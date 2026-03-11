@@ -1,0 +1,32 @@
+{
+  "paging": {"pageIndex": 1, "pageSize": 500, "total": 2},
+  "baseComponent": {"key": "com.myapp:my-app", "name": "My App", "qualifier": "TRK"},
+  "components": [
+    {
+      "key": "com.myapp:my-app:src/main/kotlin/com/myapp/service/UserService.kt",
+      "name": "UserService.kt",
+      "qualifier": "FIL",
+      "path": "src/main/kotlin/com/myapp/service/UserService.kt",
+      "measures": [
+        {"metric": "coverage", "value": "72.1"},
+        {"metric": "line_coverage", "value": "78.5"},
+        {"metric": "branch_coverage", "value": "65.0"},
+        {"metric": "uncovered_lines", "value": "12"},
+        {"metric": "uncovered_conditions", "value": "3"}
+      ]
+    },
+    {
+      "key": "com.myapp:my-app:src/main/kotlin/com/myapp/service/AuthService.kt",
+      "name": "AuthService.kt",
+      "qualifier": "FIL",
+      "path": "src/main/kotlin/com/myapp/service/AuthService.kt",
+      "measures": [
+        {"metric": "coverage", "value": "94.2"},
+        {"metric": "line_coverage", "value": "96.0"},
+        {"metric": "branch_coverage", "value": "88.5"},
+        {"metric": "uncovered_lines", "value": "2"},
+        {"metric": "uncovered_conditions", "value": "1"}
+      ]
+    }
+  ]
+}

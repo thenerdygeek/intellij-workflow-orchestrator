@@ -71,11 +71,33 @@
             implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
         <statusBarWidgetFactory id="WorkflowBuildStatusBar"
             implementation="com.workflow.orchestrator.bamboo.ui.BuildStatusBarWidgetFactory"/>
+
+        <!-- SonarQube Project Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.sonar.service.SonarDataService"/>
+
+        <!-- SonarQube Editor Integration -->
+        <codeInsight.lineMarkerProvider language="JAVA"
+            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="kotlin"
+            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
+
+        <externalAnnotator language="JAVA"
+            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
+        <externalAnnotator language="kotlin"
+            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
+
+        <editorNotificationProvider
+            implementation="com.workflow.orchestrator.sonar.ui.CoverageBannerProvider"/>
+
+        <projectViewNodeDecorator
+            implementation="com.workflow.orchestrator.sonar.ui.CoverageTreeDecorator"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
     </extensions>
 
     <projectListeners>
