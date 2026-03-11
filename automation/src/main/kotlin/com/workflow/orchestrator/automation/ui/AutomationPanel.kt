@@ -5,13 +5,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.service.*
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.events.EventBus
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import javax.swing.BoxLayout
@@ -21,29 +15,11 @@ class AutomationPanel(
     private val project: Project
 ) : JPanel(BorderLayout()), Disposable {
 
-    private val settings = PluginSettings.getInstance(project)
-    private val credentialStore = CredentialStore()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val bambooClient: BambooApiClient by lazy {
-        BambooApiClient(
-            baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
-        )
-    }
-
-    private val registryClient: DockerRegistryClient by lazy {
-        val registryUrl = settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
-            ?: settings.state.nexusUrl.orEmpty()
-        DockerRegistryClient(
-            registryUrl = registryUrl.trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) }
-        )
-    }
-
-    private val tagBuilderService by lazy { TagBuilderService(bambooClient) }
-    private val driftDetectorService by lazy { DriftDetectorService(registryClient) }
-    private val conflictDetectorService by lazy { ConflictDetectorService(bambooClient) }
+    private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
+    private val driftDetectorService by lazy { project.getService(DriftDetectorService::class.java) }
+    private val conflictDetectorService by lazy { project.getService(ConflictDetectorService::class.java) }
 
     private val tagStagingPanel: TagStagingPanel
     private val suiteConfigPanel: SuiteConfigPanel

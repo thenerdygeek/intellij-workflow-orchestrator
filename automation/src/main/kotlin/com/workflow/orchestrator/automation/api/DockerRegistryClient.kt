@@ -161,10 +161,11 @@ class DockerRegistryClient(
 
     internal fun parseWwwAuthenticate(header: String?): DockerAuthChallenge? {
         if (header == null || !header.startsWith("Bearer ")) return null
-        val params = header.removePrefix("Bearer ").split(",").associate { part ->
-            val (key, value) = part.trim().split("=", limit = 2)
-            key.trim() to value.trim().removeSurrounding("\"")
-        }
+        val params = header.removePrefix("Bearer ").split(",").mapNotNull { part ->
+            val parts = part.trim().split("=", limit = 2)
+            if (parts.size == 2) parts[0].trim() to parts[1].trim().removeSurrounding("\"")
+            else null
+        }.toMap()
         val realm = params["realm"] ?: return null
         val service = params["service"] ?: ""
         val scope = params["scope"] ?: ""

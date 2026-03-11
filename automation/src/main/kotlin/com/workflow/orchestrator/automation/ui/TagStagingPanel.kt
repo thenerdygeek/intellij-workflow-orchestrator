@@ -9,6 +9,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.RegistryStatus
 import com.workflow.orchestrator.automation.model.TagEntry
 import com.workflow.orchestrator.automation.model.TagSource
+import com.intellij.ui.components.JBScrollPane
 import java.awt.BorderLayout
 import java.awt.Component
 import javax.swing.*
@@ -44,7 +45,7 @@ class TagStagingPanel(
             font = font.deriveFont(font.size + 1f)
         }, BorderLayout.NORTH)
 
-        add(JScrollPane(table), BorderLayout.CENTER)
+        add(JBScrollPane(table), BorderLayout.CENTER)
     }
 
     fun setEntries(entries: List<TagEntry>) {

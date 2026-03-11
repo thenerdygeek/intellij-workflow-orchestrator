@@ -186,6 +186,10 @@ class BambooApiClient(
             }
         }
 
+    suspend fun getBuildResult(resultKey: String): ApiResult<BambooResultDto> {
+        return get("/rest/api/latest/result/$resultKey?expand=stages.stage")
+    }
+
     private suspend fun delete(path: String): ApiResult<Unit> =
         withContext(Dispatchers.IO) {
             try {
@@ -196,7 +200,6 @@ class BambooApiClient(
                 response.use {
                     when (it.code) {
                         in 200..299 -> ApiResult.Success(Unit)
-                        204 -> ApiResult.Success(Unit)
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
                         403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found")

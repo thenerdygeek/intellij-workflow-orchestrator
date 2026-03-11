@@ -59,8 +59,7 @@ class QueueService : Disposable {
             tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) }
         )
         this.eventBus = project.getService(EventBus::class.java)
-        val dbPath = "${project.basePath}/.idea/workflow-orchestrator/automation.db"
-        this.tagHistoryService = TagHistoryService(dbPath)
+        this.tagHistoryService = project.getService(TagHistoryService::class.java)
         this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
@@ -230,9 +229,8 @@ class QueueService : Disposable {
 
     private suspend fun handleRunningOrQueued(entry: QueueEntry): QueueEntry {
         val resultKey = entry.bambooResultKey ?: return entry
-        val planKey = resultKey.substringBeforeLast("-")
 
-        val result = bambooClient.getLatestResult(planKey, "")
+        val result = bambooClient.getBuildResult(resultKey)
         if (result !is ApiResult.Success) return entry
 
         val dto = result.data

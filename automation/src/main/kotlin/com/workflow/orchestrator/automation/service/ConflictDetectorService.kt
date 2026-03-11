@@ -51,7 +51,7 @@ class ConflictDetectorService {
 
             for ((service, yourTag) in stagedTags) {
                 val otherTag = otherTags[service]
-                if (otherTag != null) {
+                if (otherTag != null && otherTag != yourTag) {
                     conflicts.add(
                         Conflict(
                             serviceName = service,

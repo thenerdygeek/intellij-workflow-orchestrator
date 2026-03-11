@@ -5,6 +5,9 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
+import com.intellij.util.xmlb.annotations.MapAnnotation
+import com.intellij.util.xmlb.annotations.Tag
+import com.intellij.util.xmlb.annotations.XMap
 
 @Service(Service.Level.APP)
 @State(
@@ -13,16 +16,20 @@ import com.intellij.openapi.components.Storage
 )
 class AutomationSettingsService : PersistentStateComponent<AutomationSettingsService.SettingsState> {
 
+    @Tag("suite")
     data class SuiteConfig(
-        val planKey: String = "",
-        val displayName: String = "",
-        val variables: Map<String, String> = emptyMap(),
-        val enabledStages: List<String> = emptyList(),
-        val serviceNameMapping: Map<String, String>? = null,
-        val lastModified: Long = 0
+        var planKey: String = "",
+        var displayName: String = "",
+        @MapAnnotation(surroundWithTag = false, entryTagName = "variable", keyAttributeName = "key", valueAttributeName = "value")
+        var variables: MutableMap<String, String> = mutableMapOf(),
+        var enabledStages: MutableList<String> = mutableListOf(),
+        @MapAnnotation(surroundWithTag = false, entryTagName = "mapping", keyAttributeName = "docker", valueAttributeName = "service")
+        var serviceNameMapping: MutableMap<String, String>? = null,
+        var lastModified: Long = 0
     )
 
     data class SettingsState(
+        @XMap(entryTagName = "suite", keyAttributeName = "planKey")
         var suites: MutableMap<String, SuiteConfig> = mutableMapOf()
     )
 

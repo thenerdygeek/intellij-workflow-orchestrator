@@ -2,6 +2,7 @@ package com.workflow.orchestrator.automation.ui
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
@@ -18,7 +19,7 @@ class SuiteConfigPanel(
     private val variablesPanel = JPanel(GridBagLayout())
     private val stagesPanel = JPanel(FlowLayout(FlowLayout.LEFT))
     private val variableRows = mutableListOf<VariableRow>()
-    private val stageCheckboxes = mutableListOf<JCheckBox>()
+    private val stageCheckboxes = mutableListOf<JBCheckBox>()
 
     data class VariableRow(
         val keyCombo: JComboBox<String>,
@@ -84,7 +85,7 @@ class SuiteConfigPanel(
         stageCheckboxes.clear()
 
         for (stage in stages) {
-            val checkbox = JCheckBox(stage, enabled.contains(stage))
+            val checkbox = JBCheckBox(stage, enabled.contains(stage))
             stageCheckboxes.add(checkbox)
             stagesPanel.add(checkbox)
         }
