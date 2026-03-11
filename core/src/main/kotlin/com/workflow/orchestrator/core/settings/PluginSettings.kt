@@ -24,6 +24,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var queuePollIntervalSeconds by property(60)
         var sonarPollIntervalSeconds by property(60)
 
+        // Bamboo plan key (auto-detected or user-configured)
+        var bambooPlanKey by string("")
+
         // Feature toggles
         var sprintModuleEnabled by property(true)
         var buildModuleEnabled by property(true)
@@ -36,6 +39,11 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Branch naming pattern
         var branchPattern by string("feature/{ticketId}-{summary}")
+
+        // Active ticket (persisted across restarts)
+        var activeTicketId by string("")
+        var activeTicketSummary by string("")
+        var jiraBoardId by property(0)
     }
 
     val isAnyServiceConfigured: Boolean
