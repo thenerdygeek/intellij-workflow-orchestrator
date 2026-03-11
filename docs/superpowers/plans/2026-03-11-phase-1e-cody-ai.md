@@ -1167,6 +1167,8 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.eclipse.lsp4j.jsonrpc.Launcher
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -1192,10 +1194,12 @@ class CodyAgentManager(private val project: Project) : Disposable {
         data class Error(val message: String) : AgentState()
     }
 
-    @Synchronized
+    private val startMutex = kotlinx.coroutines.sync.Mutex()
+
     suspend fun ensureRunning(): CodyAgentServer {
-        val currentServer = server
-        if (currentServer != null && isRunning()) return currentServer
+        startMutex.withLock {
+            val currentServer = server
+            if (currentServer != null && isRunning()) return currentServer
 
         _state.value = AgentState.Starting
 
@@ -1216,7 +1220,17 @@ class CodyAgentManager(private val project: Project) : Disposable {
             throw IllegalStateException(msg)
         }
 
-        return startAgent(binaryPath, settings, token)
+            return startAgent(binaryPath, settings, token)
+        } // startMutex.withLock
+    }
+
+    /**
+     * Returns the server proxy only if agent is already running.
+     * Does NOT trigger lazy start. Safe to call from EDT.
+     */
+    fun getServerOrNull(): CodyAgentServer? {
+        if (_state.value !is AgentState.Running) return null
+        return server
     }
 
     private fun startAgent(binaryPath: String, settings: PluginSettings, token: String): CodyAgentServer {
@@ -1766,7 +1780,50 @@ git commit -m "feat(cody): add CodyChatService for commit message generation"
 - Create: `cody/src/test/kotlin/com/workflow/orchestrator/cody/service/CodyContextServiceTest.kt`
 - Create: `cody/src/main/kotlin/com/workflow/orchestrator/cody/service/CodyContextService.kt`
 
-- [ ] **Step 1: Write CodyContextService tests**
+- [ ] **Step 1a: Create CodyContextServiceLogic (pure logic, no IntelliJ deps)**
+
+Create `cody/src/main/kotlin/com/workflow/orchestrator/cody/service/CodyContextServiceLogic.kt`:
+
+```kotlin
+package com.workflow.orchestrator.cody.service
+
+import com.workflow.orchestrator.cody.protocol.Range
+
+/**
+ * Pure logic extracted from CodyContextService for testing
+ * without IntelliJ PSI dependencies.
+ */
+class CodyContextServiceLogic {
+
+    fun buildFixInstruction(issueType: String, issueMessage: String, ruleKey: String): String =
+        """Fix the following SonarQube $issueType issue (rule: $ruleKey):
+           |$issueMessage
+           |
+           |Provide a minimal fix that addresses the issue without changing behavior.""".trimMargin()
+
+    fun buildTestInstruction(range: Range, existingTestFile: String?): String = buildString {
+        append("Generate a unit test covering the code at lines ")
+        append("${range.start.line}-${range.end.line}. ")
+        append("Use JUnit 5 with standard assertions. ")
+        if (existingTestFile != null) {
+            append("Add to the existing test file: $existingTestFile. ")
+            append("Match the existing test style and imports.")
+        } else {
+            append("Create a new test class with proper package and imports.")
+        }
+    }
+
+    fun resolveTestFile(sourceFilePath: String): String? {
+        if (!sourceFilePath.contains("src/main/")) return null
+        val testPath = sourceFilePath.replace("src/main/", "src/test/")
+        val ext = testPath.substringAfterLast(".")
+        val nameWithoutExt = testPath.substringBeforeLast(".")
+        return "${nameWithoutExt}Test.$ext"
+    }
+}
+```
+
+- [ ] **Step 1b: Write CodyContextService tests**
 
 ```kotlin
 package com.workflow.orchestrator.cody.service
@@ -1829,39 +1886,6 @@ class CodyContextServiceTest {
     fun `resolveTestFile returns null for non-main files`() {
         val result = service.resolveTestFile("src/test/kotlin/FooTest.kt")
         assertNull(result)
-    }
-}
-
-/**
- * Pure logic extracted from CodyContextService for testing
- * without IntelliJ PSI dependencies.
- */
-class CodyContextServiceLogic {
-
-    fun buildFixInstruction(issueType: String, issueMessage: String, ruleKey: String): String =
-        """Fix the following SonarQube $issueType issue (rule: $ruleKey):
-           |$issueMessage
-           |
-           |Provide a minimal fix that addresses the issue without changing behavior.""".trimMargin()
-
-    fun buildTestInstruction(range: Range, existingTestFile: String?): String = buildString {
-        append("Generate a unit test covering the code at lines ")
-        append("${range.start.line}-${range.end.line}. ")
-        append("Use JUnit 5 with standard assertions. ")
-        if (existingTestFile != null) {
-            append("Add to the existing test file: $existingTestFile. ")
-            append("Match the existing test style and imports.")
-        } else {
-            append("Create a new test class with proper package and imports.")
-        }
-    }
-
-    fun resolveTestFile(sourceFilePath: String): String? {
-        if (!sourceFilePath.contains("src/main/")) return null
-        val testPath = sourceFilePath.replace("src/main/", "src/test/")
-        val ext = testPath.substringAfterLast(".")
-        val nameWithoutExt = testPath.substringBeforeLast(".")
-        return "${nameWithoutExt}Test.$ext"
     }
 }
 ```
@@ -1943,9 +1967,6 @@ git add cody/src/main/kotlin/com/workflow/orchestrator/cody/service/CodyContextS
         cody/src/test/kotlin/com/workflow/orchestrator/cody/service/CodyContextServiceTest.kt
 git commit -m "feat(cody): add CodyContextService with fix and test context gathering"
 ```
-
-> **Note:** Extract `CodyContextServiceLogic` to its own file since both the service and test reference it:
-> `cody/src/main/kotlin/com/workflow/orchestrator/cody/service/CodyContextServiceLogic.kt`
 
 ---
 
@@ -2343,7 +2364,15 @@ class CodyIntentionAction : IntentionAction {
         if (settings.state.sourcegraphUrl.isNullOrBlank()) return false
         if (settings.state.codyEnabled == false) return false
         if (!CredentialStore().hasToken(ServiceType.SOURCEGRAPH)) return false
-        return true
+        // Check if caret line has a Sonar issue or compiler error annotation.
+        // When Phase 1D's SonarIssueAnnotator is active, this filters to
+        // only show "Ask Cody to fix" on lines with actual issues.
+        val caretLine = editor.caretModel.logicalPosition.line
+        val hasIssue = editor.markupModel.allHighlighters.any { hl ->
+            val startLine = editor.document.getLineNumber(hl.startOffset)
+            startLine == caretLine && hl.errorStripeTooltip != null
+        }
+        return hasIssue
     }
 
     override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
@@ -2589,23 +2618,8 @@ class CodyDocumentSyncListener : EditorFactoryListener {
         }
     }
 
-    /**
-     * Gets the agent server only if it's already running.
-     * Does NOT trigger lazy start — document sync should not spawn the agent.
-     */
-    private fun getServerIfRunning(manager: CodyAgentManager): CodyAgentServer? {
-        if (manager.state.value !is CodyAgentManager.AgentState.Running) return null
-        // Access the server through reflection or a getter
-        // Since CodyAgentManager exposes state, we check that first
-        // and then use ensureRunning which returns immediately when already running
-        return try {
-            kotlinx.coroutines.runBlocking {
-                manager.ensureRunning()
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
+    private fun getServerIfRunning(manager: CodyAgentManager): CodyAgentServer? =
+        manager.getServerOrNull()
 }
 ```
 
@@ -2657,7 +2671,7 @@ class CodyDocumentChangeListener(
         if (manager.state.value !is CodyAgentManager.AgentState.Running) return
 
         try {
-            val server = kotlinx.coroutines.runBlocking { manager.ensureRunning() }
+            val server = manager.getServerOrNull() ?: return
             server.textDocumentDidChange(
                 ProtocolTextDocument(
                     uri = fileUri,
@@ -2748,7 +2762,7 @@ class CodyFocusListener(private val project: Project) :
 
         val uri = "file://${newFile.path}"
         try {
-            val server = kotlinx.coroutines.runBlocking { manager.ensureRunning() }
+            val server = manager.getServerOrNull() ?: return
             server.textDocumentDidFocus(
                 com.workflow.orchestrator.cody.protocol.TextDocumentIdentifier(uri)
             )
@@ -2834,6 +2848,22 @@ Also add inside `<projectListeners>` (alongside the existing `BranchChangeTicket
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
 ```
 
+Also add an optional Spring dependency at the top level (outside `<extensions>`):
+
+```xml
+    <!-- Optional Spring integration for Cody context enrichment -->
+    <depends optional="true" config-file="cody-spring.xml">com.intellij.spring</depends>
+```
+
+Create an empty `cody/src/main/resources/META-INF/cody-spring.xml`:
+
+```xml
+<idea-plugin>
+    <!-- Spring-aware Cody context providers registered here when Spring plugin is present.
+         Placeholder for future Spring-specific extension points. -->
+</idea-plugin>
+```
+
 - [ ] **Step 2: Verify compilation**
 
 Run: `./gradlew :core:compileKotlin 2>&1 | tail -3`
@@ -2898,6 +2928,10 @@ Expected tests:
 - `CodyIntentionActionTest`: 3 tests (text, family, writeAction)
 
 Total: 40 tests
+
+> **Deferred tests:** `CodyGutterAction`, `CodyTestGenerator`, and `CodyCommitMessageHandlerFactory` are
+> skeletons without testable logic. Their availability/behavior tests are deferred to Phase 1D integration
+> when Sonar annotations and coverage data are active.
 
 - [ ] **Step 2: Final commit if all passes**
 
