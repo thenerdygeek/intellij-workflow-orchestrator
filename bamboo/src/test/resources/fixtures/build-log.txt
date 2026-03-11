@@ -1,0 +1,10 @@
+build    11-Mar-2026 10:23:45    [INFO] Scanning for projects...
+build    11-Mar-2026 10:23:46    [INFO] Building my-app 1.0-SNAPSHOT
+build    11-Mar-2026 10:23:47    [INFO] --- maven-compiler-plugin:3.11.0:compile ---
+build    11-Mar-2026 10:24:02    [ERROR] /src/main/java/com/example/UserService.java:[45,12] error: cannot find symbol
+build    11-Mar-2026 10:24:02    [ERROR]   symbol:   method getUser()
+build    11-Mar-2026 10:24:02    [ERROR]   location: class UserRepository
+build    11-Mar-2026 10:24:03    [WARNING] /src/main/java/com/example/Config.java:[12,1] warning: [deprecation] oldMethod() in Legacy has been deprecated
+build    11-Mar-2026 10:24:10    [ERROR] /src/test/java/com/example/UserServiceTest.java:[23,8] error: method does not exist
+build    11-Mar-2026 10:24:15    [INFO] BUILD FAILURE
+build    11-Mar-2026 10:24:15    [INFO] Total time: 30 s

@@ -1,0 +1,34 @@
+{
+  "key": "PROJ-BUILD-42",
+  "buildNumber": 42,
+  "state": "Successful",
+  "lifeCycleState": "Finished",
+  "buildDurationInSeconds": 325,
+  "buildRelativeTime": "5 minutes ago",
+  "stages": {
+    "size": 3,
+    "stage": [
+      {
+        "name": "Compile",
+        "state": "Successful",
+        "lifeCycleState": "Finished",
+        "manual": false,
+        "buildDurationInSeconds": 120
+      },
+      {
+        "name": "Unit Test",
+        "state": "Successful",
+        "lifeCycleState": "Finished",
+        "manual": false,
+        "buildDurationInSeconds": 180
+      },
+      {
+        "name": "Deploy",
+        "state": "Unknown",
+        "lifeCycleState": "NotBuilt",
+        "manual": true,
+        "buildDurationInSeconds": 0
+      }
+    ]
+  }
+}

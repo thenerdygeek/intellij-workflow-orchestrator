@@ -1,0 +1,25 @@
+{
+  "plans": {
+    "size": 2,
+    "max-result": 25,
+    "start-index": 0,
+    "plan": [
+      {
+        "key": "PROJ-BUILD",
+        "shortKey": "BUILD",
+        "name": "My Project - Build",
+        "shortName": "Build",
+        "enabled": true,
+        "type": "chain"
+      },
+      {
+        "key": "PROJ-DEPLOY",
+        "shortKey": "DEPLOY",
+        "name": "My Project - Deploy",
+        "shortName": "Deploy",
+        "enabled": true,
+        "type": "chain"
+      }
+    ]
+  }
+}

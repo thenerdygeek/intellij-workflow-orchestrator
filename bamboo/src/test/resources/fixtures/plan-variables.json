@@ -1,0 +1,19 @@
+{
+  "variables": {
+    "size": 3,
+    "variable": [
+      {
+        "name": "skipTests",
+        "value": "false"
+      },
+      {
+        "name": "deployTarget",
+        "value": "staging"
+      },
+      {
+        "name": "cleanBuild",
+        "value": "true"
+      }
+    ]
+  }
+}

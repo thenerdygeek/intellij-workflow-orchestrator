@@ -1,0 +1,23 @@
+{
+  "size": 2,
+  "max-result": 25,
+  "start-index": 0,
+  "searchResults": [
+    {
+      "searchEntity": {
+        "key": "PROJ-BUILD",
+        "planName": "Build",
+        "projectName": "My Project",
+        "type": "chain"
+      }
+    },
+    {
+      "searchEntity": {
+        "key": "PROJ-DEPLOY",
+        "planName": "Deploy",
+        "projectName": "My Project",
+        "type": "chain"
+      }
+    }
+  ]
+}
