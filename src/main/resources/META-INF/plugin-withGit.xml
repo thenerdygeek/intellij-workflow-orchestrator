@@ -1,0 +1,11 @@
+<!--
+  Extensions registered only when Git4Idea is available.
+  Referenced from plugin.xml via: <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
+-->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Example: a project service that depends on Git4Idea APIs -->
+        <projectService
+            serviceImplementation="com.example.plugin.git.GitIntegrationService"/>
+    </extensions>
+</idea-plugin>

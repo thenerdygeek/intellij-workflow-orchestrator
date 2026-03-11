@@ -7,6 +7,7 @@ You are building an IntelliJ IDEA plugin that consolidates the Spring Boot devel
 - **Design Spec:** `docs/superpowers/specs/2026-03-11-workflow-orchestrator-plugin-design.md`
 - **UX Guide:** `ux-design-guide.md`
 - **Phase 1A Plan:** `docs/superpowers/plans/2026-03-11-phase-1a-foundation.md`
+- **Phase 1B Plan:** `docs/superpowers/plans/2026-03-11-phase-1b-sprint-branching.md`
 - **Requirements:** `requirement.md`
 - **Features:** `features.md`
 - **Workflow:** `workflow.md`

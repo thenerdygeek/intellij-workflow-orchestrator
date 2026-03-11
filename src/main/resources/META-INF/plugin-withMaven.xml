@@ -1,0 +1,9 @@
+<!--
+  Extensions registered only when Maven plugin is available.
+  Referenced from plugin.xml via: <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
+-->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Register Maven-specific extensions here -->
+    </extensions>
+</idea-plugin>

@@ -1,0 +1,53 @@
+<idea-plugin>
+    <id>com.workflow.orchestrator.plugin</id>
+    <name>Workflow Orchestrator</name>
+    <vendor>Workflow Team</vendor>
+    <description><![CDATA[
+        Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and Cody Enterprise
+        by consolidating the entire Spring Boot development lifecycle into a single IDE interface.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+
+    <resource-bundle>messages.WorkflowBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Settings -->
+        <projectConfigurable
+            parentId="tools"
+            instance="com.workflow.orchestrator.core.settings.WorkflowSettingsConfigurable"
+            id="workflow.orchestrator"
+            displayName="Workflow Orchestrator"
+            nonDefaultProject="true"/>
+
+        <!-- Tool Window -->
+        <toolWindow
+            id="Workflow"
+            anchor="bottom"
+            icon="/icons/workflow.svg"
+            factoryClass="com.workflow.orchestrator.core.toolwindow.WorkflowToolWindowFactory"/>
+
+        <!-- Notification Groups -->
+        <notificationGroup id="workflow.build" displayType="BALLOON"/>
+        <notificationGroup id="workflow.quality" displayType="BALLOON"/>
+        <notificationGroup id="workflow.queue" displayType="BALLOON"/>
+        <notificationGroup id="workflow.automation" displayType="BALLOON"/>
+
+        <!-- Project Service -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.settings.PluginSettings"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.offline.ConnectivityMonitor"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.notifications.WorkflowNotificationService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.onboarding.OnboardingService"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Startup (onboarding check) -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
+    </extensions>
+</idea-plugin>

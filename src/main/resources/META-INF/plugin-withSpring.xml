@@ -1,0 +1,9 @@
+<!--
+  Extensions registered only when Spring plugin is available.
+  Referenced from plugin.xml via: <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
+-->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Register Spring-specific extensions here -->
+    </extensions>
+</idea-plugin>

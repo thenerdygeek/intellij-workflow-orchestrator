@@ -1,0 +1,87 @@
+<!--
+  plugin.xml — IntelliJ Plugin descriptor targeting 2025.1+
+  Docs: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html
+-->
+<idea-plugin>
+    <!-- Unique, stable plugin identifier (matches pluginGroup in gradle.properties) -->
+    <id>com.example.plugin</id>
+    <name>My IntelliJ Plugin</name>
+    <vendor url="https://example.com" email="you@example.com">Your Name</vendor>
+
+    <description><![CDATA[
+        A multi-module IntelliJ IDEA plugin.
+        <ul>
+            <li>Feature A</li>
+            <li>Feature B</li>
+        </ul>
+    ]]></description>
+
+    <!--
+      Required dependencies.
+      com.intellij.modules.platform — always required for all IntelliJ-based IDEs.
+      com.intellij.modules.java     — required when depending on Java/JVM functionality.
+    -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+
+    <!--
+      Optional dependencies — plugin loads even if these are not installed.
+      Each has a dedicated config file in META-INF/ that registers
+      extensions only available when the dependency is present.
+    -->
+    <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
+    <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
+    <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
+
+    <!-- Resource bundle for i18n -->
+    <resource-bundle>messages.MyBundle</resource-bundle>
+
+    <!-- Extensions registered against the core IntelliJ platform -->
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Application-scoped singleton service -->
+        <applicationService
+            serviceImplementation="com.example.plugin.services.MyApplicationService"/>
+
+        <!-- Project-scoped service (one per open project) -->
+        <projectService
+            serviceImplementation="com.example.plugin.services.MyProjectService"/>
+
+        <!-- Tool window -->
+        <toolWindow
+            id="MyPlugin"
+            anchor="bottom"
+            factoryClass="com.example.plugin.toolwindow.MyToolWindowFactory"/>
+
+        <!-- Post-startup activity (runs after project opens) -->
+        <postStartupActivity
+            implementation="com.example.plugin.startup.MyStartupActivity"/>
+
+        <!-- Notification group -->
+        <notificationGroup
+            id="com.example.plugin.notifications"
+            displayType="BALLOON"/>
+    </extensions>
+
+    <!-- Actions -->
+    <actions>
+        <group id="com.example.plugin.MainMenu"
+               text="My Plugin"
+               description="My Plugin actions"
+               popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action id="com.example.plugin.actions.DoSomething"
+                    class="com.example.plugin.actions.DoSomethingAction"
+                    text="Do Something"
+                    description="Performs the main action">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
+            </action>
+        </group>
+    </actions>
+
+    <!-- Listeners -->
+    <projectListeners>
+        <listener topic="com.intellij.openapi.vfs.VirtualFileListener"
+                  class="com.example.plugin.listeners.MyFileListener"/>
+    </projectListeners>
+</idea-plugin>
