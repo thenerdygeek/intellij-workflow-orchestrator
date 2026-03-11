@@ -62,13 +62,16 @@
         <vcsCheckinHandlerFactory
             implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
 
-        <!-- Status Bar Widget -->
+        <!-- Status Bar Widgets -->
         <statusBarWidgetFactory id="WorkflowTicketStatusBar"
             implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
+        <statusBarWidgetFactory id="WorkflowBuildStatusBar"
+            implementation="com.workflow.orchestrator.bamboo.ui.BuildStatusBarWidgetFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
     </extensions>
 
     <projectListeners>
