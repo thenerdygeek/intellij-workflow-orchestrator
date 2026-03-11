@@ -9,8 +9,16 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
+    <depends>Git4Idea</depends>
 
     <resource-bundle>messages.WorkflowBundle</resource-bundle>
+
+    <extensionPoints>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.tabProvider"
+            interface="com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider"
+            dynamic="true"/>
+    </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
         <!-- Settings -->
@@ -34,7 +42,7 @@
         <notificationGroup id="workflow.queue" displayType="BALLOON"/>
         <notificationGroup id="workflow.automation" displayType="BALLOON"/>
 
-        <!-- Project Service -->
+        <!-- Project Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.settings.PluginSettings"/>
         <projectService
@@ -43,11 +51,28 @@
             serviceImplementation="com.workflow.orchestrator.core.notifications.WorkflowNotificationService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.onboarding.OnboardingService"/>
-    </extensions>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.events.EventBus"/>
 
-    <extensions defaultExtensionNs="com.intellij">
         <!-- Startup (onboarding check) -->
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
+
+        <!-- Commit message auto-prefix -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
+
+        <!-- Status Bar Widget -->
+        <statusBarWidgetFactory id="WorkflowTicketStatusBar"
+            implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
     </extensions>
+
+    <extensions defaultExtensionNs="com.workflow.orchestrator">
+        <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
+    </extensions>
+
+    <projectListeners>
+        <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
+                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
+    </projectListeners>
 </idea-plugin>
