@@ -1,0 +1,1 @@
+{"id":"edit-task-001","state":"Applied","error":null,"selectionRange":{"start":{"line":10,"character":0},"end":{"line":15,"character":42}},"instruction":"Fix the null pointer exception"}

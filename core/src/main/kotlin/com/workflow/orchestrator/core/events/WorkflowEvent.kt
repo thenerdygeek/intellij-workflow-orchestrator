@@ -32,5 +32,12 @@ sealed class WorkflowEvent {
         val lineCoverage: Double
     ) : WorkflowEvent()
 
+    /** Emitted by :cody when a user accepts or rejects an AI-generated edit. */
+    data class CodyEditReady(
+        val taskId: String,
+        val filePath: String,
+        val accepted: Boolean
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

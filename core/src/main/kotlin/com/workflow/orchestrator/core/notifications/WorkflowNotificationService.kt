@@ -32,6 +32,7 @@ class WorkflowNotificationService(private val project: Project) {
         const val GROUP_QUALITY = "workflow.quality"
         const val GROUP_QUEUE = "workflow.queue"
         const val GROUP_AUTOMATION = "workflow.automation"
+        const val GROUP_CODY = "workflow.cody"
 
         fun getInstance(project: Project): WorkflowNotificationService {
             return project.getService(WorkflowNotificationService::class.java)

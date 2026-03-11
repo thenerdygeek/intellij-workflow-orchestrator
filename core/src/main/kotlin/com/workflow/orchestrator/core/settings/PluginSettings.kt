@@ -47,6 +47,10 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var activeTicketId by string("")
         var activeTicketSummary by string("")
         var jiraBoardId by property(0)
+
+        // Cody AI configuration
+        var codyAgentPath by string("")
+        var codyEnabled by property(true)
     }
 
     val isAnyServiceConfigured: Boolean

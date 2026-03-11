@@ -12,4 +12,5 @@ include(
     ":git-integration",
     ":bamboo",
     ":sonar",
+    ":cody",
 )
