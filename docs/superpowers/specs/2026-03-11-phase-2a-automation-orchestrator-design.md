@@ -11,20 +11,22 @@
 
 Eliminates the most painful manual workflow in the development cycle: constructing Docker tag JSON payloads, navigating Bamboo's "Run Customized" UI, and manually coordinating queue access to shared automation suites.
 
-| # | Feature | Surface |
-|---|---------|---------|
-| 43 | Smart `dockerTagsAsJson` payload builder | Tag staging table in Automation tab |
-| 44 | Baseline run auto-picker (best of last N) | Baseline dropdown in toolbar |
-| 45 | Current-repo tag auto-replacement | Auto-detected on tab open |
-| 46 | Per-service inline tag editing | Editable cells in staging table |
-| 47 | Docker Registry tag validation | Registry status column + Validate All button |
-| 48 | Configuration drift detector | Drift column + Update All to Latest button |
-| 49 | Smart conflict detector | Alert bar with running build overlap warnings |
-| 50 | Suite variable & stage configuration | Variables/Stages panel (per-suite, persistent) |
-| 51 | Queue management with auto-trigger | Queue Run button + background polling + auto-fire |
-| 52 | Queue visibility & cancellation | Live status bar + queue position + Cancel button |
-| 53 | Run history & config recall | History button + last 5 saved configurations |
-| 54 | IDE restart & sleep recovery | SQLite persistence + Bamboo reconciliation on startup |
+| # | Feature | Surface | Ref |
+|---|---------|---------|-----|
+| 2A.1 | Smart `dockerTagsAsJson` payload builder | Tag staging table in Automation tab | features.md §4.1 |
+| 2A.2 | Baseline run auto-picker (best of last N) | Baseline dropdown in toolbar | features.md §4.1 |
+| 2A.3 | Current-repo tag auto-replacement | Auto-detected on tab open | features.md §4.1 |
+| 2A.4 | Per-service inline tag editing | Editable cells in staging table | features.md §4.1 |
+| 2A.5 | Docker Registry tag validation | Registry status column + Validate All button | features.md §4.1 |
+| 2A.6 | Configuration drift detector | Drift column + Update All to Latest button | features.md §6.1 |
+| 2A.7 | Smart conflict detector | Alert bar with running build overlap warnings | features.md §6.3 |
+| 2A.8 | Suite variable & stage configuration | Variables/Stages panel (per-suite, persistent) | features.md §4.1 |
+| 2A.9 | Queue management with auto-trigger | Queue Run button + background polling + auto-fire | features.md §4.2 |
+| 2A.10 | Queue visibility & cancellation | Live status bar + queue position + Cancel button | features.md §4.2 |
+| 2A.11 | Run history & config recall | History button + last 5 saved configurations | features.md §4.2 |
+| 2A.12 | IDE restart & sleep recovery | SQLite persistence + Bamboo reconciliation on startup | (infrastructure) |
+
+> **Note:** Feature numbering uses `2A.N` internal scheme. Cross-references to `features.md` use section numbers (§4.1, §4.2, §6.1, §6.3). "Regression Blame & Auto-Triage" (features.md §6.2) is deferred to Phase 2B as it requires completed automation run results and handover integration.
 
 **Configurability principle:** Each suite is independently configurable. Suite configurations (variables, stages) persist at the IDE application level — set once, available across all projects and IDE restarts. Tag history persists per-project in SQLite.
 
@@ -41,23 +43,25 @@ Phase 2A introduces a dedicated module for automation suite orchestration. Unlik
 ```
 :automation
 ├── api/
-│   └── DockerRegistryClient.kt          — Docker Registry v2 API client
+│   └── DockerRegistryClient.kt              — Docker Registry v2 API client (plain class, not a service)
 ├── service/
-│   ├── TagBuilderService.kt             — Payload construction & smart defaults
-│   ├── QueueService.kt                  — Local queue + auto-trigger + polling
-│   ├── DriftDetectorService.kt          — Tag staleness detection
-│   ├── ConflictDetectorService.kt       — Running build overlap detection
-│   ├── AutomationSettingsService.kt     — APP-level suite config persistence
-│   └── TagHistoryService.kt             — PROJECT-level SQLite history
+│   ├── TagBuilderService.kt                 — Payload construction & smart defaults
+│   ├── QueueService.kt                      — Local queue + auto-trigger + polling
+│   ├── QueueRecoveryStartupActivity.kt      — postStartupActivity for IDE restart recovery
+│   ├── DriftDetectorService.kt              — Tag staleness detection
+│   ├── ConflictDetectorService.kt           — Running build overlap detection
+│   ├── AutomationSettingsService.kt         — APP-level suite config persistence
+│   └── TagHistoryService.kt                 — PROJECT-level SQLite history
 ├── model/
-│   ├── AutomationModels.kt              — Suite, QueuedRun, TagEntry, etc.
-│   └── DockerRegistryDtos.kt            — Registry v2 API response DTOs
+│   ├── AutomationModels.kt                  — Suite, QueuedRun, TagEntry, etc.
+│   └── DockerRegistryDtos.kt                — Registry v2 API response DTOs
 └── ui/
-    ├── AutomationTabProvider.kt         — WorkflowTabProvider implementation
-    ├── AutomationPanel.kt               — Main panel orchestrating sub-panels
-    ├── TagStagingPanel.kt               — Service table with inline editing
-    ├── SuiteConfigPanel.kt              — Variables, stages, suite selector
-    └── QueueStatusPanel.kt              — Live status, queue position, actions
+    ├── AutomationTabProvider.kt             — WorkflowTabProvider implementation
+    ├── AutomationPanel.kt                   — Main panel orchestrating sub-panels
+    ├── TagStagingPanel.kt                   — Service table with inline editing
+    ├── SuiteConfigPanel.kt                  — Variables, stages, suite selector
+    ├── QueueStatusPanel.kt                  — Live status, queue position, actions
+    └── AutomationStatusBarWidgetFactory.kt  — Status bar widget for queue-at-a-glance
 ```
 
 **Module dependencies:**
@@ -70,9 +74,11 @@ Phase 2A introduces a dedicated module for automation suite orchestration. Unlik
 
 | Module | Change |
 |--------|--------|
-| `:core` | Add new WorkflowEvent subtypes for automation lifecycle |
-| `:bamboo` | Extend `BambooApiClient` with queue-polling and build-variable methods |
-| `:core` | Add `dockerRegistryUrl` and `automationModuleEnabled` to `PluginSettings` |
+| `:core` | Add new `WorkflowEvent` nested subtypes for automation lifecycle |
+| `:bamboo` | Extend `BambooApiClient` with `getRunningAndQueuedBuilds()`, `getBuildVariables()`, `cancelBuild()` (new `delete` HTTP method), `getRecentResults()` |
+| `:core` | Add `dockerRegistryUrl`, `dockerRegistryCaPath`, queue settings to `PluginSettings` (note: `automationModuleEnabled` and `nexusUrl` already exist) |
+
+**`DockerRegistryClient` lifecycle:** Plain class (not a `@Service`), instantiated by services that need it (e.g., `TagBuilderService`, `DriftDetectorService`) using registry URL from `PluginSettings`. This matches how `BambooApiClient` is constructed in `BuildMonitorService`.
 
 ---
 
@@ -103,6 +109,19 @@ data class BaselineRun(
 ```
 
 **Fetching tags from a run:** The `dockerTagsAsJson` variable value is extracted from the build result's variables via `BambooApiClient.getBuildVariables(resultKey)`.
+
+### 3.1.1 TagBuilderService API
+
+```kotlin
+@Service(Service.Level.PROJECT)
+class TagBuilderService(private val project: Project) {
+    suspend fun loadBaseline(suitePlanKey: String): List<TagEntry>
+    suspend fun scoreAndRankRuns(suitePlanKey: String, maxResults: Int = 10): List<BaselineRun>
+    fun replaceCurrentRepoTag(entries: List<TagEntry>, context: CurrentRepoContext): List<TagEntry>
+    fun buildJsonPayload(entries: List<TagEntry>): String   // generates dockerTagsAsJson JSON string
+    fun buildTriggerVariables(entries: List<TagEntry>, extraVars: Map<String, String>): Map<String, String>
+}
+```
 
 ### 3.2 Current-Repo Tag Auto-Replacement
 
@@ -219,6 +238,13 @@ Checks whether staged tags are stale compared to the latest release in the Docke
 @Service(Service.Level.PROJECT)
 class DriftDetectorService(private val project: Project) {
 
+    // DockerRegistryClient created internally from PluginSettings.dockerRegistryUrl,
+    // matching the BambooApiClient pattern in BuildMonitorService.
+    private val registryClient: DockerRegistryClient by lazy {
+        val settings = PluginSettings.getInstance(project).state
+        DockerRegistryClient(settings.dockerRegistryUrl ?: settings.nexusUrl ?: "", ...)
+    }
+
     suspend fun checkDrift(entries: List<TagEntry>): List<DriftResult>
 
     data class DriftResult(
@@ -253,6 +279,9 @@ Detects when another team member's automation run targets the same microservices
 @Service(Service.Level.PROJECT)
 class ConflictDetectorService(private val project: Project) {
 
+    // BambooApiClient created internally from PluginSettings, same pattern as BuildMonitorService.
+    private val apiClient: BambooApiClient by lazy { ... }
+
     suspend fun checkConflicts(stagedTags: Map<String, String>): List<Conflict>
 
     data class Conflict(
@@ -286,15 +315,19 @@ suspend fun getRunningAndQueuedBuilds(planKey: String): ApiResult<List<BambooBui
 
 suspend fun getBuildVariables(resultKey: String): ApiResult<Map<String, String>>
 
+suspend fun getRecentResults(planKey: String, maxResults: Int = 10): ApiResult<List<BambooResultDto>>
+
 suspend fun cancelBuild(resultKey: String): ApiResult<Unit>
+// Note: requires adding a `delete` private method to BambooApiClient (currently only has get/getRaw/post)
 ```
 
 **Bamboo REST API endpoints:**
 
 | Method | Endpoint |
 |--------|----------|
-| `getRunningAndQueuedBuilds` | `GET /rest/api/latest/result/{planKey}?includeAllStates=true&buildstate=Unknown&max-results=5` |
+| `getRunningAndQueuedBuilds` | `GET /rest/api/latest/result/{planKey}?includeAllStates=true&max-results=5` (filter client-side by `lifeCycleState` for InProgress/Queued/Pending) |
 | `getBuildVariables` | `GET /rest/api/latest/result/{resultKey}?expand=variables` |
+| `getRecentResults` | `GET /rest/api/latest/result/{planKey}?max-results={n}&expand=stages.stage,variables` |
 | `cancelBuild` | `DELETE /rest/api/latest/queue/{resultKey}` |
 
 ---
@@ -306,6 +339,9 @@ suspend fun cancelBuild(resultKey: String): ApiResult<Unit>
 Application-level persistent service for suite configurations. Stored in IntelliJ's app config directory — survives across all projects and IDE restarts.
 
 ```kotlin
+// Uses PersistentStateComponent (not SimplePersistentStateComponent) because State
+// contains nested Map<String, SuiteConfig> with List fields — BaseState delegates
+// only support flat primitive properties, not complex nested structures.
 @Service(Service.Level.APP)
 @State(
     name = "AutomationSuiteSettings",
@@ -350,8 +386,11 @@ Variables are fetched from Bamboo plan definition via `BambooApiClient.getVariab
 
 Stages are fetched from the latest build result's stage list:
 - Presented as checkboxes
-- Checked stages are passed to `triggerBuild()` via the `stage` parameter
 - Stage selection persists in `SuiteConfig`
+
+**Bamboo API limitation:** `POST /rest/api/latest/queue/{planKey}` only accepts a single `stage` query parameter per call with `executeAllStages=false`. To run multiple selected stages:
+- If ALL stages are selected → trigger with no `stage` parameter (runs all stages, which is the default)
+- If a SUBSET is selected → the standard Bamboo approach is to trigger with `executeAllStages=false` and the first stage name; Bamboo runs from that stage onward. If non-contiguous stage selection is needed, multiple sequential triggers would be required, but this is uncommon. The UI should document this limitation: "Stages run sequentially from the first checked stage."
 
 ---
 
@@ -497,6 +536,9 @@ class TagHistoryService(private val project: Project) {
 }
 ```
 
+**SQLite database path:** `<project>/.idea/workflow-orchestrator/automation.db`
+Separate from any future databases to allow independent schema management. On startup, check if path is on a network filesystem — if detected, warn user and offer local fallback at `~/.cache/workflow-orchestrator/<project-hash>/automation.db`.
+
 **SQLite schema:**
 ```sql
 -- Schema versioning for safe plugin updates
@@ -586,9 +628,12 @@ No special handling needed — Kotlin coroutines with `delay()` naturally resume
 
 ## 11. Events
 
-New `WorkflowEvent` subtypes added to `:core`:
+New nested subtypes added inside the `sealed class WorkflowEvent` in `:core` (matching the existing pattern where `BuildFinished`, `QualityGateResult`, etc. are all nested data classes):
 
 ```kotlin
+// Added inside sealed class WorkflowEvent { ... }
+
+/** Emitted by :automation when a build is triggered (manual or auto-queue). */
 data class AutomationTriggered(
     val suitePlanKey: String,
     val buildResultKey: String,
@@ -596,6 +641,7 @@ data class AutomationTriggered(
     val triggeredBy: String        // "auto-queue" or "manual"
 ) : WorkflowEvent()
 
+/** Emitted by :automation when a triggered build completes. */
 data class AutomationFinished(
     val suitePlanKey: String,
     val buildResultKey: String,
@@ -603,6 +649,7 @@ data class AutomationFinished(
     val durationMs: Long
 ) : WorkflowEvent()
 
+/** Emitted by :automation when queue position changes. */
 data class QueuePositionChanged(
     val suitePlanKey: String,
     val position: Int,             // 0 = next up, -1 = removed
@@ -616,17 +663,21 @@ data class QueuePositionChanged(
 
 ### 12.1 PluginSettings Additions (Project-level)
 
+**Already present** in `PluginSettings.State` (no changes needed):
+- `nexusUrl` — can double as Docker Registry URL, or use separate field
+- `automationModuleEnabled` — already exists as `by property(true)`
+- `queuePollIntervalSeconds` — already exists as `by property(60)`
+
+**New fields** added to `PluginSettings.State` using `BaseState` delegate syntax:
 ```kotlin
-// Added to PluginSettings.State
-var dockerRegistryUrl: String?              // Docker Registry v2 base URL
-var dockerRegistryCaPath: String?           // Custom CA cert path for self-signed registries
-var automationModuleEnabled: Boolean        // master toggle for automation tab
-var queuePollingIntervalSeconds: Int        // default 60
-var queueActivePollingIntervalSeconds: Int  // default 15 (used when builds are in-flight)
-var queueAutoTriggerEnabled: Boolean        // default true
-var tagValidationOnTrigger: Boolean         // default true (re-validate before fire)
-var queueMaxDepthPerSuite: Int              // default 10
-var queueBuildQueuedTimeoutSeconds: Int     // default 720 (Bamboo's own default)
+// Added to PluginSettings.State (BaseState delegate pattern)
+var dockerRegistryUrl by string("")              // Docker Registry v2 base URL (if different from nexusUrl)
+var dockerRegistryCaPath by string("")           // Custom CA cert path for self-signed registries
+var queueActivePollingIntervalSeconds by property(15)  // faster polling when builds in-flight
+var queueAutoTriggerEnabled by property(true)    // auto-fire when suite idle
+var tagValidationOnTrigger by property(true)     // re-validate tags before auto-fire
+var queueMaxDepthPerSuite by property(10)        // max queued entries per suite
+var queueBuildQueuedTimeoutSeconds by property(720)   // Bamboo's own default timeout
 ```
 
 ### 12.2 AutomationSettingsService (App-level)
@@ -690,7 +741,9 @@ Clicking opens the Automation tab.
 ## 14. plugin.xml Registrations
 
 ```xml
-<!-- Automation Module Services -->
+<!-- Inside <extensions defaultExtensionNs="com.intellij"> -->
+
+<!-- Automation Module Project Services -->
 <projectService
     serviceImplementation="com.workflow.orchestrator.automation.service.QueueService"/>
 <projectService
@@ -706,9 +759,6 @@ Clicking opens the Automation tab.
 <applicationService
     serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
 
-<!-- Automation Tab -->
-<tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
-
 <!-- Status Bar -->
 <statusBarWidgetFactory id="WorkflowAutomationStatusBar"
     implementation="com.workflow.orchestrator.automation.ui.AutomationStatusBarWidgetFactory"/>
@@ -717,8 +767,16 @@ Clicking opens the Automation tab.
 <postStartupActivity
     implementation="com.workflow.orchestrator.automation.service.QueueRecoveryStartupActivity"/>
 
-<!-- Notification Group -->
+<!-- Notification group — coexists with existing workflow.queue and workflow.automation.
+     This group is specifically for queue state change notifications (enqueued, triggered, completed). -->
 <notificationGroup id="workflow.automation.queue" displayType="BALLOON"/>
+
+
+<!-- Inside <extensions defaultExtensionNs="com.workflow.orchestrator"> -->
+<!-- Tab provider must use the custom extension namespace (not com.intellij) to be
+     discovered by the EP_NAME defined in WorkflowTabProvider. Matches existing
+     SprintTabProvider, BuildTabProvider, QualityTabProvider registrations. -->
+<tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
 ```
 
 ---
@@ -853,6 +911,8 @@ Clicking opens the Automation tab.
 ## 17. Build Configuration
 
 ### 17.1 New Module: `automation/build.gradle.kts`
+
+> **Pattern note:** Uses the property-based `bundledPlugins(...)` approach from `:core/build.gradle.kts` (not the hardcoded `bundledPlugin("Git4Idea")` approach from `:bamboo`). The `:automation` module does not need Git4Idea — it only needs the base platform plugins.
 
 ```kotlin
 plugins {
