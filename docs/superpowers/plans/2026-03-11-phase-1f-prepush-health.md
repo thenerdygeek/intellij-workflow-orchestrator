@@ -2006,6 +2006,29 @@ class HealthCheckCheckinHandlerFactoryTest {
 Run: `./gradlew :core:test --tests "com.workflow.orchestrator.core.healthcheck.HealthCheckCheckinHandlerFactoryTest" -x verifyPluginStructure`
 Expected: FAIL — class not found
 
+- [ ] **Step 2.5: Add `Git4Idea` bundled plugin dependency to `:core`**
+
+The `:core` module does not currently depend on `Git4Idea`. `HealthCheckCheckinHandlerFactory` needs `git4idea.GitVcs` and `git4idea.repo.GitRepositoryManager`. Add it to `core/build.gradle.kts` — matches the pattern used in `:jira/build.gradle.kts` line 26.
+
+In `core/build.gradle.kts`, inside the `intellijPlatform { }` block, add after the `intellijIdea(...)` line:
+
+```kotlin
+bundledPlugin("Git4Idea")
+```
+
+The block should now look like:
+```kotlin
+intellijPlatform {
+    intellijIdea(providers.gradleProperty("platformVersion"))
+    bundledPlugin("Git4Idea")
+
+    // Bundled plugins this submodule needs at compile time
+    bundledPlugins(providers.gradleProperty("platformBundledPlugins").map {
+        it.split(',').map(String::trim).filter(String::isNotEmpty)
+    })
+}
+```
+
 - [ ] **Step 3: Implement HealthCheckCheckinHandlerFactory**
 
 ```kotlin
@@ -2103,6 +2126,8 @@ class HealthCheckCheckinHandler(
     }
 }
 ```
+
+> **Spec deviation note:** The spec defines `getBeforeCheckinConfigurationPanel()` returning a `HealthCheckConfigPanel` with inline checkboxes in the commit dialog. This is deliberately deferred — configuration happens via the Settings UI (Task 14) instead. The inline commit-dialog panel can be added as a follow-up enhancement if needed.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2659,6 +2684,7 @@ git commit -m "feat(bamboo): add CveIntentionAction for pom.xml dependency versi
 ```kotlin
 package com.workflow.orchestrator.bamboo.editor
 
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
 import com.intellij.psi.xml.XmlFile
@@ -2674,6 +2700,8 @@ import org.junit.jupiter.api.Test
 
 class CveAnnotatorTest {
 
+    private val editor = mockk<Editor>(relaxed = true)
+
     @AfterEach
     fun cleanup() = unmockkAll()
 
@@ -2682,7 +2710,7 @@ class CveAnnotatorTest {
         val file = mockk<PsiFile>()
         every { file.name } returns "Foo.kt"
 
-        assertNull(CveAnnotator().collectInformation(file))
+        assertNull(CveAnnotator().collectInformation(file, editor, false))
     }
 
     @Test
@@ -2704,7 +2732,7 @@ class CveAnnotatorTest {
         mockkObject(CveRemediationService)
         every { CveRemediationService.getInstance(project) } returns cveService
 
-        assertNull(CveAnnotator().collectInformation(file))
+        assertNull(CveAnnotator().collectInformation(file, editor, false))
     }
 
     @Test
@@ -2721,7 +2749,7 @@ class CveAnnotatorTest {
         every { PluginSettings.getInstance(project) } returns settings
         every { settings.state } returns state
 
-        assertNull(CveAnnotator().collectInformation(file))
+        assertNull(CveAnnotator().collectInformation(file, editor, false))
     }
 
     @Test
@@ -2748,7 +2776,7 @@ class CveAnnotatorTest {
         mockkObject(CveRemediationService)
         every { CveRemediationService.getInstance(project) } returns cveService
 
-        val result = CveAnnotator().collectInformation(file)
+        val result = CveAnnotator().collectInformation(file, editor, false)
 
         assertNotNull(result)
         assertEquals(1, result!!.vulnerabilities.size)
@@ -2769,6 +2797,7 @@ package com.workflow.orchestrator.bamboo.editor
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.ExternalAnnotator
 import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.openapi.editor.Editor
 import com.intellij.psi.PsiFile
 import com.intellij.psi.xml.XmlFile
 import com.intellij.psi.xml.XmlTag
@@ -2793,7 +2822,8 @@ class CveAnnotator : ExternalAnnotator<CveAnnotator.CollectionInfo, CveAnnotator
         val cve: CveVulnerability
     )
 
-    override fun collectInformation(file: PsiFile): CollectionInfo? {
+    // Uses 3-param override for consistency with SonarIssueAnnotator (the codebase pattern).
+    override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): CollectionInfo? {
         if (file !is XmlFile || file.name != "pom.xml") return null
         val project = file.project
         val settings = PluginSettings.getInstance(project).state
