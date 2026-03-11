@@ -34,12 +34,11 @@
 | `core/src/main/kotlin/.../core/auth/CredentialStore.kt` | PasswordSafe wrapper |
 | `core/src/main/kotlin/.../core/auth/AuthTestService.kt` | "Test Connection" for each service |
 | `core/src/main/kotlin/.../core/http/HttpClientFactory.kt` | Creates per-service OkHttpClients |
-| `core/src/main/kotlin/.../core/http/AuthInterceptor.kt` | Injects Bearer token per request |
+| `core/src/main/kotlin/.../core/http/AuthInterceptor.kt` | Injects auth token per request (Bearer or Basic) |
 | `core/src/main/kotlin/.../core/http/RetryInterceptor.kt` | Exponential backoff on 429/5xx |
 | `core/src/main/kotlin/.../core/offline/ConnectivityMonitor.kt` | Per-service reachability |
-| `core/src/main/kotlin/.../core/offline/OfflineState.kt` | ONLINE / DEGRADED / OFFLINE enum |
+| `core/src/main/kotlin/.../core/offline/OfflineState.kt` | ServiceStatus + OverallState enums |
 | `core/src/main/kotlin/.../core/settings/PluginSettings.kt` | PersistentStateComponent |
-| `core/src/main/kotlin/.../core/settings/ServiceEndpoint.kt` | Data class: url + authType |
 | `core/src/main/kotlin/.../core/settings/WorkflowSettingsConfigurable.kt` | Root settings configurable |
 | `core/src/main/kotlin/.../core/settings/ConnectionsConfigurable.kt` | Connections sub-page (Kotlin UI DSL v2) |
 | `core/src/main/kotlin/.../core/notifications/WorkflowNotificationService.kt` | Central notification dispatcher |
@@ -361,11 +360,11 @@ Create `core/src/main/resources/META-INF/plugin.xml`:
             serviceImplementation="com.workflow.orchestrator.core.onboarding.OnboardingService"/>
     </extensions>
 
-    <projectListeners>
-        <listener
-            class="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"
-            topic="com.intellij.openapi.startup.StartupActivity"/>
-    </projectListeners>
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Startup (onboarding check) -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
+    </extensions>
 </idea-plugin>
 ```
 
@@ -621,37 +620,61 @@ Create `core/src/test/kotlin/com/workflow/orchestrator/core/auth/CredentialStore
 ```kotlin
 package com.workflow.orchestrator.core.auth
 
-import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.credentialStore.CredentialAttributes
+import com.intellij.credentialStore.Credentials
+import com.intellij.ide.passwordSafe.PasswordSafe
 import com.workflow.orchestrator.core.model.ServiceType
+import io.mockk.*
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 
-class CredentialStoreTest : BasePlatformTestCase() {
+class CredentialStoreTest {
 
     private lateinit var store: CredentialStore
+    private lateinit var mockPasswordSafe: PasswordSafe
 
-    override fun setUp() {
-        super.setUp()
+    @BeforeEach
+    fun setUp() {
+        mockPasswordSafe = mockk(relaxed = true)
+        mockkStatic(PasswordSafe::class)
+        every { PasswordSafe.instance } returns mockPasswordSafe
         store = CredentialStore()
     }
 
-    fun `test store and retrieve token`() {
+    @AfterEach
+    fun tearDown() {
+        unmockkAll()
+    }
+
+    @Test
+    fun `store and retrieve token`() {
+        val slot = slot<Credentials>()
+        every { mockPasswordSafe.set(any(), capture(slot)) } just Runs
+        every { mockPasswordSafe.get(any()) } answers {
+            if (slot.isCaptured) slot.captured else null
+        }
+
         store.storeToken(ServiceType.JIRA, "test-token-123")
         assertEquals("test-token-123", store.getToken(ServiceType.JIRA))
     }
 
-    fun `test retrieve missing token returns null`() {
+    @Test
+    fun `retrieve missing token returns null`() {
+        every { mockPasswordSafe.get(any()) } returns null
         assertNull(store.getToken(ServiceType.BAMBOO))
     }
 
-    fun `test remove token`() {
-        store.storeToken(ServiceType.SONARQUBE, "sonar-token")
-        store.removeToken(ServiceType.SONARQUBE)
-        assertNull(store.getToken(ServiceType.SONARQUBE))
+    @Test
+    fun `hasToken returns false when no token stored`() {
+        every { mockPasswordSafe.get(any()) } returns null
+        assertFalse(store.hasToken(ServiceType.BITBUCKET))
     }
 
-    fun `test hasToken returns correct state`() {
-        assertFalse(store.hasToken(ServiceType.BITBUCKET))
-        store.storeToken(ServiceType.BITBUCKET, "bb-token")
+    @Test
+    fun `hasToken returns true when token exists`() {
+        every { mockPasswordSafe.get(any()) } returns Credentials("user", "token")
         assertTrue(store.hasToken(ServiceType.BITBUCKET))
     }
 }
@@ -770,13 +793,28 @@ class AuthInterceptorTest {
         server.enqueue(MockResponse().setBody("ok"))
 
         val client = OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor { "my-secret-token" })
+            .addInterceptor(AuthInterceptor({ "my-secret-token" }, AuthScheme.BEARER))
             .build()
 
         client.newCall(Request.Builder().url(server.url("/test")).build()).execute()
 
         val recorded = server.takeRequest()
         assertEquals("Bearer my-secret-token", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `adds Basic auth header for BASIC scheme`() {
+        server.enqueue(MockResponse().setBody("ok"))
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(AuthInterceptor({ "my-token" }, AuthScheme.BASIC))
+            .build()
+
+        client.newCall(Request.Builder().url(server.url("/test")).build()).execute()
+
+        val recorded = server.takeRequest()
+        val expected = "Basic " + java.util.Base64.getEncoder().encodeToString("my-token:".toByteArray())
+        assertEquals(expected, recorded.getHeader("Authorization"))
     }
 
     @Test
@@ -813,8 +851,11 @@ package com.workflow.orchestrator.core.http
 import okhttp3.Interceptor
 import okhttp3.Response
 
+enum class AuthScheme { BEARER, BASIC }
+
 class AuthInterceptor(
-    private val tokenProvider: () -> String?
+    private val tokenProvider: () -> String?,
+    private val scheme: AuthScheme = AuthScheme.BEARER
 ) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -822,8 +863,13 @@ class AuthInterceptor(
         val token = tokenProvider()
 
         val request = if (token != null) {
+            val headerValue = when (scheme) {
+                AuthScheme.BEARER -> "Bearer $token"
+                AuthScheme.BASIC -> "Basic " + java.util.Base64.getEncoder()
+                    .encodeToString("$token:".toByteArray())
+            }
             originalRequest.newBuilder()
-                .header("Authorization", "Bearer $token")
+                .header("Authorization", headerValue)
                 .build()
         } else {
             originalRequest
@@ -1126,8 +1172,12 @@ class HttpClientFactory(
 
     fun clientFor(service: ServiceType): OkHttpClient {
         return clients.getOrPut(service) {
+            val scheme = when (service) {
+                ServiceType.NEXUS -> AuthScheme.BASIC
+                else -> AuthScheme.BEARER
+            }
             baseClient.newBuilder()
-                .addInterceptor(AuthInterceptor { tokenProvider(service) })
+                .addInterceptor(AuthInterceptor({ tokenProvider(service) }, scheme))
                 .build()
         }
     }
@@ -1390,20 +1440,20 @@ class ConnectivityMonitorTest {
 
     @Test
     fun `initially all services are UNKNOWN`() {
-        val monitor = ConnectivityMonitor()
+        val monitor = ConnectivityMonitor(mockk(relaxed = true))
         assertEquals(ServiceStatus.UNKNOWN, monitor.statusOf(ServiceType.JIRA))
     }
 
     @Test
     fun `markOnline sets service to ONLINE`() {
-        val monitor = ConnectivityMonitor()
+        val monitor = ConnectivityMonitor(mockk(relaxed = true))
         monitor.markOnline(ServiceType.JIRA)
         assertEquals(ServiceStatus.ONLINE, monitor.statusOf(ServiceType.JIRA))
     }
 
     @Test
     fun `markOffline sets service to OFFLINE`() {
-        val monitor = ConnectivityMonitor()
+        val monitor = ConnectivityMonitor(mockk(relaxed = true))
         monitor.markOnline(ServiceType.JIRA)
         monitor.markOffline(ServiceType.JIRA)
         assertEquals(ServiceStatus.OFFLINE, monitor.statusOf(ServiceType.JIRA))
@@ -1411,7 +1461,7 @@ class ConnectivityMonitorTest {
 
     @Test
     fun `overallState is ONLINE when all configured services are online`() {
-        val monitor = ConnectivityMonitor()
+        val monitor = ConnectivityMonitor(mockk(relaxed = true))
         monitor.markOnline(ServiceType.JIRA)
         monitor.markOnline(ServiceType.BAMBOO)
         assertEquals(OverallState.ONLINE, monitor.overallState(setOf(ServiceType.JIRA, ServiceType.BAMBOO)))
@@ -1419,7 +1469,7 @@ class ConnectivityMonitorTest {
 
     @Test
     fun `overallState is DEGRADED when some services offline`() {
-        val monitor = ConnectivityMonitor()
+        val monitor = ConnectivityMonitor(mockk(relaxed = true))
         monitor.markOnline(ServiceType.JIRA)
         monitor.markOffline(ServiceType.BAMBOO)
         assertEquals(
@@ -1430,7 +1480,7 @@ class ConnectivityMonitorTest {
 
     @Test
     fun `overallState is OFFLINE when all services offline`() {
-        val monitor = ConnectivityMonitor()
+        val monitor = ConnectivityMonitor(mockk(relaxed = true))
         monitor.markOffline(ServiceType.JIRA)
         monitor.markOffline(ServiceType.BAMBOO)
         assertEquals(
@@ -1474,10 +1524,13 @@ Create `core/src/main/kotlin/com/workflow/orchestrator/core/offline/Connectivity
 ```kotlin
 package com.workflow.orchestrator.core.offline
 
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.ServiceType
 import java.util.concurrent.ConcurrentHashMap
 
-class ConnectivityMonitor {
+@Service(Service.Level.PROJECT)
+class ConnectivityMonitor(private val project: Project) {
 
     private val statuses = ConcurrentHashMap<ServiceType, ServiceStatus>()
 
@@ -1526,29 +1579,9 @@ git commit -m "feat(core): add ConnectivityMonitor with per-service tracking"
 ### Task 11: PluginSettings (PersistentStateComponent)
 
 **Files:**
-- Create: `core/src/main/kotlin/.../core/settings/ServiceEndpoint.kt`
 - Create: `core/src/main/kotlin/.../core/settings/PluginSettings.kt`
 
-- [ ] **Step 1: Write ServiceEndpoint data class**
-
-Create `core/src/main/kotlin/com/workflow/orchestrator/core/settings/ServiceEndpoint.kt`:
-
-```kotlin
-package com.workflow.orchestrator.core.settings
-
-import com.intellij.util.xmlb.annotations.Tag
-
-@Tag("endpoint")
-data class ServiceEndpoint(
-    var url: String = "",
-    var enabled: Boolean = true
-) {
-    // No-arg constructor required for XML serialization
-    constructor() : this("", true)
-}
-```
-
-- [ ] **Step 2: Write PluginSettings**
+- [ ] **Step 1: Write PluginSettings**
 
 Create `core/src/main/kotlin/com/workflow/orchestrator/core/settings/PluginSettings.kt`:
 
@@ -1597,7 +1630,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         get() = state.jiraUrl.isNotBlank() ||
                 state.bambooUrl.isNotBlank() ||
                 state.bitbucketUrl.isNotBlank() ||
-                state.sonarUrl.isNotBlank()
+                state.sonarUrl.isNotBlank() ||
+                state.sourcegraphUrl.isNotBlank() ||
+                state.nexusUrl.isNotBlank()
 
     companion object {
         fun getInstance(project: Project): PluginSettings {
@@ -1670,12 +1705,14 @@ package com.workflow.orchestrator.core.settings
 import com.intellij.openapi.options.BoundSearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
+import com.intellij.openapi.progress.runBackgroundableTask
 import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.runBlocking
 import javax.swing.JLabel
+import javax.swing.SwingUtilities
 
 class ConnectionsConfigurable(
     private val project: Project
@@ -1686,42 +1723,18 @@ class ConnectionsConfigurable(
     private val authTestService = AuthTestService()
 
     override fun createPanel() = panel {
-        serviceGroup(
-            title = "Jira Connection",
-            serviceType = ServiceType.JIRA,
-            urlGetter = { settings.state.jiraUrl },
-            urlSetter = { settings.state.jiraUrl = it }
-        )
-        serviceGroup(
-            title = "Bamboo Connection",
-            serviceType = ServiceType.BAMBOO,
-            urlGetter = { settings.state.bambooUrl },
-            urlSetter = { settings.state.bambooUrl = it }
-        )
-        serviceGroup(
-            title = "Bitbucket Connection",
-            serviceType = ServiceType.BITBUCKET,
-            urlGetter = { settings.state.bitbucketUrl },
-            urlSetter = { settings.state.bitbucketUrl = it }
-        )
-        serviceGroup(
-            title = "SonarQube Connection",
-            serviceType = ServiceType.SONARQUBE,
-            urlGetter = { settings.state.sonarUrl },
-            urlSetter = { settings.state.sonarUrl = it }
-        )
-        serviceGroup(
-            title = "Cody Enterprise",
-            serviceType = ServiceType.SOURCEGRAPH,
-            urlGetter = { settings.state.sourcegraphUrl },
-            urlSetter = { settings.state.sourcegraphUrl = it }
-        )
-        serviceGroup(
-            title = "Nexus Docker Registry",
-            serviceType = ServiceType.NEXUS,
-            urlGetter = { settings.state.nexusUrl },
-            urlSetter = { settings.state.nexusUrl = it }
-        )
+        serviceGroup("Jira Connection", ServiceType.JIRA,
+            { settings.state.jiraUrl }, { settings.state.jiraUrl = it })
+        serviceGroup("Bamboo Connection", ServiceType.BAMBOO,
+            { settings.state.bambooUrl }, { settings.state.bambooUrl = it })
+        serviceGroup("Bitbucket Connection", ServiceType.BITBUCKET,
+            { settings.state.bitbucketUrl }, { settings.state.bitbucketUrl = it })
+        serviceGroup("SonarQube Connection", ServiceType.SONARQUBE,
+            { settings.state.sonarUrl }, { settings.state.sonarUrl = it })
+        serviceGroup("Cody Enterprise", ServiceType.SOURCEGRAPH,
+            { settings.state.sourcegraphUrl }, { settings.state.sourcegraphUrl = it })
+        serviceGroup("Nexus Docker Registry", ServiceType.NEXUS,
+            { settings.state.nexusUrl }, { settings.state.nexusUrl = it })
     }
 
     private fun Panel.serviceGroup(
@@ -1730,7 +1743,7 @@ class ConnectionsConfigurable(
         urlGetter: () -> String,
         urlSetter: (String) -> Unit
     ) {
-        val tokenField = credentialStore.getToken(serviceType) ?: ""
+        val existingToken = credentialStore.getToken(serviceType) ?: ""
         val statusLabel = JLabel("")
 
         collapsibleGroup(title) {
@@ -1744,7 +1757,7 @@ class ConnectionsConfigurable(
                 passwordField()
                     .columns(40)
                     .applyToComponent {
-                        text = tokenField
+                        text = existingToken
                     }
                     .onChanged { field ->
                         val newToken = String(field.password)
@@ -1762,13 +1775,17 @@ class ConnectionsConfigurable(
                         return@button
                     }
                     statusLabel.text = "Testing..."
-                    // Note: In production, use coroutine scope. Simplified here.
-                    val result = runBlocking {
-                        authTestService.testConnection(serviceType, url, token)
-                    }
-                    statusLabel.text = when (result) {
-                        is ApiResult.Success -> "Connected successfully"
-                        is ApiResult.Error -> "Failed: ${result.message}"
+                    // Run on background thread to avoid blocking EDT
+                    runBackgroundableTask("Testing $title", project, false) {
+                        val result = runBlocking {
+                            authTestService.testConnection(serviceType, url, token)
+                        }
+                        SwingUtilities.invokeLater {
+                            statusLabel.text = when (result) {
+                                is ApiResult.Success -> "Connected successfully"
+                                is ApiResult.Error -> "Failed: ${result.message}"
+                            }
+                        }
                     }
                 }
                 cell(statusLabel)
@@ -2024,6 +2041,7 @@ Create `core/src/main/kotlin/com/workflow/orchestrator/core/onboarding/SetupDial
 ```kotlin
 package com.workflow.orchestrator.core.onboarding
 
+import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.dsl.builder.*
@@ -2037,6 +2055,7 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
 import javax.swing.JTextField
+import javax.swing.SwingUtilities
 
 class SetupDialog(private val project: Project) : DialogWrapper(project) {
 
@@ -2057,20 +2076,18 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         }
         separator()
 
-        connectionSection("Jira", ServiceType.JIRA, settings.state::jiraUrl)
-        connectionSection("Bamboo", ServiceType.BAMBOO, settings.state::bambooUrl)
-        connectionSection("Bitbucket", ServiceType.BITBUCKET, settings.state::bitbucketUrl)
-        connectionSection("SonarQube", ServiceType.SONARQUBE, settings.state::sonarUrl)
-        connectionSection("Cody Enterprise", ServiceType.SOURCEGRAPH, settings.state::sourcegraphUrl)
-        connectionSection("Nexus Docker Registry", ServiceType.NEXUS, settings.state::nexusUrl)
+        connectionSection("Jira", ServiceType.JIRA) { settings.state.jiraUrl = it }
+        connectionSection("Bamboo", ServiceType.BAMBOO) { settings.state.bambooUrl = it }
+        connectionSection("Bitbucket", ServiceType.BITBUCKET) { settings.state.bitbucketUrl = it }
+        connectionSection("SonarQube", ServiceType.SONARQUBE) { settings.state.sonarUrl = it }
+        connectionSection("Cody Enterprise", ServiceType.SOURCEGRAPH) { settings.state.sourcegraphUrl = it }
+        connectionSection("Nexus Docker Registry", ServiceType.NEXUS) { settings.state.nexusUrl = it }
     }
 
     private fun Panel.connectionSection(
         title: String,
         serviceType: ServiceType,
-        urlProperty: com.intellij.openapi.observable.properties.ObservableMutableProperty<String>? = null,
-        urlGetter: (() -> String)? = null,
-        urlSetter: ((String) -> Unit)? = null
+        urlSaver: (String) -> Unit
     ) {
         val urlField = JTextField(20)
         val tokenField = JPasswordField(20)
@@ -2092,25 +2109,22 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                         return@button
                     }
                     statusLabel.text = "Testing..."
-                    val result = runBlocking {
-                        authTestService.testConnection(serviceType, url, token)
-                    }
-                    when (result) {
-                        is ApiResult.Success -> {
-                            statusLabel.text = "Connected!"
-                            credentialStore.storeToken(serviceType, token)
-                            // Store URL in settings
-                            when (serviceType) {
-                                ServiceType.JIRA -> settings.state.jiraUrl = url
-                                ServiceType.BAMBOO -> settings.state.bambooUrl = url
-                                ServiceType.BITBUCKET -> settings.state.bitbucketUrl = url
-                                ServiceType.SONARQUBE -> settings.state.sonarUrl = url
-                                ServiceType.SOURCEGRAPH -> settings.state.sourcegraphUrl = url
-                                ServiceType.NEXUS -> settings.state.nexusUrl = url
-                            }
+                    // Run on background thread to avoid blocking EDT
+                    runBackgroundableTask("Testing $title", project, false) {
+                        val result = runBlocking {
+                            authTestService.testConnection(serviceType, url, token)
                         }
-                        is ApiResult.Error -> {
-                            statusLabel.text = "Failed: ${result.message}"
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    statusLabel.text = "Connected!"
+                                    credentialStore.storeToken(serviceType, token)
+                                    urlSaver(url)
+                                }
+                                is ApiResult.Error -> {
+                                    statusLabel.text = "Failed: ${result.message}"
+                                }
+                            }
                         }
                     }
                 }
@@ -2164,23 +2178,9 @@ class OnboardingStartupListener : ProjectActivity {
 }
 ```
 
-- [ ] **Step 4: Update plugin.xml startup listener registration**
+- [ ] **Step 4: Verify plugin.xml already has correct registration**
 
-The `plugin.xml` already has the listener registered (from Task 3). But we need to update it to use `ProjectActivity` instead of `StartupActivity`:
-
-Replace in `core/src/main/resources/META-INF/plugin.xml` the `<projectListeners>` section with:
-
-```xml
-    <extensions defaultExtensionNs="com.intellij">
-        <!-- ... existing extensions ... -->
-
-        <!-- Startup Activity -->
-        <postStartupActivity
-            implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
-    </extensions>
-```
-
-And remove the `<projectListeners>` block entirely.
+The `plugin.xml` from Task 3 already registers `OnboardingStartupListener` via `<postStartupActivity>`. No changes needed.
 
 - [ ] **Step 5: Verify compilation**
 
@@ -2210,7 +2210,7 @@ Run:
 ```bash
 ./gradlew :core:test
 ```
-Expected: All tests PASS (ApiResult: 5, CredentialStore: 4, AuthInterceptor: 2, RetryInterceptor: 4, HttpClientFactory: 3, AuthTestService: 5, ConnectivityMonitor: 6 = 29 tests total).
+Expected: All tests PASS (ApiResult: 5, CredentialStore: 4, AuthInterceptor: 3, RetryInterceptor: 4, HttpClientFactory: 3, AuthTestService: 5, ConnectivityMonitor: 6 = 30 tests total).
 
 - [ ] **Step 2: Run plugin verifier**
 
@@ -2311,6 +2311,6 @@ After completing all 17 tasks, the plugin meets these criteria:
 | Offline detection tracks per-service | ConnectivityMonitor unit tests pass |
 | HTTP clients reuse connections with auth | HttpClientFactory tests pass |
 | Retry with exponential backoff | RetryInterceptor tests pass |
-| 29 unit tests pass | `./gradlew :core:test` |
+| 30 unit tests pass | `./gradlew :core:test` |
 | Plugin verifier passes | `./gradlew verifyPlugin` |
 | Plugin ZIP builds | `./gradlew buildPlugin` |
