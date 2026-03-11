@@ -53,6 +53,8 @@ class StageListPanel : JPanel(BorderLayout()) {
 
     private inner class StageListCellRenderer : ColoredListCellRenderer<StageState>() {
 
+        private val spinnerIcon = AnimatedIcon.Default()
+
         override fun customizeCellRenderer(
             list: JList<out StageState>,
             value: StageState?,
@@ -66,7 +68,7 @@ class StageListPanel : JPanel(BorderLayout()) {
             icon = when (value.status) {
                 BuildStatus.SUCCESS -> AllIcons.RunConfigurations.TestPassed
                 BuildStatus.FAILED -> AllIcons.RunConfigurations.TestFailed
-                BuildStatus.IN_PROGRESS -> AnimatedIcon.Default()
+                BuildStatus.IN_PROGRESS -> spinnerIcon
                 BuildStatus.PENDING -> AllIcons.RunConfigurations.TestNotRan
                 BuildStatus.UNKNOWN -> AllIcons.RunConfigurations.TestNotRan
             }

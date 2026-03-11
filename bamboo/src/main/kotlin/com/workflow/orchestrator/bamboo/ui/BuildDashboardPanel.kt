@@ -7,29 +7,26 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.intellij.ui.JBSplitter
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.service.BuildLogParser
 import com.workflow.orchestrator.bamboo.service.BuildMonitorService
 import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.awt.BorderLayout
-import javax.swing.JLabel
 import javax.swing.JPanel
 
 class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
@@ -41,9 +38,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
     )
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val eventBus = project.getService(EventBus::class.java)
-    private val notificationService = WorkflowNotificationService.getInstance(project)
-    private val monitorService = BuildMonitorService(apiClient, eventBus, scope, notificationService)
+    private val monitorService = BuildMonitorService.getInstance(project)
 
     private val stageListPanel = StageListPanel()
     private val stageDetailPanel = StageDetailPanel()
@@ -54,8 +49,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         secondComponent = stageDetailPanel
     }
 
-    private val headerLabel = JLabel("Build: loading...")
-    private val statusLabel = JLabel("")
+    private val headerLabel = JBLabel("Build: loading...")
+    private val statusLabel = JBLabel("")
 
     init {
         border = JBUI.Borders.empty()
@@ -129,6 +124,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     override fun dispose() {
         monitorService.dispose()
+        scope.cancel()
     }
 
     private fun startMonitoring() {
@@ -154,10 +150,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         group.add(object : AnAction("Refresh", "Force poll build status now", null) {
             override fun actionPerformed(e: AnActionEvent) {
-                runBackgroundableTask("Polling Build Status", project, false) {
+                scope.launch {
                     val planKey = settings.state.bambooPlanKey.orEmpty()
                     val branch = getCurrentBranch() ?: "master"
-                    runBlocking { monitorService.pollOnce(planKey, branch) }
+                    monitorService.pollOnce(planKey, branch)
                 }
             }
         })
@@ -172,8 +168,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val state = monitorService.stateFlow.value ?: return
         val resultKey = "${state.planKey}-${state.buildNumber}"
 
-        runBackgroundableTask("Loading Build Log", project, false) {
-            val logResult = runBlocking { apiClient.getBuildLog(resultKey) }
+        scope.launch {
+            val logResult = apiClient.getBuildLog(resultKey)
             invokeLater {
                 when (logResult) {
                     is ApiResult.Success -> {
@@ -190,6 +186,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun triggerManualStage(stageName: String) {
         val planKey = settings.state.bambooPlanKey.orEmpty()
-        ManualStageDialog(project, apiClient, planKey, stageName).show()
+        ManualStageDialog(project, apiClient, planKey, stageName, scope).show()
     }
 }

@@ -9,6 +9,9 @@ import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -72,10 +75,10 @@ class BambooApiClient(
             }
         }
         val bodyJson = if (variables.isNotEmpty()) {
-            val varEntries = variables.entries.joinToString(",") { (k, v) ->
-                """{"name":"$k","value":"$v"}"""
-            }
-            """{"variables":[$varEntries]}"""
+            val varArray = JsonArray(variables.entries.map { (k, v) ->
+                JsonObject(mapOf("name" to JsonPrimitive(k), "value" to JsonPrimitive(v)))
+            })
+            JsonObject(mapOf("variables" to varArray)).toString()
         } else {
             "{}"
         }

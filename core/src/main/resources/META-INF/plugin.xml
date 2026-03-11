@@ -54,6 +54,10 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.events.EventBus"/>
 
+        <!-- Bamboo Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.bamboo.service.BuildMonitorService"/>
+
         <!-- Startup (onboarding check) -->
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>

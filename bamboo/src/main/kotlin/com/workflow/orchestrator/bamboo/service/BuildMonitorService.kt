@@ -1,17 +1,24 @@
 package com.workflow.orchestrator.bamboo.service
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
 import com.workflow.orchestrator.bamboo.model.BuildState
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.model.StageState
+import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,12 +27,39 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.Instant
 
-class BuildMonitorService(
-    private val apiClient: BambooApiClient,
-    private val eventBus: EventBus,
-    private val scope: CoroutineScope,
-    private val notificationService: WorkflowNotificationService? = null
-) : Disposable {
+@Service(Service.Level.PROJECT)
+class BuildMonitorService : Disposable {
+
+    private val apiClient: BambooApiClient
+    private val eventBus: EventBus
+    private val scope: CoroutineScope
+    private val notificationService: WorkflowNotificationService?
+
+    /** Project service constructor — used by IntelliJ DI. */
+    constructor(project: Project) {
+        val settings = PluginSettings.getInstance(project)
+        val credentialStore = CredentialStore()
+        this.apiClient = BambooApiClient(
+            baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
+            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
+        )
+        this.eventBus = project.getService(EventBus::class.java)
+        this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        this.notificationService = WorkflowNotificationService.getInstance(project)
+    }
+
+    /** Test constructor — allows injecting mocks. */
+    constructor(
+        apiClient: BambooApiClient,
+        eventBus: EventBus,
+        scope: CoroutineScope,
+        notificationService: WorkflowNotificationService? = null
+    ) {
+        this.apiClient = apiClient
+        this.eventBus = eventBus
+        this.scope = scope
+        this.notificationService = notificationService
+    }
 
     private val _stateFlow = MutableStateFlow<BuildState?>(null)
     val stateFlow: StateFlow<BuildState?> = _stateFlow.asStateFlow()
@@ -129,5 +163,11 @@ class BuildMonitorService(
             overallStatus = BuildStatus.fromBambooState(dto.state, dto.lifeCycleState),
             lastUpdated = Instant.now()
         )
+    }
+
+    companion object {
+        fun getInstance(project: Project): BuildMonitorService {
+            return project.getService(BuildMonitorService::class.java)
+        }
     }
 }

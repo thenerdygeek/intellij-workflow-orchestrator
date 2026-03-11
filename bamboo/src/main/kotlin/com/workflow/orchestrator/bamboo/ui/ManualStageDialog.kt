@@ -1,8 +1,6 @@
 package com.workflow.orchestrator.bamboo.ui
 
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.components.JBCheckBox
@@ -12,7 +10,8 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooPlanVariableDto
 import com.workflow.orchestrator.core.model.ApiResult
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JComponent
@@ -22,7 +21,8 @@ class ManualStageDialog(
     private val project: Project,
     private val apiClient: BambooApiClient,
     private val planKey: String,
-    private val stageName: String
+    private val stageName: String,
+    private val scope: CoroutineScope
 ) : DialogWrapper(project) {
 
     private val variableEditors = mutableMapOf<String, JComponent>()
@@ -32,8 +32,8 @@ class ManualStageDialog(
         title = "Run Stage: $stageName"
         init()
         // Load variables asynchronously after dialog is shown
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val result = runBlocking { apiClient.getVariables(planKey) }
+        scope.launch {
+            val result = apiClient.getVariables(planKey)
             if (result is ApiResult.Success) {
                 variables = result.data
                 invokeLater { rebuildForm() }
@@ -99,10 +99,8 @@ class ManualStageDialog(
             }
         }
 
-        runBackgroundableTask("Triggering $stageName", project, false) {
-            runBlocking {
-                apiClient.triggerBuild(planKey, vars, stageName)
-            }
+        scope.launch {
+            apiClient.triggerBuild(planKey, vars, stageName)
         }
 
         super.doOKAction()

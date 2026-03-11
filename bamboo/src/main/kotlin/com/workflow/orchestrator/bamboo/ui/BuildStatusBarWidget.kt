@@ -7,6 +7,8 @@ import com.intellij.openapi.wm.StatusBarWidgetFactory
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.impl.status.EditorBasedWidget
 import com.intellij.util.Consumer
+import com.workflow.orchestrator.bamboo.model.BuildStatus
+import com.workflow.orchestrator.bamboo.service.BuildMonitorService
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -59,13 +61,33 @@ private class BuildStatusBarWidgetImpl(project: Project) :
 
     override fun install(statusBar: StatusBar) {
         super.install(statusBar)
+
+        // Collect real-time build state (in-progress, pending, etc.)
+        val monitorService = BuildMonitorService.getInstance(project)
+        scope.launch {
+            monitorService.stateFlow.collect { state ->
+                if (state != null) {
+                    val indicator = when (state.overallStatus) {
+                        BuildStatus.SUCCESS -> "\u2713"
+                        BuildStatus.FAILED -> "\u2717"
+                        BuildStatus.IN_PROGRESS -> "\u25B6"
+                        BuildStatus.PENDING -> "\u25CB"
+                        BuildStatus.UNKNOWN -> "?"
+                    }
+                    displayText = "${state.planKey}: $indicator #${state.buildNumber}"
+                    statusBar.updateWidget(ID())
+                }
+            }
+        }
+
+        // Also listen for terminal build events (ensures widget updates even if stateFlow lags)
         val eventBus = project.getService(EventBus::class.java)
         scope.launch {
             eventBus.events.collect { event ->
                 if (event is WorkflowEvent.BuildFinished) {
                     val indicator = when (event.status) {
-                        WorkflowEvent.BuildEventStatus.SUCCESS -> "✓"
-                        WorkflowEvent.BuildEventStatus.FAILED -> "✗"
+                        WorkflowEvent.BuildEventStatus.SUCCESS -> "\u2713"
+                        WorkflowEvent.BuildEventStatus.FAILED -> "\u2717"
                     }
                     displayText = "${event.planKey}: $indicator #${event.buildNumber}"
                     statusBar.updateWidget(ID())
