@@ -53,6 +53,7 @@ dependencies {
     implementation(project(":git-integration"))
     implementation(project(":bamboo"))
     implementation(project(":sonar"))
+    implementation(project(":cody"))
 
     // -- External libraries --
     implementation(libs.kotlinx.coroutines.core)

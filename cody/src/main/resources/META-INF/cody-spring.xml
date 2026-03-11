@@ -1,0 +1,3 @@
+<idea-plugin>
+    <!-- Spring-aware Cody context providers registered here when Spring plugin is present. -->
+</idea-plugin>

@@ -92,6 +92,47 @@
 
         <projectViewNodeDecorator
             implementation="com.workflow.orchestrator.sonar.ui.CoverageTreeDecorator"/>
+
+        <!-- Cody AI Notification Group -->
+        <notificationGroup id="workflow.cody" displayType="BALLOON"/>
+
+        <!-- Cody Agent Service -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentManager"/>
+
+        <!-- Cody Gutter Actions -->
+        <codeInsight.lineMarkerProvider
+            language="JAVA"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyGutterAction"/>
+        <codeInsight.lineMarkerProvider
+            language="kotlin"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyGutterAction"/>
+        <codeInsight.lineMarkerProvider
+            language="JAVA"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
+        <codeInsight.lineMarkerProvider
+            language="kotlin"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
+
+        <!-- Cody Intention Action (Alt+Enter) -->
+        <intentionAction>
+            <language>JAVA</language>
+            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <category>Cody AI</category>
+        </intentionAction>
+        <intentionAction>
+            <language>kotlin</language>
+            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <category>Cody AI</category>
+        </intentionAction>
+
+        <!-- Cody Document Sync -->
+        <editorFactoryListener
+            implementation="com.workflow.orchestrator.cody.agent.CodyDocumentSyncListener"/>
+
+        <!-- Cody Commit Message -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.cody.vcs.CodyCommitMessageHandlerFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
@@ -103,5 +144,8 @@
     <projectListeners>
         <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
                   topic="com.intellij.openapi.vcs.BranchChangeListener"/>
+        <!-- Cody Focus Tracking -->
+        <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
     </projectListeners>
 </idea-plugin>
