@@ -20,5 +20,17 @@ sealed class WorkflowEvent {
         val log: String
     ) : WorkflowEvent()
 
+    /** Emitted by :sonar when quality gate status changes. */
+    data class QualityGateResult(
+        val projectKey: String,
+        val passed: Boolean
+    ) : WorkflowEvent()
+
+    /** Emitted by :sonar on each successful coverage data refresh. */
+    data class CoverageUpdated(
+        val projectKey: String,
+        val lineCoverage: Double
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

@@ -11,4 +11,5 @@ include(
     ":jira",
     ":git-integration",
     ":bamboo",
+    ":sonar",
 )

@@ -1,0 +1,88 @@
+package com.workflow.orchestrator.sonar.ui
+
+import com.intellij.lang.annotation.AnnotationHolder
+import com.intellij.lang.annotation.ExternalAnnotator
+import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiFile
+import com.workflow.orchestrator.sonar.model.IssueSeverity
+import com.workflow.orchestrator.sonar.model.IssueType
+import com.workflow.orchestrator.sonar.model.MappedIssue
+import com.workflow.orchestrator.sonar.model.SonarState
+import com.workflow.orchestrator.sonar.service.SonarDataService
+
+data class SonarAnnotationInput(
+    val filePath: String,
+    val state: SonarState
+)
+
+data class SonarAnnotationResult(
+    val issues: List<MappedIssue>
+)
+
+class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotationResult>() {
+
+    override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): SonarAnnotationInput? {
+        val project = file.project
+        val basePath = project.basePath ?: return null
+        val virtualFile = file.virtualFile ?: return null
+        val relativePath = virtualFile.path.removePrefix("$basePath/")
+
+        val state = try {
+            SonarDataService.getInstance(project).stateFlow.value
+        } catch (_: Exception) { return null }
+
+        if (state.issues.none { it.filePath == relativePath }) return null
+
+        return SonarAnnotationInput(relativePath, state)
+    }
+
+    override fun doAnnotate(collectedInfo: SonarAnnotationInput): SonarAnnotationResult {
+        val fileIssues = collectedInfo.state.issues.filter { it.filePath == collectedInfo.filePath }
+        return SonarAnnotationResult(fileIssues)
+    }
+
+    override fun apply(file: PsiFile, annotationResult: SonarAnnotationResult, holder: AnnotationHolder) {
+        val doc = file.viewProvider.document ?: return
+
+        for (issue in annotationResult.issues) {
+            val startLine = (issue.startLine - 1).coerceIn(0, doc.lineCount - 1)
+            val endLine = (issue.endLine - 1).coerceIn(0, doc.lineCount - 1)
+
+            val startOffset = doc.getLineStartOffset(startLine) + issue.startOffset
+            val endOffset = if (issue.endOffset > 0) {
+                doc.getLineStartOffset(endLine) + issue.endOffset
+            } else {
+                doc.getLineEndOffset(endLine)
+            }
+
+            val textRange = TextRange(
+                startOffset.coerceIn(0, doc.textLength),
+                endOffset.coerceIn(0, doc.textLength)
+            )
+
+            if (textRange.isEmpty) continue
+
+            val severity = mapSeverity(issue.type, issue.severity)
+            val tooltip = "[${issue.rule}] ${issue.message}" +
+                (issue.effort?.let { " (effort: $it)" } ?: "")
+
+            holder.newAnnotation(severity, tooltip)
+                .range(textRange)
+                .tooltip(tooltip)
+                .create()
+        }
+    }
+
+    companion object {
+        fun mapSeverity(type: IssueType, severity: IssueSeverity): HighlightSeverity = when {
+            (type == IssueType.BUG || type == IssueType.VULNERABILITY) &&
+                (severity == IssueSeverity.BLOCKER || severity == IssueSeverity.CRITICAL) ->
+                HighlightSeverity.ERROR
+            type == IssueType.BUG || type == IssueType.VULNERABILITY ->
+                HighlightSeverity.WARNING
+            else -> HighlightSeverity.WEAK_WARNING
+        }
+    }
+}

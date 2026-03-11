@@ -27,6 +27,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Bamboo plan key (auto-detected or user-configured)
         var bambooPlanKey by string("")
 
+        // SonarQube project key (auto-detected or user-configured)
+        var sonarProjectKey by string("")
+
         // Feature toggles
         var sprintModuleEnabled by property(true)
         var buildModuleEnabled by property(true)

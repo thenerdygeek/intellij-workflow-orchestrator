@@ -1,0 +1,10 @@
+[
+  {"line": 38, "code": "fun findUserById(id: Long): User? {", "lineHits": 5, "conditions": null, "coveredConditions": null},
+  {"line": 39, "code": "    val user = repository.findById(id)", "lineHits": 5, "conditions": null, "coveredConditions": null},
+  {"line": 40, "code": "    if (user != null) {", "lineHits": 5, "conditions": 2, "coveredConditions": 1},
+  {"line": 41, "code": "        val name = user.getName()", "lineHits": 3, "conditions": null, "coveredConditions": null},
+  {"line": 42, "code": "        return name.toUpperCase()", "lineHits": 3, "conditions": null, "coveredConditions": null},
+  {"line": 43, "code": "    } else {", "lineHits": null, "conditions": null, "coveredConditions": null},
+  {"line": 44, "code": "        throw UserNotFoundException(\"User $id not found\")", "lineHits": 0, "conditions": null, "coveredConditions": null},
+  {"line": 45, "code": "    }", "lineHits": null, "conditions": null, "coveredConditions": null}
+]
