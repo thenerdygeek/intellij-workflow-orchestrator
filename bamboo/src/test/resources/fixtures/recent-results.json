@@ -1,0 +1,52 @@
+{
+  "results": {
+    "size": 3,
+    "result": [
+      {
+        "key": "PROJ-AUTO-849",
+        "buildNumber": 849,
+        "state": "Successful",
+        "lifeCycleState": "Finished",
+        "buildDurationInSeconds": 700,
+        "buildRelativeTime": "5 minutes ago",
+        "stages": {
+          "size": 2,
+          "stage": [
+            { "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 300 },
+            { "name": "QA", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 400 }
+          ]
+        }
+      },
+      {
+        "key": "PROJ-AUTO-848",
+        "buildNumber": 848,
+        "state": "Failed",
+        "lifeCycleState": "Finished",
+        "buildDurationInSeconds": 650,
+        "buildRelativeTime": "20 minutes ago",
+        "stages": {
+          "size": 2,
+          "stage": [
+            { "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 300 },
+            { "name": "QA", "state": "Failed", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 350 }
+          ]
+        }
+      },
+      {
+        "key": "PROJ-AUTO-847",
+        "buildNumber": 847,
+        "state": "Successful",
+        "lifeCycleState": "Finished",
+        "buildDurationInSeconds": 720,
+        "buildRelativeTime": "35 minutes ago",
+        "stages": {
+          "size": 2,
+          "stage": [
+            { "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 320 },
+            { "name": "QA", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 400 }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -7,7 +7,8 @@ enum class ErrorType {
     RATE_LIMITED,
     SERVER_ERROR,
     NETWORK_ERROR,
-    TIMEOUT
+    TIMEOUT,
+    VALIDATION_ERROR
 }
 
 sealed class ApiResult<out T> {

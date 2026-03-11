@@ -54,6 +54,7 @@ dependencies {
     implementation(project(":bamboo"))
     implementation(project(":sonar"))
     implementation(project(":cody"))
+    implementation(project(":automation"))
 
     // -- External libraries --
     implementation(libs.kotlinx.coroutines.core)

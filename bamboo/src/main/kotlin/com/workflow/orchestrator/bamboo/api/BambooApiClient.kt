@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.bamboo.api
 
 import com.workflow.orchestrator.bamboo.api.dto.*
+import com.workflow.orchestrator.bamboo.api.dto.BambooBuildStatusResponse
+import com.workflow.orchestrator.bamboo.api.dto.BambooBuildVariablesResponse
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
@@ -85,6 +87,37 @@ class BambooApiClient(
         return post("/rest/api/latest/queue/$planKey$params", bodyJson)
     }
 
+    suspend fun getRunningAndQueuedBuilds(planKey: String): ApiResult<List<BambooResultDto>> {
+        return get<BambooBuildStatusResponse>(
+            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=5"
+        ).map { response ->
+            response.results.result.filter { dto ->
+                dto.lifeCycleState in listOf("InProgress", "Queued", "Pending")
+            }
+        }
+    }
+
+    suspend fun getBuildVariables(resultKey: String): ApiResult<Map<String, String>> {
+        return get<BambooBuildVariablesResponse>(
+            "/rest/api/latest/result/$resultKey?expand=variables"
+        ).map { response ->
+            response.variables.variable.associate { it.name to it.value }
+        }
+    }
+
+    suspend fun getRecentResults(
+        planKey: String,
+        maxResults: Int = 10
+    ): ApiResult<List<BambooResultDto>> {
+        return get<BambooBuildStatusResponse>(
+            "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage,variables"
+        ).map { it.results.result }
+    }
+
+    suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
+        return delete("/rest/api/latest/queue/$resultKey")
+    }
+
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =
         withContext(Dispatchers.IO) {
             try {
@@ -145,6 +178,28 @@ class BambooApiClient(
                         }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
                         403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
+            }
+        }
+
+    private suspend fun delete(path: String): ApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$baseUrl$path").delete()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(Unit)
+                        204 -> ApiResult.Success(Unit)
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found")
                         else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
                     }
                 }

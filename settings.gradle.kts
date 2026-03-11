@@ -13,4 +13,5 @@ include(
     ":bamboo",
     ":sonar",
     ":cody",
+    ":automation",
 )

@@ -143,4 +143,74 @@ class BambooApiClientTest {
         val recorded = server.takeRequest()
         assertEquals("/rest/api/latest/result/PROJ-BUILD-42?expand=logEntries&max-results=2000", recorded.path)
     }
+
+    @Test
+    fun `getRunningAndQueuedBuilds returns filtered active builds`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("build-status-list.json")))
+
+        val result = client.getRunningAndQueuedBuilds("PROJ-AUTO")
+
+        assertTrue(result.isSuccess)
+        val builds = (result as ApiResult.Success).data
+        assertEquals(2, builds.size)
+        assertTrue(builds.all { it.lifeCycleState in listOf("InProgress", "Queued", "Pending") })
+
+        val recorded = server.takeRequest()
+        assertTrue(recorded.path!!.contains("/rest/api/latest/result/PROJ-AUTO"))
+        assertTrue(recorded.path!!.contains("includeAllStates=true"))
+    }
+
+    @Test
+    fun `getBuildVariables returns variable map from build result`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("build-variables.json")))
+
+        val result = client.getBuildVariables("PROJ-AUTO-847")
+
+        assertTrue(result.isSuccess)
+        val vars = (result as ApiResult.Success).data
+        assertEquals("regression", vars["suiteType"])
+        assertTrue(vars.containsKey("dockerTagsAsJson"))
+
+        val recorded = server.takeRequest()
+        assertTrue(recorded.path!!.contains("/rest/api/latest/result/PROJ-AUTO-847"))
+        assertTrue(recorded.path!!.contains("expand=variables"))
+    }
+
+    @Test
+    fun `getRecentResults returns last N build results`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("recent-results.json")))
+
+        val result = client.getRecentResults("PROJ-AUTO", maxResults = 5)
+
+        assertTrue(result.isSuccess)
+        val results = (result as ApiResult.Success).data
+        assertTrue(results.size <= 5)
+
+        val recorded = server.takeRequest()
+        assertTrue(recorded.path!!.contains("/rest/api/latest/result/PROJ-AUTO"))
+        assertTrue(recorded.path!!.contains("max-results=5"))
+    }
+
+    @Test
+    fun `cancelBuild sends DELETE and returns success`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        val result = client.cancelBuild("PROJ-AUTO-847")
+
+        assertTrue(result.isSuccess)
+
+        val recorded = server.takeRequest()
+        assertEquals("DELETE", recorded.method)
+        assertTrue(recorded.path!!.contains("/rest/api/latest/queue/PROJ-AUTO-847"))
+    }
+
+    @Test
+    fun `cancelBuild returns error on 404`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+
+        val result = client.cancelBuild("PROJ-AUTO-999")
+
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.NOT_FOUND, (result as ApiResult.Error).type)
+    }
 }

@@ -51,5 +51,28 @@ sealed class WorkflowEvent {
         val durationMs: Long
     ) : WorkflowEvent()
 
+    /** Emitted by :automation when a build is triggered (manual or auto-queue). */
+    data class AutomationTriggered(
+        val suitePlanKey: String,
+        val buildResultKey: String,
+        val dockerTagsJson: String,
+        val triggeredBy: String
+    ) : WorkflowEvent()
+
+    /** Emitted by :automation when a triggered build completes. */
+    data class AutomationFinished(
+        val suitePlanKey: String,
+        val buildResultKey: String,
+        val passed: Boolean,
+        val durationMs: Long
+    ) : WorkflowEvent()
+
+    /** Emitted by :automation when queue position changes. */
+    data class QueuePositionChanged(
+        val suitePlanKey: String,
+        val position: Int,
+        val estimatedWaitMs: Long?
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

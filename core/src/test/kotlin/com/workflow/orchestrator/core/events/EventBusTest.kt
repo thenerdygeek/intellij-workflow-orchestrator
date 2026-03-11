@@ -47,6 +47,68 @@ class EventBusTest {
     }
 
     @Test
+    fun `emit delivers AutomationTriggered event`() = runTest {
+        val bus = EventBus()
+        val event = WorkflowEvent.AutomationTriggered(
+            suitePlanKey = "PROJ-AUTO",
+            buildResultKey = "PROJ-AUTO-847",
+            dockerTagsJson = """{"auth":"2.4.0"}""",
+            triggeredBy = "auto-queue"
+        )
+
+        bus.events.test {
+            bus.emit(event)
+            val received = awaitItem()
+            assertTrue(received is WorkflowEvent.AutomationTriggered)
+            val triggered = received as WorkflowEvent.AutomationTriggered
+            assertEquals("PROJ-AUTO", triggered.suitePlanKey)
+            assertEquals("auto-queue", triggered.triggeredBy)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `emit delivers AutomationFinished event`() = runTest {
+        val bus = EventBus()
+        val event = WorkflowEvent.AutomationFinished(
+            suitePlanKey = "PROJ-AUTO",
+            buildResultKey = "PROJ-AUTO-847",
+            passed = true,
+            durationMs = 720000
+        )
+
+        bus.events.test {
+            bus.emit(event)
+            val received = awaitItem()
+            assertTrue(received is WorkflowEvent.AutomationFinished)
+            val finished = received as WorkflowEvent.AutomationFinished
+            assertTrue(finished.passed)
+            assertEquals(720000, finished.durationMs)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `emit delivers QueuePositionChanged event`() = runTest {
+        val bus = EventBus()
+        val event = WorkflowEvent.QueuePositionChanged(
+            suitePlanKey = "PROJ-AUTO",
+            position = 2,
+            estimatedWaitMs = 480000
+        )
+
+        bus.events.test {
+            bus.emit(event)
+            val received = awaitItem()
+            assertTrue(received is WorkflowEvent.QueuePositionChanged)
+            val changed = received as WorkflowEvent.QueuePositionChanged
+            assertEquals(2, changed.position)
+            assertEquals(480000, changed.estimatedWaitMs)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `no replay — late subscriber misses past events`() = runTest {
         val bus = EventBus()
         val event = WorkflowEvent.BuildFinished("PROJ-BUILD", 1, WorkflowEvent.BuildEventStatus.SUCCESS)

@@ -142,3 +142,19 @@ data class BambooQueueResponse(
     val buildResultKey: String = "",
     val planKey: String = ""
 )
+
+// --- Build Status DTOs (Phase 2A: Automation) ---
+
+/** Wraps result list for running/queued builds query */
+@Serializable
+data class BambooBuildStatusResponse(
+    val results: BambooResultCollection = BambooResultCollection()
+)
+
+/** Wraps variables attached to a specific build result */
+@Serializable
+data class BambooBuildVariablesResponse(
+    val key: String = "",
+    val buildNumber: Int = 0,
+    val variables: BambooVariableCollection = BambooVariableCollection()
+)

@@ -1,0 +1,34 @@
+{
+  "results": {
+    "size": 3,
+    "result": [
+      {
+        "key": "PROJ-AUTO-849",
+        "buildNumber": 849,
+        "state": "Unknown",
+        "lifeCycleState": "InProgress",
+        "buildDurationInSeconds": 0,
+        "buildRelativeTime": "a few seconds ago",
+        "stages": { "size": 0, "stage": [] }
+      },
+      {
+        "key": "PROJ-AUTO-848",
+        "buildNumber": 848,
+        "state": "Unknown",
+        "lifeCycleState": "Queued",
+        "buildDurationInSeconds": 0,
+        "buildRelativeTime": "1 minute ago",
+        "stages": { "size": 0, "stage": [] }
+      },
+      {
+        "key": "PROJ-AUTO-847",
+        "buildNumber": 847,
+        "state": "Successful",
+        "lifeCycleState": "Finished",
+        "buildDurationInSeconds": 720,
+        "buildRelativeTime": "15 minutes ago",
+        "stages": { "size": 0, "stage": [] }
+      }
+    ]
+  }
+}

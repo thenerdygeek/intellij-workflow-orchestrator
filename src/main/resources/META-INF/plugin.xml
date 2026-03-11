@@ -1,87 +1,202 @@
-<!--
-  plugin.xml — IntelliJ Plugin descriptor targeting 2025.1+
-  Docs: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html
--->
 <idea-plugin>
-    <!-- Unique, stable plugin identifier (matches pluginGroup in gradle.properties) -->
-    <id>com.example.plugin</id>
-    <name>My IntelliJ Plugin</name>
-    <vendor url="https://example.com" email="you@example.com">Your Name</vendor>
-
+    <id>com.workflow.orchestrator.plugin</id>
+    <name>Workflow Orchestrator</name>
+    <vendor>Workflow Team</vendor>
     <description><![CDATA[
-        A multi-module IntelliJ IDEA plugin.
-        <ul>
-            <li>Feature A</li>
-            <li>Feature B</li>
-        </ul>
+        Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and Cody Enterprise
+        by consolidating the entire Spring Boot development lifecycle into a single IDE interface.
     ]]></description>
 
-    <!--
-      Required dependencies.
-      com.intellij.modules.platform — always required for all IntelliJ-based IDEs.
-      com.intellij.modules.java     — required when depending on Java/JVM functionality.
-    -->
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
+    <depends>Git4Idea</depends>
 
-    <!--
-      Optional dependencies — plugin loads even if these are not installed.
-      Each has a dedicated config file in META-INF/ that registers
-      extensions only available when the dependency is present.
-    -->
-    <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
-    <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
-    <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
+    <resource-bundle>messages.WorkflowBundle</resource-bundle>
 
-    <!-- Resource bundle for i18n -->
-    <resource-bundle>messages.MyBundle</resource-bundle>
+    <extensionPoints>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.tabProvider"
+            interface="com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider"
+            dynamic="true"/>
+    </extensionPoints>
 
-    <!-- Extensions registered against the core IntelliJ platform -->
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Application-scoped singleton service -->
-        <applicationService
-            serviceImplementation="com.example.plugin.services.MyApplicationService"/>
+        <!-- Settings -->
+        <projectConfigurable
+            parentId="tools"
+            instance="com.workflow.orchestrator.core.settings.WorkflowSettingsConfigurable"
+            id="workflow.orchestrator"
+            displayName="Workflow Orchestrator"
+            nonDefaultProject="true"/>
 
-        <!-- Project-scoped service (one per open project) -->
-        <projectService
-            serviceImplementation="com.example.plugin.services.MyProjectService"/>
-
-        <!-- Tool window -->
+        <!-- Tool Window -->
         <toolWindow
-            id="MyPlugin"
+            id="Workflow"
             anchor="bottom"
-            factoryClass="com.example.plugin.toolwindow.MyToolWindowFactory"/>
+            icon="/icons/workflow.svg"
+            factoryClass="com.workflow.orchestrator.core.toolwindow.WorkflowToolWindowFactory"/>
 
-        <!-- Post-startup activity (runs after project opens) -->
+        <!-- Notification Groups -->
+        <notificationGroup id="workflow.build" displayType="BALLOON"/>
+        <notificationGroup id="workflow.quality" displayType="BALLOON"/>
+        <notificationGroup id="workflow.queue" displayType="BALLOON"/>
+        <notificationGroup id="workflow.automation" displayType="BALLOON"/>
+
+        <!-- Project Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.settings.PluginSettings"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.offline.ConnectivityMonitor"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.notifications.WorkflowNotificationService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.onboarding.OnboardingService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.events.EventBus"/>
+
+        <!-- Maven Build Service -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.maven.MavenBuildService"/>
+
+        <!-- Health Check -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.core.healthcheck.HealthCheckCheckinHandlerFactory"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.healthcheck.HealthCheckService"/>
+        <notificationGroup id="workflow.healthcheck" displayType="BALLOON"/>
+
+        <!-- Bamboo Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.bamboo.service.BuildMonitorService"/>
+
+        <!-- Startup (onboarding check) -->
         <postStartupActivity
-            implementation="com.example.plugin.startup.MyStartupActivity"/>
+            implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
 
-        <!-- Notification group -->
-        <notificationGroup
-            id="com.example.plugin.notifications"
-            displayType="BALLOON"/>
+        <!-- Commit message auto-prefix -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
+
+        <!-- Status Bar Widgets -->
+        <statusBarWidgetFactory id="WorkflowTicketStatusBar"
+            implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
+        <statusBarWidgetFactory id="WorkflowBuildStatusBar"
+            implementation="com.workflow.orchestrator.bamboo.ui.BuildStatusBarWidgetFactory"/>
+
+        <!-- SonarQube Project Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.sonar.service.SonarDataService"/>
+
+        <!-- SonarQube Editor Integration -->
+        <codeInsight.lineMarkerProvider language="JAVA"
+            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="kotlin"
+            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
+
+        <externalAnnotator language="JAVA"
+            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
+        <externalAnnotator language="kotlin"
+            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
+
+        <editorNotificationProvider
+            implementation="com.workflow.orchestrator.sonar.ui.CoverageBannerProvider"/>
+
+        <projectViewNodeDecorator
+            implementation="com.workflow.orchestrator.sonar.ui.CoverageTreeDecorator"/>
+
+        <!-- Cody AI Notification Group -->
+        <notificationGroup id="workflow.cody" displayType="BALLOON"/>
+
+        <!-- Cody Agent Service -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentManager"/>
+
+        <!-- Cody Gutter Actions -->
+        <codeInsight.lineMarkerProvider
+            language="JAVA"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyGutterAction"/>
+        <codeInsight.lineMarkerProvider
+            language="kotlin"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyGutterAction"/>
+        <codeInsight.lineMarkerProvider
+            language="JAVA"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
+        <codeInsight.lineMarkerProvider
+            language="kotlin"
+            implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
+
+        <!-- Cody Intention Action (Alt+Enter) -->
+        <intentionAction>
+            <language>JAVA</language>
+            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <category>Cody AI</category>
+        </intentionAction>
+        <intentionAction>
+            <language>kotlin</language>
+            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <category>Cody AI</category>
+        </intentionAction>
+
+        <!-- Cody Document Sync -->
+        <editorFactoryListener
+            implementation="com.workflow.orchestrator.cody.agent.CodyDocumentSyncListener"/>
+
+        <!-- Cody Commit Message -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.cody.vcs.CodyCommitMessageHandlerFactory"/>
+
+        <!-- CVE Auto-Bumper -->
+        <intentionAction>
+            <language>XML</language>
+            <className>com.workflow.orchestrator.bamboo.editor.CveIntentionAction</className>
+            <category>Workflow Orchestrator CVE</category>
+        </intentionAction>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.bamboo.service.CveRemediationService"/>
+        <externalAnnotator
+            language="XML"
+            implementationClass="com.workflow.orchestrator.bamboo.editor.CveAnnotator"/>
+
+        <!-- Automation Module Project Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.QueueService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.TagBuilderService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.DriftDetectorService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.ConflictDetectorService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>
+
+        <!-- App-level (cross-project) -->
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
+
+        <!-- Status Bar -->
+        <statusBarWidgetFactory id="WorkflowAutomationStatusBar"
+            implementation="com.workflow.orchestrator.automation.ui.AutomationStatusBarWidgetFactory"/>
+
+        <!-- Startup Recovery -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.automation.service.QueueRecoveryStartupActivity"/>
+
+        <!-- Notification group for queue state changes -->
+        <notificationGroup id="workflow.automation.queue" displayType="BALLOON"/>
     </extensions>
 
-    <!-- Actions -->
-    <actions>
-        <group id="com.example.plugin.MainMenu"
-               text="My Plugin"
-               description="My Plugin actions"
-               popup="true">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
+    <extensions defaultExtensionNs="com.workflow.orchestrator">
+        <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
+    </extensions>
 
-            <action id="com.example.plugin.actions.DoSomething"
-                    class="com.example.plugin.actions.DoSomethingAction"
-                    text="Do Something"
-                    description="Performs the main action">
-                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt P"/>
-            </action>
-        </group>
-    </actions>
-
-    <!-- Listeners -->
     <projectListeners>
-        <listener topic="com.intellij.openapi.vfs.VirtualFileListener"
-                  class="com.example.plugin.listeners.MyFileListener"/>
+        <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
+                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
+        <!-- Cody Focus Tracking -->
+        <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
     </projectListeners>
 </idea-plugin>

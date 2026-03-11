@@ -64,6 +64,15 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var healthCheckSkipBranchPattern by string("")
         var healthCheckTimeoutSeconds by property(300)
         var copyrightHeaderPattern by string("")
+
+        // Automation & Docker Registry settings
+        var dockerRegistryUrl by string("")
+        var dockerRegistryCaPath by string("")
+        var queueActivePollingIntervalSeconds by property(15)
+        var queueAutoTriggerEnabled by property(true)
+        var tagValidationOnTrigger by property(true)
+        var queueMaxDepthPerSuite by property(10)
+        var queueBuildQueuedTimeoutSeconds by property(720)
     }
 
     val isAnyServiceConfigured: Boolean
