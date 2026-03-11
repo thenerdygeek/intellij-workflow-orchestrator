@@ -12,7 +12,7 @@ import com.workflow.orchestrator.cody.service.CodyEditService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 
 class CodyIntentionAction : IntentionAction {
 
@@ -52,15 +52,15 @@ class CodyIntentionAction : IntentionAction {
             ruleKey = "unknown"
         )
 
-        runBackgroundableTask("Asking Cody to fix...", project) {
-            runBlocking {
-                CodyEditService(project).requestFix(
-                    filePath = filePath,
-                    range = range,
-                    instruction = fixContext.instruction,
-                    contextFiles = fixContext.contextFiles
-                )
-            }
+        // Launch on IO dispatcher — avoids blocking a pooled thread with runBlocking
+        @Suppress("DEPRECATION")
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            CodyEditService(project).requestFix(
+                filePath = filePath,
+                range = range,
+                instruction = fixContext.instruction,
+                contextFiles = fixContext.contextFiles
+            )
         }
     }
 

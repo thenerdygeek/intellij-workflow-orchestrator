@@ -62,8 +62,12 @@ class CodyDocumentSyncListener : EditorFactoryListener {
             server.textDocumentDidClose(ProtocolTextDocument(uri = uri))
             log.debug("Sent didClose for $uri")
 
-            // Unregister change listener
-            changeListeners.remove(uri)?.dispose()
+            // Unregister change listener from document and dispose timer
+            val changeListener = changeListeners.remove(uri)
+            if (changeListener != null) {
+                document.removeDocumentListener(changeListener)
+                changeListener.dispose()
+            }
         } catch (e: Exception) {
             log.debug("Failed to send didClose", e)
         }

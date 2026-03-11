@@ -25,9 +25,9 @@ class CodyAgentManager(private val project: Project) : Disposable {
 
     private val log = Logger.getInstance(CodyAgentManager::class.java)
 
-    private var process: Process? = null
-    private var server: CodyAgentServer? = null
-    private var _client: CodyAgentClient? = null
+    @Volatile private var process: Process? = null
+    @Volatile private var server: CodyAgentServer? = null
+    @Volatile private var _client: CodyAgentClient? = null
 
     val client: CodyAgentClient? get() = _client
 
