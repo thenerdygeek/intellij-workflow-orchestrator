@@ -8,5 +8,7 @@ plugins {
 // ---- Submodule declarations ----
 include(
     ":core",
+    ":jira",
     ":git-integration",
+    ":bamboo",
 )

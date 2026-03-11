@@ -49,7 +49,9 @@ dependencies {
 
     // -- Submodule composition: flatten into a single plugin JAR --
     implementation(project(":core"))
+    implementation(project(":jira"))
     implementation(project(":git-integration"))
+    implementation(project(":bamboo"))
 
     // -- External libraries --
     implementation(libs.kotlinx.coroutines.core)
