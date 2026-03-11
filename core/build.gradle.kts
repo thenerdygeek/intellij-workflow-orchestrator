@@ -27,6 +27,7 @@ dependencies {
         bundledPlugins(providers.gradleProperty("platformBundledPlugins").map {
             it.split(',').map(String::trim).filter(String::isNotEmpty)
         })
+        bundledPlugin("Git4Idea")
     }
 
     // External libraries used by :core

@@ -54,6 +54,17 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.events.EventBus"/>
 
+        <!-- Maven Build Service -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.maven.MavenBuildService"/>
+
+        <!-- Health Check -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.core.healthcheck.HealthCheckCheckinHandlerFactory"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.healthcheck.HealthCheckService"/>
+        <notificationGroup id="workflow.healthcheck" displayType="BALLOON"/>
+
         <!-- Bamboo Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.bamboo.service.BuildMonitorService"/>
@@ -133,6 +144,18 @@
         <!-- Cody Commit Message -->
         <vcsCheckinHandlerFactory
             implementation="com.workflow.orchestrator.cody.vcs.CodyCommitMessageHandlerFactory"/>
+
+        <!-- CVE Auto-Bumper -->
+        <intentionAction>
+            <language>XML</language>
+            <className>com.workflow.orchestrator.bamboo.editor.CveIntentionAction</className>
+            <category>Workflow Orchestrator CVE</category>
+        </intentionAction>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.bamboo.service.CveRemediationService"/>
+        <externalAnnotator
+            language="XML"
+            implementationClass="com.workflow.orchestrator.bamboo.editor.CveAnnotator"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">

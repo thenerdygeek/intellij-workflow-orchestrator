@@ -51,6 +51,19 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Cody AI configuration
         var codyAgentPath by string("")
         var codyEnabled by property(true)
+
+        // Health check settings
+        var healthCheckEnabled by property(true)
+        var healthCheckBlockingMode by string("soft")
+        var healthCheckCompileEnabled by property(true)
+        var healthCheckTestEnabled by property(true)
+        var healthCheckCopyrightEnabled by property(true)
+        var healthCheckSonarGateEnabled by property(true)
+        var healthCheckCveEnabled by property(true)
+        var healthCheckMavenGoals by string("clean compile test")
+        var healthCheckSkipBranchPattern by string("")
+        var healthCheckTimeoutSeconds by property(300)
+        var copyrightHeaderPattern by string("")
     }
 
     val isAnyServiceConfigured: Boolean

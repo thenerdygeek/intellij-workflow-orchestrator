@@ -13,7 +13,8 @@ class WorkflowSettingsConfigurable(
 
     override fun getConfigurables(): Array<Configurable> {
         return arrayOf(
-            ConnectionsConfigurable(project)
+            ConnectionsConfigurable(project),
+            HealthCheckConfigurable(project)
         )
     }
 

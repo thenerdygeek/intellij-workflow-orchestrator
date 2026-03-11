@@ -39,5 +39,17 @@ sealed class WorkflowEvent {
         val accepted: Boolean
     ) : WorkflowEvent()
 
+    /** Emitted when health checks start running (before commit). */
+    data class HealthCheckStarted(
+        val checks: List<String>
+    ) : WorkflowEvent()
+
+    /** Emitted when health checks finish. */
+    data class HealthCheckFinished(
+        val passed: Boolean,
+        val results: Map<String, Boolean>,
+        val durationMs: Long
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
