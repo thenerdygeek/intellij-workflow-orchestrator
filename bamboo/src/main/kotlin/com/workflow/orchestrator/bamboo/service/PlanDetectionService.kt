@@ -50,19 +50,39 @@ class PlanDetectionService(
 
         fun normalizeRepoUrl(url: String): String {
             var normalized = url.trim()
-            // Remove .git suffix
             normalized = normalized.removeSuffix(".git")
-            // Remove protocol (https://, ssh://, git://)
             normalized = normalized.replace(Regex("""^(https?|ssh|git)://"""), "")
-            // Convert SSH format: git@host:path -> host/path
             normalized = normalized.replace(Regex("""^git@([^:]+):"""), "$1/")
-            // Remove trailing slash
             normalized = normalized.trimEnd('/')
             return normalized
         }
 
         internal fun extractRepoUrls(specsYaml: String): List<String> {
-            return URL_REGEX.findAll(specsYaml).map { it.groupValues[1].trim() }.toList()
+            return try {
+                val yaml = org.yaml.snakeyaml.Yaml()
+                val data = yaml.load<Any>(specsYaml)
+                extractUrlsFromYamlTree(data)
+            } catch (_: Exception) {
+                // Fallback to regex if YAML parsing fails
+                URL_REGEX.findAll(specsYaml).map { it.groupValues[1].trim() }.toList()
+            }
+        }
+
+        private fun extractUrlsFromYamlTree(node: Any?): List<String> {
+            val urls = mutableListOf<String>()
+            when (node) {
+                is Map<*, *> -> {
+                    for ((key, value) in node) {
+                        if (key == "url" && value is String) {
+                            urls.add(value)
+                        } else {
+                            urls.addAll(extractUrlsFromYamlTree(value))
+                        }
+                    }
+                }
+                is List<*> -> node.forEach { urls.addAll(extractUrlsFromYamlTree(it)) }
+            }
+            return urls
         }
     }
 }
