@@ -1,0 +1,62 @@
+{
+  "transitions": [
+    {
+      "id": "21",
+      "name": "In Progress",
+      "to": {
+        "id": "3",
+        "name": "In Progress",
+        "statusCategory": { "id": 4, "key": "indeterminate", "name": "In Progress" }
+      },
+      "hasScreen": false,
+      "isGlobal": false,
+      "isConditional": false,
+      "fields": {}
+    },
+    {
+      "id": "31",
+      "name": "Code Review",
+      "to": {
+        "id": "5",
+        "name": "In Review",
+        "statusCategory": { "id": 4, "key": "indeterminate", "name": "In Progress" }
+      },
+      "hasScreen": true,
+      "isGlobal": false,
+      "isConditional": false,
+      "fields": {
+        "assignee": {
+          "required": true,
+          "name": "Assignee",
+          "schema": { "type": "user", "system": "assignee" },
+          "hasDefaultValue": false,
+          "autoCompleteUrl": "https://jira.example.com/rest/api/2/user/assignable/search?issueKey=PROJ-123&query="
+        }
+      }
+    },
+    {
+      "id": "41",
+      "name": "Done",
+      "to": {
+        "id": "6",
+        "name": "Done",
+        "statusCategory": { "id": 3, "key": "done", "name": "Done" }
+      },
+      "hasScreen": true,
+      "isGlobal": false,
+      "isConditional": false,
+      "fields": {
+        "resolution": {
+          "required": true,
+          "name": "Resolution",
+          "schema": { "type": "resolution", "system": "resolution" },
+          "allowedValues": [
+            { "id": "1", "name": "Fixed", "description": "A fix for this issue is checked in." },
+            { "id": "2", "name": "Won't Fix", "description": "Will not be fixed." }
+          ],
+          "hasDefaultValue": false
+        }
+      }
+    }
+  ]
+}
