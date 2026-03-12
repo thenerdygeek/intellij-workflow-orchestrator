@@ -683,7 +683,6 @@ Intent mapping text fields accept a Jira transition name. When blank, the auto-d
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  ┌─ Automation ───────────────────────────────────────────┐ │
-│  │ Max concurrent queue slots: [3  ]                      │ │
 │  │ Tag history entries:        [5  ]                      │ │
 │  │ Build variable name:        [dockerTagsAsJson        ] │ │
 │  └────────────────────────────────────────────────────────┘ │
@@ -833,7 +832,7 @@ var tagHistoryMaxEntries by property(5)
 var bambooBuildVariableName by string("dockerTagsAsJson")
 ```
 
-Total: **21 new fields** (all with defaults matching current hardcoded values, plus `new_coverage`/`new_branch_coverage` added to sonar metrics default).
+Total: **20 new fields** (all with defaults matching current hardcoded values, plus `new_coverage`/`new_branch_coverage` added to sonar metrics default).
 
 ---
 
@@ -888,7 +887,7 @@ Existing users upgrading the plugin:
 
 | File | Module | Change |
 |---|---|---|
-| `core/.../settings/PluginSettings.kt` | `:core` | Add 22 new settings fields |
+| `core/.../settings/PluginSettings.kt` | `:core` | Add 20 new settings fields |
 | `core/.../settings/WorkflowSettingsConfigurable.kt` | `:core` | Register new sub-pages |
 | `jira/.../api/dto/JiraDtos.kt` | `:jira` | Extend `JiraTransition` with fields metadata |
 | `jira/.../api/JiraApiClient.kt` | `:jira` | Add `expandFields` param, update `transitionIssue()`, parameterize board type |
