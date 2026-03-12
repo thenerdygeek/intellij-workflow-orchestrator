@@ -99,7 +99,11 @@
         <vcsCheckinHandlerFactory
             implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
 
-        <!-- TODO Phase 1B: TicketStatusBarWidgetFactory, BuildStatusBarWidgetFactory -->
+        <!-- Ticket Status Bar Widget -->
+        <statusBarWidgetFactory id="WorkflowTicketStatusBar"
+            implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
+
+        <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
         <!-- SonarQube Project Services -->
         <projectService
