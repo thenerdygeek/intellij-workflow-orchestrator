@@ -108,6 +108,20 @@ class SonarApiClientTest {
     }
 
     @Test
+    fun `getMeasures sends custom metricKeys in request URL`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("measures-component-tree.json")))
+
+        client.getMeasures(
+            "com.myapp:my-app",
+            metricKeys = "coverage,line_coverage,new_coverage,new_branch_coverage"
+        )
+
+        val req = server.takeRequest()
+        assertTrue(req.path!!.contains("new_coverage"))
+        assertTrue(req.path!!.contains("new_branch_coverage"))
+    }
+
+    @Test
     fun `getSourceLines returns per-line coverage data`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("source-lines.json")))
 

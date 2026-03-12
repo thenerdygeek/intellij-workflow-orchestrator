@@ -65,9 +65,10 @@ class SonarApiClient(
 
     suspend fun getMeasures(
         projectKey: String,
-        branch: String? = null
+        branch: String? = null,
+        metricKeys: String = "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions"
     ): ApiResult<List<SonarMeasureComponentDto>> {
-        val metrics = "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions"
+        val metrics = metricKeys.ifBlank { "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions" }
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
         return get<SonarMeasureSearchResult>(
             "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +

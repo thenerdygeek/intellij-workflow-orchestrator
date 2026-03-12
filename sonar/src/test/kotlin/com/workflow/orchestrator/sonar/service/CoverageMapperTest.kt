@@ -85,6 +85,47 @@ class CoverageMapperTest {
     }
 
     @Test
+    fun `maps new_coverage and new_branch_coverage when present`() {
+        val components = listOf(
+            SonarMeasureComponentDto(
+                key = "com.myapp:my-app:src/main/kotlin/OrderService.kt",
+                path = "src/main/kotlin/OrderService.kt",
+                measures = listOf(
+                    SonarMeasureDto("line_coverage", "80.0"),
+                    SonarMeasureDto("branch_coverage", "70.0"),
+                    SonarMeasureDto("uncovered_lines", "4"),
+                    SonarMeasureDto("uncovered_conditions", "1"),
+                    SonarMeasureDto("new_coverage", "100.0"),
+                    SonarMeasureDto("new_branch_coverage", "95.5")
+                )
+            )
+        )
+
+        val result = CoverageMapper.mapMeasures(components)
+
+        val file = result["src/main/kotlin/OrderService.kt"]!!
+        assertEquals(100.0, file.newCoverage!!, 0.01)
+        assertEquals(95.5, file.newBranchCoverage!!, 0.01)
+    }
+
+    @Test
+    fun `new_coverage and new_branch_coverage are null when absent`() {
+        val components = listOf(
+            SonarMeasureComponentDto(
+                key = "k",
+                path = "src/File.kt",
+                measures = listOf(SonarMeasureDto("line_coverage", "50.0"))
+            )
+        )
+
+        val result = CoverageMapper.mapMeasures(components)
+
+        val file = result["src/File.kt"]!!
+        assertNull(file.newCoverage)
+        assertNull(file.newBranchCoverage)
+    }
+
+    @Test
     fun `fully covered conditions maps to COVERED`() {
         val lines = listOf(
             SonarSourceLineDto(line = 1, lineHits = 2, conditions = 2, coveredConditions = 2)

@@ -34,7 +34,7 @@ class SonarDataServiceTest {
                 message = "NPE", component = "proj:key:src/File.kt", type = "BUG"
             ))
         )
-        coEvery { apiClient.getMeasures(any(), any()) } returns ApiResult.Success(
+        coEvery { apiClient.getMeasures(any(), any(), any()) } returns ApiResult.Success(
             listOf(SonarMeasureComponentDto(
                 key = "proj:key:src/File.kt", path = "src/File.kt",
                 measures = listOf(
@@ -67,7 +67,7 @@ class SonarDataServiceTest {
             SonarQualityGateDto("ERROR", emptyList())
         )
         coEvery { apiClient.getIssues(any(), any(), any()) } returns ApiResult.Success(emptyList())
-        coEvery { apiClient.getMeasures(any(), any()) } returns ApiResult.Success(emptyList())
+        coEvery { apiClient.getMeasures(any(), any(), any()) } returns ApiResult.Success(emptyList())
 
         val service = createTestableService()
         service.refreshWith(apiClient, "proj:key", "main")
@@ -78,7 +78,7 @@ class SonarDataServiceTest {
     @Test
     fun `detects quality gate status transition`() = runTest {
         coEvery { apiClient.getIssues(any(), any(), any()) } returns ApiResult.Success(emptyList())
-        coEvery { apiClient.getMeasures(any(), any()) } returns ApiResult.Success(emptyList())
+        coEvery { apiClient.getMeasures(any(), any(), any()) } returns ApiResult.Success(emptyList())
 
         coEvery { apiClient.getQualityGateStatus(any(), any()) } returns ApiResult.Success(
             SonarQualityGateDto("OK", emptyList())
@@ -109,7 +109,7 @@ class SonarDataServiceTest {
             ApiResult.Error(ErrorType.NETWORK_ERROR, "offline")
         coEvery { apiClient.getIssues(any(), any(), any()) } returns
             ApiResult.Error(ErrorType.NETWORK_ERROR, "offline")
-        coEvery { apiClient.getMeasures(any(), any()) } returns
+        coEvery { apiClient.getMeasures(any(), any(), any()) } returns
             ApiResult.Error(ErrorType.NETWORK_ERROR, "offline")
 
         val service = createTestableService()
@@ -149,7 +149,7 @@ private class TestSonarDataService(private val apiClient: SonarApiClient) {
     suspend fun refreshWith(client: SonarApiClient, projectKey: String, branch: String) {
         val gateResult = client.getQualityGateStatus(projectKey, branch)
         val issuesResult = client.getIssues(projectKey, branch)
-        val measuresResult = client.getMeasures(projectKey, branch)
+        val measuresResult = client.getMeasures(projectKey, branch, "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions")
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> {

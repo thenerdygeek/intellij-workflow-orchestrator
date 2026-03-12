@@ -18,7 +18,9 @@ object CoverageMapper {
                     branchCoverage = measures["branch_coverage"]?.toDoubleOrNull() ?: 0.0,
                     uncoveredLines = measures["uncovered_lines"]?.toIntOrNull() ?: 0,
                     uncoveredConditions = measures["uncovered_conditions"]?.toIntOrNull() ?: 0,
-                    lineStatuses = emptyMap()
+                    lineStatuses = emptyMap(),
+                    newCoverage = measures["new_coverage"]?.toDoubleOrNull(),
+                    newBranchCoverage = measures["new_branch_coverage"]?.toDoubleOrNull()
                 )
             }
     }
