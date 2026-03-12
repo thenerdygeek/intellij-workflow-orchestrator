@@ -41,7 +41,7 @@ class CodyCommitMessageHandler(
                 .generateCommitMessage(
                     diff = enrichedPrompt,
                     contextFiles = changedFiles.map {
-                        com.workflow.orchestrator.cody.protocol.ContextFile(uri = it.path)
+                        com.workflow.orchestrator.cody.protocol.ContextFile.fromPath(it.path)
                     }
                 )
         } catch (e: Exception) {

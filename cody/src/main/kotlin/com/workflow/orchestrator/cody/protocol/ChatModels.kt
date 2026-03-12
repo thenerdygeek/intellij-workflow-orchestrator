@@ -23,7 +23,31 @@ data class TranscriptMessage(
     val text: String? = null
 )
 
+/**
+ * Context file reference passed to the Cody agent.
+ *
+ * The agent expects `uri` as an object with `fsPath` and `path` fields
+ * (matching VS Code's Uri structure), NOT a plain string.
+ * See codypy reference: `Context(type="file", uri=Uri(fsPath=path, path=path))`
+ */
 data class ContextFile(
-    val uri: String,
+    val type: String = "file",
+    val uri: ContextFileUri,
     val range: Range? = null
+) {
+    companion object {
+        /** Convenience factory: creates a ContextFile from a file path string. */
+        fun fromPath(path: String, range: Range? = null): ContextFile {
+            val fileUri = if (path.startsWith("file://")) path else "file://$path"
+            return ContextFile(
+                uri = ContextFileUri(fsPath = path, path = fileUri),
+                range = range
+            )
+        }
+    }
+}
+
+data class ContextFileUri(
+    val fsPath: String,
+    val path: String
 )

@@ -57,10 +57,10 @@ class CodyContextService(private val project: Project) {
         )
 
         val contextFiles = mutableListOf(
-            ContextFile(uri = filePath, range = targetRange)
+            ContextFile.fromPath(filePath, range = targetRange)
         )
         if (existingTestFile != null) {
-            contextFiles.add(ContextFile(uri = existingTestFile))
+            contextFiles.add(ContextFile.fromPath(existingTestFile))
         }
 
         return TestContext(instruction, contextFiles, existingTestFile)
@@ -143,10 +143,10 @@ class CodyContextService(private val project: Project) {
         psi: PsiContextEnricher.PsiContext
     ): List<ContextFile> {
         val files = mutableListOf(
-            ContextFile(uri = filePath, range = issueRange)
+            ContextFile.fromPath(filePath, range = issueRange)
         )
-        psi.testFilePath?.let { files.add(ContextFile(uri = it)) }
-        psi.relatedFiles.take(3).forEach { files.add(ContextFile(uri = it)) }
+        psi.testFilePath?.let { files.add(ContextFile.fromPath(it)) }
+        psi.relatedFiles.take(3).forEach { files.add(ContextFile.fromPath(it)) }
         return files
     }
 }
