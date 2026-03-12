@@ -43,6 +43,7 @@ class QueueService : Disposable {
     private val autoTriggerEnabled: Boolean
     private val maxDepthPerSuite: Int
     private val tagValidationOnTrigger: Boolean
+    private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
@@ -68,6 +69,7 @@ class QueueService : Disposable {
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
         this.tagValidationOnTrigger = settings.state.tagValidationOnTrigger
+        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "dockerTagsAsJson"
     }
 
     /** Test constructor — allows injecting mocks. */
@@ -79,7 +81,8 @@ class QueueService : Disposable {
         scope: CoroutineScope,
         autoTriggerEnabled: Boolean = true,
         maxDepthPerSuite: Int = 10,
-        tagValidationOnTrigger: Boolean = true
+        tagValidationOnTrigger: Boolean = true,
+        buildVariableName: String = "dockerTagsAsJson"
     ) {
         this.bambooClient = bambooClient
         this.registryClient = registryClient
@@ -89,6 +92,7 @@ class QueueService : Disposable {
         this.autoTriggerEnabled = autoTriggerEnabled
         this.maxDepthPerSuite = maxDepthPerSuite
         this.tagValidationOnTrigger = tagValidationOnTrigger
+        this.buildVariableName = buildVariableName
     }
 
     private val _stateFlow = MutableStateFlow<List<QueueEntry>>(emptyList())
@@ -270,7 +274,7 @@ class QueueService : Disposable {
         }
 
         val variables = entry.variables.toMutableMap()
-        variables["dockerTagsAsJson"] = entry.dockerTagsPayload
+        variables[buildVariableName] = entry.dockerTagsPayload
 
         val result = bambooClient.triggerBuild(entry.suitePlanKey, variables)
         return when (result) {
