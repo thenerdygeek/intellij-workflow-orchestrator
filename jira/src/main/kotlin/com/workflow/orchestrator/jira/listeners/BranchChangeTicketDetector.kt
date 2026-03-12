@@ -1,8 +1,10 @@
 package com.workflow.orchestrator.jira.listeners
 
-import com.intellij.openapi.vcs.BranchChangeListener
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vcs.BranchChangeListener
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
@@ -12,12 +14,17 @@ import com.workflow.orchestrator.jira.service.ActiveTicketService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-class BranchChangeTicketDetector(private val project: Project) : BranchChangeListener {
+class BranchChangeTicketDetector(private val project: Project) : BranchChangeListener, Disposable {
 
     private val log = Logger.getInstance(BranchChangeTicketDetector::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        Disposer.register(project, this)
+    }
 
     override fun branchWillChange(branchName: String) {
         // No action needed before branch change
@@ -51,5 +58,10 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
                 log.info("[Jira:Branch] Updated active ticket summary for $ticketId")
             }
         }
+    }
+
+    override fun dispose() {
+        scope.cancel()
+        log.info("[Jira:Branch] BranchChangeTicketDetector disposed")
     }
 }

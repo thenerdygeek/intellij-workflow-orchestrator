@@ -22,6 +22,7 @@ import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import java.awt.*
 import java.awt.event.MouseAdapter
@@ -235,7 +236,7 @@ class SprintDashboardPanel(
         setLoading(true, "Loading sprint tickets\u2026")
 
         runBackgroundableTask("Loading Sprint", project, false) {
-            val result = runBlocking { sprintService.loadSprintIssues(boardId) }
+            val result = runBlocking(Dispatchers.IO) { sprintService.loadSprintIssues(boardId) }
             invokeLater {
                 when (result) {
                     is ApiResult.Success -> {
@@ -336,7 +337,7 @@ class SprintDashboardPanel(
             setLoading(true, "Starting work on ${selectedIssue.key}\u2026")
 
             runBackgroundableTask("Start Work: ${selectedIssue.key}", project, false) {
-                val result = runBlocking { branchingService.startWork(selectedIssue, pattern) }
+                val result = runBlocking(Dispatchers.IO) { branchingService.startWork(selectedIssue, pattern) }
                 invokeLater {
                     when (result) {
                         is ApiResult.Success -> {
