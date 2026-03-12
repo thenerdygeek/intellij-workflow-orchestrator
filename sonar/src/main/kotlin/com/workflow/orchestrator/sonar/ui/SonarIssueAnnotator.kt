@@ -25,9 +25,16 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
 
     override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): SonarAnnotationInput? {
         val project = file.project
-        val basePath = project.basePath ?: return null
         val virtualFile = file.virtualFile ?: return null
-        val relativePath = virtualFile.path.removePrefix("$basePath/")
+
+        val baseDir = project.basePath?.let {
+            com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(it)
+        }
+        val relativePath = if (baseDir != null) {
+            com.intellij.openapi.vfs.VfsUtilCore.getRelativePath(virtualFile, baseDir) ?: virtualFile.path
+        } else {
+            virtualFile.path
+        }
 
         val state = try {
             SonarDataService.getInstance(project).stateFlow.value
