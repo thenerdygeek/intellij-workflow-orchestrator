@@ -94,15 +94,8 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
 
-        <!-- Commit message auto-prefix -->
-        <vcsCheckinHandlerFactory
-            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
-
         <!-- Status Bar Widgets -->
-        <statusBarWidgetFactory id="WorkflowTicketStatusBar"
-            implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
-        <statusBarWidgetFactory id="WorkflowBuildStatusBar"
-            implementation="com.workflow.orchestrator.bamboo.ui.BuildStatusBarWidgetFactory"/>
+        <!-- TODO Phase 1B: TicketStatusBarWidgetFactory, BuildStatusBarWidgetFactory, CommitMessagePrefixHandlerFactory -->
 
         <!-- SonarQube Project Services -->
         <projectService
@@ -236,7 +229,7 @@
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <codyAgentProvider
             implementation="com.workflow.orchestrator.cody.agent.StandaloneCodyAgentProvider"/>
-        <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
+        <!-- TODO Phase 1B: SprintTabProvider -->
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
@@ -244,8 +237,7 @@
     </extensions>
 
     <projectListeners>
-        <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
-                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
+        <!-- TODO Phase 1B: BranchChangeTicketDetector listener -->
         <!-- Cody Focus Tracking -->
         <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
