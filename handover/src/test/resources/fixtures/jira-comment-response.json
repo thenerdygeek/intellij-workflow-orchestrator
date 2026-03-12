@@ -1,0 +1,6 @@
+{
+  "self": "https://jira.example.com/rest/api/2/issue/PROJ-123/comment/10042",
+  "id": "10042",
+  "body": "h4. Automation Results\n|| Suite || Status || Link ||\n| Regression Suite A | (/) PASS | [View Results|https://bamboo.example.com/browse/RS-42] |",
+  "created": "2026-03-12T10:30:00.000+0000"
+}
