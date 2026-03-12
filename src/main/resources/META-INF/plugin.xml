@@ -237,7 +237,8 @@
     </extensions>
 
     <projectListeners>
-        <!-- TODO Phase 1B: BranchChangeTicketDetector listener -->
+        <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
+                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
         <!-- Cody Focus Tracking -->
         <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
