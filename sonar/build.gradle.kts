@@ -1,6 +1,8 @@
 // sonar/build.gradle.kts — Submodule for SonarQube quality integration.
 // Uses the MODULE variant; depends on :core.
 
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
 plugins {
     alias(libs.plugins.kotlin)
     alias(libs.plugins.kotlinSerialization)
@@ -23,6 +25,7 @@ dependencies {
         intellijIdea(providers.gradleProperty("platformVersion"))
         bundledPlugin("Git4Idea")
         bundledPlugin("com.intellij.java")
+        testFramework(TestFrameworkType.Platform)
     }
 
     implementation(project(":core"))
@@ -37,6 +40,10 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.turbine)
+}
+
+intellijPlatform {
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
 }
 
 tasks.test {

@@ -1,6 +1,8 @@
 // handover/build.gradle.kts — Submodule for task handover & closure lifecycle.
 // Uses the MODULE variant; depends on :core only.
 
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
 plugins {
     alias(libs.plugins.kotlin)
     alias(libs.plugins.kotlinSerialization)
@@ -22,6 +24,7 @@ dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
         bundledPlugin("Git4Idea")
+        testFramework(TestFrameworkType.Platform)
     }
 
     implementation(project(":core"))
@@ -36,6 +39,10 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.turbine)
+}
+
+intellijPlatform {
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
 }
 
 tasks.test {
