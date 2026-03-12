@@ -74,8 +74,30 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
             if (textRange.isEmpty) continue
 
             val severity = mapSeverity(issue.type, issue.severity)
-            val tooltip = "[${issue.rule}] ${issue.message}" +
-                (issue.effort?.let { " (effort: $it)" } ?: "")
+
+            // PSI resolution for richer tooltips
+            val element = file.findElementAt(textRange.startOffset)
+            val containingMethod = com.intellij.psi.util.PsiTreeUtil.getParentOfType(
+                element, com.intellij.psi.PsiMethod::class.java
+            )
+            val containingClass = com.intellij.psi.util.PsiTreeUtil.getParentOfType(
+                element, com.intellij.psi.PsiClass::class.java
+            )
+
+            val tooltip = buildString {
+                append("[${issue.rule}] ${issue.message}")
+                issue.effort?.let { effort -> append(" (effort: $effort)") }
+                if (containingMethod != null) {
+                    append("\n\nIn method: ${containingMethod.name}()")
+                }
+                if (containingClass != null) {
+                    val classAnnotations = containingClass.annotations
+                        .mapNotNull { ann -> ann.qualifiedName?.substringAfterLast('.') }
+                    if (classAnnotations.isNotEmpty()) {
+                        append("\nClass: @${classAnnotations.joinToString(", @")} ${containingClass.name}")
+                    }
+                }
+            }
 
             holder.newAnnotation(severity, tooltip)
                 .range(textRange)
