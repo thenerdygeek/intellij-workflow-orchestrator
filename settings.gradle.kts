@@ -15,4 +15,5 @@ include(
     ":cody",
     ":automation",
     ":handover",
+    ":mock-server",
 )
