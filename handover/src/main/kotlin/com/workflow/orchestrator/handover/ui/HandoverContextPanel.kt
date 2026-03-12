@@ -85,7 +85,7 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
     fun updateState(state: HandoverState) {
         ticketIdLabel.text = state.ticketId.ifEmpty { "No active ticket" }
         ticketSummaryLabel.text = state.ticketSummary
-        ticketStatusLabel.text = if (state.jiraTransitioned) "Status: In Review" else "Status: In Progress"
+        ticketStatusLabel.text = "Status: ${state.currentStatusName ?: "Unknown"}"
 
         prStatusLabel.text = if (state.prCreated) {
             "PR created"

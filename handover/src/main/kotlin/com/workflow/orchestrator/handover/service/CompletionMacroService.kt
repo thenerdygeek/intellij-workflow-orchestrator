@@ -2,12 +2,16 @@ package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.handover.model.MacroStep
 import com.workflow.orchestrator.handover.model.MacroStepStatus
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 @Service(Service.Level.PROJECT)
 class CompletionMacroService {
 
+    private val json = Json { ignoreUnknownKeys = true }
     private var project: Project? = null
 
     constructor(project: Project) {
@@ -19,8 +23,31 @@ class CompletionMacroService {
     fun getDefaultSteps(): List<MacroStep> = listOf(
         MacroStep(id = "copyright", label = "Fix Copyright Headers"),
         MacroStep(id = "jira-comment", label = "Post Jira Comment"),
-        MacroStep(id = "jira-transition", label = "Transition to In Review"),
+        MacroStep(id = "jira-transition", label = getReviewTransitionLabel()),
         MacroStep(id = "time-log", label = "Log Work")
+    )
+
+    private fun getReviewTransitionLabel(): String {
+        val proj = project ?: return "Transition to Review"
+        val settings = PluginSettings.getInstance(proj)
+        val mappingsJson = settings.state.workflowMappings ?: return "Transition to Review"
+        if (mappingsJson.isBlank()) return "Transition to Review"
+        return try {
+            val mappings = json.decodeFromString<List<WorkflowMappingEntry>>(mappingsJson)
+            val match = mappings.find { it.intent == "SUBMIT_FOR_REVIEW" }
+            if (match != null) "Transition to ${match.transitionName}" else "Transition to Review"
+        } catch (_: Exception) {
+            "Transition to Review"
+        }
+    }
+
+    @Serializable
+    private data class WorkflowMappingEntry(
+        val intent: String,
+        val transitionName: String,
+        val projectKey: String,
+        val issueTypeId: String? = null,
+        val source: String
     )
 
     fun filterEnabledSteps(steps: List<MacroStep>): List<MacroStep> {
