@@ -18,9 +18,9 @@ class AutomationSettingsServiceTest {
         val config = AutomationSettingsService.SuiteConfig(
             planKey = "PROJ-AUTO",
             displayName = "E2E Regression",
-            variables = mapOf("suiteType" to "regression", "featureFlag" to "true"),
-            enabledStages = listOf("QA Automation"),
-            serviceNameMapping = mapOf("intellij-workflow" to "service-auth"),
+            variables = mutableMapOf("suiteType" to "regression", "featureFlag" to "true"),
+            enabledStages = mutableListOf("QA Automation"),
+            serviceNameMapping = mutableMapOf("intellij-workflow" to "service-auth"),
             lastModified = System.currentTimeMillis()
         )
 
@@ -43,14 +43,14 @@ class AutomationSettingsServiceTest {
         service.saveSuiteConfig(
             AutomationSettingsService.SuiteConfig(
                 planKey = "PROJ-AUTO1", displayName = "Suite 1",
-                variables = emptyMap(), enabledStages = emptyList(),
+                variables = mutableMapOf(), enabledStages = mutableListOf(),
                 serviceNameMapping = null, lastModified = 1000
             )
         )
         service.saveSuiteConfig(
             AutomationSettingsService.SuiteConfig(
                 planKey = "PROJ-AUTO2", displayName = "Suite 2",
-                variables = emptyMap(), enabledStages = emptyList(),
+                variables = mutableMapOf(), enabledStages = mutableListOf(),
                 serviceNameMapping = null, lastModified = 2000
             )
         )
@@ -63,7 +63,7 @@ class AutomationSettingsServiceTest {
     fun `saveSuiteConfig overwrites existing config`() {
         val config1 = AutomationSettingsService.SuiteConfig(
             planKey = "PROJ-AUTO", displayName = "Old Name",
-            variables = emptyMap(), enabledStages = emptyList(),
+            variables = mutableMapOf(), enabledStages = mutableListOf(),
             serviceNameMapping = null, lastModified = 1000
         )
         service.saveSuiteConfig(config1)
@@ -80,7 +80,7 @@ class AutomationSettingsServiceTest {
     fun `getState and loadState round-trip`() {
         val config = AutomationSettingsService.SuiteConfig(
             planKey = "PROJ-AUTO", displayName = "Test Suite",
-            variables = mapOf("key" to "value"), enabledStages = listOf("Stage1"),
+            variables = mutableMapOf("key" to "value"), enabledStages = mutableListOf("Stage1"),
             serviceNameMapping = null, lastModified = 1000
         )
         service.saveSuiteConfig(config)
