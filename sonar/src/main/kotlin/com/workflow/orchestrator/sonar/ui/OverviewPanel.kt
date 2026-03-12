@@ -1,14 +1,16 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.*
 import java.awt.*
 import javax.swing.*
 
-class OverviewPanel : JPanel(BorderLayout()) {
+class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val gateStatusLabel = JBLabel("—")
     private val gateConditionsPanel = JPanel().apply {
@@ -63,10 +65,14 @@ class OverviewPanel : JPanel(BorderLayout()) {
     }
 
     fun update(state: SonarState) {
+        val settings = PluginSettings.getInstance(project).state
+        val highThreshold = settings.coverageHighThreshold.toDouble()
+        val mediumThreshold = settings.coverageMediumThreshold.toDouble()
+
         // Quality gate
         val (gateText, gateColor) = when (state.qualityGate.status) {
-            QualityGateStatus.PASSED -> "\u2713 PASSED" to JBColor(Color(46, 160, 67), Color(46, 160, 67))
-            QualityGateStatus.FAILED -> "\u2717 FAILED" to JBColor(Color(255, 68, 68), Color(255, 68, 68))
+            QualityGateStatus.PASSED -> "\u2713 PASSED" to CoverageThresholds.GREEN
+            QualityGateStatus.FAILED -> "\u2717 FAILED" to CoverageThresholds.RED
             QualityGateStatus.NONE -> "—" to JBColor.GRAY
         }
         gateStatusLabel.text = gateText
@@ -78,7 +84,7 @@ class OverviewPanel : JPanel(BorderLayout()) {
             val icon = if (cond.passed) "\u2713" else "\u2717"
             val label = JBLabel("$icon ${cond.metric}: ${cond.actualValue} (threshold: ${cond.threshold})")
             label.font = label.font.deriveFont(10f)
-            label.foreground = if (cond.passed) JBColor.GRAY else JBColor(Color(255, 68, 68), Color(255, 68, 68))
+            label.foreground = if (cond.passed) JBColor.GRAY else CoverageThresholds.RED
             gateConditionsPanel.add(label)
         }
 
@@ -86,7 +92,8 @@ class OverviewPanel : JPanel(BorderLayout()) {
         val lineCov = state.overallCoverage.lineCoverage
         coverageLabel.text = "%.1f%%".format(lineCov)
         coverageLabel.font = coverageLabel.font.deriveFont(Font.BOLD, 18f)
-        coverageLabel.foreground = coverageColor(lineCov)
+        coverageLabel.foreground = CoverageThresholds.colorForCoverage(lineCov, highThreshold, mediumThreshold)
+        coverageBar.setThresholds(highThreshold, mediumThreshold)
         coverageBar.value = lineCov
         branchCoverageLabel.text = "Branch: %.1f%%".format(state.overallCoverage.branchCoverage)
         branchCoverageLabel.foreground = JBColor.GRAY
@@ -138,12 +145,6 @@ class OverviewPanel : JPanel(BorderLayout()) {
         }
     }
 
-    private fun coverageColor(coverage: Double): Color = when {
-        coverage >= 80 -> Color(46, 160, 67)
-        coverage >= 50 -> Color(212, 160, 32)
-        else -> Color(255, 68, 68)
-    }
-
     private fun severityColor(severity: IssueSeverity): Color = when (severity) {
         IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> Color(255, 68, 68)
         IssueSeverity.MAJOR -> Color(230, 138, 0)
@@ -158,6 +159,15 @@ private class CoverageProgressBar : JPanel() {
     var value: Double = 0.0
         set(v) { field = v; repaint() }
 
+    private var highThreshold: Double = 80.0
+    private var mediumThreshold: Double = 50.0
+
+    fun setThresholds(high: Double, medium: Double) {
+        highThreshold = high
+        mediumThreshold = medium
+        repaint()
+    }
+
     init {
         preferredSize = Dimension(0, 6)
         minimumSize = Dimension(0, 6)
@@ -171,11 +181,7 @@ private class CoverageProgressBar : JPanel() {
         g2.color = JBColor(Color(30, 30, 30), Color(30, 30, 30))
         g2.fillRoundRect(0, 0, width, height, 4, 4)
         val fillWidth = (width * value / 100.0).toInt()
-        g2.color = when {
-            value >= 80 -> Color(46, 160, 67)
-            value >= 50 -> Color(212, 160, 32)
-            else -> Color(255, 68, 68)
-        }
+        g2.color = CoverageThresholds.colorForCoverage(value, highThreshold, mediumThreshold)
         g2.fillRoundRect(0, 0, fillWidth, height, 4, 4)
     }
 }
