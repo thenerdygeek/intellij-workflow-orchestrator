@@ -95,7 +95,11 @@
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
 
         <!-- Status Bar Widgets -->
-        <!-- TODO Phase 1B: TicketStatusBarWidgetFactory, BuildStatusBarWidgetFactory, CommitMessagePrefixHandlerFactory -->
+        <!-- Commit message auto-prefix -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
+
+        <!-- TODO Phase 1B: TicketStatusBarWidgetFactory, BuildStatusBarWidgetFactory -->
 
         <!-- SonarQube Project Services -->
         <projectService
