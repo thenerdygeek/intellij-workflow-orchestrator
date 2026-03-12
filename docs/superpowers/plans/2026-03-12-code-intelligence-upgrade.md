@@ -2446,7 +2446,7 @@ buildFallbackDescription() when PSI unavailable."
 
 ---
 
-### Task 25: B3 — Add contextFiles to CodyChatService
+### Task 24: B3 — Add contextFiles to CodyChatService
 
 **Files:**
 - Modify: `cody/src/main/kotlin/com/workflow/orchestrator/cody/service/CodyChatService.kt` (or equivalent agent chat service)
@@ -2523,7 +2523,7 @@ the Cody Agent direct access to file contents for better responses."
 
 ---
 
-### Task 26: B8 — Upgrade MavenBuildService to MavenRunner
+### Task 25: B8 — Upgrade MavenBuildService to MavenRunner
 
 **Files:**
 - Modify: `core/src/main/kotlin/com/workflow/orchestrator/core/maven/MavenBuildService.kt`
@@ -2607,7 +2607,7 @@ Falls back to OSProcessHandler subprocess when MavenRunner unavailable."
 
 ---
 
-### Task 27: B9 — SonarIssueAnnotator PsiElement Resolution for Rich Tooltips
+### Task 26: B9 — SonarIssueAnnotator PsiElement Resolution for Rich Tooltips
 
 **Files:**
 - Modify: `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/ui/SonarIssueAnnotator.kt`
@@ -2701,7 +2701,7 @@ using PsiTreeUtil.getParentOfType() resolution."
 
 ---
 
-### Task 28: B11 — CoverageLineMarkerProvider Spring-Aware Endpoint Highlighting
+### Task 27: B11 — CoverageLineMarkerProvider Spring-Aware Endpoint Highlighting
 
 **Files:**
 - Modify: `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/ui/CoverageLineMarkerProvider.kt`
@@ -2788,7 +2788,7 @@ uncovered lines keep the grey icon. Uses PsiTreeUtil to detect
 
 ---
 
-### Task 29: Final Verification — All 19 Features
+### Task 28: Final Verification — All 19 Features
 
 - [ ] **Step 1: Run all module tests**
 
