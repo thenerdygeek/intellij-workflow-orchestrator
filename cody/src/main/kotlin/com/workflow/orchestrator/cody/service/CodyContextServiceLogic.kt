@@ -22,7 +22,11 @@ class CodyContextServiceLogic {
         }
     }
 
-    fun resolveTestFile(sourceFilePath: String): String? {
+    /**
+     * Fallback test file resolution using path convention.
+     * Used when PSI/TestFinderHelper is not available (e.g., unit tests without IDE context).
+     */
+    fun resolveTestFileFallback(sourceFilePath: String): String? {
         val normalized = sourceFilePath.replace('\\', '/')
         if (!normalized.contains("src/main/")) return null
         val testPath = normalized.replace("src/main/", "src/test/")

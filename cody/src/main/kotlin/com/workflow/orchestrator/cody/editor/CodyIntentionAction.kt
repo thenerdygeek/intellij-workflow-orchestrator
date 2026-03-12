@@ -43,18 +43,18 @@ class CodyIntentionAction : IntentionAction {
         val range = Range(start = lineStart, end = lineEnd)
 
         val filePath = file.virtualFile.url
-        val contextService = CodyContextService(project)
-        val fixContext = contextService.gatherFixContext(
-            filePath = filePath,
-            issueRange = range,
-            issueType = "CODE_SMELL",
-            issueMessage = "Issue detected on this line",
-            ruleKey = "unknown"
-        )
+        val contextService = project.getService(CodyContextService::class.java)
 
         // Launch on IO dispatcher — avoids blocking a pooled thread with runBlocking
         @Suppress("DEPRECATION")
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val fixContext = contextService.gatherFixContext(
+                filePath = filePath,
+                issueRange = range,
+                issueType = "CODE_SMELL",
+                issueMessage = "Issue detected on this line",
+                ruleKey = "unknown"
+            )
             CodyEditService(project).requestFix(
                 filePath = filePath,
                 range = range,

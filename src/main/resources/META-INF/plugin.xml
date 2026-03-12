@@ -120,6 +120,10 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentProviderService"/>
 
+        <!-- Cody Context Service (PSI+Spring enrichment) -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.cody.service.CodyContextService"/>
+
         <!-- Cody Gutter Actions -->
         <codeInsight.lineMarkerProvider
             language="JAVA"

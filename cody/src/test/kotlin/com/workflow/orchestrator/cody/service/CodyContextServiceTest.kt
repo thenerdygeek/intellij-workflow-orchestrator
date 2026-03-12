@@ -43,20 +43,20 @@ class CodyContextServiceTest {
     }
 
     @Test
-    fun `resolveTestFile maps main to test path`() {
-        val result = service.resolveTestFile("src/main/kotlin/com/app/UserService.kt")
+    fun `resolveTestFileFallback maps main to test path`() {
+        val result = service.resolveTestFileFallback("src/main/kotlin/com/app/UserService.kt")
         assertEquals("src/test/kotlin/com/app/UserServiceTest.kt", result)
     }
 
     @Test
-    fun `resolveTestFile maps java main to test path`() {
-        val result = service.resolveTestFile("src/main/java/com/app/UserService.java")
+    fun `resolveTestFileFallback maps java main to test path`() {
+        val result = service.resolveTestFileFallback("src/main/java/com/app/UserService.java")
         assertEquals("src/test/java/com/app/UserServiceTest.java", result)
     }
 
     @Test
-    fun `resolveTestFile returns null for non-main files`() {
-        val result = service.resolveTestFile("src/test/kotlin/FooTest.kt")
+    fun `resolveTestFileFallback returns null for non-main files`() {
+        val result = service.resolveTestFileFallback("src/test/kotlin/FooTest.kt")
         assertNull(result)
     }
 }
