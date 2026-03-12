@@ -1,7 +1,7 @@
 # Configurable Values & Intent-Based Workflow Engine — Design Specification
 
-> **Scope:** Cross-cutting extraction of 12 hardcoded values into user-configurable settings, centered on a new intent-based Jira workflow engine that replaces hardcoded status strings
-> **Modules affected:** `:core` (settings), `:jira` (workflow engine, API client), `:handover` (closure, time tracking, macro, UI), `:sonar` (coverage thresholds), `:automation` (queue limits)
+> **Scope:** Cross-cutting extraction of hardcoded values into 21 user-configurable settings, centered on a new intent-based Jira workflow engine that replaces hardcoded status strings. Includes Bamboo, SonarQube, Bitbucket, and Nexus configurability improvements plus 3 bug fixes.
+> **Modules affected:** `:core` (settings, HTTP), `:jira` (workflow engine, API client), `:handover` (closure, time tracking, PR, macro, UI), `:sonar` (coverage thresholds, metrics), `:automation` (variable names, tag history), `:bamboo` (default branch)
 > **Backward compatibility:** All new settings have defaults that match current hardcoded values — zero-config upgrade for existing users
 
 ---
@@ -121,13 +121,18 @@ class IntentResolver(
 
 **Resolution strategy** (evaluated in order, first match wins):
 
-1. **Explicit mapping** — check `TransitionMappingStore` for a user-configured mapping for this intent + project key (+ optional issue type)
-2. **Learned mapping** — check `TransitionMappingStore` for a previously auto-learned mapping
-3. **Name matching** — call `GET /issue/{key}/transitions?expand=transitions.fields`, iterate `intent.defaultNames`, find first case-insensitive match against available transition names
-4. **Category matching** — from same API response, find transition whose `to.statusCategory.key` matches `intent.targetCategory`. If exactly one match, use it. If multiple matches, proceed to step 5.
-5. **Disambiguation** — present a dialog listing available matching transitions, let user pick. Persist choice as a learned mapping.
+1. **Explicit mapping** — check `TransitionMappingStore` for a user-configured mapping for this intent + project key (+ optional issue type). If found, verify the transition name still exists in available transitions (workflow may have changed).
+2. **Learned mapping** — check `TransitionMappingStore` for a previously auto-learned mapping. Same verification as step 1.
+3. **API call** — call `GET /issue/{key}/transitions?expand=transitions.fields`. **If the API call fails** (network error, auth expired, 404), return `ApiResult.Error` immediately — do not proceed to steps 4-6.
+4. **Name matching** — iterate `intent.defaultNames` in order, find first case-insensitive match against available transition names. First match wins.
+5. **Category matching** — find transition whose `to.statusCategory.key` matches `intent.targetCategory`. If exactly one match, use it. If multiple matches, proceed to step 6.
+6. **Disambiguation** — present a dialog listing available matching transitions, let user pick. Persist choice as a learned mapping. **Threading:** The dialog must be shown on the EDT; use `withContext(Dispatchers.EDT)` to switch from the IO coroutine context per CLAUDE.md threading rules.
 
-If no transitions match at all, return `ApiResult.Error` with a descriptive message suggesting the user configure a mapping in settings.
+**Error cases:**
+- API call fails → return `ApiResult.Error` with network/auth message
+- Zero transitions available → return `ApiResult.Error("No transitions available for {issueKey}. The issue may already be in a terminal state.")`
+- No matches after all steps → return `ApiResult.Error("No transition matches intent '{intent.displayName}'. Configure a mapping in Settings > Workflow Mapping.")`
+- User dismisses disambiguation dialog → return `ApiResult.Error("Transition cancelled by user.")`
 
 #### Layer 3 — Guard Chain (`:core` + `:jira`)
 
@@ -399,8 +404,8 @@ var coverageMediumThreshold by property(50.0) // Yellow threshold (below = red)
 ```
 
 **Files to update:**
-- `sonar/src/.../ui/CoverageTreeDecorator.kt` — read thresholds from settings
-- `sonar/src/.../ui/CoverageBannerProvider.kt` — use `coverageHighThreshold` for banner display
+- `sonar/src/.../ui/CoverageTreeDecorator.kt` — read thresholds from shared `CoverageThresholds` utility
+- `sonar/src/.../ui/OverviewPanel.kt` — read thresholds from shared `CoverageThresholds` utility (removes 2 duplicate copies)
 
 ### 3.2 HTTP Timeouts
 
@@ -442,15 +447,9 @@ var worklogIncrementHours by property(0.5)
 var maxDiffLinesForReview by property(10000)
 ```
 
-### 3.5 Max Queue Slots
+### ~~3.5 Max Queue Slots~~ (Removed)
 
-**Current:** `3` hardcoded in `QueueService.kt`
-
-**New settings field:**
-
-```kotlin
-var maxConcurrentQueueSlots by property(3)
-```
+> **Note:** Queue depth is already configurable via `queueMaxDepthPerSuite` (default `10`). No additional setting needed.
 
 ### 3.6 Branch Name Max Length
 
@@ -484,6 +483,8 @@ var bambooBuildVariableName by string("dockerTagsAsJson")
 
 **Files to update:**
 - `automation/src/.../service/TagBuilderService.kt` — read variable name from settings instead of hardcoded string
+- `automation/src/.../service/ConflictDetectorService.kt` — also uses `"dockerTagsAsJson"` at line 49
+- `automation/src/.../service/QueueService.kt` — also uses `"dockerTagsAsJson"` at line 269
 
 ### 3.9 SonarQube Metric Keys
 
@@ -766,19 +767,22 @@ Intent mapping text fields accept a Jira transition name. When blank, the auto-d
 11. Learned mapping saved: SUBMIT_FOR_REVIEW → "Code Review" for project PROJ
 ```
 
-### 6.3 "Close" — Disambiguation (Multiple Matches)
+### 6.3 "Close" — Disambiguation (Multiple Category Matches)
 
 ```
 1. JiraClosureService calls IntentResolver.resolve(CLOSE, "PROJ-123")
-2. API returns: [{id:"41", name:"Done", to:{statusCategory:{key:"done"}}},
-                 {id:"42", name:"Resolved", to:{statusCategory:{key:"done"}}}]
-3. Name matching: "Done" matches → but also "Resolved" matches
-4. IntentResolver presents disambiguation dialog: "Multiple transitions match 'Close'. Which one?"
-   - ○ Done
-   - ● Resolved
-5. User selects "Resolved"
-6. Learned mapping saved: CLOSE → "Resolved" for project PROJ
-7. Next time: step 3 finds learned mapping, skips to execution
+2. API returns: [{id:"41", name:"Finish", to:{statusCategory:{key:"done"}}},
+                 {id:"42", name:"Resolve & Close", to:{statusCategory:{key:"done"}}}]
+3. Name matching: none of CLOSE.defaultNames ("Done","Closed","Resolved","Complete","Finished")
+   match "Finish" or "Resolve & Close" exactly → no match, proceed to step 4
+4. Category matching: both transitions have to.statusCategory.key == "done" → ambiguous
+5. IntentResolver shows disambiguation dialog (via withContext(Dispatchers.EDT)):
+   "Multiple transitions match 'Close'. Which one?"
+   - ○ Finish
+   - ● Resolve & Close
+6. User selects "Resolve & Close"
+7. Learned mapping saved: CLOSE → "Resolve & Close" for project PROJ
+8. Next time: step 2 finds learned mapping, skips directly to execution
 ```
 
 ---
@@ -825,12 +829,11 @@ var maxDiffLinesForReview by property(10000)
 var sonarMetricKeys by string("coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,new_coverage,new_branch_coverage")
 
 // Automation
-var maxConcurrentQueueSlots by property(3)
 var tagHistoryMaxEntries by property(5)
 var bambooBuildVariableName by string("dockerTagsAsJson")
 ```
 
-Total: **22 new fields** (all with defaults matching current hardcoded values, plus `new_coverage`/`new_branch_coverage` added to sonar metrics default).
+Total: **21 new fields** (all with defaults matching current hardcoded values, plus `new_coverage`/`new_branch_coverage` added to sonar metrics default).
 
 ---
 
@@ -899,10 +902,12 @@ Existing users upgrading the plugin:
 | `handover/.../api/BitbucketApiClient.kt` | `:handover` | Include reviewers in PR creation POST body |
 | `sonar/.../ui/CoverageTreeDecorator.kt` | `:sonar` | Use shared `CoverageThresholds` utility |
 | `sonar/.../ui/OverviewPanel.kt` | `:sonar` | Use shared `CoverageThresholds` utility (removes 2 duplicate copies) |
-| `sonar/.../ui/CoverageBannerProvider.kt` | `:sonar` | Use shared `CoverageThresholds` utility |
+| `sonar/.../ui/CoverageBannerProvider.kt` | `:sonar` | No threshold change needed (uses uncovered count, not percentage) |
 | `sonar/.../api/SonarApiClient.kt` | `:sonar` | Read metric keys from settings |
 | `sonar/.../service/CoverageMapper.kt` | `:sonar` | Handle new `new_coverage`/`new_branch_coverage` metrics |
 | `automation/.../service/TagBuilderService.kt` | `:automation` | Read variable name from settings; fix case-sensitive state match |
+| `automation/.../service/ConflictDetectorService.kt` | `:automation` | Read variable name from settings (also uses `"dockerTagsAsJson"`) |
+| `automation/.../service/QueueService.kt` | `:automation` | Read variable name from settings (also uses `"dockerTagsAsJson"`) |
 | `bamboo/.../ui/BuildDashboardPanel.kt` | `:bamboo` | Use git repo default branch instead of hardcoded `"master"` |
 | `sonar/.../service/SonarDataService.kt` | `:sonar` | Use git repo default branch instead of hardcoded `"main"` |
 | `src/main/resources/META-INF/plugin.xml` | root | Register new configurables |
