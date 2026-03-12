@@ -6,20 +6,22 @@ import org.junit.jupiter.api.Test
 class CoverageLineMarkerLogicTest {
 
     @Test
-    fun `covered color is green`() {
-        val icon = CoverageLineMarkerProvider.coverageIcon(CoverageLineMarkerProvider.COVERED_COLOR)
-        assertNotNull(icon)
-        assertEquals(6, icon.iconWidth)
-        assertEquals(14, icon.iconHeight)
+    fun `SVG icon resources exist on classpath`() {
+        val coveredUrl = CoverageLineMarkerProvider::class.java.getResource("/icons/coverage-covered.svg")
+        val uncoveredUrl = CoverageLineMarkerProvider::class.java.getResource("/icons/coverage-uncovered.svg")
+        val partialUrl = CoverageLineMarkerProvider::class.java.getResource("/icons/coverage-partial.svg")
+        assertNotNull(coveredUrl, "coverage-covered.svg should be on classpath")
+        assertNotNull(uncoveredUrl, "coverage-uncovered.svg should be on classpath")
+        assertNotNull(partialUrl, "coverage-partial.svg should be on classpath")
     }
 
     @Test
-    fun `all three status colors produce distinct icons`() {
-        val covered = CoverageLineMarkerProvider.coverageIcon(CoverageLineMarkerProvider.COVERED_COLOR)
-        val uncovered = CoverageLineMarkerProvider.coverageIcon(CoverageLineMarkerProvider.UNCOVERED_COLOR)
-        val partial = CoverageLineMarkerProvider.coverageIcon(CoverageLineMarkerProvider.PARTIAL_COLOR)
-        assertNotNull(covered)
-        assertNotNull(uncovered)
-        assertNotNull(partial)
+    fun `dark SVG icon resources exist on classpath`() {
+        val coveredDarkUrl = CoverageLineMarkerProvider::class.java.getResource("/icons/coverage-covered_dark.svg")
+        val uncoveredDarkUrl = CoverageLineMarkerProvider::class.java.getResource("/icons/coverage-uncovered_dark.svg")
+        val partialDarkUrl = CoverageLineMarkerProvider::class.java.getResource("/icons/coverage-partial_dark.svg")
+        assertNotNull(coveredDarkUrl, "coverage-covered_dark.svg should be on classpath")
+        assertNotNull(uncoveredDarkUrl, "coverage-uncovered_dark.svg should be on classpath")
+        assertNotNull(partialDarkUrl, "coverage-partial_dark.svg should be on classpath")
     }
 }
