@@ -11,6 +11,8 @@
     <depends>com.intellij.modules.java</depends>
     <depends>Git4Idea</depends>
     <depends optional="true" config-file="plugin-withCody.xml">com.sourcegraph.jetbrains</depends>
+    <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
+    <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
 
     <resource-bundle>messages.WorkflowBundle</resource-bundle>
 

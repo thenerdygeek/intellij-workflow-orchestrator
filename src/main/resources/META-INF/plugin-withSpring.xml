@@ -4,6 +4,8 @@
 -->
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Register Spring-specific extensions here -->
+        <projectService
+            serviceInterface="com.workflow.orchestrator.cody.service.SpringContextEnricher"
+            serviceImplementation="com.workflow.orchestrator.cody.service.SpringContextEnricherImpl"/>
     </extensions>
 </idea-plugin>

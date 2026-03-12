@@ -4,6 +4,7 @@
 -->
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Register Maven-specific extensions here -->
+        <!-- Maven API is used directly in :core services via runtime check.
+             This file declares the optional dependency relationship. -->
     </extensions>
 </idea-plugin>
