@@ -1281,7 +1281,17 @@ Every modified file preserves its fallback path that matches the **exact current
 
 ---
 
-## 14. Performance Considerations
+## 14. Service Lifecycle Notes
+
+**PsiContextEnricher** — Lightweight, stateless helper class. Created as a plain instance in `CodyContextService` (not a registered service). Holds only a `Project` reference, which is the same lifecycle as `CodyContextService` itself (project-scoped). No memory leak risk — when the project closes, `CodyContextService` is disposed, and `PsiContextEnricher` is garbage collected with it.
+
+**SpringContextEnricher** — Registered as an IntelliJ `projectService` in `plugin-withSpring.xml`. The interface lives in `:cody` (always on classpath). The implementation (`SpringContextEnricherImpl`) is only loaded when the Spring plugin is present. `CodyContextService` retrieves it via `project.getService()` — returns null on Community edition, falling back to `EMPTY`.
+
+**CodyContextService** — Must be annotated `@Service(Service.Level.PROJECT)` and registered in `plugin.xml` as a `<projectService>`. Methods `gatherFixContext()` and `gatherTestContext()` become `suspend fun` (they call `readAction {}` internally). All existing callers must be updated to call from a coroutine scope.
+
+---
+
+## 15. Performance Considerations
 
 | Operation | Cost | Mitigation |
 |-----------|------|------------|
@@ -1294,7 +1304,7 @@ Every modified file preserves its fallback path that matches the **exact current
 
 ---
 
-## 15. Migration Path
+## 16. Migration Path
 
 The upgrade is fully backward-compatible. No user action required. The enhanced behavior activates automatically when the IDE has Maven/Spring plugins loaded.
 
