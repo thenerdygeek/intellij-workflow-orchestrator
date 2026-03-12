@@ -30,7 +30,7 @@ dependencies {
     // -- IntelliJ Platform --
     intellijPlatform {
         // Target IDE: IntelliJ IDEA (unified since 2025.3; works for 2025.1 too)
-        intellijIdea(providers.gradleProperty("platformVersion"))
+        intellijIdeaUltimate(providers.gradleProperty("platformVersion"))
 
         // Bundled plugins your plugin depends on
         bundledPlugins(providers.gradleProperty("platformBundledPlugins").map {
