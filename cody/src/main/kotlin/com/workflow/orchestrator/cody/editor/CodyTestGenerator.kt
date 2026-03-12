@@ -2,10 +2,22 @@ package com.workflow.orchestrator.cody.editor
 
 import com.intellij.codeInsight.daemon.LineMarkerInfo
 import com.intellij.codeInsight.daemon.LineMarkerProvider
+import com.intellij.openapi.components.service
+import com.intellij.openapi.editor.markup.GutterIconRenderer
+import com.intellij.icons.AllIcons
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiIdentifier
+import com.intellij.psi.PsiMethod
+import com.workflow.orchestrator.cody.protocol.Position
+import com.workflow.orchestrator.cody.protocol.Range
+import com.workflow.orchestrator.cody.service.CodyContextService
+import com.workflow.orchestrator.cody.service.CodyEditService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.sonar.model.LineCoverageStatus
+import com.workflow.orchestrator.sonar.service.SonarDataService
+import kotlinx.coroutines.*
 
 class CodyTestGenerator : LineMarkerProvider {
 
@@ -24,9 +36,61 @@ class CodyTestGenerator : LineMarkerProvider {
         if (settings.state.codyEnabled == false) return
         if (!CredentialStore().hasToken(ServiceType.SOURCEGRAPH)) return
 
-        // Phase 1E skeleton: Full implementation depends on Phase 1D
-        // CoverageLineMarkerProvider being active. When coverage data is
-        // available, this provider adds "Workflow: Cover with Cody" markers on
-        // uncovered lines.
+        val virtualFile = file.virtualFile ?: return
+        val basePath = project.basePath ?: return
+        val relativePath = virtualFile.path.removePrefix("$basePath/")
+
+        val state = try {
+            SonarDataService.getInstance(project).stateFlow.value
+        } catch (_: Exception) { return }
+
+        val fileCoverage = state.fileCoverage[relativePath] ?: return
+
+        for (element in elements) {
+            if (element !is PsiIdentifier) continue
+            val method = element.parent as? PsiMethod ?: continue
+
+            val doc = file.viewProvider.document ?: continue
+            val methodStartLine = doc.getLineNumber(method.textRange.startOffset) + 1
+            val methodEndLine = doc.getLineNumber(method.textRange.endOffset) + 1
+
+            val hasUncoveredLines = (methodStartLine..methodEndLine).any { line ->
+                fileCoverage.lineStatuses[line] == LineCoverageStatus.UNCOVERED
+            }
+
+            if (!hasUncoveredLines) continue
+
+            val marker = LineMarkerInfo(
+                element,
+                element.textRange,
+                AllIcons.RunConfigurations.TestState.Run,
+                { "Workflow: Cover with Cody" },
+                { _, _ ->
+                    val range = Range(
+                        start = Position(line = methodStartLine - 1, character = 0),
+                        end = Position(line = methodEndLine, character = 0)
+                    )
+                    @Suppress("DEPRECATION")
+                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                        val contextService = project.service<CodyContextService>()
+                        val testContext = contextService.gatherTestContext(
+                            filePath = virtualFile.path,
+                            targetRange = range
+                        )
+                        // Use enriched instruction (Spring-aware test patterns) via requestFix
+                        // since requestTestGeneration doesn't accept custom instructions
+                        CodyEditService(project).requestFix(
+                            filePath = virtualFile.path,
+                            range = range,
+                            instruction = testContext.instruction,
+                            contextFiles = testContext.contextFiles
+                        )
+                    }
+                },
+                GutterIconRenderer.Alignment.RIGHT,
+                { "Workflow: Cover with Cody" }
+            )
+            result.add(marker)
+        }
     }
 }
