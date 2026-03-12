@@ -53,6 +53,26 @@ class CopyrightFixService {
         return if (minYear == currentYear) "$currentYear" else "$minYear-$currentYear"
     }
 
+    fun wrapForLanguage(template: String, file: com.intellij.openapi.vfs.VirtualFile): String {
+        val fileType = com.intellij.openapi.fileTypes.FileTypeRegistry.getInstance().getFileTypeByFile(file)
+        val language = (fileType as? com.intellij.openapi.fileTypes.LanguageFileType)?.language ?: return template
+        val commenter = com.intellij.lang.LanguageCommenters.INSTANCE.forLanguage(language) ?: return template
+
+        val blockStart = commenter.blockCommentPrefix
+        val blockEnd = commenter.blockCommentSuffix
+        val linePrefix = commenter.lineCommentPrefix
+
+        return if (blockStart != null && blockEnd != null) {
+            "$blockStart\n${template.lines().joinToString("\n") { " * $it" }}\n $blockEnd"
+        } else if (linePrefix != null) {
+            template.lines().joinToString("\n") { "$linePrefix $it" }
+        } else {
+            template
+        }
+    }
+
+    /** @deprecated Use wrapForLanguage(template, VirtualFile) instead */
+    @Deprecated("Use VirtualFile overload", ReplaceWith("wrapForLanguage(template, file)"))
     fun wrapForLanguage(template: String, fileExtension: String): String {
         return when (fileExtension) {
             "java", "kt", "kts" -> "/*\n${template.lines().joinToString("\n") { " * $it" }}\n */"
@@ -71,11 +91,26 @@ class CopyrightFixService {
         return headerRegion.contains("copyright")
     }
 
+    fun isSourceFile(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
+        val fileType = com.intellij.openapi.fileTypes.FileTypeRegistry.getInstance().getFileTypeByFile(file)
+        return !fileType.isBinary
+    }
+
+    /** @deprecated Use isSourceFile(VirtualFile) instead */
+    @Deprecated("Use VirtualFile overload", ReplaceWith("isSourceFile(file)"))
     fun isSourceFile(fileName: String): Boolean {
         val extension = fileName.substringAfterLast('.', "")
         return extension in SOURCE_EXTENSIONS
     }
 
+    fun isGeneratedFile(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
+        val proj = project ?: return false
+        val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(proj)
+        return fileIndex.isInGeneratedSources(file) || fileIndex.isExcluded(file)
+    }
+
+    /** @deprecated Use isGeneratedFile(VirtualFile) instead */
+    @Deprecated("Use VirtualFile overload", ReplaceWith("isGeneratedFile(file)"))
     fun isGeneratedPath(filePath: String): Boolean {
         val normalized = filePath.replace('\\', '/')
         return GENERATED_PATH_PREFIXES.any { normalized.startsWith(it) }
