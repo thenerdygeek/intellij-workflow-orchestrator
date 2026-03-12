@@ -18,7 +18,12 @@ class CodyEditService(private val project: Project) {
         val server = providerService().ensureRunning()
         server.textDocumentDidFocus(TextDocumentIdentifier(filePath))
         return server.editCommandsCode(
-            EditCommandsCodeParams(instruction = instruction, mode = "edit", range = range)
+            EditCommandsCodeParams(
+                instruction = instruction,
+                mode = "edit",
+                range = range,
+                contextFiles = contextFiles.takeIf { it.isNotEmpty() }
+            )
         ).await()
     }
 

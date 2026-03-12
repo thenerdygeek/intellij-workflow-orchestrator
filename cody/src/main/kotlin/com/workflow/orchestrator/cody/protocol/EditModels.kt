@@ -6,7 +6,8 @@ data class EditCommandsCodeParams(
     val instruction: String,
     val model: String? = null,
     val mode: String = "edit",
-    val range: Range? = null
+    val range: Range? = null,
+    val contextFiles: List<ContextFile>? = null
 )
 
 data class EditTask(
