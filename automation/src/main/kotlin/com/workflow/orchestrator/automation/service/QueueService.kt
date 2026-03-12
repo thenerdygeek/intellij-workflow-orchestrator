@@ -50,13 +50,17 @@ class QueueService : Disposable {
         val credentialStore = CredentialStore()
         this.bambooClient = BambooApiClient(
             baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
+            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
         val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
             ?: settings.state.nexusUrl.orEmpty()).trimEnd('/')
         this.registryClient = DockerRegistryClient(
             registryUrl = registryUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) }
+            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
         this.eventBus = project.getService(EventBus::class.java)
         this.tagHistoryService = project.getService(TagHistoryService::class.java)

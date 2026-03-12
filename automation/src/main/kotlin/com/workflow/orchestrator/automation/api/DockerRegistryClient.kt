@@ -21,14 +21,16 @@ import java.util.concurrent.TimeUnit
  */
 class DockerRegistryClient(
     private val registryUrl: String,
-    private val tokenProvider: () -> String?
+    private val tokenProvider: () -> String?,
+    private val connectTimeoutSeconds: Long = 15,
+    private val readTimeoutSeconds: Long = 30
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
+            .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
             .build()
     }
 

@@ -32,7 +32,12 @@ class SonarDataService(private val project: Project) : Disposable {
         val url = settings.state.sonarUrl.orEmpty().trimEnd('/')
         if (url.isBlank()) return null
         val credentialStore = CredentialStore()
-        return SonarApiClient(url) { credentialStore.getToken(ServiceType.SONARQUBE) }
+        return SonarApiClient(
+            baseUrl = url,
+            tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+        )
     }
 
     private val currentBranch: String get() {

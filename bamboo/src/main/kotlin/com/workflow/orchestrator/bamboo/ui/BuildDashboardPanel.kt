@@ -35,7 +35,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val credentialStore = CredentialStore()
     private val apiClient = BambooApiClient(
         baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
-        tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
+        tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
+        connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+        readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
     )
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val monitorService = BuildMonitorService.getInstance(project)

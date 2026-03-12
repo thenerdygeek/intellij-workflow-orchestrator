@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.core.http
 
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.settings.PluginSettings
 import okhttp3.OkHttpClient
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -29,6 +31,20 @@ class HttpClientFactory(
             baseClient.newBuilder()
                 .addInterceptor(AuthInterceptor({ tokenProvider(service) }, scheme))
                 .build()
+        }
+    }
+
+    companion object {
+        /**
+         * Creates an [HttpClientFactory] with timeouts read from [PluginSettings].
+         */
+        fun fromSettings(project: Project, tokenProvider: (ServiceType) -> String?): HttpClientFactory {
+            val settings = PluginSettings.getInstance(project)
+            return HttpClientFactory(
+                tokenProvider = tokenProvider,
+                connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+                readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+            )
         }
     }
 }
