@@ -17,6 +17,9 @@ class ChaosMiddlewareTest {
             val config = ChaosConfig().apply {
                 this.enabled = enabled
                 this.rate = rate
+                // Zero delays in tests to avoid timeouts
+                this.slowDelayMs = 0L..0L
+                this.timeoutDelayMs = 0L
             }
             attributes.put(ChaosConfigKey, config)
             install(ChaosPlugin)
@@ -39,8 +42,17 @@ class ChaosMiddlewareTest {
     @Test
     fun `chaos with rate 1 affects all requests`() = testApplication {
         setupChaos(enabled = true, rate = 1.0)
-        val response = client.get("/test")
-        assertNotEquals("OK", response.bodyAsText())
+        // SLOW_RESPONSE type delays but still returns normal "OK" from the route handler,
+        // so we run multiple requests and assert at least one is visibly affected
+        // (non-200 status, different body, or different content-type).
+        val results = (1..10).map {
+            val r = client.get("/test")
+            Triple(r.status, r.bodyAsText(), r.headers["Content-Type"])
+        }
+        val anyAffected = results.any { (status, body, _) ->
+            status != HttpStatusCode.OK || body != "OK"
+        }
+        assertTrue(anyAffected, "At least one request should be visibly affected by chaos")
     }
 
     @Test
@@ -52,7 +64,11 @@ class ChaosMiddlewareTest {
 
     @Test
     fun `admin can toggle chaos at runtime via shared config`() = testApplication {
-        val config = ChaosConfig().apply { enabled = false }
+        val config = ChaosConfig().apply {
+            enabled = false
+            slowDelayMs = 0L..0L
+            timeoutDelayMs = 0L
+        }
         application {
             attributes.put(ChaosConfigKey, config)
             install(ChaosPlugin)
@@ -61,6 +77,15 @@ class ChaosMiddlewareTest {
         assertEquals("OK", client.get("/test").bodyAsText())
         config.enabled = true
         config.rate = 1.0
-        assertNotEquals("OK", client.get("/test").bodyAsText())
+        // SLOW_RESPONSE chaos type delays but still lets route return "OK",
+        // so check multiple requests for at least one visible effect.
+        val results = (1..10).map {
+            val r = client.get("/test")
+            r.status to r.bodyAsText()
+        }
+        val anyAffected = results.any { (status, body) ->
+            status != HttpStatusCode.OK || body != "OK"
+        }
+        assertTrue(anyAffected, "At least one request should be affected after enabling chaos")
     }
 }

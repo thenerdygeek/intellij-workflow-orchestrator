@@ -14,6 +14,10 @@ import kotlin.random.Random
 class ChaosConfig {
     var enabled: Boolean = false
     var rate: Double = 0.2
+    /** Delay range in ms for SLOW_RESPONSE. Set to 0..0 in tests to avoid real waits. */
+    var slowDelayMs: LongRange = 10_000L..15_000L
+    /** Delay in ms for TIMEOUT. Set to 0 in tests. */
+    var timeoutDelayMs: Long = 35_000L
 }
 
 /** Attribute key to store the shared ChaosConfig reference on the application. */
@@ -31,11 +35,12 @@ val ChaosPlugin = createApplicationPlugin(name = "ChaosPlugin") {
         val failureType = selectFailureType()
         when (failureType) {
             ChaosFailure.SLOW_RESPONSE -> {
-                delay(Random.nextLong(10_000, 15_000))
+                val range = config.slowDelayMs
+                if (range.last > 0) delay(Random.nextLong(range.first, range.last + 1))
                 return@onCall
             }
             ChaosFailure.TIMEOUT -> {
-                delay(35_000)
+                if (config.timeoutDelayMs > 0) delay(config.timeoutDelayMs)
                 call.respondText("Timed out", ContentType.Text.Plain, HttpStatusCode.GatewayTimeout)
             }
             ChaosFailure.MALFORMED_JSON -> {
