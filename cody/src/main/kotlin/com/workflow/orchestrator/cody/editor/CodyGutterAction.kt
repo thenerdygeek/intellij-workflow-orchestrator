@@ -26,7 +26,7 @@ class CodyGutterAction : LineMarkerProvider {
 
         // Phase 1E skeleton: Full implementation depends on Phase 1D's
         // SonarIssueAnnotator being active. When Sonar annotations are
-        // available, this provider adds "Fix with Cody" markers on
+        // available, this provider adds "Workflow: Fix with Cody" markers on
         // lines with issues.
     }
 }

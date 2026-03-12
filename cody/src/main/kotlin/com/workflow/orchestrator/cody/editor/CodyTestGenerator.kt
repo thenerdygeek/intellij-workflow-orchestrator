@@ -26,7 +26,7 @@ class CodyTestGenerator : LineMarkerProvider {
 
         // Phase 1E skeleton: Full implementation depends on Phase 1D
         // CoverageLineMarkerProvider being active. When coverage data is
-        // available, this provider adds "Cover with Cody" markers on
+        // available, this provider adds "Workflow: Cover with Cody" markers on
         // uncovered lines.
     }
 }

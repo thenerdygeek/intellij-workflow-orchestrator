@@ -32,7 +32,7 @@ class CodyEditApplier(private val project: Project) {
 
         val contentFactory = DiffContentFactory.getInstance()
         val request = SimpleDiffRequest(
-            "Cody AI Fix — ${editTask.instruction ?: "Edit"}",
+            "Workflow Cody Fix — ${editTask.instruction ?: "Edit"}",
             contentFactory.create(project, originalContent, vFile.fileType),
             contentFactory.create(project, modifiedContent, vFile.fileType),
             "Original",
@@ -48,7 +48,7 @@ class CodyEditApplier(private val project: Project) {
         val content = op.textContents ?: return
         val contentFactory = DiffContentFactory.getInstance()
         val request = SimpleDiffRequest(
-            "Cody AI — New File",
+            "Workflow Cody — New File",
             contentFactory.createEmpty(),
             contentFactory.create(content),
             "Empty",
@@ -61,7 +61,7 @@ class CodyEditApplier(private val project: Project) {
     }
 
     fun applyEdits(operations: List<WorkspaceEditOperation>) {
-        WriteCommandAction.runWriteCommandAction(project, "Cody AI Edit", "cody.edit", {
+        WriteCommandAction.runWriteCommandAction(project, "Workflow Cody Edit", "workflow.cody.edit", {
             for (op in operations) {
                 when (op.type) {
                     "edit-file" -> applyEditFileOperation(op)

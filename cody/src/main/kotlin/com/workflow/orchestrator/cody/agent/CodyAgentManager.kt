@@ -192,7 +192,7 @@ class CodyAgentManager(private val project: Project) : Disposable {
         try {
             WorkflowNotificationService.getInstance(project).notifyError(
                 WorkflowNotificationService.GROUP_CODY,
-                "Cody AI",
+                "Workflow Cody",
                 message
             )
         } catch (e: Exception) {

@@ -16,9 +16,9 @@ import kotlinx.coroutines.*
 
 class CodyIntentionAction : IntentionAction {
 
-    override fun getText(): String = "Ask Cody to fix"
+    override fun getText(): String = "Workflow: Fix with Cody"
 
-    override fun getFamilyName(): String = "Cody AI"
+    override fun getFamilyName(): String = "Workflow Orchestrator"
 
     override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
         if (editor == null || file == null) return false

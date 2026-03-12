@@ -8,13 +8,13 @@ class CodyIntentionActionTest {
     @Test
     fun `getText returns expected label`() {
         val action = CodyIntentionAction()
-        assertEquals("Ask Cody to fix", action.text)
+        assertEquals("Workflow: Fix with Cody", action.text)
     }
 
     @Test
-    fun `getFamilyName returns Cody AI`() {
+    fun `getFamilyName returns Workflow Orchestrator`() {
         val action = CodyIntentionAction()
-        assertEquals("Cody AI", action.familyName)
+        assertEquals("Workflow Orchestrator", action.familyName)
     }
 
     @Test

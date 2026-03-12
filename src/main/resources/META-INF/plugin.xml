@@ -129,12 +129,12 @@
         <intentionAction>
             <language>JAVA</language>
             <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
-            <category>Cody AI</category>
+            <category>Workflow Orchestrator</category>
         </intentionAction>
         <intentionAction>
             <language>kotlin</language>
             <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
-            <category>Cody AI</category>
+            <category>Workflow Orchestrator</category>
         </intentionAction>
 
         <!-- Cody Document Sync -->
