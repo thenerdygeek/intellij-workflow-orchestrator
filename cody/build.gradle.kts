@@ -17,7 +17,7 @@ repositories {
 dependencies {
     intellijPlatform {
         intellijIdeaUltimate(providers.gradleProperty("platformVersion"))
-        bundledPlugins(listOf("Git4Idea", "com.intellij.java", "org.jetbrains.idea.maven"))
+        bundledPlugins(listOf("Git4Idea", "com.intellij.java", "org.jetbrains.idea.maven", "com.intellij.spring"))
     }
 
     implementation(project(":core"))
