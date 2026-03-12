@@ -7,12 +7,21 @@ import kotlinx.coroutines.future.await
 
 class CodyChatService(private val project: Project) {
 
-    suspend fun generateCommitMessage(diff: String): String? {
+    suspend fun generateCommitMessage(
+        diff: String,
+        contextFiles: List<ContextFile> = emptyList()
+    ): String? {
         val server = CodyAgentProviderService.getInstance(project).ensureRunning()
         val chatId = server.chatNew().await()
         val prompt = buildCommitMessagePrompt(diff)
         val response = server.chatSubmitMessage(
-            ChatSubmitParams(id = chatId, message = ChatMessage(text = prompt))
+            ChatSubmitParams(
+                id = chatId,
+                message = ChatMessage(
+                    text = prompt,
+                    contextFiles = contextFiles
+                )
+            )
         ).await()
         return response.messages.lastOrNull { it.speaker == "assistant" }?.text
     }

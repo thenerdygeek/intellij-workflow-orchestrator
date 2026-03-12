@@ -52,6 +52,33 @@ class CodyChatServiceTest {
     }
 
     @Test
+    fun `generateCommitMessage passes contextFiles in ChatMessage`() = runTest {
+        every { mockServer.chatNew() } returns CompletableFuture.completedFuture("chat-003")
+        every { mockServer.chatSubmitMessage(any()) } returns CompletableFuture.completedFuture(
+            ChatResponse(
+                type = "transcript",
+                messages = listOf(
+                    TranscriptMessage(speaker = "assistant", text = "feat: add new endpoint")
+                )
+            )
+        )
+
+        val contextFiles = listOf(
+            ContextFile(uri = "/src/main/kotlin/Foo.kt"),
+            ContextFile(uri = "/src/main/kotlin/Bar.kt")
+        )
+        val result = service.generateCommitMessage("diff --git a/...", contextFiles)
+        assertEquals("feat: add new endpoint", result)
+        verify {
+            mockServer.chatSubmitMessage(match {
+                it.message.contextFiles.size == 2 &&
+                    it.message.contextFiles[0].uri == "/src/main/kotlin/Foo.kt" &&
+                    it.message.contextFiles[1].uri == "/src/main/kotlin/Bar.kt"
+            })
+        }
+    }
+
+    @Test
     fun `buildCommitMessagePrompt includes diff content`() {
         val prompt = service.buildCommitMessagePromptForTest("--- a/Foo.kt\n+++ b/Foo.kt")
         assertTrue(prompt.contains("--- a/Foo.kt"))
@@ -62,11 +89,20 @@ class CodyChatServiceTest {
 class TestCodyChatService(
     private val server: com.workflow.orchestrator.cody.agent.CodyAgentServer
 ) {
-    suspend fun generateCommitMessage(diff: String): String? {
+    suspend fun generateCommitMessage(
+        diff: String,
+        contextFiles: List<ContextFile> = emptyList()
+    ): String? {
         val chatId = server.chatNew().get()
         val prompt = buildCommitMessagePromptForTest(diff)
         val response = server.chatSubmitMessage(
-            ChatSubmitParams(id = chatId, message = ChatMessage(text = prompt))
+            ChatSubmitParams(
+                id = chatId,
+                message = ChatMessage(
+                    text = prompt,
+                    contextFiles = contextFiles
+                )
+            )
         ).get()
         return response.messages.lastOrNull { it.speaker == "assistant" }?.text
     }

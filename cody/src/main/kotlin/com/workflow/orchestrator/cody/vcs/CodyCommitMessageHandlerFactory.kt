@@ -35,9 +35,15 @@ class CodyCommitMessageHandler(
         val prompt = buildEnrichedPrompt()
         val diff = getDiff()
         val enrichedPrompt = "$prompt\n```diff\n$diff\n```"
+        val changedFiles = panel.virtualFiles.toList()
         return try {
             com.workflow.orchestrator.cody.service.CodyChatService(panel.project)
-                .generateCommitMessage(enrichedPrompt)
+                .generateCommitMessage(
+                    diff = enrichedPrompt,
+                    contextFiles = changedFiles.map {
+                        com.workflow.orchestrator.cody.protocol.ContextFile(uri = it.path)
+                    }
+                )
         } catch (e: Exception) {
             log.warn("Cody commit message generation failed: ${e.message}")
             null
