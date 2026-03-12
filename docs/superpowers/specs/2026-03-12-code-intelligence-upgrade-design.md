@@ -1,61 +1,120 @@
 # Code Intelligence Upgrade — Design Specification
 
-> **Scope:** Cross-cutting upgrade across `:core`, `:cody`, `:bamboo`, `:sonar`, `:handover` modules
-> **Goal:** Replace shallow regex/string parsing with IntelliJ's deep code understanding APIs (PSI, MavenProjectsManager, SpringManager, LanguageCommenters, ProjectFileIndex)
+> **Scope:** Cross-cutting upgrade across ALL modules (`:core`, `:cody`, `:bamboo`, `:sonar`, `:handover`)
+> **Goal:** Establish IDE-level code intelligence as a first-class capability — every feature that touches code uses IntelliJ's deep understanding (PSI, SpringManager, MavenProjectsManager, ProjectFileIndex) instead of regex/string parsing
 > **Build target change:** `intellijIdea()` → `intellijIdeaUltimate()` to enable compile-time Spring API access
 > **Backward compatibility:** All upgrades use optional dependencies with graceful fallback — plugin still installs on Community edition
+> **Target intelligence level:** ~90% of available IntelliJ intelligence (see §2.4 for what the remaining ~10% represents)
 
 ---
 
 ## 1. Overview
 
-The Workflow Orchestrator plugin currently uses regex and string manipulation in 7 services where IntelliJ Platform provides deep, semantic APIs. This is the equivalent of using `grep` when you have a SQL database — the IDE already understands the code's structure, types, annotations, and framework semantics.
+The Workflow Orchestrator plugin currently treats IntelliJ as a container rather than a source of intelligence. Across 19 features, code context is either absent, hardcoded, or extracted via regex — when the IDE already understands the code's structure, types, annotations, Spring semantics, and Maven module graph.
 
-**Why this matters:** The biggest user-facing impact is in Cody AI context. Currently, Cody receives a single file path and an issue description. After this upgrade, Cody receives Spring bean graphs, transaction boundaries, related test files, annotation metadata, and Maven module context — dramatically improving fix quality for Spring Boot applications.
+This spec covers two categories of upgrades:
+
+**Category A — Fix Bad Patterns (7 files):** Replace regex/string parsing with proper IntelliJ APIs where the code is actively doing things wrong (e.g., hand-parsing `pom.xml` XML when `MavenProjectsManager` exists).
+
+**Category B — Add Missing Intelligence (12 features):** Wire IntelliJ's PSI/Spring/Maven intelligence into features that currently have zero code context — most critically, the Cody AI integration where the difference between "raw file path" and "Spring bean with `@Transactional` scope, injected dependencies, and related test file" is the difference between a generic fix and an accurate one.
 
 **Design philosophy:** Every upgrade maintains a fallback path. If Maven plugin isn't loaded yet (project importing), fall back to regex. If Spring plugin isn't installed (Community edition), provide PSI-only context. No feature degrades — they only get better when richer APIs are available.
+
+**Intelligence ceiling:** We target ~90% of available IntelliJ intelligence. The remaining ~10% consists of runtime-only information (active Spring profiles, `@ConditionalOnProperty` resolution, AOP proxy chains, database schema), cross-system correlation (APM data, production traffic), and diminishing-return PSI traversals (500+ reference searches). Cody's AI compensates for this gap — 90% context lets it infer the rest; 10% context means it's guessing blind.
 
 ---
 
 ## 2. Scope
 
-### 2.1 In Scope (This Spec)
+### 2.1 Category A — Fix Bad Patterns (7 files using regex where IntelliJ APIs exist)
 
 | # | File | Module | Current Problem | Upgrade |
 |---|------|--------|----------------|---------|
-| 1 | `MavenModuleDetector.kt` | `:core` | Regex XML state machine to parse `pom.xml` | `MavenProjectsManager` API |
-| 2 | `CodyContextService.kt` + `CodyContextServiceLogic.kt` | `:cody` | String-based test resolution, zero Spring/PSI context | PSI + Spring enrichment |
-| 3 | `CopyrightCheckService.kt` | `:core` | Hardcoded file extensions, raw byte reading | `FileTypeRegistry`, document API |
-| 4 | `CopyrightFixService.kt` | `:handover` | Hardcoded comment syntax, hardcoded generated paths | `LanguageCommenters`, `ProjectFileIndex` |
-| 5 | `PlanDetectionService.kt` | `:bamboo` | YAML regex for Bamboo specs | YAML PSI parser |
-| 6 | `SonarIssueAnnotator.kt` | `:sonar` | String prefix removal for relative paths | `VfsUtilCore` |
-| 7 | `CoverageLineMarkerProvider.kt` | `:sonar` | Same path issue + manual `BufferedImage` icons | `VfsUtilCore` + SVG icons |
+| A1 | `MavenModuleDetector.kt` | `:core` | Regex XML state machine to parse `pom.xml` | `MavenProjectsManager` API |
+| A2 | `CodyContextService.kt` + `CodyContextServiceLogic.kt` | `:cody` | String-based test resolution, zero Spring/PSI context | PSI + Spring enrichment |
+| A3 | `CopyrightCheckService.kt` | `:core` | Hardcoded file extensions, raw byte reading | `FileTypeRegistry`, document API |
+| A4 | `CopyrightFixService.kt` | `:handover` | Hardcoded comment syntax, hardcoded generated paths | `LanguageCommenters`, `ProjectFileIndex` |
+| A5 | `PlanDetectionService.kt` | `:bamboo` | YAML regex for Bamboo specs | SnakeYAML parser |
+| A6 | `SonarIssueAnnotator.kt` | `:sonar` | String prefix removal for relative paths | `VfsUtilCore` |
+| A7 | `CoverageLineMarkerProvider.kt` | `:sonar` | String path + manual `BufferedImage` icons | `VfsUtilCore` + SVG icons |
 
-### 2.2 Out of Scope (No Changes Needed)
+### 2.2 Category B — Add Missing Intelligence (12 features with zero/minimal code context)
+
+#### B1: Cody Intelligence Layer (highest user-facing impact)
+
+| # | File | Module | Current State | Upgrade |
+|---|------|--------|--------------|---------|
+| B1 | `CodyIntentionAction.kt` | `:cody` | Sends hardcoded `issueType="CODE_SMELL"`, `issueMessage="Issue detected"`, `ruleKey="unknown"` + single file path | Pass real Sonar issue data + PSI context (method, class, annotations) + Spring context |
+| B2 | `CodyCommitMessageHandlerFactory.kt` | `:cody` | **Empty skeleton** — no implementation | PSI-enriched diff: changed Spring beans, affected endpoints, Maven modules |
+| B3 | `CodyChatService.kt` | `:cody` | Sends raw `git diff` text only for commit messages | Add `contextFiles` to ChatMessage, include PSI metadata in prompt |
+| B4 | `CodyTestGenerator.kt` | `:cody` | **Empty skeleton** — no implementation | PSI: target method + Spring bean type → `@WebMvcTest`/`@DataJpaTest`/`@MockBean` selection |
+| B5 | `CodyEditService.kt` | `:cody` | Accepts `contextFiles` parameter but **never passes it** — `EditCommandsCodeParams` DTO missing the field | Fix protocol DTO, pass context files to Cody Agent |
+| B6 | `PreReviewService.kt` | `:handover` | Sends raw diff with generic prompt "analyze for anti-patterns" | PSI-annotate diff: `@Transactional` boundaries, `@Async` contexts, Spring bean modifications |
+
+#### B2: Build & Navigation Intelligence (developer efficiency)
+
+| # | File | Module | Current State | Upgrade |
+|---|------|--------|--------------|---------|
+| B7 | `HealthCheckService.kt` | `:core` | Runs ALL checks (compile+test+copyright+sonar) on every push | PSI + `ProjectFileIndex`: detect test-only changes → skip compile (60s→15s) |
+| B8 | `MavenBuildService.kt` | `:core` | Shells out to `mvn` via `OSProcessHandler` subprocess | Use `MavenRunner.run()` for IDE-integrated builds |
+| B9 | `SonarIssueAnnotator.kt` | `:sonar` | Maps issues to text ranges but doesn't know WHAT code element | PSI: resolve to `PsiMethod`/`PsiClass`, show method signature + Spring annotations in tooltip |
+| B10 | `PrService.kt` | `:handover` | PR description is `"PROJ-123: Summary\nBranch: feature/PROJ-123"` | `MavenProjectsManager`: changed modules. PSI: affected `@RestController` endpoints |
+| B11 | `CoverageLineMarkerProvider.kt` | `:sonar` | All uncovered lines look identical | Spring-aware: highlight uncovered `@RequestMapping` endpoints differently |
+| B12 | `CoverageTreeDecorator.kt` | `:sonar` | `path.contains("/test/")` string matching | `ProjectFileIndex.isInTestSourceContent()` |
+
+### 2.3 Out of Scope (Correct as-is)
 
 | File | Module | Reason |
 |------|--------|--------|
-| `CveRemediationService.kt` | `:bamboo` | Parses external Bamboo build logs — regex is correct for unstructured external data |
+| `CveRemediationService.kt` | `:bamboo` | Parses external Bamboo build logs — regex correct for unstructured external data |
 | `BuildLogParser.kt` | `:bamboo` | Same — external Bamboo log output, not IDE artifacts |
-| `PreReviewService.kt` | `:handover` | Requires Cody Agent protocol change (JSON-RPC structured responses), not an IntelliJ API swap |
 | `CveIntentionAction.kt` | `:bamboo` | Already uses correct PSI patterns — reference implementation |
 | `CveAnnotator.kt` | `:bamboo` | Already uses correct ExternalAnnotator + PSI — reference implementation |
 | `BranchingService.kt` | `:jira` | Already uses correct Git4Idea APIs — reference implementation |
+| `JiraClosureService.kt` | `:handover` | Operates on computed data, not source code |
+| `BuildMonitorService.kt` | `:bamboo` | Speaks only to Bamboo REST API, context-independent by design |
 
-### 2.3 Priority Tiers
+### 2.4 Intelligence Ceiling (~90% target, ~10% unreachable)
 
-**Tier 1 (HIGH — Deep API replacements, biggest user impact):**
-- MavenModuleDetector: affects incremental builds, changed-module detection
-- CodyContextService: affects every AI-assisted fix and test generation
+The remaining ~10% consists of information that is either impossible to obtain statically or not worth the complexity:
 
-**Tier 2 (MEDIUM — Targeted improvements):**
-- CopyrightCheckService: affects health check copyright validation
-- CopyrightFixService: affects handover copyright year updates
-- PlanDetectionService: affects Bamboo plan auto-detection
+| Category | Examples | Why Unreachable |
+|----------|---------|----------------|
+| **Runtime-only** | Active Spring profile, `@ConditionalOnProperty` resolution, AOP proxy chains, database schema | Only exists when `java -jar` runs — IDE does static analysis |
+| **Cross-system** | Production traffic patterns, APM metrics, deployment topology | Requires Grafana/Datadog integration — outside IDE scope |
+| **Diminishing returns** | Scanning 500+ bean consumers, full transitive dependency graph | 2-3s delay per action; user-perceptible jank for marginal context gain |
+| **Protocol limits** | Cody Agent may ignore extra context fields | Agent must be updated to consume enriched context |
 
-**Tier 3 (LOW — Quick fixes):**
-- SonarIssueAnnotator: cosmetic path computation fix
-- CoverageLineMarkerProvider: cosmetic path fix + icon modernization
+Cody's AI compensates for this gap — with 90% context it can infer the rest. With 10% context (current state), it's guessing blind.
+
+### 2.5 Priority Tiers
+
+**Tier 1 — CRITICAL (Cody intelligence + Maven foundation):**
+- A1: MavenModuleDetector → `MavenProjectsManager`
+- A2: CodyContextService → PSI + Spring enrichment (new `PsiContextEnricher` + `SpringContextEnricher`)
+- B1: CodyIntentionAction → pass real issue data + enriched context
+- B5: CodyEditService + EditCommandsCodeParams → fix protocol DTO, pass context files
+
+**Tier 2 — HIGH (Cody features + build intelligence):**
+- B2: CodyCommitMessageHandler → implement with PSI-enriched diff
+- B3: CodyChatService → add contextFiles + semantic metadata to prompt
+- B4: CodyTestGenerator → implement with Spring-aware test patterns
+- B6: PreReviewService → PSI-annotate diff before sending to Cody
+- B7: HealthCheckService → smart check skipping
+- B8: MavenBuildService → `MavenRunner` integration
+
+**Tier 3 — MEDIUM (Sonar + Handover enrichment):**
+- A3: CopyrightCheckService → `FileTypeRegistry` + document API
+- A4: CopyrightFixService → `LanguageCommenters` + `ProjectFileIndex`
+- A5: PlanDetectionService → SnakeYAML
+- B9: SonarIssueAnnotator → PsiElement resolution for method-level context
+- B10: PrService → module/endpoint-aware descriptions
+- B11: CoverageLineMarkerProvider → Spring-aware endpoint highlighting
+
+**Tier 4 — LOW (Polish):**
+- A6: SonarIssueAnnotator → `VfsUtilCore` path fix
+- A7: CoverageLineMarkerProvider → SVG icons
+- B12: CoverageTreeDecorator → `ProjectFileIndex`
 
 ---
 
@@ -1210,62 +1269,644 @@ import com.intellij.openapi.util.IconLoader
 
 ---
 
-## 11. File Change Summary
+## 11. Category B: Cody Intelligence Layer
 
-### New Files (5)
+### 11.1 B1: CodyIntentionAction — Pass Real Issue Data + PSI Context
 
-| Path | Module | Purpose |
-|------|--------|---------|
-| `cody/src/main/kotlin/.../service/PsiContextEnricher.kt` | `:cody` | PSI-based code context extraction |
-| `cody/src/main/kotlin/.../service/SpringContextEnricher.kt` | `:cody` | Interface + Ultimate implementation for Spring context |
-| `sonar/src/main/resources/icons/coverage-covered.svg` | `:sonar` | SVG gutter icon (covered) |
-| `sonar/src/main/resources/icons/coverage-covered_dark.svg` | `:sonar` | SVG gutter icon (covered, dark) |
-| `sonar/src/main/resources/icons/coverage-uncovered.svg` | `:sonar` | SVG gutter icon (uncovered) |
-| `sonar/src/main/resources/icons/coverage-uncovered_dark.svg` | `:sonar` | SVG gutter icon (uncovered, dark) |
+**File:** `cody/src/main/kotlin/.../editor/CodyIntentionAction.kt`
 
-### Modified Files (12)
+**Current problem:** Lines 37-65 send hardcoded values:
+```kotlin
+issueType = "CODE_SMELL",        // HARDCODED
+issueMessage = "Issue detected", // HARDCODED
+ruleKey = "unknown"              // HARDCODED
+```
 
-| Path | Module | Changes |
-|------|--------|---------|
-| `build.gradle.kts` | root | `intellijIdea()` → `intellijIdeaUltimate()` |
-| `gradle.properties` | root | Add Maven, Spring, Spring Boot to `platformBundledPlugins` |
-| `src/main/resources/META-INF/plugin.xml` | root | Add 2 optional `<depends>` |
-| `src/main/resources/META-INF/plugin-withMaven.xml` | root | Empty (declares dependency) |
-| `src/main/resources/META-INF/plugin-withSpring.xml` | root | Register `SpringContextEnricherImpl` |
-| `core/.../maven/MavenModuleDetector.kt` | `:core` | `MavenProjectsManager` API with regex fallback |
-| `core/.../copyright/CopyrightCheckService.kt` | `:core` | `FileTypeRegistry` + `ProjectFileIndex` + document API |
-| `cody/.../service/CodyContextService.kt` | `:cody` | Orchestrate PSI + Spring enrichers |
-| `cody/.../service/CodyContextServiceLogic.kt` | `:cody` | Rename `resolveTestFile` → `resolveTestFileFallback` |
-| `handover/.../service/CopyrightFixService.kt` | `:handover` | `LanguageCommenters` + `ProjectFileIndex` |
-| `bamboo/.../service/PlanDetectionService.kt` | `:bamboo` | SnakeYAML parsing with regex fallback |
-| `sonar/.../ui/SonarIssueAnnotator.kt` | `:sonar` | `VfsUtilCore.getRelativePath()` |
-| `sonar/.../ui/CoverageLineMarkerProvider.kt` | `:sonar` | `VfsUtilCore` + SVG `IconLoader` |
+**Fix:** The intention action is triggered from Sonar gutter markers. It must receive the actual Sonar issue from the `SonarIssueAnnotator` annotation data, then pass it through `CodyContextService` which now enriches with PSI + Spring context.
+
+```kotlin
+override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
+    if (editor == null || file == null) return
+
+    // Extract real Sonar issue from annotation at caret position
+    val caretOffset = editor.caretModel.offset
+    val sonarIssue = findSonarIssueAtCaret(editor, caretOffset)
+
+    val range = if (sonarIssue != null) {
+        Range(
+            start = Position(line = sonarIssue.startLine - 1, character = 0),
+            end = Position(line = sonarIssue.endLine, character = 0)
+        )
+    } else {
+        val caretLine = editor.caretModel.logicalPosition.line
+        Range(start = Position(line = caretLine, character = 0),
+              end = Position(line = caretLine + 1, character = 0))
+    }
+
+    val filePath = file.virtualFile.path
+    val contextService = project.service<CodyContextService>()
+
+    // Now uses PsiContextEnricher + SpringContextEnricher internally
+    project.coroutineScope.launch(Dispatchers.IO) {
+        val fixContext = contextService.gatherFixContext(
+            filePath = filePath,
+            issueRange = range,
+            issueType = sonarIssue?.type?.name ?: "CODE_SMELL",
+            issueMessage = sonarIssue?.message ?: "Fix issue at cursor",
+            ruleKey = sonarIssue?.rule ?: "manual"
+        )
+        CodyEditService(project).requestFix(
+            filePath = filePath,
+            range = range,
+            instruction = fixContext.instruction,
+            contextFiles = fixContext.contextFiles
+        )
+    }
+}
+
+private fun findSonarIssueAtCaret(editor: Editor, offset: Int): MappedIssue? {
+    // Read Sonar issue data from ExternalAnnotator highlights at this offset
+    val highlights = editor.markupModel.allHighlighters
+    return highlights
+        .filter { it.startOffset <= offset && offset <= it.endOffset }
+        .mapNotNull { it.getUserData(SONAR_ISSUE_KEY) }
+        .firstOrNull()
+}
+```
+
+**Dependencies:** `SonarIssueAnnotator` must store `MappedIssue` in the highlighter's user data via `RangeHighlighter.putUserData(SONAR_ISSUE_KEY, issue)`. Add a `Key<MappedIssue>` companion object.
+
+### 11.2 B2: CodyCommitMessageHandler — Implement with PSI-Enriched Diff
+
+**File:** `cody/src/main/kotlin/.../vcs/CodyCommitMessageHandlerFactory.kt`
+
+**Current problem:** Empty skeleton handler with no implementation.
+
+**Implementation:** The commit message handler receives the staged changes from IntelliJ's VCS framework. It should:
+
+1. Get the list of changed files from the `CommitContext`
+2. For each changed file, use `PsiContextEnricher` to extract class/method/annotation metadata
+3. Use `MavenProjectsManager` to identify affected modules
+4. Build a semantic summary and pass to `CodyChatService`
+
+```kotlin
+class CodyCommitMessageHandlerFactory : CheckinHandlerFactory() {
+    override fun createHandler(panel: CheckinProjectPanel, context: CommitContext): CheckinHandler {
+        return CodyCommitMessageHandler(panel, context)
+    }
+}
+
+class CodyCommitMessageHandler(
+    private val panel: CheckinProjectPanel,
+    private val context: CommitContext
+) : CheckinHandler() {
+
+    override fun getAfterCheckinConfigurationPanel(disposable: Disposable): RefreshableOnComponent? {
+        // "Generate commit message with Cody" checkbox — already wired in plugin.xml
+        return null
+    }
+
+    suspend fun generateMessage(): String? {
+        val project = panel.project
+        val diff = getDiff(project)
+        val changedFiles = panel.virtualFiles.toList()
+
+        // Gather PSI context for changed files
+        val psiEnricher = PsiContextEnricher(project)
+        val fileContexts = changedFiles.mapNotNull { file ->
+            val ctx = psiEnricher.enrich(file.path)
+            if (ctx.className != null) {
+                "${ctx.className} (${ctx.classAnnotations.joinToString(", ") { "@$it" }})"
+            } else null
+        }
+
+        // Gather Maven module context
+        val modules = MavenProjectsManager.getInstance(project)
+            .takeIf { it.isMavenizedProject }
+            ?.projects
+            ?.filter { mp -> changedFiles.any { VfsUtilCore.isAncestor(mp.directoryFile, it, false) } }
+            ?.map { it.mavenId.artifactId }
+            ?: emptyList()
+
+        val enrichedPrompt = buildString {
+            append("Generate a concise git commit message for this diff.\n")
+            append("Use conventional commits format (feat/fix/refactor/etc).\n")
+            append("One line summary, optional body.\n\n")
+            if (modules.isNotEmpty()) {
+                append("Affected Maven modules: ${modules.joinToString(", ")}\n")
+            }
+            if (fileContexts.isNotEmpty()) {
+                append("Changed classes:\n")
+                fileContexts.forEach { append("- $it\n") }
+            }
+            append("\n```diff\n$diff\n```")
+        }
+
+        return CodyChatService(project).generateCommitMessage(enrichedPrompt)
+    }
+}
+```
+
+### 11.3 B3: CodyChatService — Add Context Files to Chat
+
+**File:** `cody/src/main/kotlin/.../agent/CodyChatService.kt`
+
+**Change:** When sending chat messages (e.g., commit message generation), include the changed files as `contextFiles` in the `ChatMessage`. The Cody Agent protocol supports this field — it's just not being used.
+
+```kotlin
+// Before
+val response = server.chatSubmitMessage(
+    ChatSubmitParams(id = chatId, message = ChatMessage(text = prompt))
+)
+
+// After
+val response = server.chatSubmitMessage(
+    ChatSubmitParams(
+        id = chatId,
+        message = ChatMessage(
+            text = prompt,
+            contextFiles = changedFiles.map { ContextFile(uri = it.path) }
+        )
+    )
+)
+```
+
+**Prerequisite:** Verify `ChatMessage` DTO has a `contextFiles` field. If not, add it to `ChatModels.kt`.
+
+### 11.4 B4: CodyTestGenerator — Spring-Aware Test Patterns
+
+**File:** `cody/src/main/kotlin/.../editor/CodyTestGenerator.kt`
+
+**Current problem:** Empty skeleton — no implementation.
+
+**Implementation:** When the user clicks the "Generate Test" gutter marker on an uncovered method, gather Spring context to select the right test pattern:
+
+```kotlin
+private fun buildTestInstruction(
+    psiContext: PsiContextEnricher.PsiContext,
+    springContext: SpringContextEnricher.SpringContext?,
+    range: Range
+): String = buildString {
+    append("Generate a unit test covering lines ${range.start.line}-${range.end.line}. ")
+    append("Use JUnit 5 with standard assertions. ")
+
+    // Spring-aware test pattern selection
+    if (springContext != null && springContext.isBean) {
+        when (springContext.beanType) {
+            "Controller", "RestController" -> {
+                append("Use @WebMvcTest with MockMvc. ")
+                append("Mock dependencies with @MockBean. ")
+                if (springContext.requestMappings.isNotEmpty()) {
+                    val endpoint = springContext.requestMappings.first()
+                    append("Test endpoint: ${endpoint.method} ${endpoint.path}. ")
+                }
+            }
+            "Service" -> {
+                append("Use @ExtendWith(MockitoExtension.class). ")
+                append("Mock injected dependencies: ")
+                append(springContext.injectedDependencies.joinToString(", ") {
+                    "${it.beanType.substringAfterLast('.')} (${it.beanName})"
+                })
+                append(". ")
+                if (springContext.transactionalMethods.isNotEmpty()) {
+                    append("Verify @Transactional rollback on exception. ")
+                }
+            }
+            "Repository" -> {
+                append("Use @DataJpaTest with @AutoConfigureTestDatabase. ")
+                append("Test with real embedded DB, not mocks. ")
+            }
+        }
+    }
+
+    if (psiContext.testFilePath != null) {
+        append("Add to existing test file: ${psiContext.testFilePath}. ")
+        append("Match the existing test style and imports. ")
+    } else {
+        append("Create a new test class. ")
+    }
+}
+```
+
+### 11.5 B5: CodyEditService + EditCommandsCodeParams — Fix Protocol DTO
+
+**File:** `cody/src/main/kotlin/.../protocol/EditModels.kt`
+
+**Current problem:** `EditCommandsCodeParams` has no `contextFiles` field. The service accepts context files but never passes them.
+
+**Fix:**
+
+```kotlin
+// Before
+data class EditCommandsCodeParams(
+    val instruction: String,
+    val model: String? = null,
+    val mode: String = "edit",
+    val range: Range? = null
+)
+
+// After
+data class EditCommandsCodeParams(
+    val instruction: String,
+    val model: String? = null,
+    val mode: String = "edit",
+    val range: Range? = null,
+    val contextFiles: List<ContextFile>? = null  // NEW: pass context to Cody Agent
+)
+```
+
+**And update `CodyEditService.requestFix()`:**
+
+```kotlin
+// Before — contextFiles parameter ignored
+return server.editCommandsCode(
+    EditCommandsCodeParams(instruction = instruction, mode = "edit", range = range)
+)
+
+// After — contextFiles passed through
+return server.editCommandsCode(
+    EditCommandsCodeParams(
+        instruction = instruction,
+        mode = "edit",
+        range = range,
+        contextFiles = contextFiles.takeIf { it.isNotEmpty() }
+    )
+)
+```
+
+### 11.6 B6: PreReviewService — PSI-Annotated Diff
+
+**File:** `handover/src/main/kotlin/.../service/PreReviewService.kt`
+
+**Current problem:** Sends raw diff with generic prompt. Cody guesses at Spring patterns without context.
+
+**Fix:** Before sending the diff to Cody, annotate it with PSI metadata:
+
+```kotlin
+suspend fun buildEnrichedReviewPrompt(diff: String, changedFiles: List<VirtualFile>): String {
+    val psiEnricher = PsiContextEnricher(project!!)
+    val springEnricher: SpringContextEnricher = try {
+        project!!.getService(SpringContextEnricher::class.java) ?: SpringContextEnricher.EMPTY
+    } catch (_: Exception) { SpringContextEnricher.EMPTY }
+
+    val fileAnnotations = changedFiles.mapNotNull { file ->
+        val psi = psiEnricher.enrich(file.path)
+        val spring = springEnricher.enrich(file.path)
+        if (psi.className == null) return@mapNotNull null
+
+        buildString {
+            append("${file.name}: ${psi.className}")
+            if (psi.classAnnotations.isNotEmpty()) {
+                append(" (${psi.classAnnotations.joinToString(", ") { "@$it" }})")
+            }
+            if (spring != null && spring.isBean) {
+                if (spring.transactionalMethods.isNotEmpty()) {
+                    append("\n  @Transactional methods: ${spring.transactionalMethods.joinToString(", ")}")
+                }
+                if (spring.requestMappings.isNotEmpty()) {
+                    append("\n  Endpoints: ${spring.requestMappings.joinToString(", ") { "${it.method} ${it.path}" }}")
+                }
+                if (spring.injectedDependencies.isNotEmpty()) {
+                    append("\n  Dependencies: ${spring.injectedDependencies.joinToString(", ") { it.beanType.substringAfterLast('.') }}")
+                }
+            }
+        }
+    }
+
+    return buildString {
+        append("Review this Spring Boot code change for anti-patterns, ")
+        append("missing @Transactional annotations, incorrect bean scoping, ")
+        append("and potential issues.\n\n")
+        if (fileAnnotations.isNotEmpty()) {
+            append("## Changed Classes (IDE Analysis)\n")
+            fileAnnotations.forEach { append("- $it\n") }
+            append("\n")
+        }
+        append("## Diff\n```diff\n$diff\n```")
+    }
+}
+```
 
 ---
 
-## 12. Testing Strategy
+## 12. Category B: Build & Navigation Intelligence
 
-### 12.1 Test Types by Tier
+### 12.1 B7: HealthCheckService — Smart Check Skipping
+
+**File:** `core/src/main/kotlin/.../healthcheck/HealthCheckService.kt`
+
+**Current problem:** Runs all 4 checks (compile, test, copyright, sonar gate) on every pre-push, even when only test files changed.
+
+**Fix:** Use `ProjectFileIndex` to classify changed files and skip unnecessary checks:
+
+```kotlin
+data class ChangeClassification(
+    val hasProductionCode: Boolean,
+    val hasTestCode: Boolean,
+    val hasResources: Boolean,
+    val hasBuildConfig: Boolean  // pom.xml, build.gradle
+)
+
+fun classifyChanges(changedFiles: List<VirtualFile>): ChangeClassification {
+    val fileIndex = ProjectFileIndex.getInstance(project)
+    var hasProd = false; var hasTest = false; var hasRes = false; var hasBuild = false
+
+    for (file in changedFiles) {
+        when {
+            file.name == "pom.xml" || file.name.endsWith(".gradle.kts") -> hasBuild = true
+            fileIndex.isInTestSourceContent(file) -> hasTest = true
+            fileIndex.isInSourceContent(file) && !fileIndex.isInTestSourceContent(file) -> hasProd = true
+            fileIndex.isInContent(file) && !fileIndex.isInSourceContent(file) -> hasRes = true
+        }
+    }
+    return ChangeClassification(hasProd, hasTest, hasRes, hasBuild)
+}
+
+suspend fun runChecks(context: HealthCheckContext): HealthCheckResult {
+    val classification = classifyChanges(context.changedFiles)
+
+    val checksToRun = enabledChecks.filter { check ->
+        when (check.id) {
+            "maven-compile" -> classification.hasProductionCode || classification.hasBuildConfig
+            "maven-test" -> classification.hasProductionCode || classification.hasTestCode || classification.hasBuildConfig
+            "copyright" -> classification.hasProductionCode  // only production files need copyright
+            "sonar-gate" -> true  // always check (server-side)
+            else -> true
+        }
+    }
+    // ... run checksToRun instead of all checks
+}
+```
+
+**Impact:** Test-only changes skip compile → 60s → 15s. Resource-only changes skip both → 60s → 5s.
+
+### 12.2 B8: MavenBuildService — IDE-Integrated Builds
+
+**File:** `core/src/main/kotlin/.../maven/MavenBuildService.kt`
+
+**Current problem:** Shells out to `mvn`/`mvn.cmd` via `GeneralCommandLine` + `OSProcessHandler`. This:
+- Spawns a new process (30-60s overhead)
+- Doesn't reuse IDE's Maven model/cache
+- Fragile process management
+- Output parsing via regex
+
+**Fix:** Use IntelliJ's `MavenRunner` API for IDE-integrated builds:
+
+```kotlin
+// Before — subprocess
+val commandLine = GeneralCommandLine(mvnExecutable)
+    .withWorkDirectory(project.basePath)
+    .withParameters(args)
+val handler = OSProcessHandler(commandLine)
+
+// After — IDE-integrated
+fun runMavenBuild(goals: String, modules: List<String>): MavenBuildResult {
+    val mavenManager = MavenProjectsManager.getInstance(project)
+    if (!mavenManager.isMavenizedProject) {
+        return runMavenBuildFallback(goals, modules)  // subprocess fallback
+    }
+
+    val params = MavenRunnerParameters(
+        /* workingDirPath = */ project.basePath!!,
+        /* pomFileName = */ "pom.xml",
+        /* profilesMap = */ emptyMap(),
+        /* goals = */ goals.split(" "),
+        /* projectsCmdOptionValues = */ modules
+    )
+
+    val settings = MavenRunner.getInstance(project).settings.clone()
+    // Use IDE's Maven settings (local repo, mirrors, etc.)
+
+    MavenRunner.getInstance(project).run(params, settings, Runnable {
+        // Build complete callback
+    })
+}
+```
+
+**Note:** `MavenRunner.run()` provides structured build output (no regex parsing needed), reuses IDE's Maven installation and settings, and integrates with IntelliJ's build tool window.
+
+### 12.3 B9: SonarIssueAnnotator — PsiElement Resolution
+
+**File:** `sonar/src/main/kotlin/.../ui/SonarIssueAnnotator.kt`
+
+**Enhancement** (in addition to the A6 `VfsUtilCore` path fix):
+
+When annotating Sonar issues, resolve the target `PsiElement` to provide richer tooltips:
+
+```kotlin
+// In apply() phase — EDT, can access PSI
+override fun apply(file: PsiFile, result: AnnotationResult, holder: AnnotationHolder) {
+    for (issue in result.issues) {
+        val element = file.findElementAt(issue.startOffset)
+        val containingMethod = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java)
+        val containingClass = PsiTreeUtil.getParentOfType(element, PsiClass::class.java)
+
+        val tooltip = buildString {
+            append("[${issue.rule}] ${issue.message}")
+            if (containingMethod != null) {
+                append("\n\nIn method: ${containingMethod.name}()")
+            }
+            if (containingClass != null) {
+                val annotations = containingClass.annotations
+                    .mapNotNull { it.qualifiedName?.substringAfterLast('.') }
+                if (annotations.isNotEmpty()) {
+                    append("\nClass: @${annotations.joinToString(", @")} ${containingClass.name}")
+                }
+            }
+        }
+
+        // Store issue in highlighter for CodyIntentionAction to retrieve
+        val annotation = holder.newAnnotation(severity, issue.message)
+            .range(textRange)
+            .tooltip(tooltip)
+            .create()
+    }
+}
+```
+
+### 12.4 B10: PrService — Module/Endpoint-Aware Descriptions
+
+**File:** `handover/src/main/kotlin/.../service/PrService.kt`
+
+**Enhancement:** Generate rich PR descriptions using PSI + Maven context:
+
+```kotlin
+suspend fun buildEnrichedDescription(
+    ticketId: String,
+    ticketSummary: String,
+    changedFiles: List<VirtualFile>
+): String {
+    val psiEnricher = PsiContextEnricher(project!!)
+
+    // Detect affected Maven modules
+    val modules = MavenProjectsManager.getInstance(project!!)
+        .takeIf { it.isMavenizedProject }
+        ?.projects
+        ?.filter { mp -> changedFiles.any { VfsUtilCore.isAncestor(mp.directoryFile, it, false) } }
+        ?.map { it.mavenId.artifactId }
+        ?: emptyList()
+
+    // Detect affected Spring endpoints
+    val endpoints = mutableListOf<String>()
+    for (file in changedFiles) {
+        val psi = psiEnricher.enrich(file.path)
+        // Spring endpoint detection via annotations
+        val requestMappings = psi.classAnnotations.filter {
+            it in listOf("RestController", "Controller")
+        }
+        if (requestMappings.isNotEmpty()) {
+            endpoints.add("${file.nameWithoutExtension} (${psi.classAnnotations.joinToString(", ") { "@$it" }})")
+        }
+    }
+
+    return buildString {
+        append("## $ticketId: $ticketSummary\n\n")
+        if (modules.isNotEmpty()) {
+            append("**Affected modules:** ${modules.joinToString(", ")}\n\n")
+        }
+        if (endpoints.isNotEmpty()) {
+            append("**Affected controllers:**\n")
+            endpoints.forEach { append("- $it\n") }
+            append("\n")
+        }
+        append("**Files changed:** ${changedFiles.size}\n")
+    }
+}
+```
+
+### 12.5 B11: CoverageLineMarkerProvider — Spring-Aware Endpoint Highlighting
+
+**File:** `sonar/src/main/kotlin/.../ui/CoverageLineMarkerProvider.kt`
+
+**Enhancement:** When an uncovered line is inside a `@RequestMapping` method, use a different (more urgent) icon:
+
+```kotlin
+override fun getLineMarkerInfo(element: PsiElement): LineMarkerInfo<*>? {
+    // ... existing coverage check ...
+
+    val containingMethod = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java)
+    val isEndpoint = containingMethod?.annotations?.any {
+        it.qualifiedName in REQUEST_MAPPING_ANNOTATIONS
+    } ?: false
+
+    val icon = when {
+        covered -> IconLoader.getIcon("/icons/coverage-covered.svg", javaClass)
+        isEndpoint -> IconLoader.getIcon("/icons/coverage-endpoint-uncovered.svg", javaClass) // RED+BOLD
+        else -> IconLoader.getIcon("/icons/coverage-uncovered.svg", javaClass) // RED
+    }
+
+    // ...
+}
+
+companion object {
+    private val REQUEST_MAPPING_ANNOTATIONS = setOf(
+        "org.springframework.web.bind.annotation.RequestMapping",
+        "org.springframework.web.bind.annotation.GetMapping",
+        "org.springframework.web.bind.annotation.PostMapping",
+        "org.springframework.web.bind.annotation.PutMapping",
+        "org.springframework.web.bind.annotation.DeleteMapping",
+        "org.springframework.web.bind.annotation.PatchMapping"
+    )
+}
+```
+
+### 12.6 B12: CoverageTreeDecorator — ProjectFileIndex
+
+**File:** `sonar/src/main/kotlin/.../ui/CoverageTreeDecorator.kt`
+
+**Fix:** Replace string matching with proper file classification:
+
+```kotlin
+// Before
+val isTestFile = filePath.contains("/test/") || filePath.contains("/resources/")
+
+// After
+val fileIndex = ProjectFileIndex.getInstance(project)
+val isTestFile = fileIndex.isInTestSourceContent(virtualFile)
+val isGenerated = fileIndex.isInGeneratedSources(virtualFile)
+val isExcluded = fileIndex.isExcluded(virtualFile)
+
+// Only show coverage badges on main source files
+if (isTestFile || isGenerated || isExcluded) return
+```
+
+---
+
+## 13. File Change Summary
+
+### New Files (7)
+
+| Path | Module | Purpose |
+|------|--------|---------|
+| `cody/src/main/kotlin/.../service/PsiContextEnricher.kt` | `:cody` | PSI-based code context extraction (always available) |
+| `cody/src/main/kotlin/.../service/SpringContextEnricher.kt` | `:cody` | Interface + `SpringContextEnricherImpl` for Spring context (Ultimate only) |
+| `sonar/src/main/resources/icons/coverage-covered.svg` (+dark) | `:sonar` | SVG gutter icon (covered line) |
+| `sonar/src/main/resources/icons/coverage-uncovered.svg` (+dark) | `:sonar` | SVG gutter icon (uncovered line) |
+| `sonar/src/main/resources/icons/coverage-endpoint-uncovered.svg` (+dark) | `:sonar` | SVG gutter icon (uncovered `@RequestMapping` — urgent) |
+
+### Modified Files (19)
+
+| Path | Module | Category | Changes |
+|------|--------|----------|---------|
+| `build.gradle.kts` | root | A | `intellijIdea()` → `intellijIdeaUltimate()` |
+| `gradle.properties` | root | A | Add Maven, Spring, Spring Boot to `platformBundledPlugins` |
+| `plugin.xml` | root | A | Add 2 optional `<depends>` for Maven + Spring |
+| `plugin-withMaven.xml` | root | A | Declare Maven dependency |
+| `plugin-withSpring.xml` | root | A | Register `SpringContextEnricherImpl` as projectService |
+| `MavenModuleDetector.kt` | `:core` | A1 | `MavenProjectsManager` API with regex fallback |
+| `CopyrightCheckService.kt` | `:core` | A3 | `FileTypeRegistry` + `ProjectFileIndex` + document API |
+| `CopyrightFixService.kt` | `:handover` | A4 | `LanguageCommenters` + `ProjectFileIndex` |
+| `PlanDetectionService.kt` | `:bamboo` | A5 | SnakeYAML parsing with regex fallback |
+| `SonarIssueAnnotator.kt` | `:sonar` | A6+B9 | `VfsUtilCore` + PsiElement resolution + Sonar issue user data |
+| `CoverageLineMarkerProvider.kt` | `:sonar` | A7+B11 | `VfsUtilCore` + SVG icons + Spring endpoint detection |
+| `CodyContextService.kt` | `:cody` | A2 | Orchestrate PSI + Spring enrichers, `suspend fun` |
+| `CodyContextServiceLogic.kt` | `:cody` | A2 | Rename `resolveTestFile` → `resolveTestFileFallback` |
+| `CodyIntentionAction.kt` | `:cody` | B1 | Pass real Sonar issue data + PSI/Spring context |
+| `CodyCommitMessageHandlerFactory.kt` | `:cody` | B2 | Implement with PSI-enriched diff |
+| `CodyChatService.kt` | `:cody` | B3 | Add `contextFiles` to ChatMessage |
+| `EditModels.kt` | `:cody` | B5 | Add `contextFiles` field to `EditCommandsCodeParams` |
+| `CodyEditService.kt` | `:cody` | B5 | Pass context files to Cody Agent |
+| `PreReviewService.kt` | `:handover` | B6 | PSI-annotated diff prompt |
+| `HealthCheckService.kt` | `:core` | B7 | Smart check skipping via `ProjectFileIndex` |
+| `MavenBuildService.kt` | `:core` | B8 | `MavenRunner` integration with subprocess fallback |
+| `PrService.kt` | `:handover` | B10 | Module/endpoint-aware descriptions |
+| `CoverageTreeDecorator.kt` | `:sonar` | B12 | `ProjectFileIndex.isInTestSourceContent()` |
+
+### Skeleton Files to Implement (2)
+
+| Path | Module | Category | Currently |
+|------|--------|----------|-----------|
+| `CodyTestGenerator.kt` | `:cody` | B4 | Empty skeleton → Spring-aware test pattern selection |
+| `CodyCommitMessageHandlerFactory.kt` | `:cody` | B2 | Empty handler → PSI-enriched commit messages |
+
+---
+
+## 14. Testing Strategy
+
+### 14.1 Test Types by Tier
 
 | Tier | Test Approach | Framework |
 |------|--------------|-----------|
 | Tier 1 (Maven) | Unit tests with mock `MavenProjectsManager` + fallback tests | JUnit 5 + MockK |
-| Tier 1 (Cody PSI) | `BasePlatformTestCase` with fixture Java files | IntelliJ test framework |
-| Tier 1 (Cody Spring) | `BasePlatformTestCase` with Spring-annotated fixtures | IntelliJ test framework |
-| Tier 2 (Copyright) | Unit tests (pure logic unchanged) + platform tests for `FileTypeRegistry` | JUnit 5 + BasePlatformTestCase |
-| Tier 2 (YAML) | Unit tests with YAML strings | JUnit 5 |
-| Tier 3 (Sonar) | Existing annotator tests with updated path assertions | IntelliJ test framework |
+| Tier 1 (Cody PSI) | `BasePlatformTestCase` with fixture Java files containing `@Service`, `@Controller`, `@Transactional` | IntelliJ test framework |
+| Tier 1 (Cody Spring) | `BasePlatformTestCase` with Spring-annotated fixtures + Spring test framework | IntelliJ test framework |
+| Tier 2 (Cody features) | Unit tests for prompt building + `BasePlatformTestCase` for PSI integration | JUnit 5 + IntelliJ test framework |
+| Tier 2 (Health Check) | Unit tests for `classifyChanges()` with mock `ProjectFileIndex` | JUnit 5 + MockK |
+| Tier 3 (Copyright) | Unit tests (pure logic unchanged) + platform tests for `FileTypeRegistry` | JUnit 5 + BasePlatformTestCase |
+| Tier 3 (YAML) | Unit tests with YAML strings | JUnit 5 |
+| Tier 4 (Sonar) | Existing annotator tests + updated path assertions + PsiElement tooltip tests | IntelliJ test framework |
 
-### 12.2 Regression Safety
+### 14.2 Regression Safety
 
-Every modified file preserves its fallback path that matches the **exact current behavior**. This means:
+Every modified file preserves its fallback path that matches the **exact current behavior**:
 - All existing tests pass without modification (fallback paths are exercised)
 - New tests verify the enhanced API paths
-- A `isMavenAvailable()` / `isSpringAvailable()` flag can be used in tests to force one path or the other
+- `isMavenAvailable()` / `isSpringAvailable()` flags can force fallback in tests
+- `PsiContextEnricher` returns `emptyContext()` when PSI is not available (safe degradation)
 
 ---
 
-## 13. Edge Cases
+## 15. Edge Cases
 
 | Scenario | Handling |
 |----------|---------|
@@ -1276,12 +1917,17 @@ Every modified file preserves its fallback path that matches the **exact current
 | Kotlin file (no `PsiJavaFile`) | `packageName` from PSI cast returns null → instruction omits it |
 | Very large class (>1000 methods) | `extractMethodAnnotations` processes all — acceptable as readAction is bounded |
 | YAML parse failure | SnakeYAML throws → catch → regex fallback |
-| Non-Maven project (Gradle) | `isMavenizedProject` returns false → regex fallback for pom.xml (if any) |
+| Non-Maven project (Gradle) | `isMavenizedProject` returns false → regex fallback |
 | Multiple constructors (Spring) | Takes first constructor for injection analysis — Spring convention |
+| Test-only changes in health check | `classifyChanges()` detects → skips compile → runs tests only |
+| No Sonar issue at caret (CodyIntentionAction) | Uses generic range + "manual" ruleKey — PSI context still enriched |
+| Cody Agent ignores `contextFiles` field | Graceful — instruction text still contains enriched context as plain text |
+| `MavenRunner` not available | Falls back to `OSProcessHandler` subprocess |
+| Changed file is generated (build output) | `ProjectFileIndex.isInGeneratedSources()` → excluded from health check / coverage |
 
 ---
 
-## 14. Service Lifecycle Notes
+## 16. Service Lifecycle Notes
 
 **PsiContextEnricher** — Lightweight, stateless helper class. Created as a plain instance in `CodyContextService` (not a registered service). Holds only a `Project` reference, which is the same lifecycle as `CodyContextService` itself (project-scoped). No memory leak risk — when the project closes, `CodyContextService` is disposed, and `PsiContextEnricher` is garbage collected with it.
 
@@ -1291,7 +1937,7 @@ Every modified file preserves its fallback path that matches the **exact current
 
 ---
 
-## 15. Performance Considerations
+## 17. Performance Considerations
 
 | Operation | Cost | Mitigation |
 |-----------|------|------------|
@@ -1304,7 +1950,7 @@ Every modified file preserves its fallback path that matches the **exact current
 
 ---
 
-## 16. Migration Path
+## 18. Migration Path
 
 The upgrade is fully backward-compatible. No user action required. The enhanced behavior activates automatically when the IDE has Maven/Spring plugins loaded.
 
