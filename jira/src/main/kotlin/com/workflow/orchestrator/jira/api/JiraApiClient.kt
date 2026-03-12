@@ -9,6 +9,11 @@ import com.workflow.orchestrator.jira.api.dto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -84,29 +89,39 @@ class JiraApiClient(
         fields: Map<String, Any>?,
         comment: String?
     ): String {
-        val sb = StringBuilder()
-        sb.append("""{"transition":{"id":"$transitionId"}""")
-        if (!fields.isNullOrEmpty()) {
-            sb.append(""","fields":{""")
-            sb.append(fields.entries.joinToString(",") { (k, v) ->
-                val valueJson = when (v) {
-                    is Map<*, *> -> {
-                        v.entries.joinToString(",", "{", "}") { (mk, mv) ->
-                            """"$mk":"$mv""""
+        val payload = buildJsonObject {
+            putJsonObject("transition") {
+                put("id", transitionId)
+            }
+            if (!fields.isNullOrEmpty()) {
+                putJsonObject("fields") {
+                    for ((key, value) in fields) {
+                        when (value) {
+                            is Map<*, *> -> putJsonObject(key) {
+                                for ((mk, mv) in value) {
+                                    put(mk.toString(), mv.toString())
+                                }
+                            }
+                            else -> putJsonObject(key) {
+                                put("name", value.toString())
+                            }
                         }
                     }
-                    else -> """{"name":"${v.toString().replace("\"", "\\\"")}"}"""
                 }
-                """"$k":$valueJson"""
-            })
-            sb.append("}")
+            }
+            if (comment != null) {
+                putJsonObject("update") {
+                    putJsonArray("comment") {
+                        add(buildJsonObject {
+                            putJsonObject("add") {
+                                put("body", comment)
+                            }
+                        })
+                    }
+                }
+            }
         }
-        if (comment != null) {
-            val escaped = comment.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
-            sb.append(""","update":{"comment":[{"add":{"body":"$escaped"}}]}""")
-        }
-        sb.append("}")
-        return sb.toString()
+        return payload.toString()
     }
 
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =

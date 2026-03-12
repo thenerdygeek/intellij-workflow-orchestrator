@@ -9,7 +9,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
-    <depends>Git4Idea</depends>
+    <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
     <depends optional="true" config-file="plugin-withCody.xml">com.sourcegraph.jetbrains</depends>
     <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
@@ -86,6 +86,10 @@
             serviceImplementation="com.workflow.orchestrator.core.healthcheck.HealthCheckService"/>
         <notificationGroup id="workflow.healthcheck" displayType="BALLOON"/>
 
+        <!-- Jira Active Ticket -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.jira.service.ActiveTicketService"/>
+
         <!-- Bamboo Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.bamboo.service.BuildMonitorService"/>
@@ -93,11 +97,6 @@
         <!-- Startup (onboarding check) -->
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
-
-        <!-- Status Bar Widgets -->
-        <!-- Commit message auto-prefix -->
-        <vcsCheckinHandlerFactory
-            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
 
         <!-- Ticket Status Bar Widget -->
         <statusBarWidgetFactory id="WorkflowTicketStatusBar"
@@ -245,8 +244,6 @@
     </extensions>
 
     <projectListeners>
-        <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
-                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
         <!-- Cody Focus Tracking -->
         <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>

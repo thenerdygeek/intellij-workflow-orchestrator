@@ -44,7 +44,7 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
         settings.state.activeTicketId = ticketId
 
-        // Fetch ticket summary from Jira in background
+        // Fetch ticket summary from Jira in background and update shared ActiveTicketService
         scope.launch {
             val credentialStore = CredentialStore()
             val apiClient = JiraApiClient(
@@ -54,8 +54,12 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
             val result = apiClient.getIssue(ticketId)
             if (result is ApiResult.Success) {
-                settings.state.activeTicketSummary = result.data.fields.summary
+                val summary = result.data.fields.summary
+                settings.state.activeTicketSummary = summary
+                ActiveTicketService.getInstance(project).setActiveTicket(ticketId, summary)
                 log.info("[Jira:Branch] Updated active ticket summary for $ticketId")
+            } else {
+                ActiveTicketService.getInstance(project).setActiveTicket(ticketId, "")
             }
         }
     }

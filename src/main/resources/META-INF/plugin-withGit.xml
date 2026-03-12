@@ -4,8 +4,13 @@
 -->
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Example: a project service that depends on Git4Idea APIs -->
-        <projectService
-            serviceImplementation="com.example.plugin.git.GitIntegrationService"/>
+        <!-- Commit message auto-prefix (requires GitVcs.getKey()) -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
     </extensions>
+
+    <projectListeners>
+        <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
+                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
+    </projectListeners>
 </idea-plugin>

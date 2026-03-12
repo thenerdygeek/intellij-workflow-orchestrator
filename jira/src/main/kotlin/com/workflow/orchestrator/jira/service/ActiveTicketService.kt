@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.jira.service
 
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,6 +12,7 @@ data class ActiveTicketState(
     val summary: String
 )
 
+@Service(Service.Level.PROJECT)
 class ActiveTicketService {
     private val log = Logger.getInstance(ActiveTicketService::class.java)
 
@@ -40,6 +43,10 @@ class ActiveTicketService {
     companion object {
         private val companionLog = Logger.getInstance(ActiveTicketService::class.java)
         private val TICKET_PATTERN = Regex("([A-Z][A-Z0-9]+-\\d+)")
+
+        @JvmStatic
+        fun getInstance(project: Project): ActiveTicketService =
+            project.getService(ActiveTicketService::class.java)
 
         fun extractTicketIdFromBranch(branchName: String): String? {
             val ticketId = TICKET_PATTERN.find(branchName)?.groupValues?.get(1)

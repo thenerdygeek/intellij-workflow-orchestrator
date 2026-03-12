@@ -10,7 +10,6 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.util.Consumer
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
-import git4idea.repo.GitRepositoryManager
 import java.awt.Component
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
@@ -78,8 +77,7 @@ class TicketStatusBarWidget(
                 panel.add(JBLabel(summary), gbc)
             }
 
-            val repos = GitRepositoryManager.getInstance(project).repositories
-            val currentBranch = repos.firstOrNull()?.currentBranchName
+            val currentBranch = tryGetCurrentBranch()
             if (currentBranch != null) {
                 gbc.gridy = row++
                 gbc.insets = JBUI.insets(4, 0, 0, 0)
@@ -102,5 +100,18 @@ class TicketStatusBarWidget(
 
     fun update() {
         myStatusBar?.updateWidget(ID())
+    }
+
+    private fun tryGetCurrentBranch(): String? {
+        return try {
+            val gitRepoClass = Class.forName("git4idea.repo.GitRepositoryManager")
+            val getInstance = gitRepoClass.getMethod("getInstance", Project::class.java)
+            val manager = getInstance.invoke(null, project)
+            val repos = gitRepoClass.getMethod("getRepositories").invoke(manager) as? List<*>
+            val firstRepo = repos?.firstOrNull() ?: return null
+            firstRepo.javaClass.getMethod("getCurrentBranchName").invoke(firstRepo) as? String
+        } catch (_: Exception) {
+            null
+        }
     }
 }

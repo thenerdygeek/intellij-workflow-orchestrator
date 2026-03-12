@@ -31,7 +31,7 @@ class SprintTabProvider : WorkflowTabProvider {
             tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
         )
         val sprintService = SprintService(apiClient)
-        val activeTicketService = ActiveTicketService()
+        val activeTicketService = ActiveTicketService.getInstance(project)
         val branchingService = BranchingService(project, apiClient, activeTicketService)
 
         val panel = SprintDashboardPanel(project, sprintService, activeTicketService, branchingService)
