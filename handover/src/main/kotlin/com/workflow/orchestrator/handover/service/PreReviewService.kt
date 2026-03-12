@@ -197,7 +197,10 @@ class PreReviewService {
 
     fun validateDiff(diff: String): DiffValidation {
         if (diff.isBlank()) return DiffValidation.EMPTY
-        if (diff.lines().size > 10_000) return DiffValidation.TOO_LARGE
+        val maxLines = project?.let {
+            com.workflow.orchestrator.core.settings.PluginSettings.getInstance(it).state.maxDiffLinesForReview
+        } ?: 10_000
+        if (diff.lines().size > maxLines) return DiffValidation.TOO_LARGE
         return DiffValidation.OK
     }
 

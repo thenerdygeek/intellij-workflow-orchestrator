@@ -43,6 +43,7 @@ class QueueService : Disposable {
     private val autoTriggerEnabled: Boolean
     private val maxDepthPerSuite: Int
     private val tagValidationOnTrigger: Boolean
+    private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
@@ -50,13 +51,17 @@ class QueueService : Disposable {
         val credentialStore = CredentialStore()
         this.bambooClient = BambooApiClient(
             baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
+            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
         val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
             ?: settings.state.nexusUrl.orEmpty()).trimEnd('/')
         this.registryClient = DockerRegistryClient(
             registryUrl = registryUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) }
+            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
         this.eventBus = project.getService(EventBus::class.java)
         this.tagHistoryService = project.getService(TagHistoryService::class.java)
@@ -64,6 +69,7 @@ class QueueService : Disposable {
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
         this.tagValidationOnTrigger = settings.state.tagValidationOnTrigger
+        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "dockerTagsAsJson"
     }
 
     /** Test constructor — allows injecting mocks. */
@@ -75,7 +81,8 @@ class QueueService : Disposable {
         scope: CoroutineScope,
         autoTriggerEnabled: Boolean = true,
         maxDepthPerSuite: Int = 10,
-        tagValidationOnTrigger: Boolean = true
+        tagValidationOnTrigger: Boolean = true,
+        buildVariableName: String = "dockerTagsAsJson"
     ) {
         this.bambooClient = bambooClient
         this.registryClient = registryClient
@@ -85,6 +92,7 @@ class QueueService : Disposable {
         this.autoTriggerEnabled = autoTriggerEnabled
         this.maxDepthPerSuite = maxDepthPerSuite
         this.tagValidationOnTrigger = tagValidationOnTrigger
+        this.buildVariableName = buildVariableName
     }
 
     private val _stateFlow = MutableStateFlow<List<QueueEntry>>(emptyList())
@@ -266,7 +274,7 @@ class QueueService : Disposable {
         }
 
         val variables = entry.variables.toMutableMap()
-        variables["dockerTagsAsJson"] = entry.dockerTagsPayload
+        variables[buildVariableName] = entry.dockerTagsPayload
 
         val result = bambooClient.triggerBuild(entry.suitePlanKey, variables)
         return when (result) {

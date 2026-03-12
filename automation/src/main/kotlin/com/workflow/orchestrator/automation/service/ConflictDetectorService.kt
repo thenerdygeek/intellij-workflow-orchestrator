@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class ConflictDetectorService {
 
     private val bambooClient: BambooApiClient
+    private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
@@ -23,13 +24,17 @@ class ConflictDetectorService {
         val credentialStore = CredentialStore()
         this.bambooClient = BambooApiClient(
             baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) }
+            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
+        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "dockerTagsAsJson"
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(bambooClient: BambooApiClient) {
+    constructor(bambooClient: BambooApiClient, buildVariableName: String = "dockerTagsAsJson") {
         this.bambooClient = bambooClient
+        this.buildVariableName = buildVariableName
     }
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -46,7 +51,7 @@ class ConflictDetectorService {
             val varsResult = bambooClient.getBuildVariables(build.key)
             if (varsResult !is ApiResult.Success) continue
 
-            val dockerTagsJson = varsResult.data["dockerTagsAsJson"] ?: continue
+            val dockerTagsJson = varsResult.data[buildVariableName] ?: continue
             val otherTags = parseDockerTagsJson(dockerTagsJson)
 
             for ((service, yourTag) in stagedTags) {

@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.HistoryEntry
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
+import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -16,14 +17,17 @@ import java.time.Instant
 class TagHistoryService {
 
     private val dbPath: String
+    private val project: Project?
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
+        this.project = project
         this.dbPath = File(project.basePath ?: ".", ".idea${File.separator}workflow-orchestrator${File.separator}automation.db").path
     }
 
     /** Test constructor — allows injecting explicit path. */
     constructor(dbPath: String) {
+        this.project = null
         this.dbPath = dbPath
     }
 
@@ -121,7 +125,10 @@ class TagHistoryService {
         }
     }
 
-    fun getHistory(suitePlanKey: String, limit: Int = 5): List<HistoryEntry> {
+    fun getHistory(
+        suitePlanKey: String,
+        limit: Int = project?.let { PluginSettings.getInstance(it).state.tagHistoryMaxEntries } ?: 5
+    ): List<HistoryEntry> {
         return connection.prepareStatement("""
             SELECT * FROM automation_history
             WHERE suite_plan_key = ?

@@ -128,8 +128,11 @@ class HandoverStateService : Disposable {
         _stateFlow.value = _stateFlow.value.copy(copyrightFixed = true)
     }
 
-    fun markJiraTransitioned() {
-        _stateFlow.value = _stateFlow.value.copy(jiraTransitioned = true)
+    fun markJiraTransitioned(statusName: String? = null) {
+        _stateFlow.value = _stateFlow.value.copy(
+            jiraTransitioned = true,
+            currentStatusName = statusName ?: _stateFlow.value.currentStatusName
+        )
     }
 
     fun markWorkLogged() {

@@ -57,14 +57,14 @@ class PrServiceTest {
 
     @Test
     fun `buildPrTitle formats ticket and summary`() {
-        val title = service.buildPrTitle("PROJ-123", "Add login feature")
+        val title = service.buildPrTitle("PROJ-123", "Add login feature", "feature/PROJ-123")
         assertEquals("PROJ-123: Add login feature", title)
     }
 
     @Test
     fun `buildPrTitle truncates long summaries`() {
         val longSummary = "A".repeat(200)
-        val title = service.buildPrTitle("PROJ-123", longSummary)
+        val title = service.buildPrTitle("PROJ-123", longSummary, "feature/PROJ-123")
         assertTrue(title.length <= 120)
     }
 

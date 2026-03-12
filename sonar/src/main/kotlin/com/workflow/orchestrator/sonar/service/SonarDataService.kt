@@ -32,12 +32,17 @@ class SonarDataService(private val project: Project) : Disposable {
         val url = settings.state.sonarUrl.orEmpty().trimEnd('/')
         if (url.isBlank()) return null
         val credentialStore = CredentialStore()
-        return SonarApiClient(url) { credentialStore.getToken(ServiceType.SONARQUBE) }
+        return SonarApiClient(
+            baseUrl = url,
+            tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+        )
     }
 
     private val currentBranch: String get() {
         val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.firstOrNull()?.currentBranchName ?: "main"
+        return repos.firstOrNull()?.currentBranchName ?: (settings.state.defaultTargetBranch ?: "develop")
     }
 
     fun refresh() {
@@ -51,7 +56,8 @@ class SonarDataService(private val project: Project) : Disposable {
     internal suspend fun refreshWith(client: SonarApiClient, projectKey: String, branch: String) {
         val gateResult = client.getQualityGateStatus(projectKey, branch)
         val issuesResult = client.getIssues(projectKey, branch)
-        val measuresResult = client.getMeasures(projectKey, branch)
+        val metricKeys = settings.state.sonarMetricKeys.orEmpty()
+        val measuresResult = client.getMeasures(projectKey, branch, metricKeys)
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> mapQualityGate(gateResult.data)

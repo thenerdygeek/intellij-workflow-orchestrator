@@ -28,6 +28,7 @@ data class HandoverState(
     val copyrightFixed: Boolean = false,
     val jiraCommentPosted: Boolean = false,
     val jiraTransitioned: Boolean = false,
+    val currentStatusName: String? = null,
     val todayWorkLogged: Boolean = false,
 
     // Start work timestamp (from PluginSettings)

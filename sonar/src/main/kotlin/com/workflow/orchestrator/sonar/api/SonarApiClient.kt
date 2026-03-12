@@ -17,14 +17,16 @@ import java.util.concurrent.TimeUnit
 
 class SonarApiClient(
     private val baseUrl: String,
-    private val tokenProvider: () -> String?
+    private val tokenProvider: () -> String?,
+    private val connectTimeoutSeconds: Long = 10,
+    private val readTimeoutSeconds: Long = 30
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
+            .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))
             .addInterceptor(RetryInterceptor())
             .build()
@@ -63,9 +65,10 @@ class SonarApiClient(
 
     suspend fun getMeasures(
         projectKey: String,
-        branch: String? = null
+        branch: String? = null,
+        metricKeys: String = "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions"
     ): ApiResult<List<SonarMeasureComponentDto>> {
-        val metrics = "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions"
+        val metrics = metricKeys.ifBlank { "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions" }
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
         return get<SonarMeasureSearchResult>(
             "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +

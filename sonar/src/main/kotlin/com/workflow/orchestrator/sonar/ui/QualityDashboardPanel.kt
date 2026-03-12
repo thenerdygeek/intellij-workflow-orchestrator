@@ -27,7 +27,7 @@ class QualityDashboardPanel(
         font = font.deriveFont(Font.PLAIN, 11f)
         border = JBUI.Borders.empty(4, 8)
     }
-    private val overviewPanel = OverviewPanel()
+    private val overviewPanel = OverviewPanel(project)
     private val issueListPanel = IssueListPanel(project)
     private val coverageTablePanel = CoverageTablePanel(project)
     private val statusLabel = JBLabel("Loading...")

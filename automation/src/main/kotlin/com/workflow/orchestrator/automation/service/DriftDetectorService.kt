@@ -24,7 +24,9 @@ class DriftDetectorService {
         val credentialStore = CredentialStore()
         this.registryClient = DockerRegistryClient(
             registryUrl = registryUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) }
+            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
     }
 

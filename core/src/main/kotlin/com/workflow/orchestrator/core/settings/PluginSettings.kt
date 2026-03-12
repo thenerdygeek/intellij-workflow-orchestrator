@@ -79,6 +79,48 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var bitbucketProjectKey by string("")
         var bitbucketRepoSlug by string("")
         var startWorkTimestamp by property(0L)
+
+        // --- Configurable values (Phase: Config Extraction) ---
+
+        // Jira workflow mapping (serialized JSON of TransitionMapping list)
+        var workflowMappings by string("")
+
+        // Jira board type filter ("scrum", "kanban", or "" for all)
+        var jiraBoardType by string("scrum")
+
+        // Plugin guards (transition prerequisites)
+        var guardBuildPassedBeforeReview by property(false)
+        var guardCopyrightBeforeClose by property(false)
+        var guardCoverageBeforeReview by property(false)
+        var guardAutomationBeforeClose by property(false)
+
+        // Coverage thresholds (percentage)
+        var coverageHighThreshold by property(80.0f)
+        var coverageMediumThreshold by property(50.0f)
+
+        // HTTP timeouts (seconds) — applied to all API clients via HttpClientFactory
+        var httpConnectTimeoutSeconds by property(10)
+        var httpReadTimeoutSeconds by property(30)
+
+        // Time tracking
+        var maxWorklogHours by property(7.0f)
+        var worklogIncrementHours by property(0.5f)
+
+        // Branching & PRs
+        var branchMaxSummaryLength by property(50)
+        var prTitleFormat by string("{ticketId}: {summary}")
+        var maxPrTitleLength by property(120)
+        var prDefaultReviewers by string("")
+
+        // Cody AI
+        var maxDiffLinesForReview by property(10000)
+
+        // SonarQube
+        var sonarMetricKeys by string("coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,new_coverage,new_branch_coverage")
+
+        // Automation
+        var tagHistoryMaxEntries by property(5)
+        var bambooBuildVariableName by string("dockerTagsAsJson")
     }
 
     val isAnyServiceConfigured: Boolean

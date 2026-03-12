@@ -36,6 +36,20 @@
             displayName="Workflow Orchestrator"
             nonDefaultProject="true"/>
 
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.jira.settings.WorkflowMappingConfigurable"
+            id="workflow.orchestrator.workflow"
+            displayName="Workflow Mapping"
+            nonDefaultProject="true"/>
+
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.core.settings.AdvancedConfigurable"
+            id="workflow.orchestrator.advanced"
+            displayName="Advanced"
+            nonDefaultProject="true"/>
+
         <!-- Tool Window -->
         <toolWindow
             id="Workflow"

@@ -18,6 +18,7 @@ class TimeTrackingService {
     constructor()
 
     companion object {
+        @Deprecated("Read maxWorklogHours from PluginSettings via getMaxHours() instead")
         const val MAX_HOURS = 7.0
         private val ISO_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
 
@@ -26,8 +27,13 @@ class TimeTrackingService {
         }
     }
 
+    fun getMaxHours(): Double {
+        val proj = project ?: return 7.0
+        return com.workflow.orchestrator.core.settings.PluginSettings.getInstance(proj).state.maxWorklogHours.toDouble()
+    }
+
     fun validateHours(hours: Double): Boolean {
-        return hours > 0.0 && hours <= MAX_HOURS
+        return hours > 0.0 && hours <= getMaxHours()
     }
 
     fun hoursToSeconds(hours: Double): Int {
@@ -40,7 +46,7 @@ class TimeTrackingService {
     }
 
     fun clampHours(hours: Double): Double {
-        return hours.coerceAtMost(MAX_HOURS)
+        return hours.coerceAtMost(getMaxHours())
     }
 
     fun isFutureDate(year: Int, month: Int, day: Int): Boolean {

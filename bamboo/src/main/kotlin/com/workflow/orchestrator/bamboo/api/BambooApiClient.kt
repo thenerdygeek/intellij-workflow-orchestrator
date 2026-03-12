@@ -24,14 +24,16 @@ import java.util.concurrent.TimeUnit
 
 class BambooApiClient(
     private val baseUrl: String,
-    private val tokenProvider: () -> String?
+    private val tokenProvider: () -> String?,
+    private val connectTimeoutSeconds: Long = 10,
+    private val readTimeoutSeconds: Long = 30
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
+            .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))
             .addInterceptor(RetryInterceptor())
             .build()
