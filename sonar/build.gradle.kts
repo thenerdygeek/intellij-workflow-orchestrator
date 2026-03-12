@@ -22,6 +22,7 @@ dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
         bundledPlugin("Git4Idea")
+        bundledPlugin("com.intellij.java")
     }
 
     implementation(project(":core"))

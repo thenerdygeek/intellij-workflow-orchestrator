@@ -36,10 +36,22 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         val lineNumber = doc.getLineNumber(element.textRange.startOffset) + 1
         val lineStatus = fileCoverage.lineStatuses[lineNumber] ?: return null
 
-        val (icon, tooltip) = when (lineStatus) {
-            LineCoverageStatus.COVERED -> ICON_COVERED to "Line covered"
-            LineCoverageStatus.UNCOVERED -> ICON_UNCOVERED to "Line not covered"
-            LineCoverageStatus.PARTIAL -> ICON_PARTIAL to "Partially covered (some branches uncovered)"
+        // Spring-aware: highlight uncovered @RequestMapping endpoints more urgently
+        val isEndpoint = if (lineStatus == LineCoverageStatus.UNCOVERED) {
+            val containingMethod = com.intellij.psi.util.PsiTreeUtil.getParentOfType(
+                element, com.intellij.psi.PsiMethod::class.java
+            )
+            containingMethod?.annotations?.any {
+                it.qualifiedName in REQUEST_MAPPING_ANNOTATIONS
+            } ?: false
+        } else false
+
+        val (icon, tooltip) = when {
+            lineStatus == LineCoverageStatus.COVERED -> ICON_COVERED to "Line covered"
+            lineStatus == LineCoverageStatus.UNCOVERED && isEndpoint ->
+                ICON_ENDPOINT_UNCOVERED to "UNCOVERED REST endpoint — high priority"
+            lineStatus == LineCoverageStatus.UNCOVERED -> ICON_UNCOVERED to "Line not covered"
+            else -> ICON_PARTIAL to "Partially covered (some branches uncovered)"
         }
 
         return LineMarkerInfo(
@@ -65,5 +77,15 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         private val ICON_COVERED: Icon = IconLoader.getIcon("/icons/coverage-covered.svg", CoverageLineMarkerProvider::class.java)
         private val ICON_UNCOVERED: Icon = IconLoader.getIcon("/icons/coverage-uncovered.svg", CoverageLineMarkerProvider::class.java)
         private val ICON_PARTIAL: Icon = IconLoader.getIcon("/icons/coverage-partial.svg", CoverageLineMarkerProvider::class.java)
+        private val ICON_ENDPOINT_UNCOVERED: Icon = IconLoader.getIcon("/icons/coverage-endpoint-uncovered.svg", CoverageLineMarkerProvider::class.java)
+
+        private val REQUEST_MAPPING_ANNOTATIONS = setOf(
+            "org.springframework.web.bind.annotation.RequestMapping",
+            "org.springframework.web.bind.annotation.GetMapping",
+            "org.springframework.web.bind.annotation.PostMapping",
+            "org.springframework.web.bind.annotation.PutMapping",
+            "org.springframework.web.bind.annotation.DeleteMapping",
+            "org.springframework.web.bind.annotation.PatchMapping"
+        )
     }
 }
