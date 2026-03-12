@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class TagBuilderService {
 
     private val bambooClient: BambooApiClient
+    private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
@@ -28,11 +29,13 @@ class TagBuilderService {
             connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
             readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
+        this.buildVariableName = settings.state.bambooBuildVariableName ?: "dockerTagsAsJson"
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(bambooClient: BambooApiClient) {
+    constructor(bambooClient: BambooApiClient, buildVariableName: String = "dockerTagsAsJson") {
         this.bambooClient = bambooClient
+        this.buildVariableName = buildVariableName
     }
     private val json = Json { ignoreUnknownKeys = true }
     private val semverPattern = Regex("""^\d+\.\d+\.\d+.*$""")
@@ -48,13 +51,13 @@ class TagBuilderService {
             val varsResult = bambooClient.getBuildVariables(dto.key)
             if (varsResult !is ApiResult.Success) return@mapNotNull null
 
-            val dockerTagsJson = varsResult.data["dockerTagsAsJson"] ?: return@mapNotNull null
+            val dockerTagsJson = varsResult.data[buildVariableName] ?: return@mapNotNull null
             val tags = parseDockerTagsJson(dockerTagsJson)
             if (tags.isEmpty()) return@mapNotNull null
 
             val releaseCount = tags.values.count { semverPattern.matches(it) }
-            val successStages = dto.stages.stage.count { it.state == "Successful" }
-            val failedStages = dto.stages.stage.count { it.state == "Failed" }
+            val successStages = dto.stages.stage.count { it.state.equals("Successful", ignoreCase = true) }
+            val failedStages = dto.stages.stage.count { it.state.equals("Failed", ignoreCase = true) }
             val score = (releaseCount * 10) + (successStages * 5) - (failedStages * 20)
 
             BaselineRun(
@@ -117,7 +120,7 @@ class TagBuilderService {
         extraVars: Map<String, String>
     ): Map<String, String> {
         val result = mutableMapOf<String, String>()
-        result["dockerTagsAsJson"] = buildJsonPayload(entries)
+        result[buildVariableName] = buildJsonPayload(entries)
         result.putAll(extraVars)
         return result
     }

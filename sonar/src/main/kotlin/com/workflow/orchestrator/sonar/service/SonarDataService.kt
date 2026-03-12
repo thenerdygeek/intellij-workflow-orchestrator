@@ -42,7 +42,7 @@ class SonarDataService(private val project: Project) : Disposable {
 
     private val currentBranch: String get() {
         val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.firstOrNull()?.currentBranchName ?: "main"
+        return repos.firstOrNull()?.currentBranchName ?: (settings.state.defaultTargetBranch ?: "develop")
     }
 
     fun refresh() {

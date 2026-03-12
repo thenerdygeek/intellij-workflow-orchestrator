@@ -136,7 +136,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             return
         }
 
-        val branch = getCurrentBranch() ?: "master"
+        val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
         val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
         headerLabel.text = "Plan: $planKey / $branch"
         monitorService.startPolling(planKey, branch, interval)
@@ -154,7 +154,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             override fun actionPerformed(e: AnActionEvent) {
                 scope.launch {
                     val planKey = settings.state.bambooPlanKey.orEmpty()
-                    val branch = getCurrentBranch() ?: "master"
+                    val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
                     monitorService.pollOnce(planKey, branch)
                 }
             }
