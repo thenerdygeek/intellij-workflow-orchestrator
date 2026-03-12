@@ -32,8 +32,15 @@ data class BitbucketPrRequest(
     val title: String,
     val description: String,
     val fromRef: BitbucketRef,
-    val toRef: BitbucketRef
+    val toRef: BitbucketRef,
+    val reviewers: List<BitbucketReviewer>? = null
 )
+
+@Serializable
+data class BitbucketReviewer(val user: BitbucketReviewerUser)
+
+@Serializable
+data class BitbucketReviewerUser(val name: String)
 
 @Serializable
 data class BitbucketRef(
