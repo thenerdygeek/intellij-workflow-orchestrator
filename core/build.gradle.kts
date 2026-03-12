@@ -1,6 +1,8 @@
 // core/build.gradle.kts — Submodule: uses the MODULE variant of the plugin.
 // This avoids polluting submodules with signing/publishing/run tasks.
 
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
 plugins {
     alias(libs.plugins.kotlin)
     alias(libs.plugins.kotlinSerialization)
@@ -28,6 +30,7 @@ dependencies {
             it.split(',').map(String::trim).filter(String::isNotEmpty)
         })
         bundledPlugin("Git4Idea")
+        testFramework(TestFrameworkType.Platform)
     }
 
     // External libraries used by :core

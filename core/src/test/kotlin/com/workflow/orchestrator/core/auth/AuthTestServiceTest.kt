@@ -9,7 +9,10 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import com.intellij.testFramework.LoggedErrorProcessorEnabler
 
+@ExtendWith(LoggedErrorProcessorEnabler.DoNoRethrowErrors::class)
 class AuthTestServiceTest {
 
     private lateinit var server: MockWebServer

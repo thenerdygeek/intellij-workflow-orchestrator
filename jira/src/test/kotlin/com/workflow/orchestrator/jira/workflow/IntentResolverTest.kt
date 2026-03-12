@@ -8,7 +8,10 @@ import com.workflow.orchestrator.jira.api.dto.JiraTransition
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import com.intellij.testFramework.LoggedErrorProcessorEnabler
 
+@ExtendWith(LoggedErrorProcessorEnabler.DoNoRethrowErrors::class)
 class IntentResolverTest {
 
     private lateinit var store: TransitionMappingStore
