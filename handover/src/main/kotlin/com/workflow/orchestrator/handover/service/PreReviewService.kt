@@ -2,8 +2,10 @@ package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.handover.model.FindingSeverity
 import com.workflow.orchestrator.handover.model.ReviewFinding
+import java.lang.reflect.Method
 
 @Service(Service.Level.PROJECT)
 class PreReviewService {
@@ -59,6 +61,136 @@ class PreReviewService {
             |$diff
             |```
         """.trimMargin()
+    }
+
+    /**
+     * Enhanced review prompt that includes PSI + Spring annotations for changed files.
+     * Falls back to plain diff if PSI enrichment fails.
+     *
+     * Uses reflection to access PsiContextEnricher and SpringContextEnricher from the
+     * :cody module to avoid a compile-time cross-module dependency. At runtime, the
+     * classes are available because both modules are loaded into the same plugin classloader.
+     */
+    suspend fun buildEnrichedReviewPrompt(
+        diff: String,
+        changedFiles: List<VirtualFile>
+    ): String {
+        val proj = project ?: return buildReviewPrompt(diff)
+
+        return try {
+            val fileAnnotations = buildFileAnnotations(proj, changedFiles)
+            buildAnnotatedPrompt(diff, fileAnnotations)
+        } catch (_: Exception) {
+            buildReviewPrompt(diff)
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun buildFileAnnotations(
+        proj: Project,
+        changedFiles: List<VirtualFile>
+    ): List<String> {
+        // Resolve PsiContextEnricher via reflection (lives in :cody module)
+        val psiEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
+        val psiEnricher = psiEnricherClass.getConstructor(Project::class.java).newInstance(proj)
+        val enrichPsiMethod = psiEnricherClass.getMethod(
+            "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
+        )
+
+        // Resolve SpringContextEnricher via reflection (interface in :cody module)
+        val springEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.SpringContextEnricher")
+        val springEnricher: Any = try {
+            proj.getService(springEnricherClass)
+                ?: getSpringEnricherEmpty(springEnricherClass)
+        } catch (_: Exception) {
+            getSpringEnricherEmpty(springEnricherClass)
+        }
+        val enrichSpringMethod = springEnricherClass.getMethod(
+            "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
+        )
+
+        return changedFiles.mapNotNull { file ->
+            try {
+                val psi = invokeSuspend(psiEnricher, enrichPsiMethod, file.path) ?: return@mapNotNull null
+                val spring = invokeSuspend(springEnricher, enrichSpringMethod, file.path)
+
+                val className = psi.javaClass.getMethod("getClassName").invoke(psi) as? String
+                    ?: return@mapNotNull null
+                val classAnnotations = psi.javaClass.getMethod("getClassAnnotations").invoke(psi) as List<String>
+
+                buildString {
+                    append("${file.name}: $className")
+                    if (classAnnotations.isNotEmpty()) {
+                        append(" (${classAnnotations.joinToString(", ") { "@$it" }})")
+                    }
+                    if (spring != null) {
+                        val isBean = spring.javaClass.getMethod("isBean").invoke(spring) as Boolean
+                        if (isBean) {
+                            appendSpringDetails(spring)
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun StringBuilder.appendSpringDetails(spring: Any) {
+        val transactionalMethods = spring.javaClass.getMethod("getTransactionalMethods")
+            .invoke(spring) as List<String>
+        if (transactionalMethods.isNotEmpty()) {
+            append("\n  @Transactional methods: ${transactionalMethods.joinToString(", ")}")
+        }
+
+        val requestMappings = spring.javaClass.getMethod("getRequestMappings")
+            .invoke(spring) as List<Any>
+        if (requestMappings.isNotEmpty()) {
+            val mappingStrings = requestMappings.map { mapping ->
+                val method = mapping.javaClass.getMethod("getMethod").invoke(mapping) as String
+                val path = mapping.javaClass.getMethod("getPath").invoke(mapping) as String
+                "$method $path"
+            }
+            append("\n  Endpoints: ${mappingStrings.joinToString(", ")}")
+        }
+
+        val injectedDeps = spring.javaClass.getMethod("getInjectedDependencies")
+            .invoke(spring) as List<Any>
+        if (injectedDeps.isNotEmpty()) {
+            val depStrings = injectedDeps.map { dep ->
+                val beanType = dep.javaClass.getMethod("getBeanType").invoke(dep) as String
+                beanType.substringAfterLast('.')
+            }
+            append("\n  Dependencies: ${depStrings.joinToString(", ")}")
+        }
+    }
+
+    private fun getSpringEnricherEmpty(springEnricherClass: Class<*>): Any {
+        val companion = springEnricherClass.getField("Companion").get(null)
+        return companion.javaClass.getMethod("getEMPTY").invoke(companion)
+    }
+
+    private suspend fun invokeSuspend(obj: Any, method: Method, arg: String): Any? {
+        return kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { cont ->
+            method.invoke(obj, arg, cont)
+        }
+    }
+
+    private fun buildAnnotatedPrompt(diff: String, fileAnnotations: List<String>): String {
+        return buildString {
+            append("Analyze this Spring Boot code diff for anti-patterns, ")
+            append("missing @Transactional annotations, incorrect bean scoping, ")
+            append("and potential issues.\n")
+            append("For each issue found, format as:\n")
+            append("**SEVERITY** `file:line` — description [pattern-name]\n\n")
+            if (fileAnnotations.isNotEmpty()) {
+                append("## Changed Classes (IDE Analysis)\n")
+                fileAnnotations.forEach { append("- $it\n") }
+                append("\n")
+            }
+            append("## Diff\n```diff\n$diff\n```")
+        }
     }
 
     enum class DiffValidation { OK, EMPTY, TOO_LARGE }
