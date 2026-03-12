@@ -24,10 +24,15 @@ class AuthTestService {
         .followSslRedirects(true)
         .build()
 
+    /**
+     * @param token For most services, the PAT. For Nexus, the password.
+     * @param username Only used for Nexus (which requires username + password).
+     */
     suspend fun testConnection(
         serviceType: ServiceType,
         baseUrl: String,
-        token: String
+        token: String,
+        username: String? = null
     ): ApiResult<String> = withContext(Dispatchers.IO) {
         val normalizedBaseUrl = baseUrl.trimEnd('/')
 
@@ -38,7 +43,7 @@ class AuthTestService {
 
         val endpoint = healthEndpoint(serviceType)
         val url = "${normalizedBaseUrl}$endpoint"
-        val authHeader = buildAuthHeader(serviceType, token)
+        val authHeader = buildAuthHeader(serviceType, token, username)
 
         log.info("[Core:Auth] Testing connection to ${serviceType.name} at $url (auth: ${authSchemeLabel(serviceType)})")
 
@@ -247,10 +252,13 @@ class AuthTestService {
      * - Sourcegraph (Cody Enterprise): "token <access_token>" (Sourcegraph-specific format)
      * - Nexus Docker Registry: Basic auth with token as username, empty password
      */
-    private fun buildAuthHeader(serviceType: ServiceType, token: String): String = when (serviceType) {
+    private fun buildAuthHeader(serviceType: ServiceType, token: String, username: String? = null): String = when (serviceType) {
         ServiceType.SOURCEGRAPH -> "token $token"
-        ServiceType.NEXUS -> "Basic " + java.util.Base64.getEncoder()
-            .encodeToString("$token:".toByteArray())
+        ServiceType.NEXUS -> {
+            val user = username ?: ""
+            "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("$user:$token".toByteArray())
+        }
         else -> "Bearer $token"
     }
 

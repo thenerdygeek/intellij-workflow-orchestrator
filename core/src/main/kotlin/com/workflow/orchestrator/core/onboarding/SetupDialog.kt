@@ -31,7 +31,8 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
 
     override fun createCenterPanel(): JComponent = panel {
         row {
-            text("Connect your development tools. You can configure any service later in Settings.")
+            text("Connect your development tools. You can change these later in<br>" +
+                 "<b>Settings → Tools → Workflow Orchestrator → Connections</b>")
         }
         separator()
 
@@ -40,7 +41,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         connectionSection("Bitbucket", ServiceType.BITBUCKET) { settings.state.bitbucketUrl = it }
         connectionSection("SonarQube", ServiceType.SONARQUBE) { settings.state.sonarUrl = it }
         connectionSection("Cody Enterprise", ServiceType.SOURCEGRAPH) { settings.state.sourcegraphUrl = it }
-        connectionSection("Nexus Docker Registry", ServiceType.NEXUS) { settings.state.nexusUrl = it }
+        nexusConnectionSection()
     }
 
     private fun Panel.connectionSection(
@@ -68,7 +69,6 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                         return@button
                     }
                     statusLabel.text = "Testing..."
-                    // Run on background thread to avoid blocking EDT
                     runBackgroundableTask("Testing $title", project, false) {
                         val result = runBlocking {
                             authTestService.testConnection(serviceType, url, token)
@@ -79,6 +79,59 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                                     statusLabel.text = "Connected!"
                                     credentialStore.storeToken(serviceType, token)
                                     urlSaver(url)
+                                }
+                                is ApiResult.Error -> {
+                                    statusLabel.text = "Failed: ${result.message}"
+                                }
+                            }
+                        }
+                    }
+                }
+                cell(statusLabel)
+            }
+        }
+    }
+
+    /**
+     * Nexus uses username + password (Basic auth), not a single access token.
+     */
+    private fun Panel.nexusConnectionSection() {
+        val urlField = JTextField(20)
+        val usernameField = JTextField(20)
+        val passwordField = JPasswordField(20)
+        val statusLabel = JLabel("")
+
+        collapsibleGroup("Nexus Docker Registry") {
+            row("Registry URL:") {
+                cell(urlField).columns(COLUMNS_LARGE)
+            }
+            row("Username:") {
+                cell(usernameField).columns(COLUMNS_LARGE)
+            }
+            row("Password:") {
+                cell(passwordField).columns(COLUMNS_LARGE)
+            }
+            row {
+                button("Test Connection") {
+                    val url = urlField.text.trim()
+                    val username = usernameField.text.trim()
+                    val password = String(passwordField.password).trim()
+                    if (url.isBlank() || username.isBlank() || password.isBlank()) {
+                        statusLabel.text = "Enter URL, username, and password"
+                        return@button
+                    }
+                    statusLabel.text = "Testing..."
+                    runBackgroundableTask("Testing Nexus Docker Registry", project, false) {
+                        val result = runBlocking {
+                            authTestService.testConnection(ServiceType.NEXUS, url, password, username = username)
+                        }
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    statusLabel.text = "Connected!"
+                                    settings.state.nexusUrl = url
+                                    settings.state.nexusUsername = username
+                                    credentialStore.storeNexusPassword(password)
                                 }
                                 is ApiResult.Error -> {
                                     statusLabel.text = "Failed: ${result.message}"

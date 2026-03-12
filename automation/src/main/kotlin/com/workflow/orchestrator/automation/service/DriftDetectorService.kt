@@ -24,9 +24,10 @@ class DriftDetectorService {
             .takeUnless { it.isNullOrBlank() }
             ?: settings.state.nexusUrl.orEmpty()).trimEnd('/')
         val credentialStore = CredentialStore()
+        val nexusUsername = settings.state.nexusUsername.orEmpty()
         this.registryClient = DockerRegistryClient(
             registryUrl = registryUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.NEXUS) },
+            tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
             connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
             readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )

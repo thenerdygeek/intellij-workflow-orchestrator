@@ -21,8 +21,7 @@ class AuthInterceptor(
             log.debug("[Core:Auth] Adding ${scheme.name} auth header for request to ${originalRequest.url.host}")
             val headerValue = when (scheme) {
                 AuthScheme.BEARER -> "Bearer $token"
-                AuthScheme.BASIC -> "Basic " + java.util.Base64.getEncoder()
-                    .encodeToString("$token:".toByteArray())
+                AuthScheme.BASIC -> "Basic $token" // token is pre-encoded base64(username:password)
                 AuthScheme.TOKEN -> "token $token"
             }
             originalRequest.newBuilder()

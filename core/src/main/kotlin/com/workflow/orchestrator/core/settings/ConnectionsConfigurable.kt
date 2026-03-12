@@ -71,10 +71,25 @@ class ConnectionsConfigurable(
         urlGetter: () -> String,
         urlSetter: (String) -> Unit
     ) {
+        if (serviceType == ServiceType.NEXUS) {
+            nexusServiceGroup(title, urlGetter, urlSetter)
+        } else {
+            tokenServiceGroup(title, serviceType, urlGetter, urlSetter)
+        }
+    }
+
+    /**
+     * Standard service group with a single Access Token field.
+     * Used by Jira, Bamboo, Bitbucket, SonarQube, Sourcegraph.
+     */
+    private fun Panel.tokenServiceGroup(
+        title: String,
+        serviceType: ServiceType,
+        urlGetter: () -> String,
+        urlSetter: (String) -> Unit
+    ) {
         val existingToken = credentialStore.getToken(serviceType) ?: ""
         val statusLabel = JLabel("")
-        // Track the current field values so Test Connection uses what's in the UI,
-        // not the last-saved settings value
         var currentUrl = urlGetter()
         var currentToken = existingToken
 
@@ -112,6 +127,82 @@ class ConnectionsConfigurable(
                     runBackgroundableTask("Testing $title", project, false) {
                         val result = runBlocking {
                             authTestService.testConnection(serviceType, url, token)
+                        }
+                        SwingUtilities.invokeLater {
+                            statusLabel.text = when (result) {
+                                is ApiResult.Success -> "✓ Connected successfully"
+                                is ApiResult.Error -> "✗ ${result.message}"
+                            }
+                        }
+                    }
+                }
+                cell(statusLabel)
+            }
+        }
+    }
+
+    /**
+     * Nexus-specific service group with Username + Password fields.
+     * Nexus Docker Registry uses Basic auth (username:password), not a single access token.
+     */
+    private fun Panel.nexusServiceGroup(
+        title: String,
+        urlGetter: () -> String,
+        urlSetter: (String) -> Unit
+    ) {
+        val existingPassword = credentialStore.getNexusPassword() ?: ""
+        val existingUsername = settings.state.nexusUsername.orEmpty()
+        val statusLabel = JLabel("")
+        var currentUrl = urlGetter()
+        var currentUsername = existingUsername
+        var currentPassword = existingPassword
+
+        collapsibleGroup(title) {
+            row("Registry URL:") {
+                textField()
+                    .columns(40)
+                    .bindText(urlGetter, urlSetter)
+                    .onChanged { field -> currentUrl = field.text }
+                    .comment("e.g., https://nexus.company.com/repository/docker-hosted")
+            }
+            row("Username:") {
+                textField()
+                    .columns(40)
+                    .applyToComponent {
+                        text = existingUsername
+                    }
+                    .onChanged { field ->
+                        currentUsername = field.text
+                        settings.state.nexusUsername = field.text
+                    }
+            }
+            row("Password:") {
+                passwordField()
+                    .columns(40)
+                    .applyToComponent {
+                        text = existingPassword
+                    }
+                    .onChanged { field ->
+                        val newPassword = String(field.password)
+                        currentPassword = newPassword
+                        if (newPassword.isNotBlank()) {
+                            credentialStore.storeNexusPassword(newPassword)
+                        }
+                    }
+            }
+            row {
+                button("Test Connection") {
+                    val url = currentUrl.trim()
+                    val user = currentUsername.trim()
+                    val pass = currentPassword.ifBlank { credentialStore.getNexusPassword() }
+                    if (url.isBlank() || user.isBlank() || pass.isNullOrBlank()) {
+                        statusLabel.text = "Please enter URL, username, and password"
+                        return@button
+                    }
+                    statusLabel.text = "Testing..."
+                    runBackgroundableTask("Testing $title", project, false) {
+                        val result = runBlocking {
+                            authTestService.testConnection(ServiceType.NEXUS, url, pass, username = user)
                         }
                         SwingUtilities.invokeLater {
                             statusLabel.text = when (result) {

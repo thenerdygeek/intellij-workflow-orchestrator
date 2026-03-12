@@ -43,6 +43,41 @@ class CredentialStore(
         return getToken(service) != null
     }
 
+    /**
+     * Stores a Nexus password separately from the username.
+     * Username is stored in PluginSettings; password in PasswordSafe under a separate key.
+     */
+    fun storeNexusPassword(password: String) {
+        val attributes = CredentialAttributes(
+            generateServiceName("WorkflowOrchestrator", "NEXUS_PASSWORD")
+        )
+        val credentials = Credentials("NEXUS", password)
+        safe().set(attributes, credentials)
+        log.info("[Core:Credentials] Stored Nexus password")
+    }
+
+    fun getNexusPassword(): String? {
+        val attributes = CredentialAttributes(
+            generateServiceName("WorkflowOrchestrator", "NEXUS_PASSWORD")
+        )
+        val result = safe().get(attributes)?.getPasswordAsString()
+        if (result != null) {
+            log.debug("[Core:Credentials] Retrieved Nexus password")
+        } else {
+            log.debug("[Core:Credentials] No Nexus password found")
+        }
+        return result
+    }
+
+    /**
+     * Returns a Base64-encoded "username:password" string for Nexus Basic auth.
+     */
+    fun getNexusBasicAuthToken(username: String): String? {
+        val password = getNexusPassword() ?: return null
+        if (username.isBlank()) return null
+        return java.util.Base64.getEncoder().encodeToString("$username:$password".toByteArray())
+    }
+
     private fun credentialAttributes(service: ServiceType): CredentialAttributes {
         return CredentialAttributes(
             generateServiceName("WorkflowOrchestrator", service.name)

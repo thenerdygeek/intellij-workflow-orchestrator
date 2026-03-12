@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Docker Registry v2 API client.
  * @param registryUrl Base URL of the Docker Registry (e.g., "https://registry.example.com")
- * @param tokenProvider Returns a base64-encoded Basic auth token for the registry
+ * @param tokenProvider Returns a base64-encoded "username:password" string for Basic auth with the registry
  */
 class DockerRegistryClient(
     private val registryUrl: String,

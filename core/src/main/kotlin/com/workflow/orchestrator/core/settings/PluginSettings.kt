@@ -18,6 +18,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var sonarUrl by string("")
         var sourcegraphUrl by string("")
         var nexusUrl by string("")
+        var nexusUsername by string("")
 
         // Polling intervals (seconds)
         var buildPollIntervalSeconds by property(30)
