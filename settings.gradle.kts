@@ -14,4 +14,5 @@ include(
     ":sonar",
     ":cody",
     ":automation",
+    ":handover",
 )

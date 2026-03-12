@@ -1,0 +1,93 @@
+package com.workflow.orchestrator.handover.service
+
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.handover.model.ClipboardPayload
+import com.workflow.orchestrator.handover.model.SuiteLinkEntry
+import com.workflow.orchestrator.handover.model.SuiteResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+@Service(Service.Level.PROJECT)
+class QaClipboardService {
+
+    private var project: Project? = null
+
+    constructor(project: Project) {
+        this.project = project
+    }
+
+    constructor()
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    fun formatForClipboard(payload: ClipboardPayload): String {
+        val sb = StringBuilder()
+
+        if (payload.dockerTags.isNotEmpty()) {
+            sb.appendLine("Docker Tags:")
+            for ((service, tag) in payload.dockerTags) {
+                sb.appendLine("  • $service: $tag")
+            }
+        }
+
+        if (payload.suiteLinks.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.appendLine()
+            sb.appendLine("Automation Results:")
+            for (link in payload.suiteLinks) {
+                val status = if (link.passed) "PASS" else "FAIL"
+                sb.appendLine("  • ${link.suiteName}: $status — ${link.link}")
+            }
+        }
+
+        if (payload.ticketIds.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.appendLine()
+            sb.append("Tickets: ${payload.ticketIds.joinToString(", ")}")
+        }
+
+        return sb.toString()
+    }
+
+    fun buildPayloadFromSuiteResults(
+        suiteResults: List<SuiteResult>,
+        ticketIds: List<String>
+    ): ClipboardPayload {
+        val mergedTags = mutableMapOf<String, String>()
+        val suiteLinks = mutableListOf<SuiteLinkEntry>()
+
+        for (suite in suiteResults) {
+            // Extract docker tags
+            try {
+                val parsed = json.decodeFromString<JsonObject>(suite.dockerTagsJson)
+                for ((key, value) in parsed) {
+                    mergedTags[key] = value.jsonPrimitive.content
+                }
+            } catch (_: Exception) {
+                // Skip malformed JSON
+            }
+
+            // Build suite link
+            // Only include completed suites in clipboard
+            if (suite.passed != null) {
+                suiteLinks.add(SuiteLinkEntry(
+                    suiteName = suite.suitePlanKey,
+                    passed = suite.passed,
+                    link = suite.bambooLink
+                ))
+            }
+        }
+
+        return ClipboardPayload(
+            dockerTags = mergedTags,
+            suiteLinks = suiteLinks,
+            ticketIds = ticketIds
+        )
+    }
+
+    companion object {
+        fun getInstance(project: Project): QaClipboardService {
+            return project.getService(QaClipboardService::class.java)
+        }
+    }
+}

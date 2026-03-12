@@ -74,5 +74,24 @@ sealed class WorkflowEvent {
         val estimatedWaitMs: Long?
     ) : WorkflowEvent()
 
+    /** Emitted by :handover when a PR is created via Bitbucket. */
+    data class PullRequestCreated(
+        val prUrl: String,
+        val prNumber: Int,
+        val ticketId: String
+    ) : WorkflowEvent()
+
+    /** Emitted by :handover when a Jira closure comment is posted. */
+    data class JiraCommentPosted(
+        val ticketId: String,
+        val commentId: String
+    ) : WorkflowEvent()
+
+    /** Emitted by :handover when Cody pre-review completes. */
+    data class PreReviewFinished(
+        val findingsCount: Int,
+        val highSeverityCount: Int
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

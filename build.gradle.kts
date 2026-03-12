@@ -55,6 +55,7 @@ dependencies {
     implementation(project(":sonar"))
     implementation(project(":cody"))
     implementation(project(":automation"))
+    implementation(project(":handover"))
 
     // -- External libraries --
     implementation(libs.kotlinx.coroutines.core)

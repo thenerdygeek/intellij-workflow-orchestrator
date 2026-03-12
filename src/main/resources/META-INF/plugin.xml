@@ -183,6 +183,27 @@
 
         <!-- Notification group for queue state changes -->
         <notificationGroup id="workflow.automation.queue" displayType="BALLOON"/>
+
+        <!-- Phase 2B: Handover Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverStateService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.CopyrightFixService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.PreReviewService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.PrService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.JiraClosureService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.TimeTrackingService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.QaClipboardService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.CompletionMacroService"/>
+
+        <!-- Handover Notification Group -->
+        <notificationGroup id="workflow.handover" displayType="BALLOON"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
@@ -190,6 +211,7 @@
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
     </extensions>
 
     <projectListeners>

@@ -73,6 +73,12 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var tagValidationOnTrigger by property(true)
         var queueMaxDepthPerSuite by property(10)
         var queueBuildQueuedTimeoutSeconds by property(720)
+
+        // Phase 2B: Handover settings
+        var defaultTargetBranch by string("develop")
+        var bitbucketProjectKey by string("")
+        var bitbucketRepoSlug by string("")
+        var startWorkTimestamp by property(0L)
     }
 
     val isAnyServiceConfigured: Boolean

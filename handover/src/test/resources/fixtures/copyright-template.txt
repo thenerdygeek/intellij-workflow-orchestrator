@@ -1,0 +1,4 @@
+Copyright (c) {year} MyCompany Ltd.
+All rights reserved.
+
+This software is proprietary and confidential.

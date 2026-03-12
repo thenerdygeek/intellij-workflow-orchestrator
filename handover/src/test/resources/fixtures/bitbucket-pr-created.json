@@ -1,0 +1,12 @@
+{
+  "id": 42,
+  "title": "PROJ-123: Add login feature",
+  "state": "OPEN",
+  "links": {
+    "self": [
+      {
+        "href": "https://bitbucket.example.com/projects/PROJ/repos/my-service/pull-requests/42"
+      }
+    ]
+  }
+}
