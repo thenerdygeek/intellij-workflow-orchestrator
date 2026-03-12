@@ -21,6 +21,28 @@ class HealthCheckService(private val project: Project) {
         sonarGateCheck
     )
 
+    data class ChangeClassification(
+        val hasProductionCode: Boolean,
+        val hasTestCode: Boolean,
+        val hasResources: Boolean,
+        val hasBuildConfig: Boolean
+    )
+
+    fun classifyChanges(changedFiles: List<com.intellij.openapi.vfs.VirtualFile>): ChangeClassification {
+        val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
+        var hasProd = false; var hasTest = false; var hasRes = false; var hasBuild = false
+
+        for (file in changedFiles) {
+            when {
+                file.name == "pom.xml" || file.name.endsWith(".gradle.kts") -> hasBuild = true
+                fileIndex.isInTestSourceContent(file) -> hasTest = true
+                fileIndex.isInSourceContent(file) && !fileIndex.isInTestSourceContent(file) -> hasProd = true
+                fileIndex.isInContent(file) && !fileIndex.isInSourceContent(file) -> hasRes = true
+            }
+        }
+        return ChangeClassification(hasProd, hasTest, hasRes, hasBuild)
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
@@ -52,15 +74,30 @@ class HealthCheckService(private val project: Project) {
 
         val enabledChecks = checks.filter { it.isEnabled(settings) }
 
+        val checksToRun = if (context.changedFiles.isNotEmpty()) {
+            val classification = classifyChanges(context.changedFiles)
+            enabledChecks.filter { check ->
+                when (check.id) {
+                    "maven-compile" -> classification.hasProductionCode || classification.hasBuildConfig
+                    "maven-test" -> classification.hasProductionCode || classification.hasTestCode || classification.hasBuildConfig
+                    "copyright" -> classification.hasProductionCode
+                    "sonar-gate" -> true
+                    else -> true
+                }
+            }
+        } else {
+            enabledChecks
+        }
+
         val eventBus = project.getService(EventBus::class.java)
         eventBus.emit(
-            WorkflowEvent.HealthCheckStarted(checks = enabledChecks.map { it.id })
+            WorkflowEvent.HealthCheckStarted(checks = checksToRun.map { it.id })
         )
 
         val startTime = System.currentTimeMillis()
         val results = mutableMapOf<String, HealthCheck.CheckResult>()
 
-        for (check in enabledChecks) {
+        for (check in checksToRun) {
             val result = withTimeoutOrNull(
                 settings.healthCheckTimeoutSeconds * 1000L
             ) {
