@@ -24,6 +24,7 @@
 | `jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/TransitionMappingStore.kt` | JSON-backed persistence of intent→transition mappings |
 | `jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/IntentResolver.kt` | 6-step resolution: explicit → learned → API → name → category → disambiguate |
 | `jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/TransitionExecutor.kt` | Builds POST body with fields/comment/worklog, executes transition |
+| `jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/DisambiguationHelper.kt` | EDT popup for multi-match transition selection + learned mapping persistence |
 | `jira/src/main/kotlin/com/workflow/orchestrator/jira/settings/WorkflowMappingConfigurable.kt` | Workflow Mapping settings UI page |
 | `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/ui/CoverageThresholds.kt` | Shared threshold→color utility (replaces 3x duplicated logic) |
 
@@ -53,6 +54,9 @@
 | `sonar/.../ui/CoverageTreeDecorator.kt` | Use CoverageThresholds utility |
 | `sonar/.../ui/OverviewPanel.kt` | Use CoverageThresholds utility |
 | `automation/.../service/TagBuilderService.kt` | Configurable variable name + case-insensitive fix |
+| `automation/.../service/TagHistoryService.kt` | Wire tagHistoryMaxEntries from settings |
+| `handover/.../service/HandoverStateService.kt` | Populate currentStatusName from Jira transitions |
+| `sonar/.../service/CoverageMapper.kt` | Handle new_coverage and new_branch_coverage metrics |
 
 ---
 
@@ -227,27 +231,73 @@ git commit -m "feat(core): add TransitionGuard interface and GuardResult sealed 
 
 ---
 
-### Task 4: Update HttpClientFactory to read timeouts from settings
+### Task 4: Wire HTTP timeouts from settings to all API clients
 
 **Files:**
 - Modify: `core/src/main/kotlin/com/workflow/orchestrator/core/http/HttpClientFactory.kt`
+- Modify: `jira/src/main/kotlin/com/workflow/orchestrator/jira/api/JiraApiClient.kt`
+- Modify: `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/api/BambooApiClient.kt`
+- Modify: `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/api/SonarApiClient.kt`
+- Modify: `automation/src/main/kotlin/com/workflow/orchestrator/automation/api/NexusApiClient.kt` (if exists)
 
-The `HttpClientFactory` already accepts `connectTimeoutSeconds` and `readTimeoutSeconds` as constructor params (see current code). The change is at the **call site** where `HttpClientFactory` is instantiated — it should read from `PluginSettings` instead of using defaults. Since API clients construct their own `OkHttpClient` instances with hardcoded timeouts, we need to make them use the factory or read settings directly.
+The `HttpClientFactory` already accepts `connectTimeoutSeconds` and `readTimeoutSeconds` as constructor params. The change is at the **call sites** — each API client constructs its own `OkHttpClient` with hardcoded timeouts.
 
-- [ ] **Step 1: No changes needed to HttpClientFactory itself**
+- [ ] **Step 1: Add a convenience factory method that reads from PluginSettings**
 
-The factory already accepts configurable timeouts. Verify the current constructor signature:
+In `HttpClientFactory.kt`, add a companion factory method:
+
 ```kotlin
-class HttpClientFactory(
-    private val tokenProvider: (ServiceType) -> String?,
-    private val connectTimeoutSeconds: Long = 10,
-    private val readTimeoutSeconds: Long = 30
-)
+companion object {
+    fun fromSettings(project: Project, tokenProvider: (ServiceType) -> String?): HttpClientFactory {
+        val settings = PluginSettings.getInstance(project)
+        return HttpClientFactory(
+            tokenProvider = tokenProvider,
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+        )
+    }
+}
 ```
 
-The actual wiring of settings→factory happens in each API client (Tasks 14-16). No change here.
+- [ ] **Step 2: Update JiraApiClient to use settings-based timeouts**
 
-- [ ] **Step 2: Commit (skip — no changes)**
+In `JiraApiClient.kt` (lines 26-32), replace the hardcoded `OkHttpClient` construction:
+
+```kotlin
+// Before:
+private val client = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .build()
+
+// After:
+private val client: OkHttpClient
+
+init {
+    val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+    client = OkHttpClient.Builder()
+        .connectTimeout(settings.state.httpConnectTimeoutSeconds.toLong(), TimeUnit.SECONDS)
+        .readTimeout(settings.state.httpReadTimeoutSeconds.toLong(), TimeUnit.SECONDS)
+        .build()
+}
+```
+
+Apply the same pattern to `BambooApiClient`, `SonarApiClient`, and `NexusApiClient` if they have similar hardcoded timeout construction.
+
+- [ ] **Step 3: Run tests**
+
+Run: `./gradlew :core:test && ./gradlew :jira:test && ./gradlew :bamboo:test && ./gradlew :sonar:test`
+Expected: All pass
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add core/src/main/kotlin/com/workflow/orchestrator/core/http/HttpClientFactory.kt \
+       jira/src/main/kotlin/com/workflow/orchestrator/jira/api/JiraApiClient.kt \
+       bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/api/BambooApiClient.kt \
+       sonar/src/main/kotlin/com/workflow/orchestrator/sonar/api/SonarApiClient.kt
+git commit -m "feat(core): wire configurable HTTP timeouts from settings to all API clients"
+```
 
 ---
 
@@ -542,6 +592,10 @@ class TransitionMappingStore {
         mappings.removeAll { it.intent == intent && it.projectKey == projectKey }
     }
 
+    fun clearExplicitGlobalMapping(intent: String) {
+        mappings.removeAll { it.intent == intent && it.projectKey == "" && it.source == "explicit" }
+    }
+
     fun getAllMappings(): List<TransitionMapping> = mappings.toList()
 
     fun toJson(): String = json.encodeToString(mappings.toList())
@@ -602,7 +656,7 @@ Replace the `transitionIssue` method (lines 55-58):
 suspend fun transitionIssue(
     issueKey: String,
     transitionId: String,
-    fields: Map<String, String>? = null,
+    fields: Map<String, Any>? = null,
     comment: String? = null
 ): ApiResult<Unit> {
     val body = buildTransitionPayload(transitionId, fields, comment)
@@ -611,7 +665,7 @@ suspend fun transitionIssue(
 
 private fun buildTransitionPayload(
     transitionId: String,
-    fields: Map<String, String>?,
+    fields: Map<String, Any>?,
     comment: String?
 ): String {
     val sb = StringBuilder()
@@ -620,7 +674,16 @@ private fun buildTransitionPayload(
     if (!fields.isNullOrEmpty()) {
         sb.append(""","fields":{""")
         sb.append(fields.entries.joinToString(",") { (k, v) ->
-            """"$k":{"name":"${v.replace("\"", "\\\"")}"}"""
+            val valueJson = when (v) {
+                is Map<*, *> -> {
+                    // Pass through structured values like {"id":"1"} or {"name":"Fixed"}
+                    v.entries.joinToString(",", "{", "}") { (mk, mv) ->
+                        """"$mk":"$mv""""
+                    }
+                }
+                else -> """{"name":"${v.toString().replace("\"", "\\\"")}"}"""
+            }
+            """"$k":$valueJson"""
         })
         sb.append("}")
     }
@@ -772,6 +835,20 @@ class IntentResolverTest {
     }
 
     @Test
+    fun `returns disambiguation error when multiple category matches`() {
+        val ambiguousTransitions = listOf(
+            JiraTransition("51", "Complete", JiraStatus("7", "Complete", JiraStatusCategory(3, "done", "Done"))),
+            JiraTransition("52", "Resolved", JiraStatus("8", "Resolved", JiraStatusCategory(3, "done", "Done")))
+        )
+        val result = IntentResolver.resolveFromTransitions(
+            WorkflowIntent.CLOSE, ambiguousTransitions, mappingStore, "PROJ"
+        )
+        assertTrue(result is ApiResult.Error)
+        val error = (result as ApiResult.Error)
+        assertTrue(error.message.startsWith("DISAMBIGUATE:"))
+    }
+
+    @Test
     fun `saves learned mapping after name match`() {
         IntentResolver.resolveFromTransitions(
             WorkflowIntent.START_WORK, standardTransitions, mappingStore, "PROJ"
@@ -876,10 +953,11 @@ object IntentResolver {
                 return ApiResult.Success(matched.toResolved(ResolutionMethod.CATEGORY_MATCH))
             }
             if (categoryMatches.size > 1) {
-                // Step 6: Disambiguation needed — return the list for the caller to handle
-                // For non-interactive use, return the first match
-                // The full disambiguation dialog is wired in the project-level service
-                return ApiResult.Success(categoryMatches[0].toResolved(ResolutionMethod.CATEGORY_MATCH))
+                // Step 6: Disambiguation needed — return Ambiguous result
+                return ApiResult.Error(
+                    ErrorType.VALIDATION,
+                    "DISAMBIGUATE:${categoryMatches.joinToString("|") { "${it.id}::${it.name}" }}"
+                )
             }
         }
 
@@ -918,7 +996,7 @@ object IntentResolver {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `./gradlew :jira:test --tests "*.IntentResolverTest"`
-Expected: All 8 tests PASS
+Expected: All 9 tests PASS
 
 - [ ] **Step 5: Commit**
 
@@ -926,6 +1004,100 @@ Expected: All 8 tests PASS
 git add jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/IntentResolver.kt \
        jira/src/test/kotlin/com/workflow/orchestrator/jira/workflow/IntentResolverTest.kt
 git commit -m "feat(jira): add IntentResolver with 6-step transition resolution and tests"
+```
+
+---
+
+### Task 9b: Add DisambiguationHelper for multi-match resolution
+
+**Files:**
+- Create: `jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/DisambiguationHelper.kt`
+
+- [ ] **Step 1: Implement the disambiguation helper**
+
+This is the project-level helper that shows a dialog when IntentResolver returns a `DISAMBIGUATE:` error, lets the user pick, and persists the choice as a learned mapping.
+
+```kotlin
+package com.workflow.orchestrator.jira.workflow
+
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.PopupStep
+import com.intellij.openapi.ui.popup.util.BaseListPopupStep
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.workflow.WorkflowIntent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+
+data class TransitionChoice(val id: String, val name: String) {
+    override fun toString(): String = name
+}
+
+object DisambiguationHelper {
+
+    fun parseDisambiguationError(error: ApiResult.Error): List<TransitionChoice>? {
+        if (!error.message.startsWith("DISAMBIGUATE:")) return null
+        return error.message.removePrefix("DISAMBIGUATE:")
+            .split("|")
+            .mapNotNull { entry ->
+                val parts = entry.split("::")
+                if (parts.size == 2) TransitionChoice(parts[0], parts[1]) else null
+            }
+    }
+
+    suspend fun showDisambiguationPopup(
+        project: Project,
+        intent: WorkflowIntent,
+        choices: List<TransitionChoice>
+    ): TransitionChoice? = withContext(Dispatchers.EDT) {
+        suspendCancellableCoroutine { cont ->
+            val step = object : BaseListPopupStep<TransitionChoice>(
+                "Select transition for '${intent.displayName}'", choices
+            ) {
+                override fun onChosen(selectedValue: TransitionChoice, finalChoice: Boolean): PopupStep<*>? {
+                    cont.resume(selectedValue)
+                    return FINAL_CHOICE
+                }
+
+                override fun onPopupCancel() {
+                    cont.resume(null)
+                }
+            }
+            JBPopupFactory.getInstance().createListPopup(step).showCenteredInCurrentWindow(project)
+        }
+    }
+
+    fun saveLearnedMapping(
+        project: Project,
+        intent: WorkflowIntent,
+        choice: TransitionChoice,
+        projectKey: String
+    ) {
+        val settings = PluginSettings.getInstance(project)
+        val store = TransitionMappingStore()
+        store.loadFromJson(settings.state.workflowMappings)
+        store.saveMapping(
+            TransitionMapping(intent.name, choice.name, projectKey, null, "learned")
+        )
+        settings.state.workflowMappings = store.toJson()
+    }
+}
+```
+
+- [ ] **Step 2: Verify compilation**
+
+Run: `./gradlew :jira:compileKotlin`
+Expected: BUILD SUCCESSFUL
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add jira/src/main/kotlin/com/workflow/orchestrator/jira/workflow/DisambiguationHelper.kt
+git commit -m "feat(jira): add DisambiguationHelper for multi-match transition resolution with user popup"
 ```
 
 ---
@@ -953,15 +1125,15 @@ class TransitionExecutorTest {
     }
 
     @Test
-    fun `builds payload with fields`() {
+    fun `builds payload with name-based fields`() {
         val payload = TransitionExecutor.buildPayload(
             "41",
-            mapOf("resolution" to "Fixed"),
+            mapOf("assignee" to "jsmith"),
             null
         )
         assertTrue(payload.contains(""""transition":{"id":"41"}"""))
         assertTrue(payload.contains(""""fields":{"""))
-        assertTrue(payload.contains(""""resolution":{"name":"Fixed"}"""))
+        assertTrue(payload.contains(""""assignee":{"name":"jsmith"}"""))
     }
 
     @Test
@@ -971,10 +1143,20 @@ class TransitionExecutorTest {
     }
 
     @Test
+    fun `builds payload with id-based fields`() {
+        val payload = TransitionExecutor.buildPayload(
+            "41",
+            mapOf("resolution" to mapOf("id" to "1")),
+            null
+        )
+        assertTrue(payload.contains(""""resolution":{"id":"1"}"""))
+    }
+
+    @Test
     fun `builds payload with fields and comment`() {
         val payload = TransitionExecutor.buildPayload(
             "41",
-            mapOf("resolution" to "Fixed"),
+            mapOf("assignee" to "jsmith"),
             "Closing this"
         )
         assertTrue(payload.contains(""""transition":{"id":"41"}"""))
@@ -1023,7 +1205,7 @@ class TransitionExecutor(
     companion object {
         fun buildPayload(
             transitionId: String,
-            fields: Map<String, String>?,
+            fields: Map<String, Any>?,
             comment: String?
         ): String {
             val sb = StringBuilder()
@@ -1032,8 +1214,18 @@ class TransitionExecutor(
             if (!fields.isNullOrEmpty()) {
                 sb.append(""","fields":{""")
                 sb.append(fields.entries.joinToString(",") { (k, v) ->
-                    val escaped = v.replace("\\", "\\\\").replace("\"", "\\\"")
-                    """"$k":{"name":"$escaped"}"""
+                    val valueJson = when (v) {
+                        is Map<*, *> -> {
+                            v.entries.joinToString(",", "{", "}") { (mk, mv) ->
+                                """"$mk":"$mv""""
+                            }
+                        }
+                        else -> {
+                            val escaped = v.toString().replace("\\", "\\\\").replace("\"", "\\\"")
+                            """{"name":"$escaped"}"""
+                        }
+                    }
+                    """"$k":$valueJson"""
                 })
                 sb.append("}")
             }
@@ -1056,7 +1248,7 @@ class TransitionExecutor(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `./gradlew :jira:test --tests "*.TransitionExecutorTest"`
-Expected: All 5 tests PASS
+Expected: All 6 tests PASS
 
 - [ ] **Step 5: Commit**
 
@@ -1161,6 +1353,17 @@ val jiraTransitioned: Boolean = false,
 val currentStatusName: String? = null,  // NEW — actual status name from Jira
 ```
 
+- [ ] **Step 1b: Update HandoverStateService to populate currentStatusName**
+
+Modify `handover/src/main/kotlin/com/workflow/orchestrator/handover/service/HandoverStateService.kt`. After a Jira transition is performed, the service should capture the target status name and set it on the state:
+
+```kotlin
+// In the method that performs/records a transition, add:
+state = state.copy(currentStatusName = resolvedTransition.targetStatusName)
+```
+
+If the service fetches ticket status on refresh, also populate `currentStatusName` from the Jira issue's current status name.
+
 - [ ] **Step 2: Update HandoverContextPanel to use actual status name**
 
 In `HandoverContextPanel.kt`, replace line 88:
@@ -1173,19 +1376,32 @@ ticketStatusLabel.text = if (state.jiraTransitioned) "Status: In Review" else "S
 ticketStatusLabel.text = "Status: ${state.currentStatusName ?: "Unknown"}"
 ```
 
-- [ ] **Step 3: Update CompletionMacroService step label**
+- [ ] **Step 3: Update CompletionMacroService step label to use dynamic resolution**
 
-In `CompletionMacroService.kt`, replace line 22:
+In `CompletionMacroService.kt`, replace line 22 with a dynamic label. The service should read the workflow mapping to show the actual transition name:
 
 ```kotlin
 // Before:
 MacroStep(id = "jira-transition", label = "Transition to In Review"),
 
 // After:
-MacroStep(id = "jira-transition", label = "Transition to Review"),
+MacroStep(id = "jira-transition", label = getReviewTransitionLabel()),
 ```
 
-Note: The dynamic label from mapping store would require a project reference which the service doesn't currently have in `getDefaultSteps()`. Using a generic label "Transition to Review" is simpler and still correct.
+Add a helper method:
+
+```kotlin
+private fun getReviewTransitionLabel(): String {
+    val proj = project ?: return "Transition to Review"
+    val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(proj)
+    val store = com.workflow.orchestrator.jira.workflow.TransitionMappingStore()
+    store.loadFromJson(settings.state.workflowMappings)
+    val mapping = store.getMapping("SUBMIT_FOR_REVIEW", "")
+    return if (mapping != null) "Transition to ${mapping.transitionName}" else "Transition to Review"
+}
+```
+
+Note: `CompletionMacroService` is a project-level `@Service` with a `project` field, so it can access settings. If `getDefaultSteps()` is called from the constructor, defer the label resolution to first access or use lazy initialization.
 
 - [ ] **Step 4: Verify compilation**
 
@@ -1387,7 +1603,16 @@ Remove the unused `import java.awt.Color` and `import com.intellij.ui.JBColor` i
 
 - [ ] **Step 6: Update OverviewPanel to use CoverageThresholds**
 
-Find all places in `OverviewPanel.kt` that duplicate the 80/50 threshold logic and replace them with calls to `CoverageThresholds.colorForCoverage()`. Read the OverviewPanel to find exact line numbers.
+Read `OverviewPanel.kt` fully. Search for all occurrences of `80.0`, `50.0`, `Color(46, 160, 67)`, `Color(212, 160, 32)`, `Color(255, 68, 68)`, and any `when` blocks that select colors based on coverage percentages. Replace each occurrence with:
+
+```kotlin
+val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+val color = CoverageThresholds.colorForCoverage(
+    pct, settings.coverageHighThreshold, settings.coverageMediumThreshold
+)
+```
+
+There are typically 2 occurrences in OverviewPanel: one in the summary section and one in the per-file table renderer. Replace both. Remove any now-unused `Color` or `JBColor` imports.
 
 - [ ] **Step 7: Run all sonar tests**
 
@@ -1406,10 +1631,12 @@ git commit -m "refactor(sonar): extract coverage thresholds to shared configurab
 
 ---
 
-### Task 15: Make SonarQube metric keys configurable
+### Task 15: Make SonarQube metric keys configurable and update CoverageMapper
 
 **Files:**
 - Modify: `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/api/SonarApiClient.kt`
+- Modify: `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/service/SonarDataService.kt`
+- Modify: `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/service/CoverageMapper.kt`
 
 - [ ] **Step 1: Update getMeasures to accept metric keys parameter**
 
@@ -1423,19 +1650,26 @@ suspend fun getMeasures(projectKey: String, metricKeys: String): ApiResult<...> 
 }
 ```
 
-The caller (SonarDataService) should read `PluginSettings.sonarMetricKeys` and pass it.
+- [ ] **Step 2: Update SonarDataService caller to read from settings**
 
-- [ ] **Step 2: Verify tests pass**
+The caller (SonarDataService) should read `PluginSettings.sonarMetricKeys` and pass it to `getMeasures()`.
+
+- [ ] **Step 3: Update CoverageMapper to handle new metrics**
+
+Read `CoverageMapper.kt` and add mapping logic for the new `new_coverage` and `new_branch_coverage` metrics. These should be mapped to appropriate fields in the coverage model so they can be displayed in the UI.
+
+- [ ] **Step 4: Verify tests pass**
 
 Run: `./gradlew :sonar:test`
 Expected: All pass
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add sonar/src/main/kotlin/com/workflow/orchestrator/sonar/api/SonarApiClient.kt \
-       sonar/src/main/kotlin/com/workflow/orchestrator/sonar/service/SonarDataService.kt
-git commit -m "feat(sonar): make metric keys configurable via settings"
+       sonar/src/main/kotlin/com/workflow/orchestrator/sonar/service/SonarDataService.kt \
+       sonar/src/main/kotlin/com/workflow/orchestrator/sonar/service/CoverageMapper.kt
+git commit -m "feat(sonar): make metric keys configurable, update CoverageMapper for new metrics"
 ```
 
 ---
@@ -1481,7 +1715,16 @@ val failedStages = dto.stages.stage.count { it.state.equals("Failed", ignoreCase
 
 - [ ] **Step 4: Make bambooBuildVariableName configurable in TagBuilderService**
 
-Find `"dockerTagsAsJson"` hardcoded string (around line 49) and read from settings instead. The TagBuilderService needs a project reference to access PluginSettings. If it doesn't have one, pass the variable name as a parameter from the caller.
+Find **both** `"dockerTagsAsJson"` hardcoded strings: line 49 (reading the variable) and line 118 (writing the variable as a key in the build trigger payload). Replace both with the settings value. The TagBuilderService needs a project reference to access PluginSettings. If it doesn't have one, pass the variable name as a parameter from the caller.
+
+```kotlin
+// Line 49 (reading):
+val variableName = bambooBuildVariableName  // from settings or parameter
+val existingTag = buildResult.variables?.get(variableName)
+
+// Line 118 (writing):
+result[variableName] = buildJsonPayload(entries)
+```
 
 - [ ] **Step 5: Run affected tests**
 
@@ -1495,6 +1738,36 @@ git add bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/ui/BuildDashboar
        sonar/src/main/kotlin/com/workflow/orchestrator/sonar/service/SonarDataService.kt \
        automation/src/main/kotlin/com/workflow/orchestrator/automation/service/TagBuilderService.kt
 git commit -m "fix: unify default branch fallbacks, fix case-sensitive state match, configurable build variable name"
+```
+
+---
+
+### Task 16b: Wire tagHistoryMaxEntries to TagHistoryService
+
+**Files:**
+- Modify: `automation/src/main/kotlin/com/workflow/orchestrator/automation/service/TagHistoryService.kt`
+
+- [ ] **Step 1: Update callers of getHistory() to pass settings value**
+
+In `TagHistoryService.kt`, the `getHistory` method has `limit: Int = 5` as a default parameter (line 124). Find all callers of `getHistory()` (likely in the same service or in `StagingPanel`) and update them to pass the settings value:
+
+```kotlin
+val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+val history = tagHistoryService.getHistory(suitePlanKey, limit = settings.state.tagHistoryMaxEntries)
+```
+
+If callers are in UI code without direct project access, pass the limit as a parameter from the caller.
+
+- [ ] **Step 2: Run tests**
+
+Run: `./gradlew :automation:test`
+Expected: All pass
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add automation/src/main/kotlin/com/workflow/orchestrator/automation/service/TagHistoryService.kt
+git commit -m "feat(automation): wire tagHistoryMaxEntries setting to TagHistoryService callers"
 ```
 
 ---
@@ -1913,7 +2186,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
     override fun createPanel(): DialogPanel {
         val settings = PluginSettings.getInstance(project)
         val store = TransitionMappingStore()
-        store.loadFromJson(settings.state.workflowMappings ?: "")
+        store.loadFromJson(settings.state.workflowMappings)
 
         // Pre-populate fields from stored mappings
         for (intent in WorkflowIntent.entries) {
@@ -1975,9 +2248,14 @@ class WorkflowMappingConfigurable(private val project: Project) :
 
     override fun apply() {
         super.apply()
-        // Save intent mappings
+        // Save intent mappings — load existing learned mappings first to avoid wiping them
         val settings = PluginSettings.getInstance(project)
         val store = TransitionMappingStore()
+        store.loadFromJson(settings.state.workflowMappings)
+        // Remove old explicit global mappings, then add current ones
+        for (intent in WorkflowIntent.entries) {
+            store.clearExplicitGlobalMapping(intent.name)
+        }
         for ((intent, transitionName) in intentFields) {
             if (transitionName.isNotBlank()) {
                 store.saveMapping(
@@ -2099,11 +2377,11 @@ git commit -m "fix: address issues found during manual verification"
 | Chunk | Tasks | Focus |
 |---|---|---|
 | 1 | 1-4 | Core foundation: 20 settings fields, WorkflowIntent, TransitionGuard |
-| 2 | 5-10 | Jira workflow engine: DTOs, MappingStore, IntentResolver, TransitionExecutor |
+| 2 | 5-10 | Jira workflow engine: DTOs, MappingStore, IntentResolver, DisambiguationHelper, TransitionExecutor |
 | 3 | 11-13 | Wire consumers: BranchingService, HandoverPanel, BranchNameValidator |
 | 4 | 14-17 | Sonar + Bamboo: CoverageThresholds, metric keys, bug fixes |
 | 5 | 18-20 | Handover: PR title/reviewers, time tracking, diff limits |
 | 6 | 21-23 | Settings UI: AdvancedConfigurable, WorkflowMappingConfigurable, plugin.xml |
 | 7 | 24 | Final verification |
 
-**Total: 24 tasks, ~50 steps, 9 new files, 22 modified files**
+**Total: 27 tasks (24 + 3 fix tasks), ~60 steps, 10 new files, 25 modified files**
