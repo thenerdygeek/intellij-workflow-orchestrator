@@ -1191,7 +1191,7 @@ class TransitionExecutor(
     suspend fun execute(
         issueKey: String,
         resolved: ResolvedTransition,
-        fieldValues: Map<String, String>? = null,
+        fieldValues: Map<String, Any>? = null,
         comment: String? = null
     ): ApiResult<Unit> {
         return apiClient.transitionIssue(
@@ -1417,6 +1417,7 @@ Expected: All tests pass
 
 ```bash
 git add handover/src/main/kotlin/com/workflow/orchestrator/handover/model/HandoverModels.kt \
+       handover/src/main/kotlin/com/workflow/orchestrator/handover/service/HandoverStateService.kt \
        handover/src/main/kotlin/com/workflow/orchestrator/handover/ui/HandoverContextPanel.kt \
        handover/src/main/kotlin/com/workflow/orchestrator/handover/service/CompletionMacroService.kt
 git commit -m "refactor(handover): replace hardcoded status strings with dynamic currentStatusName"
