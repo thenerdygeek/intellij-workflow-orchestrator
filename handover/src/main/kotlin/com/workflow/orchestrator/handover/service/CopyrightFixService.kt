@@ -28,8 +28,17 @@ class CopyrightFixService {
 
     fun updateYearInHeader(headerText: String, currentYear: Int): String {
         val yearExprMatch = FULL_YEAR_EXPR.find(headerText) ?: return headerText
-        val yearExpr = yearExprMatch.value
+        val replacement = consolidateYears(yearExprMatch.value, currentYear) ?: return headerText
+        if (yearExprMatch.value == replacement) return headerText
+        return headerText.replaceRange(yearExprMatch.range, replacement)
+    }
 
+    /**
+     * Parses all years from a year expression (e.g. "2018, 2020-2023, 2025")
+     * and consolidates into earliest-currentYear format.
+     * Returns null if no years found.
+     */
+    fun consolidateYears(yearExpr: String, currentYear: Int): String? {
         val allYears = mutableSetOf<Int>()
         YEAR_RANGE_PATTERN.findAll(yearExpr).forEach { match ->
             val start = match.groupValues[1].toInt()
@@ -39,14 +48,9 @@ class CopyrightFixService {
         YEAR_PATTERN.findAll(yearExpr).forEach { match ->
             allYears.add(match.groupValues[1].toInt())
         }
-
-        if (allYears.isEmpty()) return headerText
-
+        if (allYears.isEmpty()) return null
         val minYear = allYears.min()
-        val replacement = if (minYear == currentYear) "$currentYear" else "$minYear-$currentYear"
-        if (yearExpr == replacement) return headerText
-
-        return headerText.replaceRange(yearExprMatch.range, replacement)
+        return if (minYear == currentYear) "$currentYear" else "$minYear-$currentYear"
     }
 
     fun wrapForLanguage(template: String, fileExtension: String): String {
@@ -99,17 +103,7 @@ class CopyrightFixService {
                 filePath = filePath,
                 status = CopyrightStatus.YEAR_OUTDATED,
                 oldYear = yearExprMatch?.value,
-                newYear = if (yearExprMatch != null) {
-                    val allYears = mutableSetOf<Int>()
-                    YEAR_RANGE_PATTERN.findAll(yearExprMatch.value).forEach { m ->
-                        allYears.addAll(m.groupValues[1].toInt()..m.groupValues[2].toInt())
-                    }
-                    YEAR_PATTERN.findAll(yearExprMatch.value).forEach { m ->
-                        allYears.add(m.groupValues[1].toInt())
-                    }
-                    val min = allYears.min()
-                    if (min == currentYear) "$currentYear" else "$min-$currentYear"
-                } else null
+                newYear = yearExprMatch?.let { consolidateYears(it.value, currentYear) }
             )
         }
     }

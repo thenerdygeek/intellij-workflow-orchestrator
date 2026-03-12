@@ -197,6 +197,27 @@ class HandoverStateServiceTest {
     }
 
     @Test
+    fun `TicketChanged event resets state for new ticket`() = runTest {
+        service.stateFlow.test {
+            skipItems(1)
+
+            // First accumulate some state
+            service.markCopyrightFixed()
+            awaitItem()
+
+            // Emit ticket change
+            eventBus.emit(WorkflowEvent.TicketChanged("PROJ-456", "New feature"))
+
+            val state = awaitItem()
+            assertEquals("PROJ-456", state.ticketId)
+            assertEquals("New feature", state.ticketSummary)
+            assertFalse(state.copyrightFixed) // reset
+            assertFalse(state.prCreated) // reset
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `markCopyrightFixed updates state`() = runTest {
         service.stateFlow.test {
             skipItems(1)

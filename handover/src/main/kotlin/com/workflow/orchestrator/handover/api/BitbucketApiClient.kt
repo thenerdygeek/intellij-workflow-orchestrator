@@ -107,7 +107,7 @@ class BitbucketApiClient(
             try {
                 val branchRef = "refs/heads/$branchName"
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?at=$branchRef&state=OPEN")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?direction=OUTGOING&at=$branchRef&state=OPEN")
                     .get()
                     .header("Accept", "application/json")
                     .build()

@@ -14,7 +14,7 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     val textArea = JBTextArea(8, 40).apply {
         isEditable = false
-        font = java.awt.Font("Monospaced", java.awt.Font.PLAIN, 12)
+        font = JBUI.Fonts.create("Monospaced", 12)
     }
     val copyAllButton = JButton("Copy All")
     val addServiceButton = JButton("Add Service")

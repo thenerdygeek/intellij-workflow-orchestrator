@@ -3,6 +3,7 @@ package com.workflow.orchestrator.handover.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.handover.model.SuiteResult
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -18,7 +19,7 @@ class JiraClosureService {
 
     constructor()
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
     fun buildClosureComment(suiteResults: List<SuiteResult>): String {
         if (suiteResults.isEmpty()) return ""
@@ -54,7 +55,7 @@ class JiraClosureService {
             sb.appendLine()
             sb.appendLine("h4. Docker Tags")
             sb.appendLine("{code:json}")
-            sb.appendLine(buildJsonString(mergedTags))
+            sb.appendLine(json.encodeToString(mergedTags))
             sb.append("{code}")
         }
 
@@ -63,11 +64,6 @@ class JiraClosureService {
 
     private fun escapeWikiMarkup(text: String): String {
         return text.replace("|", "\\|").replace("{", "\\{").replace("}", "\\}")
-    }
-
-    private fun buildJsonString(tags: Map<String, String>): String {
-        val entries = tags.entries.joinToString(",\n  ") { (k, v) -> "\"$k\": \"$v\"" }
-        return "{\n  $entries\n}"
     }
 
     companion object {

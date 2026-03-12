@@ -93,5 +93,11 @@ sealed class WorkflowEvent {
         val highSeverityCount: Int
     ) : WorkflowEvent()
 
+    /** Emitted by :jira when the active ticket changes (Start Work, branch switch). */
+    data class TicketChanged(
+        val ticketId: String,
+        val ticketSummary: String
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

@@ -53,23 +53,10 @@ class HandoverStateService : Disposable {
             startWorkTimestamp = settings.state.startWorkTimestamp
         )
 
-        // Subscribe to EventBus
+        // Subscribe to EventBus (handles all cross-module events including ticket changes)
         scope.launch {
             eventBus.events.collect { event ->
                 handleEvent(event)
-            }
-        }
-
-        // Auto-reset when active ticket changes in settings
-        scope.launch {
-            var previousTicketId = settings.state.activeTicketId.orEmpty()
-            while (true) {
-                kotlinx.coroutines.delay(2000)
-                val currentTicketId = settings.state.activeTicketId.orEmpty()
-                if (currentTicketId != previousTicketId && currentTicketId.isNotEmpty()) {
-                    resetForNewTicket(currentTicketId, settings.state.activeTicketSummary.orEmpty())
-                    previousTicketId = currentTicketId
-                }
             }
         }
     }
@@ -127,6 +114,11 @@ class HandoverStateService : Disposable {
             is WorkflowEvent.JiraCommentPosted -> current.copy(
                 jiraCommentPosted = true
             )
+
+            is WorkflowEvent.TicketChanged -> {
+                resetForNewTicket(event.ticketId, event.ticketSummary)
+                _stateFlow.value // resetForNewTicket already updates _stateFlow
+            }
 
             else -> current // Ignore events we don't care about
         }

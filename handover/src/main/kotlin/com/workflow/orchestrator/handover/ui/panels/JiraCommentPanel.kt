@@ -13,7 +13,7 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     val commentPreview = JBTextArea(12, 40).apply {
         isEditable = false
-        font = java.awt.Font("Monospaced", java.awt.Font.PLAIN, 12)
+        font = JBUI.Fonts.create("Monospaced", 12)
     }
     val editButton = JButton("Edit")
     val postButton = JButton("Post Comment")
