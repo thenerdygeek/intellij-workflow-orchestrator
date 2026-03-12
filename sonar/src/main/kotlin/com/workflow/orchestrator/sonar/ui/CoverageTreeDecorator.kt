@@ -18,11 +18,19 @@ class CoverageTreeDecorator : ProjectViewNodeDecorator {
         if (file.isDirectory) return
 
         val basePath = project.basePath ?: return
-        val relativePath = file.path.removePrefix("$basePath/")
 
-        // Skip test files and non-source files
-        val normalizedPath = relativePath.replace('\\', '/')
-        if (normalizedPath.contains("/test/") || normalizedPath.contains("/resources/")) return
+        val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
+        if (fileIndex.isInTestSourceContent(file)) return
+        if (fileIndex.isInGeneratedSources(file)) return
+        if (fileIndex.isExcluded(file)) return
+        if (!fileIndex.isInSourceContent(file)) return
+
+        val baseDir = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(basePath)
+        val relativePath = if (baseDir != null) {
+            com.intellij.openapi.vfs.VfsUtilCore.getRelativePath(file, baseDir) ?: file.path
+        } else {
+            file.path.removePrefix("$basePath/")
+        }
 
         val state = getSonarState(project)
         val coverage = state.fileCoverage[relativePath] ?: return
