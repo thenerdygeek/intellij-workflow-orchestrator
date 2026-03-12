@@ -32,7 +32,7 @@ class MavenModuleDetectorTest {
     }
 
     @Test
-    fun `extractArtifactId parses simple pom`() {
+    fun `extractArtifactIdFallback parses simple pom`() {
         val pomContent = """
             <?xml version="1.0" encoding="UTF-8"?>
             <project>
@@ -46,11 +46,11 @@ class MavenModuleDetectorTest {
         every { pomFile.contentsToByteArray() } returns pomContent.toByteArray()
 
         val detector = MavenModuleDetector(project)
-        assertEquals("my-service", detector.extractArtifactId(pomFile))
+        assertEquals("my-service", detector.extractArtifactIdFallback(pomFile))
     }
 
     @Test
-    fun `extractArtifactId skips parent artifactId`() {
+    fun `extractArtifactIdFallback skips parent artifactId`() {
         val pomContent = """
             <?xml version="1.0" encoding="UTF-8"?>
             <project>
@@ -67,11 +67,11 @@ class MavenModuleDetectorTest {
         every { pomFile.contentsToByteArray() } returns pomContent.toByteArray()
 
         val detector = MavenModuleDetector(project)
-        assertEquals("child-module", detector.extractArtifactId(pomFile))
+        assertEquals("child-module", detector.extractArtifactIdFallback(pomFile))
     }
 
     @Test
-    fun `findNearestPom walks up directory tree`() {
+    fun `findNearestPomFallback walks up directory tree`() {
         val pomFile = mockk<VirtualFile>()
         val parentDir = mockk<VirtualFile>()
         val childDir = mockk<VirtualFile>()
@@ -83,11 +83,11 @@ class MavenModuleDetectorTest {
         every { parentDir.findChild("pom.xml") } returns pomFile
 
         val detector = MavenModuleDetector(project)
-        assertEquals(pomFile, detector.findNearestPom(file))
+        assertEquals(pomFile, detector.findNearestPomFallback(file))
     }
 
     @Test
-    fun `findNearestPom returns null when no pom found`() {
+    fun `findNearestPomFallback returns null when no pom found`() {
         val file = mockk<VirtualFile>()
         val dir = mockk<VirtualFile>()
         every { file.parent } returns dir
@@ -95,7 +95,7 @@ class MavenModuleDetectorTest {
         every { dir.parent } returns null
 
         val detector = MavenModuleDetector(project)
-        assertNull(detector.findNearestPom(file))
+        assertNull(detector.findNearestPomFallback(file))
     }
 
     @Test
@@ -119,5 +119,30 @@ class MavenModuleDetectorTest {
         val modules = detector.detectChangedModules(listOf(file1, file2))
         assertEquals(1, modules.size)
         assertEquals("my-mod", modules[0])
+    }
+
+    @Test
+    fun `extractArtifactId is renamed to extractArtifactIdFallback`() {
+        // Verify the fallback method name exists — existing behavior preserved
+        val pomContent = """
+            <project><artifactId>my-service</artifactId></project>
+        """.trimIndent()
+        val pomFile = mockk<VirtualFile>()
+        every { pomFile.contentsToByteArray() } returns pomContent.toByteArray()
+
+        val detector = MavenModuleDetector(project)
+        assertEquals("my-service", detector.extractArtifactIdFallback(pomFile))
+    }
+
+    @Test
+    fun `findNearestPom is renamed to findNearestPomFallback`() {
+        val pomFile = mockk<VirtualFile>()
+        val dir = mockk<VirtualFile>()
+        val file = mockk<VirtualFile>()
+        every { file.parent } returns dir
+        every { dir.findChild("pom.xml") } returns pomFile
+
+        val detector = MavenModuleDetector(project)
+        assertEquals(pomFile, detector.findNearestPomFallback(file))
     }
 }

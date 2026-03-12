@@ -1,15 +1,48 @@
 package com.workflow.orchestrator.core.maven
 
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 
 class MavenModuleDetector(private val project: Project) {
 
     fun detectChangedModules(changedFiles: List<VirtualFile>): List<String> {
+        val mavenManager = getMavenManager()
+        if (mavenManager != null && mavenManager.projects.isNotEmpty()) {
+            return detectViaMavenApi(changedFiles, mavenManager)
+        }
+        return detectViaFallback(changedFiles)
+    }
+
+    /**
+     * Primary path: uses MavenProjectsManager which provides the full Maven model.
+     * Maps each changed file to its owning Maven module via directory ancestry.
+     */
+    private fun detectViaMavenApi(
+        changedFiles: List<VirtualFile>,
+        mavenManager: org.jetbrains.idea.maven.project.MavenProjectsManager
+    ): List<String> {
+        val modules = mutableSetOf<String>()
+        val mavenProjects = mavenManager.projects
+        for (file in changedFiles) {
+            val owningProject = mavenProjects.find { mavenProject ->
+                VfsUtilCore.isAncestor(mavenProject.directoryFile, file, false)
+            }
+            if (owningProject != null) {
+                owningProject.mavenId.artifactId?.let { modules.add(it) }
+            }
+        }
+        return modules.toList()
+    }
+
+    /**
+     * Fallback path: used when Maven plugin is not available or projects haven't imported yet.
+     */
+    private fun detectViaFallback(changedFiles: List<VirtualFile>): List<String> {
         val modules = mutableSetOf<String>()
         for (file in changedFiles) {
-            val pomFile = findNearestPom(file) ?: continue
-            val artifactId = extractArtifactId(pomFile)
+            val pomFile = findNearestPomFallback(file) ?: continue
+            val artifactId = extractArtifactIdFallback(pomFile)
             if (artifactId != null) {
                 modules.add(artifactId)
             }
@@ -22,12 +55,21 @@ class MavenModuleDetector(private val project: Project) {
         if (modules.isEmpty()) {
             return goalList
         }
-        // Always use -pl for targeted builds, even with a single module.
-        // For single-module projects, detectChangedModules returns empty list (no pom.xml).
         return listOf("-pl", modules.joinToString(","), "-am") + goalList
     }
 
-    internal fun findNearestPom(file: VirtualFile): VirtualFile? {
+    private fun getMavenManager(): org.jetbrains.idea.maven.project.MavenProjectsManager? {
+        return try {
+            org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
+                .takeIf { it.isMavenizedProject }
+        } catch (_: Exception) {
+            null // Maven plugin not available
+        }
+    }
+
+    // --- Fallback methods (preserved from original implementation) ---
+
+    internal fun findNearestPomFallback(file: VirtualFile): VirtualFile? {
         var dir = file.parent
         while (dir != null) {
             val pom = dir.findChild("pom.xml")
@@ -37,10 +79,8 @@ class MavenModuleDetector(private val project: Project) {
         return null
     }
 
-    internal fun extractArtifactId(pomFile: VirtualFile): String? {
+    internal fun extractArtifactIdFallback(pomFile: VirtualFile): String? {
         val content = String(pomFile.contentsToByteArray())
-        // Simple regex to find <artifactId> directly under <project> (not inside <parent> or <dependency>)
-        // We look for the first <artifactId> that's NOT inside a <parent> block
         val lines = content.lines()
         var inParent = false
         var inDependencies = false
