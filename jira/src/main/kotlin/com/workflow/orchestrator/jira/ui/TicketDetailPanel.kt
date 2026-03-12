@@ -348,7 +348,7 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
                     0f, 0f, width.toFloat(), height.toFloat(),
                     JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
                 ))
-                g2.color = Color.WHITE
+                g2.color = JBColor.WHITE
                 g2.font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
                 val fm = g2.fontMetrics
                 val textX = (width - fm.stringWidth(text.uppercase())) / 2
@@ -375,8 +375,9 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
-                // Semi-transparent background
-                g2.color = Color(color.red, color.green, color.blue, 30)
+                // Semi-transparent background (resolve JBColor for current theme)
+                val resolved = color
+                g2.color = Color(resolved.red, resolved.green, resolved.blue, 30)
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),
                     JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
@@ -496,7 +497,7 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
             val size = minOf(width, height).toFloat()
             g2.color = avatarColor
             g2.fill(Ellipse2D.Float(0f, 0f, size, size))
-            g2.color = Color.WHITE
+            g2.color = JBColor.WHITE
             g2.font = g2.font.deriveFont(Font.BOLD, size * 0.45f)
             val fm = g2.fontMetrics
             val textX = ((size - fm.stringWidth(letter)) / 2).toInt()

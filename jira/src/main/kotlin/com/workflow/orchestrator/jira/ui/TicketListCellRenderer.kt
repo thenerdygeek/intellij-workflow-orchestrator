@@ -37,7 +37,8 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
     ): Component {
         this.issue = value
         this.isSelected = isSelected
-        this.isHovered = !isSelected && index == hoveredIndex
+        val listHoveredIndex = (list.getClientProperty(HOVERED_INDEX_KEY) as? Int) ?: -1
+        this.isHovered = !isSelected && index == listHoveredIndex
 
         preferredSize = Dimension(list.width, JBUI.scale(ROW_HEIGHT))
         return this
@@ -128,7 +129,7 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
             pillW.toFloat(), pillH.toFloat(),
             JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
         ))
-        g2.color = Color.WHITE
+        g2.color = JBColor.WHITE
         g2.drawString(pillText, cursorX + pillPadH, line2Y)
         cursorX += pillW + JBUI.scale(8)
 
@@ -173,9 +174,8 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
     }
 
     companion object {
-        /** Tracked by [SprintDashboardPanel] via MouseMotionListener on the JBList. */
-        @JvmStatic
-        var hoveredIndex: Int = -1
+        /** Client property key for per-list hover tracking. Set by [SprintDashboardPanel]. */
+        const val HOVERED_INDEX_KEY = "workflow.sprint.hoveredIndex"
 
         private const val ROW_HEIGHT = 52
 

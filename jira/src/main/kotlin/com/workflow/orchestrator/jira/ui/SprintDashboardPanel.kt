@@ -159,6 +159,7 @@ class SprintDashboardPanel(
         }, BorderLayout.CENTER)
 
         val splitter = JBSplitter(false, 0.4f).apply {
+            setSplitterProportionKey("workflow.sprint.splitter")
             firstComponent = leftPanel
             secondComponent = detailPanel
             isOpaque = false
@@ -192,12 +193,14 @@ class SprintDashboardPanel(
             }
         }
 
-        // Hover tracking for cell renderer
+        // Hover tracking for cell renderer (per-list via client property)
+        ticketList.putClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY, -1)
         ticketList.addMouseMotionListener(object : MouseMotionAdapter() {
             override fun mouseMoved(e: MouseEvent) {
                 val index = ticketList.locationToIndex(e.point)
-                if (index != TicketListCellRenderer.hoveredIndex) {
-                    TicketListCellRenderer.hoveredIndex = index
+                val current = ticketList.getClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY) as? Int ?: -1
+                if (index != current) {
+                    ticketList.putClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY, index)
                     ticketList.repaint()
                 }
             }
@@ -205,8 +208,9 @@ class SprintDashboardPanel(
 
         ticketList.addMouseListener(object : MouseAdapter() {
             override fun mouseExited(e: MouseEvent) {
-                if (TicketListCellRenderer.hoveredIndex != -1) {
-                    TicketListCellRenderer.hoveredIndex = -1
+                val current = ticketList.getClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY) as? Int ?: -1
+                if (current != -1) {
+                    ticketList.putClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY, -1)
                     ticketList.repaint()
                 }
             }
@@ -284,7 +288,7 @@ class SprintDashboardPanel(
     }
 
     private fun setLoading(loading: Boolean, message: String) {
-        loadingIcon.isVisible = loading
+        loadingIcon.icon = if (loading) AllIcons.Process.Step_1 else null
         statusLabel.text = message
     }
 
