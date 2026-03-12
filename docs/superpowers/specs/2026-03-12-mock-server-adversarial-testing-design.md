@@ -71,7 +71,7 @@ A standalone Ktor-based mock server that simulates Jira, Bamboo, and SonarQube w
 | Bamboo Mock | 8280 | `/rest/api/latest/` |
 | SonarQube Mock | 8380 | `/api/` |
 
-All three start from a single process.
+All three start from a single process. Ports are configurable via environment variables (`MOCK_JIRA_PORT`, `MOCK_BAMBOO_PORT`, `MOCK_SONAR_PORT`) or CLI args. Startup fails fast with a clear error if any port is already in use.
 
 ---
 
@@ -83,7 +83,7 @@ The mock server deliberately uses values that differ from what the plugin hardco
 
 #### Workflow States
 
-The plugin assumes "In Progress" status name and `"indeterminate"` category key (`BranchingService.kt:62-64`). The mock uses entirely different names and categories:
+The plugin assumes "In Progress" status name and `"indeterminate"` category key (`BranchingService.kt:62-63`). The mock uses entirely different names and categories:
 
 | Status Name | Category Key | Category Name | ID |
 |---|---|---|---|
@@ -94,11 +94,14 @@ The plugin assumes "In Progress" status name and `"indeterminate"` category key 
 | Approved | `done` | Done | 5 |
 | Closed | `done` | Done | 6 |
 | Blocked | `blocked` | Blocked | 7 |
+| Investigating | `indeterminate` | In Progress | 8 |
 
 **Targeted assumptions:**
-- `BranchingService.kt:62` — `name.equals("In Progress")` → no match
-- `BranchingService.kt:64` — `statusCategory.key == "indeterminate"` → no match (uses `"in_flight"`)
+- `BranchingService.kt:62` — `name.equals("In Progress")` → no match for "WIP", "Investigating", etc.
+- `BranchingService.kt:63` — `statusCategory.key == "indeterminate"` → **matches "Investigating" only** (tests that the fallback path works when name differs but category key matches)
 - `TicketListCellRenderer.kt:48-53` — Only handles `"new"`, `"indeterminate"`, `"done"` → `"in_flight"`, `"verification"`, `"blocked"` all fall to grey default
+
+Note: The "Investigating" status deliberately uses `"indeterminate"` as its category key to test the plugin's fallback path where the status name doesn't match "In Progress" but the category key does match. This tests both the failure case (WIP with `"in_flight"`) and the fallback success case (Investigating with `"indeterminate"`).
 
 #### Transitions with Requirements
 
@@ -137,23 +140,42 @@ Uses "Story", "Defect" (not "Bug"), "Spike", "Tech Debt" — diverges from stand
 - Tickets include cross-project issue links (blocked-by, relates-to)
 - One ticket has no summary (empty string) — tests null/empty handling
 
+#### Transition Field Validation
+
+When the plugin POSTs a transition without required fields, the mock returns HTTP 400:
+
+```json
+{
+  "errorMessages": [],
+  "errors": {
+    "assignee": "Assignee is required for this transition"
+  }
+}
+```
+
+The plugin's `JiraApiClient.transitionIssue()` sends only `{"transition":{"id":"..."}}` with no field values. This will surface the gap in required-field handling.
+
 #### API Endpoints Implemented
 
 | Method | Path | Plugin Usage |
 |---|---|---|
 | GET | `/rest/api/2/myself` | Test connection |
-| GET | `/rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue` | Sprint ticket loading |
-| GET | `/rest/api/2/issue/{key}` | Ticket detail with links |
+| GET | `/rest/agile/1.0/board?type=scrum` | Board discovery (required before sprint loading) |
+| GET | `/rest/agile/1.0/board/{boardId}/sprint?state=active` | Active sprint discovery |
+| GET | `/rest/agile/1.0/sprint/{sprintId}/issue` | Sprint ticket loading |
+| GET | `/rest/api/2/issue/{key}?expand=issuelinks` | Ticket detail with links |
 | GET | `/rest/api/2/issue/{key}/transitions` | Available transitions for ticket |
-| POST | `/rest/api/2/issue/{key}/transitions` | Execute transition (mutates state) |
+| POST | `/rest/api/2/issue/{key}/transitions` | Execute transition (validates required fields, mutates state) |
 | POST | `/rest/api/2/issue/{key}/comment` | Add comment |
 | POST | `/rest/api/2/issue/{key}/worklog` | Log time |
+
+Note: The sprint issues path is `/rest/agile/1.0/sprint/{sprintId}/issue` (no board segment). The board discovery and active sprint endpoints are required because `SprintService` discovers these dynamically before loading issues.
 
 ### Bamboo Mock
 
 #### Build Lifecycle States
 
-The plugin hardcodes `"InProgress"`, `"Queued"`, `"Pending"` in `BuildState.kt:10-17` and `BambooApiClient.kt:94-96`. The mock uses different values:
+The plugin hardcodes `"InProgress"`, `"Queued"`, `"Pending"` in `BuildState.kt:10-17` and `BambooApiClient.kt:95`. The mock uses different values:
 
 | lifeCycleState | state | Plugin expects? | Maps to |
 |---|---|---|---|
@@ -165,8 +187,8 @@ The plugin hardcodes `"InProgress"`, `"Queued"`, `"Pending"` in `BuildState.kt:1
 | `Cancelled` | `Cancelled` | No | UNKNOWN |
 
 **Targeted assumptions:**
-- `BuildState.kt:12` — `"InProgress"` check fails for `"Running"`
-- `BambooApiClient.kt:94-96` — Filter for running builds misses `"Running"` state
+- `BuildState.kt:11` — `"InProgress"` check fails for `"Running"`
+- `BambooApiClient.kt:95` — Filter for running builds misses `"Running"` state
 - `BuildState.kt` — No handling for `"PartiallySuccessful"` or `"Cancelled"`
 
 #### Dynamic Build Progression
@@ -193,17 +215,24 @@ Each stage has its own status and can fail independently.
 
 #### Build Log
 
-Returns realistic multi-line build logs with Maven output, test results, and timestamps. Includes ANSI color codes to test log rendering.
+Returns realistic multi-line build logs with Maven output, test results, and timestamps. Includes ANSI color codes to test log rendering. Accessed via `?expand=logEntries` query parameter on the result endpoint (not a separate `/log` path).
 
 #### API Endpoints Implemented
 
 | Method | Path | Plugin Usage |
 |---|---|---|
 | GET | `/rest/api/latest/currentUser` | Test connection |
+| GET | `/rest/api/latest/plan` | List all plans (used by `PlanDetectionService`) |
+| GET | `/rest/api/latest/search/plans?searchTerm={term}` | Search plans by name |
+| GET | `/rest/api/latest/plan/{key}/branch` | List plan branches |
+| GET | `/rest/api/latest/plan/{key}/variable` | Get plan variables (used by `ManualStageDialog`) |
 | GET | `/rest/api/latest/result/{planKey}/latest` | Latest build result |
-| GET | `/rest/api/latest/result/{buildKey}` | Specific build with stages |
+| GET | `/rest/api/latest/result/{buildKey}` | Specific build with stages (supports `?expand=logEntries,variables`) |
 | GET | `/rest/api/latest/result/{planKey}` | Running/queued builds (filtered by lifeCycleState) |
 | POST | `/rest/api/latest/queue/{planKey}` | Trigger build (starts progression timer) |
+| DELETE | `/rest/api/latest/queue/{resultKey}` | Cancel a queued/running build |
+
+Note: Build logs and variables are accessed via `?expand=logEntries` and `?expand=variables` query parameters on the result endpoint, not via separate paths. The mock parses the `expand` query parameter and includes the requested data in the response.
 
 ### SonarQube Mock
 
@@ -261,10 +290,14 @@ Returns per-file coverage with realistic line-level data. Some files have 100% c
 
 | Method | Path | Plugin Usage |
 |---|---|---|
-| GET | `/api/authentication/validate` | Test connection |
+| GET | `/api/authentication/validate` | Test connection (sometimes returns `{"valid": false}` in chaos mode) |
+| GET | `/api/projects/search` | Project discovery (used by `ProjectKeyDetectionService`) |
 | GET | `/api/measures/component_tree` | Coverage data per file |
+| GET | `/api/sources/lines` | Source line coverage data |
 | GET | `/api/issues/search` | Open issues with severity, type, location |
 | GET | `/api/qualitygates/project_status` | Quality gate status with conditions |
+
+Note: Extra fields in responses will be silently ignored by the plugin due to `ignoreUnknownKeys = true`. The extra metrics (`security_rating`, `reliability_rating`) test this — they will not crash but will be silently dropped.
 
 ---
 
@@ -276,11 +309,13 @@ A Ktor interceptor plugin that, when enabled, randomly corrupts a configurable p
 
 | Type | Weight | Description |
 |---|---|---|
-| Malformed JSON | 25% | Truncates response body mid-object (tests unhandled `SerializationException`) |
-| Slow response | 20% | Adds 10-15s delay before responding (tests timeout handling) |
-| HTTP 500 | 20% | Returns `{"error": "Internal Server Error"}` |
+| Malformed JSON | 20% | Truncates response body mid-object (tests unhandled `SerializationException`) |
+| Slow response | 15% | Adds 10-15s delay before responding (tests timeout handling) |
+| Timeout response | 5% | Adds 35s delay, exceeding plugin's 30s `readTimeout` (tests actual timeout) |
+| HTTP 429 | 10% | Returns `Too Many Requests` with `Retry-After` header (tests retry interceptor) |
+| HTTP 500 | 15% | Returns `{"error": "Internal Server Error"}` |
 | HTTP 503 | 15% | Returns `Service Unavailable` as plain text |
-| Empty body | 10% | Returns 200 OK with empty body (tests null body handling) |
+| Empty body | 10% | Returns 200 OK with empty body (tests `decodeFromString("")` crash path) |
 | Wrong Content-Type | 10% | Returns `text/html` with `<html>Session expired</html>` (tests content type validation) |
 
 ### Configuration
@@ -295,12 +330,12 @@ A Ktor interceptor plugin that, when enabled, randomly corrupts a configurable p
 
 ## Admin API
 
-All three mock services share admin endpoints on their respective ports.
+Each mock service exposes admin endpoints on its own port. Admin operations are **per-service** — resetting on port 8180 resets only Jira state. The exception is scenario loading: cross-service scenarios (like `default` and `happy-path`) reset all services when called on any port.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/__admin/state` | JSON dump of all current state (tickets, builds, projects, issues) |
-| POST | `/__admin/reset` | Reset to initial factory data |
+| GET | `/__admin/state` | JSON dump of this service's current state |
+| POST | `/__admin/reset` | Reset this service to initial factory data |
 | POST | `/__admin/chaos?enabled={bool}` | Enable/disable chaos mode |
 | POST | `/__admin/chaos?rate={float}` | Set chaos failure rate (0.0 to 1.0) |
 | POST | `/__admin/scenario/{name}` | Load a predefined scenario |
@@ -324,6 +359,9 @@ Loadable via `POST /__admin/scenario/{name}`. Each scenario resets state and loa
 | `transition-blocked` | Jira | All transitions require multiple fields | Transition requirement handling |
 | `metrics-missing` | SonarQube | Returns only `coverage`, omits all other metrics | Null/missing field handling |
 | `build-progression` | Bamboo | 3 builds at different stages, progressing in real-time | Polling and state update rendering |
+| `paginated-results` | All | Returns paginated responses with `startAt`, `maxResults`, `isLast` | Tests whether plugin handles multi-page results or assumes single page |
+| `no-active-sprint` | Jira | All sprints are `closed` or `future`, none `active` | Tests "No active sprint found" error path in `SprintService` |
+| `auth-invalid` | SonarQube | `/api/authentication/validate` returns `{"valid": false}` | Tests handling of authenticated but invalid session |
 
 ---
 
@@ -397,10 +435,10 @@ This is the checklist of hardcoded assumptions the mock server is designed to ex
 | # | File | Line | Assumption | Mock Divergence | Expected Failure |
 |---|---|---|---|---|---|
 | 1 | `BranchingService.kt` | 62 | Status name is "In Progress" | Uses "WIP" | "Start Work" transition not found |
-| 2 | `BranchingService.kt` | 64 | Category key is "indeterminate" | Uses "in_flight" | Fallback also fails |
-| 3 | `TicketListCellRenderer.kt` | 48-53 | Only 3 category keys exist | 5 category keys | Unknown categories render grey |
-| 4 | `BuildState.kt` | 12 | `lifeCycleState == "InProgress"` | Returns "Running" | Running builds show as UNKNOWN |
-| 5 | `BambooApiClient.kt` | 94-96 | Filter list: InProgress, Queued, Pending | "Running" not in list | Running builds excluded from dashboard |
+| 2 | `BranchingService.kt` | 63 | Category key is "indeterminate" | Uses "in_flight" (but "Investigating" uses "indeterminate" to test fallback success) | Fallback fails for WIP, succeeds for Investigating |
+| 3 | `TicketListCellRenderer.kt` | 48-53 | Only 3 category keys exist | 6 category keys | Unknown categories render grey |
+| 4 | `BuildState.kt` | 11 | `lifeCycleState == "InProgress"` | Returns "Running" | Running builds show as UNKNOWN |
+| 5 | `BambooApiClient.kt` | 95 | Filter list: InProgress, Queued, Pending | "Running" not in list | Running builds excluded from dashboard |
 | 6 | `SonarDataService.kt` | 115-118 | Only "OK" and "ERROR" gate status | Returns "WARN" | Warning mapped to NONE |
 | 7 | `IssueMapper.kt` | 37-43 | 4 known issue types | Returns "SECURITY_AUDIT" | Mapped to CODE_SMELL |
 | 8 | `IssueMapper.kt` | 45-52 | 5 known severities | Returns "CRITICAL_SECURITY" | Mapped to INFO |
@@ -410,6 +448,9 @@ This is the checklist of hardcoded assumptions the mock server is designed to ex
 | 12 | `SonarApiClient.kt` | 99 | Deserialization never fails | Chaos: malformed JSON | Unhandled SerializationException |
 | 13 | `BuildDashboardPanel.kt` | 137 | Default branch is "master" | N/A (Git-local) | N/A |
 | 14 | `SonarDataService.kt` | 40 | Default branch is "main" | N/A (Git-local) | N/A |
+| 15 | `JiraApiClient.kt` | 56 | Transitions don't require fields | Mock returns required fields block | POST transition returns 400 when fields missing |
+| 16 | All API clients | — | 200 response always has a body | Chaos: empty body on 200 | `decodeFromString("")` throws SerializationException |
+| 17 | All API clients | — | Single-page results | `paginated-results` scenario | Plugin may only see first page of data |
 
 ---
 
@@ -428,6 +469,10 @@ application {
     mainClass.set("com.workflow.orchestrator.mockserver.MockServerMainKt")
 }
 
+kotlin {
+    jvmToolchain(21) // Match root project JVM target
+}
+
 dependencies {
     // Ktor server
     implementation("io.ktor:ktor-server-core:3.1.1")
@@ -442,7 +487,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     // Coroutines (for timed build progression)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
 
     // Logging
     implementation("ch.qos.logback:logback-classic:1.5.6")
