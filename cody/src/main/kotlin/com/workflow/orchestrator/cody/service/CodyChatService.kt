@@ -1,14 +1,14 @@
 package com.workflow.orchestrator.cody.service
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.cody.agent.CodyAgentManager
+import com.workflow.orchestrator.cody.agent.CodyAgentProviderService
 import com.workflow.orchestrator.cody.protocol.*
 import kotlinx.coroutines.future.await
 
 class CodyChatService(private val project: Project) {
 
     suspend fun generateCommitMessage(diff: String): String? {
-        val server = CodyAgentManager.getInstance(project).ensureRunning()
+        val server = CodyAgentProviderService.getInstance(project).ensureRunning()
         val chatId = server.chatNew().await()
         val prompt = buildCommitMessagePrompt(diff)
         val response = server.chatSubmitMessage(

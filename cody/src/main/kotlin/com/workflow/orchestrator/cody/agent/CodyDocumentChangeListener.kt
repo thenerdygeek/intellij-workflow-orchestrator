@@ -31,7 +31,16 @@ class CodyDocumentChangeListener(
         }
     }
 
+    private fun isIntegratedMode(): Boolean = try {
+        CodyAgentProviderService.getInstance(project).isIntegratedMode
+    } catch (e: Exception) {
+        false
+    }
+
     private fun sendDidChange(document: Document) {
+        // Skip document sync when the official Cody plugin handles it
+        if (isIntegratedMode()) return
+
         val manager = try {
             CodyAgentManager.getInstance(project)
         } catch (e: Exception) { return }

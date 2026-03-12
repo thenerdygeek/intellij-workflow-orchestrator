@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.cody.protocol.ProtocolTextDocument
 import java.util.concurrent.ConcurrentHashMap
 
@@ -12,11 +13,20 @@ class CodyDocumentSyncListener : EditorFactoryListener {
     private val log = Logger.getInstance(CodyDocumentSyncListener::class.java)
     private val changeListeners = ConcurrentHashMap<String, CodyDocumentChangeListener>()
 
+    private fun isIntegratedMode(project: Project): Boolean = try {
+        CodyAgentProviderService.getInstance(project).isIntegratedMode
+    } catch (e: Exception) {
+        false
+    }
+
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
         val document = editor.document
         val vFile = FileDocumentManager.getInstance().getFile(document) ?: return
         val project = editor.project ?: return
+
+        // Skip document sync when the official Cody plugin handles it
+        if (isIntegratedMode(project)) return
 
         val manager = try {
             CodyAgentManager.getInstance(project)
@@ -49,6 +59,9 @@ class CodyDocumentSyncListener : EditorFactoryListener {
         val document = editor.document
         val vFile = FileDocumentManager.getInstance().getFile(document) ?: return
         val project = editor.project ?: return
+
+        // Skip document sync when the official Cody plugin handles it
+        if (isIntegratedMode(project)) return
 
         val manager = try {
             CodyAgentManager.getInstance(project)

@@ -1,0 +1,11 @@
+<idea-plugin>
+    <!--
+        Loaded ONLY when the official Sourcegraph Cody plugin (com.sourcegraph.jetbrains)
+        is installed. Registers the SourcegraphPluginAgentProvider which reuses Cody's
+        already-running agent via reflection, avoiding a duplicate agent subprocess.
+    -->
+    <extensions defaultExtensionNs="com.workflow.orchestrator">
+        <codyAgentProvider
+            implementation="com.workflow.orchestrator.cody.agent.integrated.SourcegraphPluginAgentProvider"/>
+    </extensions>
+</idea-plugin>

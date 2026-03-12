@@ -1,11 +1,13 @@
 package com.workflow.orchestrator.cody.service
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.cody.agent.CodyAgentManager
+import com.workflow.orchestrator.cody.agent.CodyAgentProviderService
 import com.workflow.orchestrator.cody.protocol.*
 import kotlinx.coroutines.future.await
 
 class CodyEditService(private val project: Project) {
+
+    private fun providerService() = CodyAgentProviderService.getInstance(project)
 
     suspend fun requestFix(
         filePath: String,
@@ -13,7 +15,7 @@ class CodyEditService(private val project: Project) {
         instruction: String,
         contextFiles: List<ContextFile> = emptyList()
     ): EditTask {
-        val server = CodyAgentManager.getInstance(project).ensureRunning()
+        val server = providerService().ensureRunning()
         server.textDocumentDidFocus(TextDocumentIdentifier(filePath))
         return server.editCommandsCode(
             EditCommandsCodeParams(instruction = instruction, mode = "edit", range = range)
@@ -25,7 +27,7 @@ class CodyEditService(private val project: Project) {
         targetRange: Range,
         existingTestFile: String? = null
     ): EditTask {
-        val server = CodyAgentManager.getInstance(project).ensureRunning()
+        val server = providerService().ensureRunning()
         server.textDocumentDidFocus(TextDocumentIdentifier(filePath))
         val instruction = buildString {
             append("Generate a unit test covering the code at lines ")
@@ -40,17 +42,17 @@ class CodyEditService(private val project: Project) {
     }
 
     suspend fun acceptEdit(taskId: String) {
-        val server = CodyAgentManager.getInstance(project).ensureRunning()
+        val server = providerService().ensureRunning()
         server.editTaskAccept(EditTaskParams(taskId)).await()
     }
 
     suspend fun undoEdit(taskId: String) {
-        val server = CodyAgentManager.getInstance(project).ensureRunning()
+        val server = providerService().ensureRunning()
         server.editTaskUndo(EditTaskParams(taskId)).await()
     }
 
     suspend fun cancelEdit(taskId: String) {
-        val server = CodyAgentManager.getInstance(project).ensureRunning()
+        val server = providerService().ensureRunning()
         server.editTaskCancel(EditTaskParams(taskId)).await()
     }
 }

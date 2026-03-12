@@ -10,8 +10,18 @@ class CodyFocusListener(private val project: Project) : FileEditorManagerListene
 
     private val log = Logger.getInstance(CodyFocusListener::class.java)
 
+    private fun isIntegratedMode(): Boolean = try {
+        CodyAgentProviderService.getInstance(project).isIntegratedMode
+    } catch (e: Exception) {
+        false
+    }
+
     override fun selectionChanged(event: FileEditorManagerEvent) {
         val newFile = event.newFile ?: return
+
+        // Skip focus tracking when the official Cody plugin handles it
+        if (isIntegratedMode()) return
+
         val manager = try {
             CodyAgentManager.getInstance(project)
         } catch (e: Exception) { return }

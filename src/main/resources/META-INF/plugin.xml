@@ -10,6 +10,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
     <depends>Git4Idea</depends>
+    <depends optional="true" config-file="plugin-withCody.xml">com.sourcegraph.jetbrains</depends>
 
     <resource-bundle>messages.WorkflowBundle</resource-bundle>
 
@@ -17,6 +18,10 @@
         <extensionPoint
             qualifiedName="com.workflow.orchestrator.tabProvider"
             interface="com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider"
+            dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.codyAgentProvider"
+            interface="com.workflow.orchestrator.cody.agent.CodyAgentProvider"
             dynamic="true"/>
     </extensionPoints>
 
@@ -110,6 +115,8 @@
         <!-- Cody Agent Service -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentManager"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentProviderService"/>
 
         <!-- Cody Gutter Actions -->
         <codeInsight.lineMarkerProvider
@@ -207,6 +214,8 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
+        <codyAgentProvider
+            implementation="com.workflow.orchestrator.cody.agent.StandaloneCodyAgentProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
