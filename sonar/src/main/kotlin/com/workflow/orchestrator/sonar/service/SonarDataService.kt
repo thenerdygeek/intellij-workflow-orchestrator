@@ -2,6 +2,7 @@ package com.workflow.orchestrator.sonar.service
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
@@ -20,6 +21,7 @@ import java.time.Instant
 @Service(Service.Level.PROJECT)
 class SonarDataService(private val project: Project) : Disposable {
 
+    private val log = Logger.getInstance(SonarDataService::class.java)
     private val _stateFlow = MutableStateFlow(SonarState.EMPTY)
     val stateFlow: StateFlow<SonarState> = _stateFlow.asStateFlow()
 

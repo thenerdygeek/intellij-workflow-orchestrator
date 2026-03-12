@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.automation.api
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.automation.model.DockerAuthChallenge
 import com.workflow.orchestrator.automation.model.DockerAuthTokenResponse
 import com.workflow.orchestrator.automation.model.DockerTagListResponse
@@ -25,6 +26,7 @@ class DockerRegistryClient(
     private val connectTimeoutSeconds: Long = 15,
     private val readTimeoutSeconds: Long = 30
 ) {
+    private val log = Logger.getInstance(DockerRegistryClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {

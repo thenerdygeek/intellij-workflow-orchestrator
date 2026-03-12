@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -9,7 +10,10 @@ import com.workflow.orchestrator.handover.api.dto.BitbucketReviewerUser
 import java.lang.reflect.Method
 
 object PrTitleRenderer {
+    private val log = Logger.getInstance(PrTitleRenderer::class.java)
+
     fun render(format: String, ticketId: String, summary: String, branch: String, maxLength: Int): String {
+        log.debug("[Handover:PR] Rendering PR title: format='$format', ticketId=$ticketId, maxLength=$maxLength")
         val rendered = format
             .replace("{ticketId}", ticketId)
             .replace("{branch}", branch)
@@ -44,6 +48,8 @@ class PrService {
 
     constructor()
 
+    private val log = Logger.getInstance(PrService::class.java)
+
     companion object {
         private const val DEFAULT_MAX_TITLE_LENGTH = 120
         private const val DEFAULT_PR_TITLE_FORMAT = "{ticketId}: {summary}"
@@ -77,15 +83,19 @@ class PrService {
         val settings = project?.let { PluginSettings.getInstance(it).state }
         val format = settings?.prTitleFormat?.takeIf { it.isNotBlank() } ?: DEFAULT_PR_TITLE_FORMAT
         val maxLength = settings?.maxPrTitleLength?.takeIf { it > 0 } ?: DEFAULT_MAX_TITLE_LENGTH
-        return PrTitleRenderer.render(format, ticketId, ticketSummary, branchName, maxLength)
+        val title = PrTitleRenderer.render(format, ticketId, ticketSummary, branchName, maxLength)
+        log.info("[Handover:PR] Built PR title: '$title' using format '$format'")
+        return title
     }
 
     fun buildDefaultReviewers(): List<BitbucketReviewer> {
         val raw = project?.let { PluginSettings.getInstance(it).state.prDefaultReviewers } ?: return emptyList()
-        return raw.split(",")
+        val reviewers = raw.split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .map { BitbucketReviewer(BitbucketReviewerUser(it)) }
+        log.info("[Handover:PR] Built ${reviewers.size} default reviewers")
+        return reviewers
     }
 
     fun buildFallbackDescription(ticketId: String, ticketSummary: String, branchName: String): String {
@@ -107,11 +117,19 @@ class PrService {
         branchName: String,
         changedFiles: List<VirtualFile>
     ): String {
-        val proj = project ?: return buildFallbackDescription(ticketId, ticketSummary, branchName)
-        if (changedFiles.isEmpty()) return buildFallbackDescription(ticketId, ticketSummary, branchName)
+        val proj = project ?: run {
+            log.warn("[Handover:PR] No project available, using fallback description")
+            return buildFallbackDescription(ticketId, ticketSummary, branchName)
+        }
+        if (changedFiles.isEmpty()) {
+            log.warn("[Handover:PR] No changed files, using fallback description")
+            return buildFallbackDescription(ticketId, ticketSummary, branchName)
+        }
 
+        log.info("[Handover:PR] Building enriched description for $ticketId with ${changedFiles.size} changed files")
         val modules = detectAffectedModules(proj, changedFiles)
         val endpoints = detectControllerEndpoints(proj, changedFiles)
+        log.debug("[Handover:PR] Detected ${modules.size} affected modules, ${endpoints.size} controller endpoints")
 
         return buildString {
             append("## $ticketId: $ticketSummary\n\n")

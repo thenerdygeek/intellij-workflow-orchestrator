@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.offline
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.ServiceType
 import java.util.concurrent.ConcurrentHashMap
@@ -8,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Service(Service.Level.PROJECT)
 class ConnectivityMonitor(private val project: Project) {
 
+    private val log = Logger.getInstance(ConnectivityMonitor::class.java)
     private val statuses = ConcurrentHashMap<ServiceType, ServiceStatus>()
 
     fun statusOf(service: ServiceType): ServiceStatus {
@@ -15,11 +17,17 @@ class ConnectivityMonitor(private val project: Project) {
     }
 
     fun markOnline(service: ServiceType) {
-        statuses[service] = ServiceStatus.ONLINE
+        val previous = statuses.put(service, ServiceStatus.ONLINE)
+        if (previous != ServiceStatus.ONLINE) {
+            log.warn("[Core:Connectivity] ${service.name} connectivity changed: ${previous ?: "UNKNOWN"} -> ONLINE")
+        }
     }
 
     fun markOffline(service: ServiceType) {
-        statuses[service] = ServiceStatus.OFFLINE
+        val previous = statuses.put(service, ServiceStatus.OFFLINE)
+        if (previous != ServiceStatus.OFFLINE) {
+            log.warn("[Core:Connectivity] ${service.name} connectivity changed: ${previous ?: "UNKNOWN"} -> OFFLINE")
+        }
     }
 
     fun overallState(configuredServices: Set<ServiceType>): OverallState {

@@ -26,6 +26,7 @@ class HttpClientFactory(
         return clients.getOrPut(service) {
             val scheme = when (service) {
                 ServiceType.NEXUS -> AuthScheme.BASIC
+                ServiceType.SOURCEGRAPH -> AuthScheme.TOKEN
                 else -> AuthScheme.BEARER
             }
             baseClient.newBuilder()

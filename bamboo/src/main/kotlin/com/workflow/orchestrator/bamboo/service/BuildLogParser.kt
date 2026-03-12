@@ -1,9 +1,12 @@
 package com.workflow.orchestrator.bamboo.service
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.bamboo.model.BuildError
 import com.workflow.orchestrator.bamboo.model.ErrorSeverity
 
 object BuildLogParser {
+
+    private val log = Logger.getInstance(BuildLogParser::class.java)
 
     // Matches: [ERROR] /path/to/File.java:[lineNum,col] message
     private val FILE_ERROR_PATTERN = Regex(
@@ -20,10 +23,11 @@ object BuildLogParser {
         """\[ERROR]\s+(?!/\S+\.(?:java|kt|xml))(.+)"""
     )
 
-    fun parse(log: String): List<BuildError> {
+    fun parse(buildLog: String): List<BuildError> {
+        log.info("[Bamboo:Parser] Starting build log parsing (${buildLog.lines().size} lines)")
         val errors = mutableListOf<BuildError>()
 
-        for (line in log.lines()) {
+        for (line in buildLog.lines()) {
             FILE_ERROR_PATTERN.find(line)?.let { match ->
                 errors.add(
                     BuildError(
@@ -62,6 +66,12 @@ object BuildLogParser {
             }
         }
 
+        val errorCount = errors.count { it.severity == ErrorSeverity.ERROR }
+        val warningCount = errors.count { it.severity == ErrorSeverity.WARNING }
+        log.info("[Bamboo:Parser] Parsing complete: $errorCount errors, $warningCount warnings found")
+        if (errorCount > 0) {
+            log.debug("[Bamboo:Parser] Errors: ${errors.filter { it.severity == ErrorSeverity.ERROR }.joinToString { "${it.filePath}:${it.lineNumber} - ${it.message}" }}")
+        }
         return errors
     }
 }

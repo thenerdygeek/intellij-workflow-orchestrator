@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.handover.model.SuiteResult
 import kotlinx.serialization.encodeToString
@@ -19,10 +20,15 @@ class JiraClosureService {
 
     constructor()
 
+    private val log = Logger.getInstance(JiraClosureService::class.java)
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
     fun buildClosureComment(suiteResults: List<SuiteResult>): String {
-        if (suiteResults.isEmpty()) return ""
+        log.info("[Handover:Jira] Building closure comment from ${suiteResults.size} suite results")
+        if (suiteResults.isEmpty()) {
+            log.warn("[Handover:Jira] No suite results provided for closure comment")
+            return ""
+        }
 
         val sb = StringBuilder()
 
@@ -59,6 +65,8 @@ class JiraClosureService {
             sb.append("{code}")
         }
 
+        log.info("[Handover:Jira] Closure comment built with ${mergedTags.size} docker tags")
+        log.debug("[Handover:Jira] Comment preview: ${sb.toString().take(200)}")
         return sb.toString()
     }
 

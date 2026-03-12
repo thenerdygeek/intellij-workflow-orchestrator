@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.handover.model.MacroStep
@@ -11,6 +12,7 @@ import kotlinx.serialization.json.Json
 @Service(Service.Level.PROJECT)
 class CompletionMacroService {
 
+    private val log = Logger.getInstance(CompletionMacroService::class.java)
     private val json = Json { ignoreUnknownKeys = true }
     private var project: Project? = null
 
@@ -75,33 +77,39 @@ class CompletionMacroService {
         steps: List<MacroStep>,
         actions: Map<String, suspend () -> Boolean>
     ): List<MacroStep> {
+        log.info("[Handover:Macro] Starting macro execution with ${steps.size} steps (${steps.count { it.enabled }} enabled)")
         val results = steps.toMutableList()
         var failed = false
 
         for (i in results.indices) {
             val step = results[i]
             if (!step.enabled || failed) {
+                log.info("[Handover:Macro] Skipping step '${step.id}' (enabled=${step.enabled}, previousFailed=$failed)")
                 results[i] = step.copy(status = MacroStepStatus.SKIPPED)
                 continue
             }
 
+            log.info("[Handover:Macro] Executing step '${step.id}'")
             results[i] = step.copy(status = MacroStepStatus.RUNNING)
             val action = actions[step.id]
             val success = try {
                 action?.invoke() ?: false
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                log.error("[Handover:Macro] Step '${step.id}' threw exception", e)
                 false
             }
 
             results[i] = step.copy(
                 status = if (success) MacroStepStatus.SUCCESS else MacroStepStatus.FAILED
             )
+            log.info("[Handover:Macro] Step '${step.id}' completed: ${if (success) "SUCCESS" else "FAILED"}")
 
             if (!success) {
                 failed = true
             }
         }
 
+        log.info("[Handover:Macro] Macro execution finished: ${results.count { it.status == MacroStepStatus.SUCCESS }} succeeded, ${results.count { it.status == MacroStepStatus.FAILED }} failed, ${results.count { it.status == MacroStepStatus.SKIPPED }} skipped")
         return results
     }
 

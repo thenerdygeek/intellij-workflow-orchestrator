@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.handover.model.ClipboardPayload
 import com.workflow.orchestrator.handover.model.SuiteLinkEntry
@@ -20,9 +21,11 @@ class QaClipboardService {
 
     constructor()
 
+    private val log = Logger.getInstance(QaClipboardService::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
     fun formatForClipboard(payload: ClipboardPayload): String {
+        log.info("[Handover:QA] Formatting clipboard content: ${payload.dockerTags.size} docker tags, ${payload.suiteLinks.size} suite links, ${payload.ticketIds.size} tickets")
         val sb = StringBuilder()
 
         if (payload.dockerTags.isNotEmpty()) {
@@ -53,6 +56,7 @@ class QaClipboardService {
         suiteResults: List<SuiteResult>,
         ticketIds: List<String>
     ): ClipboardPayload {
+        log.info("[Handover:QA] Building clipboard payload from ${suiteResults.size} suite results and ${ticketIds.size} tickets")
         val mergedTags = mutableMapOf<String, String>()
         val suiteLinks = mutableListOf<SuiteLinkEntry>()
 
@@ -78,6 +82,7 @@ class QaClipboardService {
             }
         }
 
+        log.debug("[Handover:QA] Merged ${mergedTags.size} docker tags, ${suiteLinks.size} completed suite links")
         return ClipboardPayload(
             dockerTags = mergedTags,
             suiteLinks = suiteLinks,

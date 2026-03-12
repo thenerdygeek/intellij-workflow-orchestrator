@@ -1,11 +1,13 @@
 package com.workflow.orchestrator.jira.workflow
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.jira.api.JiraApiClient
 
 class TransitionExecutor(
     private val apiClient: JiraApiClient
 ) {
+    private val log = Logger.getInstance(TransitionExecutor::class.java)
     suspend fun execute(
         issueKey: String,
         resolved: ResolvedTransition,

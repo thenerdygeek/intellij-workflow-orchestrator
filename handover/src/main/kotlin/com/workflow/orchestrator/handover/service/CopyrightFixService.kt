@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.handover.model.CopyrightFileEntry
 import com.workflow.orchestrator.handover.model.CopyrightStatus
@@ -18,6 +19,8 @@ class CopyrightFixService {
 
     /** Test constructor — no project needed for pure logic tests. */
     constructor()
+
+    private val log = Logger.getInstance(CopyrightFixService::class.java)
 
     private val YEAR_PATTERN = Regex("""\b((?:19|20)\d{2})\b""")
     private val YEAR_RANGE_PATTERN = Regex("""((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})""")
@@ -121,7 +124,9 @@ class CopyrightFixService {
         content: String,
         currentYear: Int = Year.now().value
     ): CopyrightFileEntry {
+        log.debug("[Handover:Copyright] Analyzing file: $filePath")
         if (!hasCopyrightHeader(content)) {
+            log.info("[Handover:Copyright] Missing copyright header: $filePath")
             return CopyrightFileEntry(
                 filePath = filePath,
                 status = CopyrightStatus.MISSING_HEADER
@@ -132,9 +137,11 @@ class CopyrightFixService {
         val updated = updateYearInHeader(headerRegion, currentYear)
 
         return if (updated == headerRegion) {
+            log.debug("[Handover:Copyright] Copyright OK: $filePath")
             CopyrightFileEntry(filePath = filePath, status = CopyrightStatus.OK)
         } else {
             val yearExprMatch = FULL_YEAR_EXPR.find(headerRegion)
+            log.info("[Handover:Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> ${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}")
             CopyrightFileEntry(
                 filePath = filePath,
                 status = CopyrightStatus.YEAR_OUTDATED,

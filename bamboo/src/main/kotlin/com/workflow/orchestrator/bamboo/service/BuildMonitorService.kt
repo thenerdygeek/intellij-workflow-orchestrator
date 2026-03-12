@@ -2,6 +2,7 @@ package com.workflow.orchestrator.bamboo.service
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
@@ -29,6 +30,8 @@ import java.time.Instant
 
 @Service(Service.Level.PROJECT)
 class BuildMonitorService : Disposable {
+
+    private val log = Logger.getInstance(BuildMonitorService::class.java)
 
     private val apiClient: BambooApiClient
     private val eventBus: EventBus
@@ -71,6 +74,7 @@ class BuildMonitorService : Disposable {
     private var pollingJob: Job? = null
 
     fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
+        log.info("[Bamboo:Monitor] Starting polling for planKey=$planKey, branch=$branch, intervalMs=$intervalMs")
         stopPolling()
         previousBuildNumber = null
         previousStatus = null
@@ -83,11 +87,13 @@ class BuildMonitorService : Disposable {
     }
 
     fun stopPolling() {
+        log.info("[Bamboo:Monitor] Stopping polling")
         pollingJob?.cancel()
         pollingJob = null
     }
 
     fun switchBranch(planKey: String, newBranch: String, intervalMs: Long = 30_000) {
+        log.info("[Bamboo:Monitor] Switching branch to '$newBranch' for planKey=$planKey")
         _stateFlow.value = null
         startPolling(planKey, newBranch, intervalMs)
     }
@@ -98,6 +104,7 @@ class BuildMonitorService : Disposable {
     }
 
     suspend fun pollOnce(planKey: String, branch: String) {
+        log.debug("[Bamboo:Monitor] Polling planKey=$planKey, branch=$branch")
         val result = apiClient.getLatestResult(planKey, branch)
         if (result is ApiResult.Success) {
             val dto = result.data
@@ -109,6 +116,10 @@ class BuildMonitorService : Disposable {
                 buildState.overallStatus == BuildStatus.FAILED
             val statusChanged = dto.buildNumber != previousBuildNumber ||
                 buildState.overallStatus != previousStatus
+
+            if (statusChanged) {
+                log.info("[Bamboo:Monitor] Build $planKey-${dto.buildNumber} changed from $previousStatus to ${buildState.overallStatus}")
+            }
 
             if (isTerminal && statusChanged) {
                 val eventStatus = when (buildState.overallStatus) {
@@ -128,6 +139,8 @@ class BuildMonitorService : Disposable {
 
             previousBuildNumber = dto.buildNumber
             previousStatus = buildState.overallStatus
+        } else {
+            log.warn("[Bamboo:Monitor] Poll failed for planKey=$planKey, branch=$branch: $result")
         }
     }
 

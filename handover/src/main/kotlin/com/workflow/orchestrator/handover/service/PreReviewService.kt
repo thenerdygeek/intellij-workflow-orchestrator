@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.handover.model.FindingSeverity
@@ -18,12 +19,15 @@ class PreReviewService {
 
     constructor()
 
+    private val log = Logger.getInstance(PreReviewService::class.java)
+
     /**
      * Parses Cody's text response into structured findings.
      * Cody returns free-text; we look for patterns like:
      * - **HIGH** `file.kt:42` — Missing @Transactional [missing-transactional]
      */
     fun parseFindings(codyResponse: String): List<ReviewFinding> {
+        log.debug("[Handover:Review] Parsing findings from Cody response (${codyResponse.length} chars)")
         val findings = mutableListOf<ReviewFinding>()
         val pattern = Regex(
             """\*\*(HIGH|MEDIUM|LOW)\*\*\s+`([^:]+):(\d+)`\s*[-\u2013\u2014]\s*(.+?)\s*\[([^\]]+)]"""
@@ -44,10 +48,12 @@ class PreReviewService {
             ))
         }
 
+        log.info("[Handover:Review] Parsed ${findings.size} findings from Cody response")
         return findings.sortedBy { it.severity.ordinal }
     }
 
     fun buildReviewPrompt(diff: String): String {
+        log.info("[Handover:Review] Building plain review prompt (diff: ${diff.lines().size} lines)")
         return """
             |Analyze this Spring Boot code diff for anti-patterns and issues.
             |For each issue found, format as:
@@ -75,12 +81,18 @@ class PreReviewService {
         diff: String,
         changedFiles: List<VirtualFile>
     ): String {
-        val proj = project ?: return buildReviewPrompt(diff)
+        val proj = project ?: run {
+            log.warn("[Handover:Review] No project available, falling back to plain prompt")
+            return buildReviewPrompt(diff)
+        }
 
         return try {
+            log.info("[Handover:Review] Building enriched review prompt with ${changedFiles.size} changed files")
             val fileAnnotations = buildFileAnnotations(proj, changedFiles)
+            log.debug("[Handover:Review] Enriched prompt includes ${fileAnnotations.size} file annotations")
             buildAnnotatedPrompt(diff, fileAnnotations)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            log.warn("[Handover:Review] Enrichment failed, falling back to plain prompt: ${e.message}")
             buildReviewPrompt(diff)
         }
     }
@@ -196,11 +208,19 @@ class PreReviewService {
     enum class DiffValidation { OK, EMPTY, TOO_LARGE }
 
     fun validateDiff(diff: String): DiffValidation {
-        if (diff.isBlank()) return DiffValidation.EMPTY
+        if (diff.isBlank()) {
+            log.warn("[Handover:Review] Diff validation failed: diff is empty")
+            return DiffValidation.EMPTY
+        }
         val maxLines = project?.let {
             com.workflow.orchestrator.core.settings.PluginSettings.getInstance(it).state.maxDiffLinesForReview
         } ?: 10_000
-        if (diff.lines().size > maxLines) return DiffValidation.TOO_LARGE
+        val lineCount = diff.lines().size
+        if (lineCount > maxLines) {
+            log.warn("[Handover:Review] Diff validation failed: $lineCount lines exceeds max $maxLines")
+            return DiffValidation.TOO_LARGE
+        }
+        log.debug("[Handover:Review] Diff validation passed: $lineCount lines")
         return DiffValidation.OK
     }
 

@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.bamboo.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,6 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 
 @Service(Service.Level.PROJECT)
 class CveRemediationService(private val project: Project) {
+
+    private val log = Logger.getInstance(CveRemediationService::class.java)
 
     data class CveVulnerability(
         val cveId: String,
@@ -24,8 +27,18 @@ class CveRemediationService(private val project: Project) {
     private val _vulnerabilities = MutableStateFlow<List<CveVulnerability>>(emptyList())
     val vulnerabilities: StateFlow<List<CveVulnerability>> = _vulnerabilities.asStateFlow()
 
-    fun updateFromBuildLog(log: String) {
-        _vulnerabilities.value = parseFromBuildLog(log)
+    fun updateFromBuildLog(buildLog: String) {
+        val parsed = parseFromBuildLog(buildLog)
+        log.info("[Bamboo:CVE] Scan complete: ${parsed.size} vulnerabilities found")
+        if (parsed.isNotEmpty()) {
+            val bySeverity = parsed.groupBy { it.severity }
+            val summary = bySeverity.entries.joinToString { "${it.key}=${it.value.size}" }
+            log.warn("[Bamboo:CVE] Vulnerability severities: $summary")
+            parsed.forEach { cve ->
+                log.warn("[Bamboo:CVE] ${cve.cveId} (${cve.severity}): ${cve.groupId}:${cve.artifactId}:${cve.currentVersion}${cve.fixedVersion?.let { " -> $it" } ?: ""}")
+            }
+        }
+        _vulnerabilities.value = parsed
     }
 
     companion object {

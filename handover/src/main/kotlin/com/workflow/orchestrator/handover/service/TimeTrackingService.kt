@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -16,6 +17,8 @@ class TimeTrackingService {
     }
 
     constructor()
+
+    private val log = Logger.getInstance(TimeTrackingService::class.java)
 
     companion object {
         @Deprecated("Read maxWorklogHours from PluginSettings via getMaxHours() instead")
@@ -33,7 +36,11 @@ class TimeTrackingService {
     }
 
     fun validateHours(hours: Double): Boolean {
-        return hours > 0.0 && hours <= getMaxHours()
+        val valid = hours > 0.0 && hours <= getMaxHours()
+        if (!valid) {
+            log.warn("[Handover:Time] Invalid hours: $hours (max: ${getMaxHours()})")
+        }
+        return valid
     }
 
     fun hoursToSeconds(hours: Double): Int {
@@ -42,7 +49,9 @@ class TimeTrackingService {
 
     fun formatStartedDate(year: Int, month: Int, day: Int, hour: Int, minute: Int): String {
         val dt = LocalDateTime.of(year, month, day, hour, minute, 0)
-        return dt.atOffset(ZoneOffset.UTC).format(ISO_FORMAT)
+        val formatted = dt.atOffset(ZoneOffset.UTC).format(ISO_FORMAT)
+        log.debug("[Handover:Time] Formatted started date: $formatted")
+        return formatted
     }
 
     fun clampHours(hours: Double): Double {
@@ -57,6 +66,8 @@ class TimeTrackingService {
     fun computeElapsedHours(startTimestamp: Long, currentTimestamp: Long): Double {
         if (startTimestamp == 0L) return 0.0
         val diffMs = currentTimestamp - startTimestamp
-        return diffMs.toDouble() / (3600.0 * 1000.0)
+        val hours = diffMs.toDouble() / (3600.0 * 1000.0)
+        log.debug("[Handover:Time] Computed elapsed hours: $hours (${diffMs}ms)")
+        return hours
     }
 }

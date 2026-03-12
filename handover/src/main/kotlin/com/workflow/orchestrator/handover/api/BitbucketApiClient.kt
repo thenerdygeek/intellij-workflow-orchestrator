@@ -17,6 +17,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.intellij.openapi.diagnostic.Logger
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -24,6 +25,7 @@ class BitbucketApiClient(
     private val baseUrl: String,
     private val tokenProvider: () -> String?
 ) {
+    private val log = Logger.getInstance(BitbucketApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
@@ -66,6 +68,8 @@ class BitbucketApiClient(
         toBranch: String
     ): ApiResult<BitbucketPrResponse> =
         withContext(Dispatchers.IO) {
+            log.info("[Handover:PR] Creating PR in $projectKey/$repoSlug: $fromBranch -> $toBranch")
+            log.debug("[Handover:PR] PR title: $title, description length: ${description.length} chars")
             try {
                 val payload = BitbucketPrRequest(
                     title = title,
@@ -85,15 +89,17 @@ class BitbucketApiClient(
                     when (it.code) {
                         in 200..299 -> {
                             val bodyStr = it.body?.string() ?: ""
+                            log.info("[Handover:PR] PR created successfully in $projectKey/$repoSlug")
                             ApiResult.Success(json.decodeFromString<BitbucketPrResponse>(bodyStr))
                         }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
-                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bitbucket permissions")
-                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR already exists for this branch")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                        401 -> { log.error("[Handover:PR] Auth failed creating PR in $projectKey/$repoSlug"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token") }
+                        403 -> { log.error("[Handover:PR] Forbidden creating PR in $projectKey/$repoSlug"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bitbucket permissions") }
+                        409 -> { log.warn("[Handover:PR] PR already exists for branch $fromBranch in $projectKey/$repoSlug"); ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR already exists for this branch") }
+                        else -> { log.error("[Handover:PR] Unexpected response ${it.code} creating PR in $projectKey/$repoSlug"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}") }
                     }
                 }
             } catch (e: IOException) {
+                log.error("[Handover:PR] Network error creating PR in $projectKey/$repoSlug", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
@@ -104,6 +110,7 @@ class BitbucketApiClient(
         branchName: String
     ): ApiResult<List<BitbucketPrResponse>> =
         withContext(Dispatchers.IO) {
+            log.info("[Handover:PR] Fetching PRs for branch $branchName in $projectKey/$repoSlug")
             try {
                 val branchRef = "refs/heads/$branchName"
                 val request = Request.Builder()
@@ -117,15 +124,17 @@ class BitbucketApiClient(
                         in 200..299 -> {
                             val bodyStr = it.body?.string() ?: ""
                             val parsed = json.decodeFromString<BitbucketPrListResponse>(bodyStr)
+                            log.info("[Handover:PR] Found ${parsed.values.size} PRs for branch $branchName")
                             ApiResult.Success(parsed.values)
                         }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
-                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bitbucket permissions")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository not found")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                        401 -> { log.error("[Handover:PR] Auth failed fetching PRs for branch $branchName"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token") }
+                        403 -> { log.error("[Handover:PR] Forbidden fetching PRs for branch $branchName"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bitbucket permissions") }
+                        404 -> { log.error("[Handover:PR] Repository not found: $projectKey/$repoSlug"); ApiResult.Error(ErrorType.NOT_FOUND, "Repository not found") }
+                        else -> { log.error("[Handover:PR] Unexpected response ${it.code} fetching PRs for branch $branchName"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}") }
                     }
                 }
             } catch (e: IOException) {
+                log.error("[Handover:PR] Network error fetching PRs for branch $branchName", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }

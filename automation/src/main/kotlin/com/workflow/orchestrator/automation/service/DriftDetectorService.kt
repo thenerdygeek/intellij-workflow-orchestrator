@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.automation.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.DriftResult
@@ -13,6 +14,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 @Service(Service.Level.PROJECT)
 class DriftDetectorService {
 
+    private val log = Logger.getInstance(DriftDetectorService::class.java)
     private val registryClient: DockerRegistryClient
 
     /** Project service constructor — used by IntelliJ DI. */

@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.automation.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
@@ -16,6 +17,7 @@ import kotlinx.serialization.json.jsonPrimitive
 @Service(Service.Level.PROJECT)
 class TagBuilderService {
 
+    private val log = Logger.getInstance(TagBuilderService::class.java)
     private val bambooClient: BambooApiClient
     private val buildVariableName: String
 
@@ -30,6 +32,7 @@ class TagBuilderService {
             readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
         )
         this.buildVariableName = settings.state.bambooBuildVariableName ?: "dockerTagsAsJson"
+        log.info("[Automation:Tags] TagBuilderService initialized, buildVariableName='$buildVariableName'")
     }
 
     /** Test constructor — allows injecting mocks. */
@@ -44,8 +47,12 @@ class TagBuilderService {
         suitePlanKey: String,
         maxResults: Int = 10
     ): List<BaselineRun> {
+        log.debug("[Automation:Tags] Scoring and ranking runs for plan '$suitePlanKey', maxResults=$maxResults")
         val buildsResult = bambooClient.getRecentResults(suitePlanKey, maxResults)
-        if (buildsResult !is ApiResult.Success) return emptyList()
+        if (buildsResult !is ApiResult.Success) {
+            log.debug("[Automation:Tags] No builds found for plan '$suitePlanKey'")
+            return emptyList()
+        }
 
         return buildsResult.data.mapNotNull { dto ->
             val varsResult = bambooClient.getBuildVariables(dto.key)
@@ -71,14 +78,21 @@ class TagBuilderService {
                 triggeredAt = java.time.Instant.now(),
                 score = score
             )
-        }.sortedByDescending { it.score }
+        }.sortedByDescending { it.score }.also { ranked ->
+            log.debug("[Automation:Tags] Scored ${ranked.size} baseline runs for plan '$suitePlanKey'")
+        }
     }
 
     suspend fun loadBaseline(suitePlanKey: String): List<TagEntry> {
+        log.info("[Automation:Tags] Loading baseline for plan '$suitePlanKey'")
         val ranked = scoreAndRankRuns(suitePlanKey)
-        if (ranked.isEmpty()) return emptyList()
+        if (ranked.isEmpty()) {
+            log.info("[Automation:Tags] No baseline runs found for plan '$suitePlanKey'")
+            return emptyList()
+        }
 
         val best = ranked[0]
+        log.info("[Automation:Tags] Selected baseline run #${best.buildNumber} with ${best.totalServices} services, score=${best.score}")
         return best.dockerTags.map { (service, tag) ->
             TagEntry(
                 serviceName = service,
@@ -97,6 +111,7 @@ class TagBuilderService {
         context: CurrentRepoContext
     ): List<TagEntry> {
         if (context.featureBranchTag == null) return entries
+        log.debug("[Automation:Tags] Replacing tag for service '${context.serviceName}' with feature branch tag '${context.featureBranchTag}'")
         return entries.map { entry ->
             if (entry.serviceName == context.serviceName) {
                 entry.copy(
@@ -112,13 +127,17 @@ class TagBuilderService {
 
     fun buildJsonPayload(entries: List<TagEntry>): String {
         val map = entries.associate { it.serviceName to JsonPrimitive(it.currentTag) }
-        return JsonObject(map).toString()
+        val payload = JsonObject(map).toString()
+        log.info("[Automation:Tags] Built JSON payload with ${entries.size} services, length=${payload.length}")
+        log.debug("[Automation:Tags] JSON preview: ${payload.take(200)}${if (payload.length > 200) "..." else ""}")
+        return payload
     }
 
     fun buildTriggerVariables(
         entries: List<TagEntry>,
         extraVars: Map<String, String>
     ): Map<String, String> {
+        log.info("[Automation:Tags] Building trigger variables using variable name '$buildVariableName' with ${extraVars.size} extra vars")
         val result = mutableMapOf<String, String>()
         result[buildVariableName] = buildJsonPayload(entries)
         result.putAll(extraVars)
@@ -128,8 +147,11 @@ class TagBuilderService {
     private fun parseDockerTagsJson(jsonStr: String): Map<String, String> {
         return try {
             val obj = json.decodeFromString<JsonObject>(jsonStr)
-            obj.entries.associate { (k, v) -> k to v.jsonPrimitive.content }
+            val result = obj.entries.associate { (k, v) -> k to v.jsonPrimitive.content }
+            log.debug("[Automation:Tags] Parsed dockerTagsJson with ${result.size} entries")
+            result
         } catch (e: Exception) {
+            log.error("[Automation:Tags] Failed to parse dockerTagsJson: ${e.message}")
             emptyMap()
         }
     }

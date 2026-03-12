@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.automation.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.Conflict
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
 @Service(Service.Level.PROJECT)
 class ConflictDetectorService {
 
+    private val log = Logger.getInstance(ConflictDetectorService::class.java)
     private val bambooClient: BambooApiClient
     private val buildVariableName: String
 

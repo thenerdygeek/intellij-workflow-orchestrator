@@ -2,6 +2,7 @@ package com.workflow.orchestrator.automation.service
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.QueueEntry
@@ -35,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Service(Service.Level.PROJECT)
 class QueueService : Disposable {
 
+    private val log = Logger.getInstance(QueueService::class.java)
     private val bambooClient: BambooApiClient
     private val registryClient: DockerRegistryClient
     private val eventBus: EventBus
@@ -107,7 +109,10 @@ class QueueService : Disposable {
         scope.launch {
             mutex.withLock {
                 val suiteEntries = _stateFlow.value.count { it.suitePlanKey == entry.suitePlanKey }
-                if (suiteEntries >= maxDepthPerSuite) return@launch
+                if (suiteEntries >= maxDepthPerSuite) {
+                    log.warn("[Automation:Queue] Queue depth limit reached for suite '${entry.suitePlanKey}' (max=$maxDepthPerSuite), rejecting entry ${entry.id}")
+                    return@launch
+                }
 
                 val seq = sequenceCounter.incrementAndGet()
                 tagHistoryService.saveQueueEntry(entry, seq)
@@ -117,6 +122,11 @@ class QueueService : Disposable {
                 val position = _stateFlow.value
                     .filter { it.suitePlanKey == entry.suitePlanKey }
                     .indexOfFirst { it.id == entry.id }
+
+                val serviceCount = try {
+                    Json.decodeFromString<JsonObject>(entry.dockerTagsPayload).size
+                } catch (_: Exception) { 0 }
+                log.info("[Automation:Queue] Enqueued build with $serviceCount services, position: $position, suite='${entry.suitePlanKey}', entryId=${entry.id}")
 
                 eventBus.emit(WorkflowEvent.QueuePositionChanged(
                     suitePlanKey = entry.suitePlanKey,
@@ -135,9 +145,11 @@ class QueueService : Disposable {
         scope.launch {
             mutex.withLock {
                 val entry = _stateFlow.value.find { it.id == entryId } ?: return@launch
+                log.info("[Automation:Queue] Cancelling entry $entryId (status=${entry.status}, suite='${entry.suitePlanKey}')")
 
                 if (entry.bambooResultKey != null &&
                     entry.status in listOf(QueueEntryStatus.QUEUED_ON_BAMBOO)) {
+                    log.info("[Automation:Queue] Cancelling Bamboo build ${entry.bambooResultKey}")
                     bambooClient.cancelBuild(entry.bambooResultKey!!)
                 }
 
@@ -162,6 +174,7 @@ class QueueService : Disposable {
     }
 
     suspend fun triggerNow(entry: QueueEntry): ApiResult<String> {
+        log.info("[Automation:Queue] Manual trigger requested for entry ${entry.id}, suite='${entry.suitePlanKey}'")
         return mutex.withLock {
             doTrigger(entry)
         }
@@ -169,6 +182,7 @@ class QueueService : Disposable {
 
     private fun startPollingIfNeeded() {
         if (pollingJob?.isActive == true) return
+        log.info("[Automation:Queue] Starting queue polling")
         pollingJob = scope.launch {
             while (true) {
                 if (pollInProgress.compareAndSet(false, true)) {
@@ -183,7 +197,10 @@ class QueueService : Disposable {
                 }
                 delay(if (hasActive) 15_000L else 60_000L)
 
-                if (_stateFlow.value.isEmpty()) break
+                if (_stateFlow.value.isEmpty()) {
+                    log.info("[Automation:Queue] Queue empty, stopping polling")
+                    break
+                }
             }
             pollingJob = null
         }
@@ -223,11 +240,13 @@ class QueueService : Disposable {
         if (runningResult is ApiResult.Success && runningResult.data.isEmpty()) {
             val triggerResult = doTrigger(entry)
             return if (triggerResult is ApiResult.Success) {
+                log.info("[Automation:Queue] Auto-triggered entry ${entry.id} on Bamboo, resultKey=${triggerResult.data}")
                 entry.copy(
                     status = QueueEntryStatus.QUEUED_ON_BAMBOO,
                     bambooResultKey = triggerResult.data
                 )
             } else {
+                log.error("[Automation:Queue] Failed to auto-trigger entry ${entry.id} for suite '${entry.suitePlanKey}'")
                 entry.copy(status = QueueEntryStatus.FAILED_TO_TRIGGER)
             }
         }
@@ -245,6 +264,7 @@ class QueueService : Disposable {
         return when (dto.lifeCycleState) {
             "Finished" -> {
                 val passed = dto.state == "Successful"
+                log.info("[Automation:Queue] Build finished for entry ${entry.id}, resultKey=$resultKey, passed=$passed")
                 tagHistoryService.updateQueueEntryStatus(
                     entry.id, QueueEntryStatus.COMPLETED, resultKey
                 )
@@ -262,9 +282,11 @@ class QueueService : Disposable {
     }
 
     private suspend fun doTrigger(entry: QueueEntry): ApiResult<String> {
+        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', tagValidation=$tagValidationOnTrigger")
         if (tagValidationOnTrigger) {
             val tagsValid = validateTags(entry)
             if (!tagsValid) {
+                log.error("[Automation:Queue] Tag validation failed for entry ${entry.id}, aborting trigger")
                 tagHistoryService.updateQueueEntryStatus(entry.id, QueueEntryStatus.TAG_INVALID)
                 return ApiResult.Error(
                     ErrorType.VALIDATION_ERROR,
@@ -275,11 +297,13 @@ class QueueService : Disposable {
 
         val variables = entry.variables.toMutableMap()
         variables[buildVariableName] = entry.dockerTagsPayload
+        log.debug("[Automation:Queue] Using build variable '$buildVariableName' for trigger")
 
         val result = bambooClient.triggerBuild(entry.suitePlanKey, variables)
         return when (result) {
             is ApiResult.Success -> {
                 val buildKey = result.data.buildResultKey
+                log.info("[Automation:Queue] Build triggered successfully, buildKey=$buildKey")
                 tagHistoryService.updateQueueEntryStatus(
                     entry.id, QueueEntryStatus.QUEUED_ON_BAMBOO, buildKey
                 )
@@ -292,6 +316,7 @@ class QueueService : Disposable {
                 ApiResult.Success(buildKey)
             }
             is ApiResult.Error -> {
+                log.error("[Automation:Queue] Build trigger failed for entry ${entry.id}: ${result.message}")
                 tagHistoryService.updateQueueEntryStatus(
                     entry.id, QueueEntryStatus.FAILED_TO_TRIGGER,
                     errorMessage = result.message
@@ -321,6 +346,7 @@ class QueueService : Disposable {
         scope.launch {
             mutex.withLock {
                 val persisted = tagHistoryService.getActiveQueueEntries()
+                log.info("[Automation:Queue] Restored ${persisted.size} entries from persistence")
                 if (persisted.isNotEmpty()) {
                     _stateFlow.value = persisted
                     startPollingIfNeeded()
@@ -330,6 +356,7 @@ class QueueService : Disposable {
     }
 
     override fun dispose() {
+        log.info("[Automation:Queue] QueueService disposing, cancelling polling and scope")
         pollingJob?.cancel()
         scope.cancel()
     }

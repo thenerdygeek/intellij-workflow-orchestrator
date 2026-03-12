@@ -2,6 +2,7 @@ package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -22,6 +23,7 @@ import java.time.Instant
 @Service(Service.Level.PROJECT)
 class HandoverStateService : Disposable {
 
+    private val log = Logger.getInstance(HandoverStateService::class.java)
     private val eventBus: EventBus
     private val settings: PluginSettings
     private val scope: CoroutineScope
@@ -62,6 +64,7 @@ class HandoverStateService : Disposable {
     }
 
     private fun handleEvent(event: WorkflowEvent) {
+        log.debug("[Handover:State] Handling event: ${event::class.simpleName}")
         val current = _stateFlow.value
         _stateFlow.value = when (event) {
             is WorkflowEvent.BuildFinished -> current.copy(
@@ -116,6 +119,7 @@ class HandoverStateService : Disposable {
             )
 
             is WorkflowEvent.TicketChanged -> {
+                log.info("[Handover:State] Ticket changed to ${event.ticketId}")
                 resetForNewTicket(event.ticketId, event.ticketSummary)
                 _stateFlow.value // resetForNewTicket already updates _stateFlow
             }
@@ -125,10 +129,12 @@ class HandoverStateService : Disposable {
     }
 
     fun markCopyrightFixed() {
+        log.info("[Handover:State] Marked copyright as fixed")
         _stateFlow.value = _stateFlow.value.copy(copyrightFixed = true)
     }
 
     fun markJiraTransitioned(statusName: String? = null) {
+        log.info("[Handover:State] Marked Jira as transitioned${statusName?.let { " to $it" } ?: ""}")
         _stateFlow.value = _stateFlow.value.copy(
             jiraTransitioned = true,
             currentStatusName = statusName ?: _stateFlow.value.currentStatusName
@@ -136,10 +142,12 @@ class HandoverStateService : Disposable {
     }
 
     fun markWorkLogged() {
+        log.info("[Handover:State] Marked work as logged")
         _stateFlow.value = _stateFlow.value.copy(todayWorkLogged = true)
     }
 
     fun resetForNewTicket(ticketId: String, ticketSummary: String) {
+        log.info("[Handover:State] Resetting state for new ticket: $ticketId")
         _stateFlow.value = HandoverState(
             ticketId = ticketId,
             ticketSummary = ticketSummary,

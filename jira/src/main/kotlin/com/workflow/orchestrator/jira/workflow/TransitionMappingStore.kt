@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.workflow
 
+import com.intellij.openapi.diagnostic.Logger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -14,6 +15,7 @@ data class TransitionMapping(
 )
 
 class TransitionMappingStore {
+    private val log = Logger.getInstance(TransitionMappingStore::class.java)
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
     private val mappings = mutableListOf<TransitionMapping>()
 

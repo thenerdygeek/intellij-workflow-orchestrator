@@ -13,6 +13,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.intellij.openapi.diagnostic.Logger
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -21,6 +22,7 @@ class JiraApiClient(
     private val baseUrl: String,
     private val tokenProvider: () -> String?
 ) {
+    private val log = Logger.getInstance(JiraApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
@@ -33,27 +35,34 @@ class JiraApiClient(
     }
 
     suspend fun getBoards(boardType: String = ""): ApiResult<List<JiraBoard>> {
+        log.info("[Jira:API] GET /rest/agile/1.0/board (type=$boardType)")
         val typeFilter = if (boardType.isNotBlank()) "?type=$boardType" else ""
         return get<JiraBoardSearchResult>("/rest/agile/1.0/board$typeFilter").map { it.values }
     }
 
-    suspend fun getActiveSprints(boardId: Int): ApiResult<List<JiraSprint>> =
-        get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=active")
+    suspend fun getActiveSprints(boardId: Int): ApiResult<List<JiraSprint>> {
+        log.info("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=active")
+        return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=active")
             .map { it.values }
+    }
 
     suspend fun getSprintIssues(sprintId: Int): ApiResult<List<JiraIssue>> {
+        log.info("[Jira:API] GET sprint issues for sprintId=$sprintId (assignee=currentUser)")
         val jql = URLEncoder.encode("assignee=currentUser()", "UTF-8")
         return get<JiraIssueSearchResult>("/rest/agile/1.0/sprint/$sprintId/issue?jql=$jql")
             .map { it.issues }
     }
 
-    suspend fun getIssue(key: String): ApiResult<JiraIssue> =
-        get("/rest/api/2/issue/$key?expand=issuelinks")
+    suspend fun getIssue(key: String): ApiResult<JiraIssue> {
+        log.info("[Jira:API] GET /rest/api/2/issue/$key")
+        return get("/rest/api/2/issue/$key?expand=issuelinks")
+    }
 
     suspend fun getTransitions(
         issueKey: String,
         expandFields: Boolean = false
     ): ApiResult<List<JiraTransition>> {
+        log.info("[Jira:API] Fetching transitions for $issueKey (expandFields=$expandFields)")
         val expand = if (expandFields) "?expand=transitions.fields" else ""
         return get<JiraTransitionList>("/rest/api/2/issue/$issueKey/transitions$expand")
             .map { it.transitions }
@@ -65,6 +74,7 @@ class JiraApiClient(
         fields: Map<String, Any>? = null,
         comment: String? = null
     ): ApiResult<Unit> {
+        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/transitions (transitionId=$transitionId)")
         val body = buildTransitionPayload(transitionId, fields, comment)
         return post("/rest/api/2/issue/$issueKey/transitions", body)
     }
@@ -105,19 +115,31 @@ class JiraApiClient(
                 val request = Request.Builder().url("$baseUrl$path").get().build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
+                    log.info("[Jira:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
                             val bodyStr = it.body?.string() ?: ""
                             ApiResult.Success(json.decodeFromString<T>(bodyStr))
                         }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token")
-                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found")
-                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}")
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
+                            log.error("[Jira:API] Authentication failed for GET $path")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
+                            log.error("[Jira:API] Forbidden for GET $path")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found").also {
+                            log.warn("[Jira:API] Resource not found: GET $path")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also {
+                            log.warn("[Jira:API] Rate limited on GET $path")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.error("[Jira:API] Server error ${response.code} for GET $path")
+                        }
                     }
                 }
             } catch (e: IOException) {
+                log.error("[Jira:API] Network error for GET $path: ${e.message}", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }
@@ -129,14 +151,22 @@ class JiraApiClient(
                 val request = Request.Builder().url("$baseUrl$path").post(body).build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
+                    log.info("[Jira:API] POST $path -> ${it.code}")
                     when (it.code) {
                         in 200..299, 204 -> ApiResult.Success(Unit)
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token")
-                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}")
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
+                            log.error("[Jira:API] Authentication failed for POST $path")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
+                            log.error("[Jira:API] Forbidden for POST $path")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.error("[Jira:API] Server error ${response.code} for POST $path")
+                        }
                     }
                 }
             } catch (e: IOException) {
+                log.error("[Jira:API] Network error for POST $path: ${e.message}", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }

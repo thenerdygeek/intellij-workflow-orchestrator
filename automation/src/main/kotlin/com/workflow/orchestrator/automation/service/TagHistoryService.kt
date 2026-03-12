@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.automation.service
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.HistoryEntry
 import com.workflow.orchestrator.automation.model.QueueEntry
@@ -16,6 +17,7 @@ import java.time.Instant
 @Service(Service.Level.PROJECT)
 class TagHistoryService {
 
+    private val log = Logger.getInstance(TagHistoryService::class.java)
     private val dbPath: String
     private val project: Project?
 
