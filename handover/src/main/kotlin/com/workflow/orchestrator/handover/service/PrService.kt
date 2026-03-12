@@ -2,6 +2,8 @@ package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
+import java.lang.reflect.Method
 
 @Service(Service.Level.PROJECT)
 class PrService {
@@ -53,5 +55,101 @@ class PrService {
 
     fun buildFallbackDescription(ticketId: String, ticketSummary: String, branchName: String): String {
         return "$ticketId: $ticketSummary\n\nBranch: $branchName"
+    }
+
+    /**
+     * Generates enriched PR description with Maven modules and REST endpoint info.
+     * Falls back to buildFallbackDescription() when PSI unavailable.
+     *
+     * Uses reflection to access PsiContextEnricher from the :cody module and
+     * MavenProjectsManager (optional dependency) to avoid compile-time cross-module
+     * dependencies. At runtime, the classes are available because all modules are
+     * loaded into the same plugin classloader.
+     */
+    suspend fun buildEnrichedDescription(
+        ticketId: String,
+        ticketSummary: String,
+        branchName: String,
+        changedFiles: List<VirtualFile>
+    ): String {
+        val proj = project ?: return buildFallbackDescription(ticketId, ticketSummary, branchName)
+        if (changedFiles.isEmpty()) return buildFallbackDescription(ticketId, ticketSummary, branchName)
+
+        val modules = detectAffectedModules(proj, changedFiles)
+        val endpoints = detectControllerEndpoints(proj, changedFiles)
+
+        return buildString {
+            append("## $ticketId: $ticketSummary\n\n")
+            if (modules.isNotEmpty()) {
+                append("**Affected modules:** ${modules.joinToString(", ")}\n\n")
+            }
+            if (endpoints.isNotEmpty()) {
+                append("**Affected controllers:**\n")
+                endpoints.forEach { append("- $it\n") }
+                append("\n")
+            }
+            append("**Files changed:** ${changedFiles.size}\n")
+            append("**Branch:** $branchName\n")
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun detectAffectedModules(proj: Project, changedFiles: List<VirtualFile>): List<String> {
+        return try {
+            val mavenManagerClass = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
+            val getInstanceMethod = mavenManagerClass.getMethod("getInstance", Project::class.java)
+            val mavenManager = getInstanceMethod.invoke(null, proj)
+
+            val isMavenized = mavenManagerClass.getMethod("isMavenizedProject").invoke(mavenManager) as Boolean
+            if (!isMavenized) return emptyList()
+
+            val projects = mavenManagerClass.getMethod("getProjects").invoke(mavenManager) as List<Any>
+            projects.filter { mp ->
+                val dirFile = mp.javaClass.getMethod("getDirectoryFile").invoke(mp) as VirtualFile
+                changedFiles.any { file ->
+                    com.intellij.openapi.vfs.VfsUtilCore.isAncestor(dirFile, file, false)
+                }
+            }.mapNotNull { mp ->
+                val mavenId = mp.javaClass.getMethod("getMavenId").invoke(mp)
+                mavenId.javaClass.getMethod("getArtifactId").invoke(mavenId) as? String
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun detectControllerEndpoints(
+        proj: Project,
+        changedFiles: List<VirtualFile>
+    ): List<String> {
+        val endpoints = mutableListOf<String>()
+        try {
+            val psiEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
+            val psiEnricher = psiEnricherClass.getConstructor(Project::class.java).newInstance(proj)
+            val enrichMethod = psiEnricherClass.getMethod(
+                "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
+            )
+
+            for (file in changedFiles) {
+                try {
+                    val psi = invokeSuspend(psiEnricher, enrichMethod, file.path) ?: continue
+                    val classAnnotations = psi.javaClass.getMethod("getClassAnnotations").invoke(psi) as List<String>
+                    val isController = classAnnotations.any {
+                        it in listOf("RestController", "Controller")
+                    }
+                    if (isController) {
+                        endpoints.add("${file.nameWithoutExtension} (${classAnnotations.joinToString(", ") { "@$it" }})")
+                    }
+                } catch (_: Exception) { /* skip */ }
+            }
+        } catch (_: Exception) { /* PsiContextEnricher not available */ }
+        return endpoints
+    }
+
+    private suspend fun invokeSuspend(obj: Any, method: Method, arg: String): Any? {
+        return kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { cont ->
+            method.invoke(obj, arg, cont)
+        }
     }
 }
