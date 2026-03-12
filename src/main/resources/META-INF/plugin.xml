@@ -229,7 +229,7 @@
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <codyAgentProvider
             implementation="com.workflow.orchestrator.cody.agent.StandaloneCodyAgentProvider"/>
-        <!-- TODO Phase 1B: SprintTabProvider -->
+        <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
