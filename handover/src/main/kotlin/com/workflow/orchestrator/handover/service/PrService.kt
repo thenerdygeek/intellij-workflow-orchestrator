@@ -3,7 +3,35 @@ package com.workflow.orchestrator.handover.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.handover.api.dto.BitbucketReviewer
+import com.workflow.orchestrator.handover.api.dto.BitbucketReviewerUser
 import java.lang.reflect.Method
+
+object PrTitleRenderer {
+    fun render(format: String, ticketId: String, summary: String, branch: String, maxLength: Int): String {
+        val rendered = format
+            .replace("{ticketId}", ticketId)
+            .replace("{branch}", branch)
+            .replace("{summary}", summary)
+        return if (rendered.length > maxLength) {
+            val withoutSummary = format
+                .replace("{ticketId}", ticketId)
+                .replace("{branch}", branch)
+                .replace("{summary}", "")
+            val availableForSummary = maxLength - withoutSummary.length
+            if (availableForSummary > 3) {
+                format.replace("{ticketId}", ticketId)
+                    .replace("{branch}", branch)
+                    .replace("{summary}", summary.take(availableForSummary - 3) + "...")
+            } else {
+                rendered.take(maxLength)
+            }
+        } else {
+            rendered
+        }
+    }
+}
 
 @Service(Service.Level.PROJECT)
 class PrService {
@@ -17,7 +45,8 @@ class PrService {
     constructor()
 
     companion object {
-        private const val MAX_TITLE_LENGTH = 120
+        private const val DEFAULT_MAX_TITLE_LENGTH = 120
+        private const val DEFAULT_PR_TITLE_FORMAT = "{ticketId}: {summary}"
 
         // SSH: ssh://git@host(:port)/PROJECT/repo.git
         private val SSH_URL_PATTERN = Regex("""ssh://[^/]+(?::\d+)?/([^/]+)/([^/]+?)(?:\.git)?$""")
@@ -44,13 +73,19 @@ class PrService {
         return null
     }
 
-    fun buildPrTitle(ticketId: String, ticketSummary: String): String {
-        val full = "$ticketId: $ticketSummary"
-        return if (full.length > MAX_TITLE_LENGTH) {
-            full.take(MAX_TITLE_LENGTH - 3) + "..."
-        } else {
-            full
-        }
+    fun buildPrTitle(ticketId: String, ticketSummary: String, branchName: String = ""): String {
+        val settings = project?.let { PluginSettings.getInstance(it).state }
+        val format = settings?.prTitleFormat?.takeIf { it.isNotBlank() } ?: DEFAULT_PR_TITLE_FORMAT
+        val maxLength = settings?.maxPrTitleLength?.takeIf { it > 0 } ?: DEFAULT_MAX_TITLE_LENGTH
+        return PrTitleRenderer.render(format, ticketId, ticketSummary, branchName, maxLength)
+    }
+
+    fun buildDefaultReviewers(): List<BitbucketReviewer> {
+        val raw = project?.let { PluginSettings.getInstance(it).state.prDefaultReviewers } ?: return emptyList()
+        return raw.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { BitbucketReviewer(BitbucketReviewerUser(it)) }
     }
 
     fun buildFallbackDescription(ticketId: String, ticketSummary: String, branchName: String): String {
