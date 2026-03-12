@@ -45,6 +45,8 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
 
     override fun apply(file: PsiFile, annotationResult: SonarAnnotationResult, holder: AnnotationHolder) {
         val doc = file.viewProvider.document ?: return
+        val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(file.project)
+            .selectedTextEditor
 
         for (issue in annotationResult.issues) {
             val startLine = (issue.startLine - 1).coerceIn(0, doc.lineCount - 1)
@@ -72,10 +74,21 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
                 .range(textRange)
                 .tooltip(tooltip)
                 .create()
+
+            // Store issue in highlighter for CodyIntentionAction to retrieve
+            if (editor != null) {
+                val highlighters = editor.markupModel.allHighlighters
+                    .filter { it.startOffset == textRange.startOffset && it.endOffset == textRange.endOffset }
+                for (hl in highlighters) {
+                    hl.putUserData(SONAR_ISSUE_KEY, issue)
+                }
+            }
         }
     }
 
     companion object {
+        val SONAR_ISSUE_KEY = com.intellij.openapi.util.Key.create<MappedIssue>("workflow.sonar.issue")
+
         fun mapSeverity(type: IssueType, severity: IssueSeverity): HighlightSeverity = when {
             (type == IssueType.BUG || type == IssueType.VULNERABILITY) &&
                 (severity == IssueSeverity.BLOCKER || severity == IssueSeverity.CRITICAL) ->
