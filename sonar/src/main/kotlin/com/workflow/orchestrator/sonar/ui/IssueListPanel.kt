@@ -84,7 +84,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private fun navigateToIssue(issue: MappedIssue) {
         val basePath = project.basePath ?: return
-        val vf = LocalFileSystem.getInstance().findFileByPath("$basePath/${issue.filePath}") ?: return
+        val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, issue.filePath).path) ?: return
         OpenFileDescriptor(project, vf, issue.startLine - 1, issue.startOffset).navigate(true)
     }
 }
@@ -102,7 +102,7 @@ private class IssueListCellRenderer : ListCellRenderer<MappedIssue> {
             IssueSeverity.INFO -> "#888888"
         }
         val typeStr = value.type.name.replace("_", " ")
-        val fileName = value.filePath.substringAfterLast('/')
+        val fileName = java.io.File(value.filePath).name
         label.text = "<html><font color='$color'>\u25CF</font> $typeStr " +
             "<font color='$color'>${value.severity}</font> ${value.message} — $fileName:${value.startLine}</html>"
         label.border = JBUI.Borders.empty(4, 8)

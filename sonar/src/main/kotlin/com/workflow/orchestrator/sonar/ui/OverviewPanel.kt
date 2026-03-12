@@ -112,7 +112,7 @@ class OverviewPanel : JPanel(BorderLayout()) {
                 val color = severityColor(issue.severity)
                 val label = JBLabel("<html><font color='${htmlColor(color)}'>\u25CF</font> " +
                     "${issue.type} <font color='${htmlColor(color)}'>${issue.severity}</font> " +
-                    "${issue.message} — ${issue.filePath.substringAfterLast('/')}:${issue.startLine}</html>")
+                    "${issue.message} — ${java.io.File(issue.filePath).name}:${issue.startLine}</html>")
                 label.font = label.font.deriveFont(11f)
                 label.border = JBUI.Borders.emptyBottom(2)
                 recentIssuesPanel.add(label)

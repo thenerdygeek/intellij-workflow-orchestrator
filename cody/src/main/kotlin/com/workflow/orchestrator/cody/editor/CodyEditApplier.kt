@@ -8,6 +8,7 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.workflow.orchestrator.cody.protocol.*
 
 class CodyEditApplier(private val project: Project) {
@@ -23,8 +24,7 @@ class CodyEditApplier(private val project: Project) {
 
     private fun showEditFileDiff(editTask: EditTask, op: WorkspaceEditOperation) {
         val uri = op.uri ?: return
-        val filePath = uri.removePrefix("file://")
-        val vFile = LocalFileSystem.getInstance().findFileByPath(filePath) ?: return
+        val vFile = VirtualFileManager.getInstance().findFileByUrl(uri) ?: return
         val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return
 
         val originalContent = document.text
@@ -73,8 +73,7 @@ class CodyEditApplier(private val project: Project) {
 
     private fun applyEditFileOperation(op: WorkspaceEditOperation) {
         val uri = op.uri ?: return
-        val filePath = uri.removePrefix("file://")
-        val vFile = LocalFileSystem.getInstance().findFileByPath(filePath) ?: return
+        val vFile = VirtualFileManager.getInstance().findFileByUrl(uri) ?: return
         val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return
 
         val newContent = CodyEditApplierLogic.applyTextEditsToContent(document.text, op.edits ?: emptyList())
@@ -83,11 +82,11 @@ class CodyEditApplier(private val project: Project) {
 
     private fun applyCreateFileOperation(op: WorkspaceEditOperation) {
         val uri = op.uri ?: return
-        val filePath = uri.removePrefix("file://")
-        val parentPath = filePath.substringBeforeLast("/")
-        val fileName = filePath.substringAfterLast("/")
+        val filePath = java.net.URI(uri).path
+        val file = java.io.File(filePath)
 
-        val parentDir = LocalFileSystem.getInstance().findFileByPath(parentPath) ?: return
+        val parentDir = LocalFileSystem.getInstance().findFileByPath(file.parent) ?: return
+        val fileName = file.name
         val newFile = parentDir.createChildData(this, fileName)
         val document = FileDocumentManager.getInstance().getDocument(newFile) ?: return
         document.setText(op.textContents ?: "")

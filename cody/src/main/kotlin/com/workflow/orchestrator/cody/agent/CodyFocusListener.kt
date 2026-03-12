@@ -18,7 +18,7 @@ class CodyFocusListener(private val project: Project) : FileEditorManagerListene
 
         if (manager.state.value !is CodyAgentManager.AgentState.Running) return
 
-        val uri = "file://${newFile.path}"
+        val uri = newFile.url
         try {
             val server = manager.getServerOrNull() ?: return
             server.textDocumentDidFocus(TextDocumentIdentifier(uri))

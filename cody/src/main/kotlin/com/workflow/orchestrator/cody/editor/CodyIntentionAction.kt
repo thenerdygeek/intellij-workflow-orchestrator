@@ -42,7 +42,7 @@ class CodyIntentionAction : IntentionAction {
         val lineEnd = Position(line = caretLine + 1, character = 0)
         val range = Range(start = lineStart, end = lineEnd)
 
-        val filePath = "file://${file.virtualFile.path}"
+        val filePath = file.virtualFile.url
         val contextService = CodyContextService(project)
         val fixContext = contextService.gatherFixContext(
             filePath = filePath,

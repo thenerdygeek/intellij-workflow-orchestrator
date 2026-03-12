@@ -19,7 +19,7 @@ class TagHistoryService {
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
-        this.dbPath = "${project.basePath}/.idea/workflow-orchestrator/automation.db"
+        this.dbPath = File(project.basePath ?: ".", ".idea${File.separator}workflow-orchestrator${File.separator}automation.db").path
     }
 
     /** Test constructor — allows injecting explicit path. */

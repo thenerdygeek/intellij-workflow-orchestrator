@@ -83,11 +83,13 @@ class MavenBuildService(private val project: Project) {
 
         val mavenHome = System.getenv("MAVEN_HOME") ?: System.getenv("M2_HOME")
         if (mavenHome != null) {
-            val mvnBin = File(mavenHome, "bin/mvn")
+            val isWindows = System.getProperty("os.name").lowercase().contains("win")
+            val mvnName = if (isWindows) "mvn.cmd" else "mvn"
+            val mvnBin = File(File(mavenHome, "bin"), mvnName)
             if (mvnBin.exists()) return mvnBin.absolutePath
         }
 
-        return "mvn"
+        return if (System.getProperty("os.name").lowercase().contains("win")) "mvn.cmd" else "mvn"
     }
 
     companion object {

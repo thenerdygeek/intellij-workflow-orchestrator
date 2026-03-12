@@ -24,7 +24,7 @@ class CodyDocumentSyncListener : EditorFactoryListener {
 
         if (!manager.isRunning()) return
 
-        val uri = "file://${vFile.path}"
+        val uri = vFile.url
         try {
             val server = manager.getServerOrNull() ?: return
             server.textDocumentDidOpen(
@@ -56,7 +56,7 @@ class CodyDocumentSyncListener : EditorFactoryListener {
 
         if (!manager.isRunning()) return
 
-        val uri = "file://${vFile.path}"
+        val uri = vFile.url
         try {
             val server = manager.getServerOrNull() ?: return
             server.textDocumentDidClose(ProtocolTextDocument(uri = uri))

@@ -21,7 +21,8 @@ class CoverageTreeDecorator : ProjectViewNodeDecorator {
         val relativePath = file.path.removePrefix("$basePath/")
 
         // Skip test files and non-source files
-        if (relativePath.contains("/test/") || relativePath.contains("/resources/")) return
+        val normalizedPath = relativePath.replace('\\', '/')
+        if (normalizedPath.contains("/test/") || normalizedPath.contains("/resources/")) return
 
         val state = getSonarState(project)
         val coverage = state.fileCoverage[relativePath] ?: return

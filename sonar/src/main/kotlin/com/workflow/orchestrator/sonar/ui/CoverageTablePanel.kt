@@ -46,7 +46,7 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
     private fun navigateToFile(filePath: String) {
         val basePath = project.basePath ?: return
-        val vf = LocalFileSystem.getInstance().findFileByPath("$basePath/$filePath") ?: return
+        val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, filePath).path) ?: return
         OpenFileDescriptor(project, vf, 0, 0).navigate(true)
     }
 }
@@ -69,7 +69,7 @@ private class CoverageTableModel : AbstractTableModel() {
     override fun getValueAt(row: Int, col: Int): Any {
         val file = data[row]
         return when (col) {
-            0 -> file.filePath.substringAfterLast('/')
+            0 -> java.io.File(file.filePath).name
             1 -> "%.1f%%".format(file.lineCoverage)
             2 -> "%.1f%%".format(file.branchCoverage)
             3 -> file.uncoveredLines

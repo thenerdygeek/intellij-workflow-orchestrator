@@ -77,7 +77,8 @@ class CopyrightFixService {
     }
 
     fun isGeneratedPath(filePath: String): Boolean {
-        return GENERATED_PATH_PREFIXES.any { filePath.startsWith(it) }
+        val normalized = filePath.replace('\\', '/')
+        return GENERATED_PATH_PREFIXES.any { normalized.startsWith(it) }
     }
 
     fun analyzeFile(

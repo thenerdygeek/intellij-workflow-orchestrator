@@ -23,8 +23,9 @@ class CodyContextServiceLogic {
     }
 
     fun resolveTestFile(sourceFilePath: String): String? {
-        if (!sourceFilePath.contains("src/main/")) return null
-        val testPath = sourceFilePath.replace("src/main/", "src/test/")
+        val normalized = sourceFilePath.replace('\\', '/')
+        if (!normalized.contains("src/main/")) return null
+        val testPath = normalized.replace("src/main/", "src/test/")
         val ext = testPath.substringAfterLast(".")
         val nameWithoutExt = testPath.substringBeforeLast(".")
         return "${nameWithoutExt}Test.$ext"
