@@ -18,10 +18,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.eclipse.lsp4j.jsonrpc.Launcher
 import java.io.File
-import java.net.URI
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.TimeUnit
 
 @Service(Service.Level.PROJECT)
@@ -147,10 +143,7 @@ class CodyAgentManager(private val project: Project) : Disposable {
      *
      * 1. User-configured path (Settings > Advanced > codyAgentPath)
      * 2. Environment variable CODY_AGENT_BINARY, or "cody" on system PATH
-     * 3. Auto-downloaded binary at ~/.cody-agent/cody-agent-{VERSION}
-     *
-     * If tier 3's binary doesn't exist yet, [downloadAgentBinary] is called
-     * to fetch it from the npm registry.
+     * 3. Previously installed binary at ~/.cody-agent/cody-agent-{VERSION}
      */
     internal fun resolveAgentBinary(): String? {
         // Tier 1: User-configured path in settings
@@ -174,28 +167,20 @@ class CodyAgentManager(private val project: Project) : Disposable {
             return pathBinary
         }
 
-        // Tier 3: Auto-downloaded binary at ~/.cody-agent/
-        val autoPath = getAutoDownloadedBinaryPath()
+        // Tier 3: Previously installed binary at ~/.cody-agent/
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val suffix = if (isWindows) ".cmd" else ""
+        val autoPath = File(
+            File(System.getProperty("user.home"), ".cody-agent"),
+            "cody-agent-$CODY_AGENT_VERSION$suffix"
+        )
         if (autoPath.exists()) {
-            log.info("[CodyAgent] Using auto-downloaded binary: $autoPath")
+            log.info("[CodyAgent] Using binary at: $autoPath")
             return autoPath.absolutePath
         }
 
-        // Attempt auto-download
-        log.info("[CodyAgent] No binary found, attempting auto-download of @sourcegraph/cody v$CODY_AGENT_VERSION")
-        return try {
-            val downloaded = downloadAgentBinary()
-            if (downloaded != null) {
-                log.info("[CodyAgent] Auto-download complete: $downloaded")
-                downloaded
-            } else {
-                log.warn("[CodyAgent] Auto-download failed")
-                null
-            }
-        } catch (e: Exception) {
-            log.warn("[CodyAgent] Auto-download failed: ${e.message}", e)
-            null
-        }
+        log.warn("[CodyAgent] No Cody binary found. Install via: npm install -g @sourcegraph/cody")
+        return null
     }
 
     private fun findOnPath(command: String): String? {
@@ -210,97 +195,6 @@ class CodyAgentManager(private val project: Project) : Disposable {
         } catch (e: Exception) {
             null
         }
-    }
-
-    private fun getAutoDownloadedBinaryPath(): File {
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-        val suffix = if (isWindows) ".cmd" else ""
-        val dir = File(System.getProperty("user.home"), ".cody-agent")
-        return File(dir, "cody-agent-$CODY_AGENT_VERSION$suffix")
-    }
-
-    /**
-     * Downloads @sourcegraph/cody from the npm registry, extracts it,
-     * and creates a wrapper script — matching cody_agentic_tool's approach.
-     *
-     * Requires Node.js to be installed (the agent is a Node.js application).
-     */
-    private fun downloadAgentBinary(): String? {
-        // Check Node.js prerequisite
-        val nodePath = findOnPath("node")
-        if (nodePath == null) {
-            log.warn("[CodyAgent] Node.js not found on PATH — required for Cody Agent. " +
-                "Install Node.js from https://nodejs.org/ or install Cody globally: npm install -g @sourcegraph/cody")
-            notifyError("Cody Agent requires Node.js. Install Node.js or run: npm install -g @sourcegraph/cody")
-            return null
-        }
-        log.info("[CodyAgent] Node.js found at: $nodePath")
-
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-        val agentDir = File(System.getProperty("user.home"), ".cody-agent")
-        agentDir.mkdirs()
-
-        val tarballUrl = "https://registry.npmjs.org/@sourcegraph/cody/-/cody-$CODY_AGENT_VERSION.tgz"
-        val tarballFile = File(agentDir, "cody-$CODY_AGENT_VERSION.tgz")
-
-        // Download tarball
-        log.info("[CodyAgent] Downloading $tarballUrl")
-        try {
-            URI(tarballUrl).toURL().openStream().use { input ->
-                tarballFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-        } catch (e: Exception) {
-            log.error("[CodyAgent] Failed to download tarball: ${e.message}", e)
-            tarballFile.delete()
-            return null
-        }
-        log.info("[CodyAgent] Downloaded ${tarballFile.length()} bytes")
-
-        // Extract tarball using tar command
-        val packageDir = File(agentDir, "package")
-        if (packageDir.exists()) packageDir.deleteRecursively()
-
-        try {
-            val extractProc = ProcessBuilder("tar", "xzf", tarballFile.absolutePath, "-C", agentDir.absolutePath)
-                .redirectErrorStream(true)
-                .start()
-            val extractOutput = extractProc.inputStream.bufferedReader().readText()
-            val exitCode = extractProc.waitFor()
-            if (exitCode != 0) {
-                log.error("[CodyAgent] tar extraction failed (exit=$exitCode): $extractOutput")
-                return null
-            }
-        } finally {
-            tarballFile.delete()
-        }
-
-        val indexJs = File(packageDir, "dist/index.js")
-        if (!indexJs.exists()) {
-            log.error("[CodyAgent] Expected index.js not found at: ${indexJs.absolutePath}")
-            return null
-        }
-
-        // Create wrapper script
-        val wrapperFile = getAutoDownloadedBinaryPath()
-        if (isWindows) {
-            wrapperFile.writeText("@echo off\r\n\"$nodePath\" \"${indexJs.absolutePath}\" %*\r\n")
-        } else {
-            wrapperFile.writeText("#!/bin/sh\nexec \"$nodePath\" \"${indexJs.absolutePath}\" \"$@\"\n")
-            try {
-                Files.setPosixFilePermissions(
-                    wrapperFile.toPath(),
-                    PosixFilePermissions.fromString("rwxr-xr-x")
-                )
-            } catch (e: Exception) {
-                // Fallback for systems where setPosixFilePermissions isn't supported
-                wrapperFile.setExecutable(true)
-            }
-        }
-
-        log.info("[CodyAgent] Created wrapper script: ${wrapperFile.absolutePath}")
-        return wrapperFile.absolutePath
     }
 
     internal fun buildClientInfo(settings: PluginSettings, token: String): ClientInfo {
