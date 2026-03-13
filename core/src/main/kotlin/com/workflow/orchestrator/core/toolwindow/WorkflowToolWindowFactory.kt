@@ -92,6 +92,13 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
             },
 
+            // Open settings
+            object : DumbAwareAction("Settings", "Open Workflow Orchestrator settings", AllIcons.General.GearPlain) {
+                override fun actionPerformed(e: AnActionEvent) {
+                    ShowSettingsUtil.getInstance().showSettingsDialog(project, "Workflow Orchestrator")
+                }
+            },
+
             // Quick navigate between tabs
             object : DumbAwareAction("Next Tab", "Switch to next tab", AllIcons.Actions.Forward) {
                 override fun actionPerformed(e: AnActionEvent) {
@@ -242,7 +249,17 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
 
     private fun settingsSnapshot(project: Project): String {
         val s = PluginSettings.getInstance(project).state
-        return "${s.jiraUrl}|${s.bambooUrl}|${s.sonarUrl}|${s.bitbucketUrl}|${s.sourcegraphUrl}|${s.nexusUrl}"
+        return buildString {
+            // Connection URLs
+            append("${s.jiraUrl}|${s.bambooUrl}|${s.sonarUrl}|${s.bitbucketUrl}|${s.sourcegraphUrl}|${s.nexusUrl}")
+            // Board config
+            append("|board=${s.jiraBoardId}|boardType=${s.jiraBoardType}|boardName=${s.jiraBoardName}")
+            // Module toggles
+            append("|sprint=${s.sprintModuleEnabled}|build=${s.buildModuleEnabled}")
+            append("|quality=${s.qualityModuleEnabled}|auto=${s.automationModuleEnabled}|handover=${s.handoverModuleEnabled}")
+            // Keys that affect tab content
+            append("|planKey=${s.bambooPlanKey}|sonarKey=${s.sonarProjectKey}")
+        }
     }
 
     private data class DefaultTab(val title: String, val order: Int, val emptyMessage: String)

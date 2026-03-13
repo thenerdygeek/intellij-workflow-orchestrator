@@ -26,6 +26,11 @@ class WorkflowMappingConfigurable(private val project: Project) :
     BoundSearchableConfigurable("Workflow Mapping", "workflow.orchestrator.workflow") {
 
     private val intentFields = mutableMapOf<WorkflowIntent, String>()
+
+    // Track board selection outside the DSL so it survives apply/reset cycles
+    private var selectedBoardId: Int = 0
+    private var selectedBoardType: String = ""
+    private var selectedBoardName: String = ""
     private var boardRegexFieldRef: javax.swing.JTextField? = null
 
     override fun createPanel(): DialogPanel {
@@ -38,6 +43,10 @@ class WorkflowMappingConfigurable(private val project: Project) :
             intentFields[intent] = mapping?.transitionName ?: ""
         }
 
+        // Initialize from persisted settings
+        selectedBoardId = settings.state.jiraBoardId
+        selectedBoardType = settings.state.jiraBoardType ?: ""
+        selectedBoardName = settings.state.jiraBoardName ?: ""
         val boardStatusLabel = JLabel("")
         val boardSearchField = javax.swing.JTextField(20)
         val boardRegexField = javax.swing.JTextField(20)
@@ -47,24 +56,24 @@ class WorkflowMappingConfigurable(private val project: Project) :
         boardComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
             if (item == null) "Select a board..." else "${item.board.name} (${item.board.type}, ID: ${item.board.id})"
         }
-        // Pre-populate with current board if set
-        val currentBoardId = settings.state.jiraBoardId
-        if (currentBoardId > 0) {
-            val currentBoardName = settings.state.jiraBoardName ?: "Board $currentBoardId"
-            val currentBoardType = settings.state.jiraBoardType ?: "scrum"
+
+        // Pre-populate with current saved board
+        if (selectedBoardId > 0) {
             val placeholder = com.workflow.orchestrator.jira.api.dto.JiraBoard(
-                currentBoardId, currentBoardName, currentBoardType
+                selectedBoardId,
+                selectedBoardName.ifBlank { "Board $selectedBoardId" },
+                selectedBoardType.ifBlank { "scrum" }
             )
             boardComboBox.addItem(BoardItem(placeholder))
             boardComboBox.selectedIndex = 0
+            boardStatusLabel.text = "Current: ${selectedBoardName.ifBlank { "Board $selectedBoardId" }} (ID: $selectedBoardId)"
         }
+
         boardComboBox.addActionListener {
-            val selected = boardComboBox.selectedItem as? BoardItem
-            if (selected != null) {
-                settings.state.jiraBoardId = selected.board.id
-                settings.state.jiraBoardType = selected.board.type
-                settings.state.jiraBoardName = selected.board.name
-            }
+            val selected = boardComboBox.selectedItem as? BoardItem ?: return@addActionListener
+            selectedBoardId = selected.board.id
+            selectedBoardType = selected.board.type
+            selectedBoardName = selected.board.name
         }
 
         return panel {
@@ -90,12 +99,12 @@ class WorkflowMappingConfigurable(private val project: Project) :
                             boardStatusLabel.text = "Enter a board name to search"
                             return@button
                         }
-                        val regexText = boardRegexField.text.trim()
-                        val regex = if (regexText.isNotBlank()) {
+                        val currentRegex = boardRegexField.text.trim()
+                        val regex = if (currentRegex.isNotBlank()) {
                             try {
-                                Regex(regexText, RegexOption.IGNORE_CASE)
+                                Regex(currentRegex, RegexOption.IGNORE_CASE)
                             } catch (_: Exception) {
-                                boardStatusLabel.text = "Invalid regex: $regexText"
+                                boardStatusLabel.text = "Invalid regex: $currentRegex"
                                 return@button
                             }
                         } else null
@@ -119,7 +128,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
                                         boardComboBox.removeAllItems()
                                         if (filtered.isEmpty()) {
                                             val msg = if (regex != null && result.data.isNotEmpty()) {
-                                                "${result.data.size} board(s) found but none match regex \"$regexText\""
+                                                "${result.data.size} board(s) found but none match regex \"$currentRegex\""
                                             } else {
                                                 "No boards matching \"$searchText\""
                                             }
@@ -131,10 +140,6 @@ class WorkflowMappingConfigurable(private val project: Project) :
                                             boardComboBox.selectedIndex = 0
                                             val regexNote = if (regex != null) " (${result.data.size} total, ${filtered.size} match regex)" else ""
                                             boardStatusLabel.text = "${filtered.size} board(s) found$regexNote"
-                                            val first = filtered.first()
-                                            settings.state.jiraBoardId = first.id
-                                            settings.state.jiraBoardType = first.type
-                                            settings.state.jiraBoardName = first.name
                                         }
                                     }
                                     is ApiResult.Error -> {
@@ -154,37 +159,10 @@ class WorkflowMappingConfigurable(private val project: Project) :
                 }
                 row("Selected board:") {
                     cell(boardComboBox)
-                        .comment("Choose from search results. The selected board will be used for the Sprint Dashboard.")
+                        .comment("Choose from search results, then click Apply. The Sprint Dashboard will reload with this board.")
                 }
                 row {
                     cell(boardStatusLabel)
-                }
-                row("Board type:") {
-                    comboBox(listOf("", "scrum", "kanban", "simple"))
-                        .applyToComponent {
-                            renderer = com.intellij.ui.SimpleListCellRenderer.create("") { value ->
-                                when (value) {
-                                    "" -> "All (auto-detect)"
-                                    "scrum" -> "Scrum (has sprints)"
-                                    "kanban" -> "Kanban (continuous flow)"
-                                    "simple" -> "Simple (basic tracking)"
-                                    else -> value
-                                }
-                            }
-                        }
-                        .bindItem(
-                            { settings.state.jiraBoardType ?: "" },
-                            { settings.state.jiraBoardType = it ?: "" }
-                        )
-                        .comment("Override board type. Usually auto-detected from the selected board.")
-                }
-                row("Board ID (manual):") {
-                    intTextField(IntRange(0, 99999))
-                        .bindIntText(
-                            { settings.state.jiraBoardId },
-                            { settings.state.jiraBoardId = it }
-                        )
-                        .comment("Auto-filled when you select a board above. Or enter manually if you know the ID.")
                 }
             }
 
@@ -231,10 +209,17 @@ class WorkflowMappingConfigurable(private val project: Project) :
     override fun apply() {
         super.apply()
         val settings = PluginSettings.getInstance(project)
+
+        // Write board selection AFTER super.apply() so DSL bindings don't overwrite
+        if (selectedBoardId > 0) {
+            settings.state.jiraBoardId = selectedBoardId
+            settings.state.jiraBoardType = selectedBoardType
+            settings.state.jiraBoardName = selectedBoardName
+        }
         settings.state.boardFilterRegex = boardRegexFieldRef?.text?.trim() ?: ""
+
         val store = TransitionMappingStore()
         store.loadFromJson(settings.state.workflowMappings ?: "")
-        // Clear only explicit global mappings, preserve learned ones
         for (intent in WorkflowIntent.entries) {
             store.clearExplicitGlobalMapping(intent.name)
         }
@@ -246,5 +231,12 @@ class WorkflowMappingConfigurable(private val project: Project) :
             }
         }
         settings.state.workflowMappings = store.toJson()
+    }
+
+    override fun isModified(): Boolean {
+        val settings = PluginSettings.getInstance(project)
+        if (selectedBoardId != settings.state.jiraBoardId) return true
+        if (selectedBoardType != (settings.state.jiraBoardType ?: "")) return true
+        return super.isModified()
     }
 }
