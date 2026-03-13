@@ -25,8 +25,8 @@ dependencies {
 
     implementation(project(":core"))
     implementation(project(":bamboo"))
-    implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.serialization.json)
+    compileOnly(libs.kotlinx.coroutines.core)
+    compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.sqlite.jdbc)
 

@@ -58,8 +58,8 @@ dependencies {
     implementation(project(":handover"))
 
     // -- External libraries --
-    implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.serialization.json)
+    compileOnly(libs.kotlinx.coroutines.core)
+    compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     implementation(libs.sqlite.jdbc)

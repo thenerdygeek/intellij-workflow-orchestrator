@@ -22,7 +22,7 @@ dependencies {
 
     implementation(project(":core"))
     implementation(project(":sonar"))
-    implementation(libs.kotlinx.coroutines.core)
+    compileOnly(libs.kotlinx.coroutines.core)
     implementation(libs.lsp4j.jsonrpc)
     implementation(libs.gson)
 

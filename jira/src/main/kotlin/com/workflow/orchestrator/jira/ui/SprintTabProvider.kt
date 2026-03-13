@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
@@ -35,7 +36,8 @@ class SprintTabProvider : WorkflowTabProvider {
         val branchingService = BranchingService(project, apiClient, activeTicketService)
 
         val panel = SprintDashboardPanel(project, sprintService, activeTicketService, branchingService)
-        panel.loadData()
+        // Defer loadData to avoid calling runBackgroundableTask during tool window init
+        invokeLater { panel.loadData() }
         return panel
     }
 }
