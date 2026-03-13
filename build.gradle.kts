@@ -25,6 +25,12 @@ repositories {
     }
 }
 
+// Exclude SLF4J from all dependencies — IntelliJ provides its own.
+// Bundling a second SLF4J causes LinkageError due to plugin classloader isolation.
+configurations.all {
+    exclude(group = "org.slf4j")
+}
+
 // ---- Dependencies ----
 dependencies {
     // -- IntelliJ Platform --
