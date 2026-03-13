@@ -82,6 +82,7 @@ class SourcegraphProbe:
         self.working_endpoint = None
         self.working_auth_style = None
         self.working_model = None
+        self._extra_endpoints = []  # Populated by OpenAPI spec discovery
 
     # ─────────────────────────────────────────────
     # HTTP helpers
@@ -183,6 +184,173 @@ class SourcegraphProbe:
         return match.group(1).strip() if match else None
 
     # ═════════════════════════════════════════════
+    # SECTION 0: OPENAPI SPEC DISCOVERY
+    # ═════════════════════════════════════════════
+
+    def test_openapi_spec(self):
+        self._section("0", "OPENAPI SPEC DISCOVERY",
+                       "Fetching the actual API schema from your instance (source of truth)")
+
+        # 0.1: Fetch the OpenAPI spec — this tells us EXACTLY what endpoints exist
+        openapi_paths = [
+            "/api/openapi/public",
+            "/.api/openapi/public",
+            "/api/openapi",
+            "/.api/openapi",
+            "/-/openapi.json",
+            "/-/openapi.yaml",
+        ]
+
+        openapi_spec = None
+        openapi_endpoints = []
+
+        for path in openapi_paths:
+            try:
+                status, body, elapsed = self._request("GET", path, timeout=15)
+                if status == 200 and len(body) > 100:
+                    # Try parsing as JSON
+                    try:
+                        spec = json.loads(body)
+                        openapi_spec = spec
+                        # Extract all paths from the spec
+                        paths = spec.get("paths", {})
+                        openapi_endpoints = list(paths.keys())
+
+                        # Find completions-related endpoints
+                        completions_endpoints = [p for p in openapi_endpoints
+                                                  if "complet" in p.lower() or "chat" in p.lower() or "llm" in p.lower()]
+
+                        # Save the full spec to a file for analysis
+                        with open("sourcegraph-openapi-spec.json", "w") as f:
+                            json.dump(spec, f, indent=2)
+
+                        self.report.add(TestResult(
+                            name=f"0.1 OpenAPI spec found at {path}",
+                            passed=True,
+                            status_code=status, response_time_ms=elapsed,
+                            notes=(f"Total endpoints: {len(openapi_endpoints)}\n"
+                                   f"LLM/completions endpoints: {completions_endpoints or 'none found'}\n"
+                                   f"Full spec saved to: sourcegraph-openapi-spec.json"),
+                            category="openapi_discovery"
+                        ))
+
+                        # Extract detailed info about completions endpoints
+                        for ep in completions_endpoints:
+                            ep_data = paths.get(ep, {})
+                            methods = list(ep_data.keys())
+                            for method in methods:
+                                method_data = ep_data[method]
+                                params = []
+                                # Query params
+                                for p in method_data.get("parameters", []):
+                                    params.append(f"{p.get('name')} ({p.get('in', '?')}): {p.get('description', 'no desc')}")
+                                # Request body schema
+                                req_body = method_data.get("requestBody", {})
+                                body_schema = ""
+                                if req_body:
+                                    content = req_body.get("content", {})
+                                    for ct, ct_data in content.items():
+                                        schema = ct_data.get("schema", {})
+                                        body_schema = json.dumps(schema, indent=2)[:500]
+
+                                self.report.add(TestResult(
+                                    name=f"0.2 {method.upper()} {ep}",
+                                    passed=True,
+                                    notes=(f"Parameters: {params or 'none'}\n"
+                                           f"Request body schema: {body_schema or 'none'}"),
+                                    category="openapi_discovery"
+                                ))
+
+                        # Also look for all API endpoints (not just completions)
+                        api_categories = {}
+                        for p in openapi_endpoints:
+                            parts = p.strip("/").split("/")
+                            cat = parts[1] if len(parts) > 1 else parts[0]
+                            api_categories.setdefault(cat, []).append(p)
+
+                        self.report.add(TestResult(
+                            name="0.3 API endpoint categories",
+                            passed=True,
+                            notes="\n".join(f"  {cat}: {len(eps)} endpoints" for cat, eps in sorted(api_categories.items())),
+                            category="openapi_discovery"
+                        ))
+
+                        break  # Found spec, stop trying other paths
+
+                    except json.JSONDecodeError:
+                        # Maybe YAML?
+                        self.report.add(TestResult(
+                            name=f"0.1 OpenAPI spec at {path}",
+                            passed=False,
+                            status_code=status, response_time_ms=elapsed,
+                            notes=f"Got response but not valid JSON (might be YAML). First 200 chars: {body[:200]}",
+                            category="openapi_discovery"
+                        ))
+                else:
+                    pass  # silently skip non-200 responses for other paths
+
+            except ConnectionError:
+                pass  # silently skip unreachable paths
+
+        if openapi_spec is None:
+            self.report.add(TestResult(
+                name="0.1 OpenAPI spec",
+                passed=False,
+                notes=(f"No OpenAPI spec found at any of: {openapi_paths}\n"
+                       "Will fall back to probing endpoints manually.\n"
+                       "TIP: Check if your instance has /api-reference in the browser"),
+                category="openapi_discovery"
+            ))
+
+        # 0.4: Check for interactive API reference page
+        try:
+            status, body, elapsed = self._request("GET", "/api-reference", timeout=10)
+            has_api_ref = status == 200 and len(body) > 500
+            self.report.add(TestResult(
+                name="0.4 Interactive API reference page",
+                passed=has_api_ref,
+                status_code=status, response_time_ms=elapsed,
+                notes=("Available at /api-reference — open in browser for full docs" if has_api_ref
+                       else f"HTTP {status}"),
+                category="openapi_discovery"
+            ))
+        except ConnectionError as e:
+            self.report.add(TestResult(
+                name="0.4 Interactive API reference page",
+                passed=False, error=str(e),
+                category="openapi_discovery"
+            ))
+
+        # Use discovered endpoints to guide probing
+        if openapi_spec:
+            # Add any completions endpoints from the spec to our probe list
+            paths = openapi_spec.get("paths", {})
+            for p in paths:
+                if "complet" in p.lower() or "chat" in p.lower():
+                    # Check if this endpoint is already in our probe list
+                    clean_path = p if p.startswith("/") else f"/{p}"
+                    if clean_path not in [ep[0] for ep in self._get_endpoint_list()]:
+                        self._extra_endpoints.append((clean_path, "token"))
+                        self._extra_endpoints.append((clean_path, "bearer"))
+
+        return openapi_spec
+
+    def _get_endpoint_list(self):
+        """Standard list of endpoints to probe."""
+        return [
+            ("/.api/chat/completions", "token"),
+            ("/.api/chat/completions", "bearer"),
+            ("/.api/llm/chat/completions", "token"),
+            ("/.api/llm/chat/completions", "bearer"),
+            ("/.api/completions/code", "token"),
+            ("/.api/completions/stream", "token"),
+            ("/.api/completions/chat", "token"),
+            ("/.api/v1/chat/completions", "token"),
+            ("/.api/v1/chat/completions", "bearer"),
+            ("/.api/v1/completions", "token"),
+        ]
+
+    # ═════════════════════════════════════════════
     # SECTION 1: CONNECTIVITY & ENDPOINT DISCOVERY
     # ═════════════════════════════════════════════
 
@@ -256,23 +424,15 @@ class SourcegraphProbe:
                 category="connectivity"
             ))
 
-        # 1.4: Probe all known LLM endpoints
+        # 1.4: Probe all known LLM endpoints (standard + any discovered from OpenAPI spec)
         simple_body = {
             "messages": [{"role": "user", "content": "Reply with exactly: PROBE_OK"}],
             "max_tokens": 50, "temperature": 0, "stream": False
         }
 
-        endpoints = [
-            ("/.api/chat/completions", "token"),
-            ("/.api/chat/completions", "bearer"),
-            ("/.api/llm/chat/completions", "token"),
-            ("/.api/llm/chat/completions", "bearer"),
-            ("/.api/completions/chat", "token"),
-            ("/.api/completions/stream", "token"),
-            ("/.api/v1/chat/completions", "token"),
-            ("/.api/v1/chat/completions", "bearer"),
-            ("/.api/v1/completions", "token"),
-        ]
+        endpoints = self._get_endpoint_list() + self._extra_endpoints
+        # Deduplicate
+        endpoints = list(dict.fromkeys(endpoints))
 
         for path, auth in endpoints:
             try:
@@ -1570,6 +1730,7 @@ Examples:
     if args.model:
         probe.working_model = args.model
 
+    probe.test_openapi_spec()
     probe.test_connectivity()
     probe.test_structured_output()
     probe.test_agentic_patterns()
