@@ -161,14 +161,18 @@ class CodyAgentManager(private val project: Project) : Disposable {
             return envBinary
         }
 
-        val pathBinary = findOnPath("cody")
-        if (pathBinary != null) {
-            log.info("[CodyAgent] Using 'cody' from PATH: $pathBinary")
-            return pathBinary
+        // On Windows, npm creates "cody.cmd" wrapper — the plain "cody" is a shell script
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val pathCommands = if (isWindows) listOf("cody.cmd", "cody") else listOf("cody")
+        for (cmd in pathCommands) {
+            val pathBinary = findOnPath(cmd)
+            if (pathBinary != null) {
+                log.info("[CodyAgent] Using '$cmd' from PATH: $pathBinary")
+                return pathBinary
+            }
         }
 
         // Tier 3: Previously installed binary at ~/.cody-agent/
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
         val suffix = if (isWindows) ".cmd" else ""
         val autoPath = File(
             File(System.getProperty("user.home"), ".cody-agent"),

@@ -283,6 +283,12 @@ private class SourcegraphServerInvocationHandler(
 
         val targetMethod = resolveMethod(method)
         if (targetMethod == null) {
+            // Fallback: use generic request(methodName, params) if available
+            val jsonRpcName = method.getAnnotation(org.eclipse.lsp4j.jsonrpc.services.JsonRequest::class.java)?.value
+            if (jsonRpcName != null && method.returnType == CompletableFuture::class.java) {
+                log.info("Method '${method.name}' not found directly, trying generic request('$jsonRpcName', ...)")
+                return tryGenericRequest(jsonRpcName, args)
+            }
             log.warn("Method '${method.name}' not found on Sourcegraph server, returning empty future")
             return if (method.returnType == CompletableFuture::class.java) {
                 CompletableFuture.completedFuture(null)
@@ -311,14 +317,66 @@ private class SourcegraphServerInvocationHandler(
         val cacheKey = "${ourMethod.name}/${ourMethod.parameterCount}"
         return methodCache.getOrPut(cacheKey) {
             try {
-                // Find method on target by name with same parameter count
+                val paramCount = ourMethod.parameterCount
+                // Try exact name match first
                 target.javaClass.methods.firstOrNull { m ->
-                    m.name == ourMethod.name && m.parameterCount == ourMethod.parameterCount
+                    m.name == ourMethod.name && m.parameterCount == paramCount
+                }
+                // Sourcegraph uses underscore naming (chat_new) while we use
+                // camelCase (chatNew). Convert and retry.
+                ?: run {
+                    val underscored = camelToUnderscore(ourMethod.name)
+                    if (underscored != ourMethod.name) {
+                        target.javaClass.methods.firstOrNull { m ->
+                            m.name == underscored && m.parameterCount == paramCount
+                        }
+                    } else null
                 }
             } catch (e: Exception) {
                 null
             }
         }
+    }
+
+    /**
+     * Fallback: call the generic request(String, Object) method on the Sourcegraph server.
+     * This allows us to invoke any JSON-RPC method by name even if it's not on the proxy interface.
+     */
+    private fun tryGenericRequest(methodName: String, args: Array<out Any>?): Any? {
+        return try {
+            val requestMethod = target.javaClass.methods.firstOrNull { m ->
+                m.name == "request" && m.parameterCount == 2 &&
+                    m.parameterTypes[0] == String::class.java
+            }
+            if (requestMethod != null) {
+                val param = if (args != null && args.isNotEmpty()) {
+                    // Convert our DTO to a generic object via JSON round-trip
+                    val json = gson.toJson(args[0])
+                    gson.fromJson(json, Any::class.java)
+                } else null
+                requestMethod.invoke(target, methodName, param)
+            } else {
+                log.warn("Generic request() method not found on Sourcegraph server")
+                CompletableFuture.completedFuture(null)
+            }
+        } catch (e: Exception) {
+            log.warn("Generic request('$methodName') failed: ${e.message}")
+            CompletableFuture.failedFuture<Any>(e)
+        }
+    }
+
+    /** Converts camelCase to underscore: chatNew → chat_new, editTaskAccept → editTask_accept */
+    private fun camelToUnderscore(name: String): String {
+        val sb = StringBuilder()
+        for ((i, c) in name.withIndex()) {
+            if (c.isUpperCase() && i > 0) {
+                sb.append('_')
+                sb.append(c.lowercaseChar())
+            } else {
+                sb.append(c)
+            }
+        }
+        return sb.toString()
     }
 
     /**
