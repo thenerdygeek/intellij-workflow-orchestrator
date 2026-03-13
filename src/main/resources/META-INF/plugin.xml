@@ -276,6 +276,7 @@
         <!-- SonarQube Global Inspection -->
         <globalInspection
             implementationClass="com.workflow.orchestrator.sonar.inspection.SonarGlobalInspectionTool"
+            shortName="SonarQubeIssues"
             groupName="Workflow Orchestrator"
             displayName="SonarQube Issues"
             enabledByDefault="true"
