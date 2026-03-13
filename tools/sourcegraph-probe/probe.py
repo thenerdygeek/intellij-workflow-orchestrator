@@ -199,6 +199,9 @@ class SourcegraphProbe:
             "/.api/openapi",
             "/-/openapi.json",
             "/-/openapi.yaml",
+            # Some instances serve spec at versioned paths
+            "/api/openapi/v1",
+            "/.api/openapi/v1",
         ]
 
         openapi_spec = None
@@ -206,8 +209,57 @@ class SourcegraphProbe:
 
         for path in openapi_paths:
             try:
-                status, body, elapsed = self._request("GET", path, timeout=15)
+                # Request JSON explicitly — some paths return HTML (Swagger UI) by default
+                json_headers = self._headers()
+                json_headers["Accept"] = "application/json, application/openapi+json, application/vnd.oai.openapi+json"
+                status, body, elapsed = self._request("GET", path, headers=json_headers, timeout=15)
+
                 if status == 200 and len(body) > 100:
+                    # Check if we got HTML instead of JSON
+                    stripped = body.strip()
+                    if stripped.startswith("<!") or stripped.startswith("<html") or stripped.startswith("<HTML"):
+                        # Got HTML (Swagger UI page) — save it and note the finding
+                        html_save_path = "sourcegraph-api-reference.html"
+                        with open(html_save_path, "w") as f:
+                            f.write(body)
+
+                        # Try to extract the spec URL from the HTML
+                        # Swagger UI typically loads spec from a URL like /api/openapi/public?format=json
+                        spec_url_match = re.search(r'url:\s*["\']([^"\']+)["\']', body)
+                        swagger_url = spec_url_match.group(1) if spec_url_match else None
+
+                        self.report.add(TestResult(
+                            name=f"0.1 {path} returned HTML (Swagger UI)",
+                            passed=False,
+                            status_code=status, response_time_ms=elapsed,
+                            notes=(f"Got Swagger UI page, saved to {html_save_path}\n"
+                                   f"Embedded spec URL: {swagger_url or 'not found'}\n"
+                                   "TIP: Open this URL in browser to see the interactive API docs"),
+                            category="openapi_discovery"
+                        ))
+
+                        # If we found an embedded spec URL, try fetching that
+                        if swagger_url:
+                            try:
+                                s2, b2, e2 = self._request("GET", swagger_url, headers=json_headers, timeout=15)
+                                if s2 == 200:
+                                    stripped2 = b2.strip()
+                                    if not (stripped2.startswith("<!") or stripped2.startswith("<html")):
+                                        try:
+                                            spec = json.loads(b2)
+                                            body = b2  # Use this as the spec
+                                            status = s2
+                                            elapsed = e2
+                                            # Fall through to JSON parsing below
+                                        except json.JSONDecodeError:
+                                            pass
+                            except ConnectionError:
+                                pass
+
+                        # If still HTML after trying embedded URL, continue to next path
+                        if body.strip().startswith("<!") or body.strip().startswith("<html"):
+                            continue
+
                     # Try parsing as JSON
                     try:
                         spec = json.loads(body)
