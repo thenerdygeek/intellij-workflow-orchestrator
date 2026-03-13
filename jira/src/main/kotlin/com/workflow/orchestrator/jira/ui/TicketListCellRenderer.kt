@@ -44,9 +44,51 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         return this
     }
 
+    private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
+
+    private fun paintSectionHeader(g: Graphics, issue: JiraIssue) {
+        val g2 = g.create() as Graphics2D
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
+
+        val insets = insets
+        val x = insets.left
+        val w = width - insets.left - insets.right
+        val midY = height / 2
+
+        val headerFont = g2.font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+        val metrics = g2.getFontMetrics(headerFont)
+
+        val text = issue.key // e.g. "── John Doe (5) ──"
+        val textWidth = metrics.stringWidth(text)
+        val textX = x + JBUI.scale(10)
+        val textY = midY + metrics.ascent / 2
+
+        // Draw header text
+        g2.font = headerFont
+        g2.color = SECONDARY_TEXT_COLOR
+        g2.drawString(text, textX, textY)
+
+        // Draw line after text
+        val lineStartX = textX + textWidth + JBUI.scale(8)
+        val lineEndX = x + w - JBUI.scale(10)
+        if (lineStartX < lineEndX) {
+            g2.color = JBColor(0xD0D7DE, 0x3D4043)
+            g2.fillRect(lineStartX, midY, lineEndX - lineStartX, 1)
+        }
+
+        g2.dispose()
+    }
+
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
         val issue = this.issue ?: return
+
+        if (isHeader(issue)) {
+            paintSectionHeader(g, issue)
+            return
+        }
+
         val g2 = g.create() as Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)

@@ -51,17 +51,25 @@ class JiraApiClient(
             .map { it.values }
     }
 
-    suspend fun getSprintIssues(sprintId: Int): ApiResult<List<JiraIssue>> {
-        log.info("[Jira:API] GET sprint issues for sprintId=$sprintId (assignee=currentUser)")
-        val jql = URLEncoder.encode("assignee=currentUser()", "UTF-8")
-        return get<JiraIssueSearchResult>("/rest/agile/1.0/sprint/$sprintId/issue?jql=$jql")
+    suspend fun getSprintIssues(sprintId: Int, allUsers: Boolean = false): ApiResult<List<JiraIssue>> {
+        val jqlParts = mutableListOf<String>()
+        if (!allUsers) jqlParts.add("assignee=currentUser()")
+        val query = if (jqlParts.isNotEmpty()) {
+            "jql=${URLEncoder.encode(jqlParts.joinToString(" AND "), "UTF-8")}&maxResults=200"
+        } else {
+            "maxResults=200"
+        }
+        log.info("[Jira:API] GET sprint issues for sprintId=$sprintId (allUsers=$allUsers)")
+        return get<JiraIssueSearchResult>("/rest/agile/1.0/sprint/$sprintId/issue?$query")
             .map { it.issues }
     }
 
-    suspend fun getBoardIssues(boardId: Int): ApiResult<List<JiraIssue>> {
-        log.info("[Jira:API] GET board issues for boardId=$boardId (assignee=currentUser)")
-        val jql = URLEncoder.encode("assignee=currentUser() AND resolution=Unresolved", "UTF-8")
-        return get<JiraIssueSearchResult>("/rest/agile/1.0/board/$boardId/issue?jql=$jql&maxResults=50")
+    suspend fun getBoardIssues(boardId: Int, allUsers: Boolean = false): ApiResult<List<JiraIssue>> {
+        val jqlParts = mutableListOf("resolution=Unresolved")
+        if (!allUsers) jqlParts.add("assignee=currentUser()")
+        val jql = URLEncoder.encode(jqlParts.joinToString(" AND "), "UTF-8")
+        log.info("[Jira:API] GET board issues for boardId=$boardId (allUsers=$allUsers)")
+        return get<JiraIssueSearchResult>("/rest/agile/1.0/board/$boardId/issue?jql=$jql&maxResults=200")
             .map { it.issues }
     }
 

@@ -4,6 +4,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
@@ -19,6 +20,8 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
+import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
+import com.workflow.orchestrator.jira.api.dto.JiraStatus
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
@@ -90,6 +93,7 @@ class SprintDashboardPanel(
 
     // -- State --
     private var allIssues: List<JiraIssue> = emptyList()
+    private var showAllUsers: Boolean = false
 
     init {
         background = JBColor.PanelBackground
@@ -113,6 +117,7 @@ class SprintDashboardPanel(
         // Toolbar
         val actionGroup = DefaultActionGroup().apply {
             add(RefreshAction())
+            add(ToggleAllUsersAction())
             add(StartWorkAction())
         }
         val toolbar = ActionManager.getInstance()
@@ -237,7 +242,7 @@ class SprintDashboardPanel(
         setLoading(true, "Loading sprint tickets\u2026")
 
         runBackgroundableTask("Loading Sprint", project, false) {
-            val result = runBlocking(Dispatchers.IO) { sprintService.loadSprintIssues(boardId, boardType) }
+            val result = runBlocking(Dispatchers.IO) { sprintService.loadSprintIssues(boardId, boardType, showAllUsers) }
             invokeLater {
                 when (result) {
                     is ApiResult.Success -> {
@@ -260,8 +265,30 @@ class SprintDashboardPanel(
 
     private fun updateList(issues: List<JiraIssue>) {
         listModel.clear()
-        for (issue in issues) {
-            listModel.addElement(issue)
+        if (showAllUsers && issues.isNotEmpty()) {
+            // Group by assignee, sorted alphabetically, unassigned last
+            val grouped = issues.groupBy { it.fields.assignee?.displayName ?: "Unassigned" }
+                .toSortedMap(compareBy {
+                    if (it == "Unassigned") "\uFFFF" else it.lowercase()
+                })
+            for ((assignee, assigneeIssues) in grouped) {
+                // Add a separator issue with the assignee name as a section header
+                val headerIssue = JiraIssue(
+                    id = "header-$assignee", key = "── $assignee (${assigneeIssues.size}) ──",
+                    fields = JiraIssueFields(
+                        summary = "",
+                        status = JiraStatus(name = "")
+                    )
+                )
+                listModel.addElement(headerIssue)
+                for (issue in assigneeIssues) {
+                    listModel.addElement(issue)
+                }
+            }
+        } else {
+            for (issue in issues) {
+                listModel.addElement(issue)
+            }
         }
         if (issues.isEmpty()) {
             detailPanel.showEmpty()
@@ -311,7 +338,8 @@ class SprintDashboardPanel(
         } else {
             val filtered = allIssues.filter { issue ->
                 issue.key.lowercase().contains(query) ||
-                        issue.fields.summary.lowercase().contains(query)
+                        issue.fields.summary.lowercase().contains(query) ||
+                        (issue.fields.assignee?.displayName?.lowercase()?.contains(query) == true)
             }
             updateList(filtered)
         }
@@ -329,6 +357,31 @@ class SprintDashboardPanel(
         override fun actionPerformed(e: AnActionEvent) {
             loadData()
         }
+    }
+
+    private inner class ToggleAllUsersAction : AnAction(
+        "All Tickets",
+        "Toggle between my tickets and all team tickets",
+        AllIcons.Actions.GroupByModule
+    ) {
+        override fun actionPerformed(e: AnActionEvent) {
+            showAllUsers = !showAllUsers
+            loadData()
+        }
+
+        override fun update(e: AnActionEvent) {
+            if (showAllUsers) {
+                e.presentation.text = "My Tickets"
+                e.presentation.description = "Show only tickets assigned to me"
+                e.presentation.icon = AllIcons.Actions.GroupByModule
+            } else {
+                e.presentation.text = "All Tickets"
+                e.presentation.description = "Show all team tickets grouped by assignee"
+                e.presentation.icon = AllIcons.Actions.GroupByModule
+            }
+        }
+
+        override fun getActionUpdateThread() = ActionUpdateThread.BGT
     }
 
     private inner class StartWorkAction : AnAction(

@@ -30,7 +30,8 @@ class SprintService(private val apiClient: JiraApiClient) {
      */
     suspend fun loadSprintIssues(
         boardId: Int? = null,
-        boardTypeFilter: String = ""
+        boardTypeFilter: String = "",
+        allUsers: Boolean = false
     ): ApiResult<List<JiraIssue>> {
         // Step 1: Resolve the board
         val board = if (boardId != null && boardId > 0) {
@@ -51,13 +52,13 @@ class SprintService(private val apiClient: JiraApiClient) {
 
         // Step 2: Load issues based on board type
         return if (board.type == "scrum") {
-            loadScrumBoardIssues(board.id)
+            loadScrumBoardIssues(board.id, allUsers)
         } else {
-            loadKanbanBoardIssues(board.id)
+            loadKanbanBoardIssues(board.id, allUsers)
         }
     }
 
-    private suspend fun loadScrumBoardIssues(boardId: Int): ApiResult<List<JiraIssue>> {
+    private suspend fun loadScrumBoardIssues(boardId: Int, allUsers: Boolean = false): ApiResult<List<JiraIssue>> {
         val sprintResult = apiClient.getActiveSprints(boardId)
         val sprint = when (sprintResult) {
             is ApiResult.Success -> {
@@ -71,19 +72,19 @@ class SprintService(private val apiClient: JiraApiClient) {
                 log.warn("[Jira:Sprint] Failed to fetch sprints for board $boardId: ${sprintResult.message}")
                 // Fall back to board issues if sprint endpoint fails
                 log.info("[Jira:Sprint] Falling back to board issues endpoint")
-                return loadKanbanBoardIssues(boardId)
+                return loadKanbanBoardIssues(boardId, allUsers)
             }
         }
 
         if (sprint == null) {
             log.info("[Jira:Sprint] No active sprint on scrum board $boardId, falling back to board issues")
-            return loadKanbanBoardIssues(boardId)
+            return loadKanbanBoardIssues(boardId, allUsers)
         }
 
         activeSprint = sprint
         log.info("[Jira:Sprint] Active sprint: ${sprint.name} (id=${sprint.id})")
 
-        val issuesResult = apiClient.getSprintIssues(sprint.id)
+        val issuesResult = apiClient.getSprintIssues(sprint.id, allUsers)
         if (issuesResult is ApiResult.Success) {
             cachedIssues = issuesResult.data
             log.info("[Jira:Sprint] Loaded ${cachedIssues.size} issues from sprint ${sprint.name}")
@@ -91,10 +92,10 @@ class SprintService(private val apiClient: JiraApiClient) {
         return issuesResult
     }
 
-    private suspend fun loadKanbanBoardIssues(boardId: Int): ApiResult<List<JiraIssue>> {
+    private suspend fun loadKanbanBoardIssues(boardId: Int, allUsers: Boolean = false): ApiResult<List<JiraIssue>> {
         activeSprint = null
         log.info("[Jira:Sprint] Loading board issues (no sprint) for board $boardId")
-        val issuesResult = apiClient.getBoardIssues(boardId)
+        val issuesResult = apiClient.getBoardIssues(boardId, allUsers)
         if (issuesResult is ApiResult.Success) {
             cachedIssues = issuesResult.data
             log.info("[Jira:Sprint] Loaded ${cachedIssues.size} board issues")
