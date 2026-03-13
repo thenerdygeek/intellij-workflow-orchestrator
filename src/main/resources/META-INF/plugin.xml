@@ -14,6 +14,7 @@
     <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
     <depends optional="true" config-file="plugin-withTasks.xml">com.intellij.tasks</depends>
+    <depends optional="true" config-file="plugin-withCoverage.xml">Coverage</depends>
 
     <resource-bundle>messages.WorkflowBundle</resource-bundle>
 
@@ -251,6 +252,25 @@
         <!-- Search Everywhere: Jira Tickets -->
         <searchEverywhereContributor
             implementation="com.workflow.orchestrator.jira.search.JiraSearchContributorFactory"/>
+
+        <!-- SonarQube Global Inspection -->
+        <globalInspection
+            implementationClass="com.workflow.orchestrator.sonar.inspection.SonarGlobalInspectionTool"
+            groupName="Workflow Orchestrator"
+            displayName="SonarQube Issues"
+            enabledByDefault="true"
+            level="WARNING"/>
+
+        <!-- Project View: Build Status Badge -->
+        <projectViewNodeDecorator
+            implementation="com.workflow.orchestrator.bamboo.ui.BuildStatusNodeDecorator"/>
+
+        <!-- Bamboo Run Configuration -->
+        <configurationType implementation="com.workflow.orchestrator.bamboo.run.BambooBuildConfigurationType"/>
+
+        <!-- Before Run: Docker Tag Validation -->
+        <stepsBeforeRunProvider
+            implementation="com.workflow.orchestrator.automation.run.TagValidationBeforeRunProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">

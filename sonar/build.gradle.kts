@@ -25,6 +25,7 @@ dependencies {
         intellijIdea(providers.gradleProperty("platformVersion"))
         bundledPlugin("Git4Idea")
         bundledPlugin("com.intellij.java")
+        bundledPlugin("Coverage")
         testFramework(TestFrameworkType.Platform)
     }
 

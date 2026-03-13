@@ -111,6 +111,114 @@ object SurefireReportParser {
         return SuiteResult(tests, failures, errors, skipped, failedTests)
     }
 
+    /**
+     * Parse all surefire reports and return both a summary and detailed test case info grouped by suite.
+     */
+    fun parseDetailedReports(projectBasePath: String): Pair<TestResultSummary, Map<String, List<TestCaseInfo>>> {
+        val baseDir = File(projectBasePath)
+        val reportDirs = mutableListOf<File>()
+
+        // Single-module project
+        val singleModuleDir = File(baseDir, "target/surefire-reports")
+        if (singleModuleDir.isDirectory) {
+            reportDirs.add(singleModuleDir)
+        }
+
+        // Multi-module: scan first-level subdirectories
+        baseDir.listFiles()?.filter { it.isDirectory }?.forEach { subDir ->
+            val surefireDir = File(subDir, "target/surefire-reports")
+            if (surefireDir.isDirectory) {
+                reportDirs.add(surefireDir)
+            }
+        }
+
+        if (reportDirs.isEmpty()) {
+            return Pair(TestResultSummary(0, 0, 0, 0, 0, emptyList()), emptyMap())
+        }
+
+        var totalTests = 0
+        var totalFailures = 0
+        var totalErrors = 0
+        var totalSkipped = 0
+        val failedTests = mutableListOf<TestFailure>()
+        val casesBySuite = mutableMapOf<String, List<TestCaseInfo>>()
+
+        for (dir in reportDirs) {
+            val xmlFiles = dir.listFiles { _, name -> name.startsWith("TEST-") && name.endsWith(".xml") }
+                ?: continue
+
+            for (xmlFile in xmlFiles) {
+                try {
+                    val result = parseReportFile(xmlFile)
+                    totalTests += result.tests
+                    totalFailures += result.failures
+                    totalErrors += result.errors
+                    totalSkipped += result.skipped
+                    failedTests.addAll(result.failedTests)
+
+                    val (suiteName, cases) = parseTestCases(xmlFile)
+                    if (suiteName.isNotEmpty() && cases.isNotEmpty()) {
+                        casesBySuite[suiteName] = cases
+                    }
+                } catch (e: Exception) {
+                    log.warn("[Maven:Surefire] Failed to parse ${xmlFile.name}: ${e.message}")
+                }
+            }
+        }
+
+        val passed = totalTests - totalFailures - totalErrors - totalSkipped
+        val summary = TestResultSummary(totalTests, passed, totalFailures, totalErrors, totalSkipped, failedTests)
+        return Pair(summary, casesBySuite)
+    }
+
+    private fun parseTestCases(file: File): Pair<String, List<TestCaseInfo>> {
+        val factory = DocumentBuilderFactory.newInstance()
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        val builder = factory.newDocumentBuilder()
+        val doc = builder.parse(file)
+
+        val root = doc.documentElement
+        val suiteName = root.getAttribute("name") ?: ""
+
+        val cases = mutableListOf<TestCaseInfo>()
+        val testcases = root.getElementsByTagName("testcase")
+        for (i in 0 until testcases.length) {
+            val testcase = testcases.item(i)
+            val name = testcase.attributes.getNamedItem("name")?.nodeValue ?: "unknown"
+            val className = testcase.attributes.getNamedItem("classname")?.nodeValue ?: "unknown"
+            val timeStr = testcase.attributes.getNamedItem("time")?.nodeValue ?: "0"
+            val durationMs = ((timeStr.toDoubleOrNull() ?: 0.0) * 1000).toLong()
+
+            var status = TestCaseStatus.PASSED
+            var failureMessage = ""
+            var stackTrace = ""
+
+            val children = testcase.childNodes
+            for (j in 0 until children.length) {
+                val child = children.item(j)
+                when (child.nodeName) {
+                    "failure" -> {
+                        status = TestCaseStatus.FAILED
+                        failureMessage = child.attributes?.getNamedItem("message")?.nodeValue ?: ""
+                        stackTrace = child.textContent ?: ""
+                    }
+                    "error" -> {
+                        status = TestCaseStatus.ERROR
+                        failureMessage = child.attributes?.getNamedItem("message")?.nodeValue ?: ""
+                        stackTrace = child.textContent ?: ""
+                    }
+                    "skipped" -> {
+                        status = TestCaseStatus.SKIPPED
+                    }
+                }
+            }
+
+            cases.add(TestCaseInfo(name, className, durationMs, status, failureMessage, stackTrace))
+        }
+
+        return Pair(suiteName, cases)
+    }
+
     private data class SuiteResult(
         val tests: Int,
         val failures: Int,

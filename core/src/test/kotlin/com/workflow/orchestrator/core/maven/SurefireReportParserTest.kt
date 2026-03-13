@@ -139,4 +139,28 @@ class SurefireReportParserTest {
         assertEquals(0, result.passed)
         assertTrue(result.failedTests.isEmpty())
     }
+
+    @Test
+    fun `parseDetailedResults returns test case info grouped by suite`() {
+        val reportDir = File(tempDir, "target/surefire-reports").apply { mkdirs() }
+        File(reportDir, "TEST-com.example.FooTest.xml").writeText("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <testsuite name="com.example.FooTest" tests="2" failures="1" errors="0" skipped="0" time="0.3">
+              <testcase name="testPass" classname="com.example.FooTest" time="0.1"/>
+              <testcase name="testFail" classname="com.example.FooTest" time="0.2">
+                <failure message="oops" type="AssertionError">stack</failure>
+              </testcase>
+            </testsuite>
+        """.trimIndent())
+
+        val (summary, casesBySuite) = SurefireReportParser.parseDetailedReports(tempDir.absolutePath)
+
+        assertEquals(2, summary.totalTests)
+        val cases = casesBySuite["com.example.FooTest"]
+        assertNotNull(cases)
+        assertEquals(2, cases!!.size)
+        assertEquals(TestCaseStatus.PASSED, cases[0].status)
+        assertEquals(TestCaseStatus.FAILED, cases[1].status)
+        assertEquals("oops", cases[1].failureMessage)
+    }
 }
