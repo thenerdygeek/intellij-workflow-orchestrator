@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.toolwindow
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
@@ -9,6 +10,8 @@ import com.intellij.ui.content.ContentFactory
 import com.workflow.orchestrator.core.settings.PluginSettings
 
 class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
+
+    private val log = Logger.getInstance(WorkflowToolWindowFactory::class.java)
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         buildTabs(project, toolWindow)
@@ -54,9 +57,14 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         )
 
         defaultTabs.forEach { tab ->
-            val provider = providers[tab.title]
-            val panel = provider?.createPanel(project)
-                ?: EmptyStatePanel(project, tab.emptyMessage)
+            val panel = try {
+                val provider = providers[tab.title]
+                provider?.createPanel(project)
+                    ?: EmptyStatePanel(project, tab.emptyMessage)
+            } catch (e: Exception) {
+                log.warn("[Workflow:UI] Failed to create ${tab.title} tab: ${e.message}", e)
+                EmptyStatePanel(project, "Failed to load ${tab.title} tab.\n${e.message}")
+            }
             val content = ContentFactory.getInstance().createContent(panel, tab.title, false)
             content.isCloseable = false
             contentManager.addContent(content)
