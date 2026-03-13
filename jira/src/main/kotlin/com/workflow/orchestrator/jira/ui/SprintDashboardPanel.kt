@@ -232,11 +232,12 @@ class SprintDashboardPanel(
     fun loadData() {
         val settings = PluginSettings.getInstance(project)
         val boardId = settings.state.jiraBoardId.takeIf { it > 0 }
+        val boardType = settings.state.jiraBoardType ?: ""
 
         setLoading(true, "Loading sprint tickets\u2026")
 
         runBackgroundableTask("Loading Sprint", project, false) {
-            val result = runBlocking(Dispatchers.IO) { sprintService.loadSprintIssues(boardId) }
+            val result = runBlocking(Dispatchers.IO) { sprintService.loadSprintIssues(boardId, boardType) }
             invokeLater {
                 when (result) {
                     is ApiResult.Success -> {
@@ -269,6 +270,7 @@ class SprintDashboardPanel(
 
     private fun updateSprintHeader() {
         val sprint = sprintService.activeSprint
+        val board = sprintService.discoveredBoard
         if (sprint != null) {
             sprintNameLabel.text = sprint.name
             val dateRange = buildString {
@@ -280,8 +282,13 @@ class SprintDashboardPanel(
             }
             sprintMetaLabel.text = if (dateRange.isNotEmpty()) dateRange else sprint.state
             ticketCountLabel.text = "(${allIssues.size} tickets)"
+        } else if (board != null) {
+            // Kanban or board without active sprint
+            sprintNameLabel.text = board.name
+            sprintMetaLabel.text = board.type.replaceFirstChar { it.uppercase() } + " board"
+            ticketCountLabel.text = "(${allIssues.size} tickets)"
         } else {
-            sprintNameLabel.text = "No active sprint"
+            sprintNameLabel.text = "No board found"
             sprintMetaLabel.text = ""
             ticketCountLabel.text = ""
         }

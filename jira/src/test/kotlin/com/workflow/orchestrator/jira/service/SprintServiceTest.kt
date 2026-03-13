@@ -16,6 +16,7 @@ class SprintServiceTest {
     private lateinit var sprintService: SprintService
 
     private val testBoard = JiraBoard(id = 1, name = "Board", type = "scrum")
+    private val testKanbanBoard = JiraBoard(id = 2, name = "Kanban Board", type = "kanban")
     private val testSprint = JiraSprint(id = 42, name = "Sprint 14", state = "active")
     private val testIssue = JiraIssue(
         id = "10001", key = "PROJ-123",
@@ -32,7 +33,7 @@ class SprintServiceTest {
     }
 
     @Test
-    fun `loadSprintIssues returns issues for auto-discovered board and sprint`() = runTest {
+    fun `loadSprintIssues returns issues for auto-discovered scrum board and sprint`() = runTest {
         coEvery { apiClient.getBoards(any()) } returns ApiResult.Success(listOf(testBoard))
         coEvery { apiClient.getActiveSprints(1) } returns ApiResult.Success(listOf(testSprint))
         coEvery { apiClient.getSprintIssues(42) } returns ApiResult.Success(listOf(testIssue))
@@ -47,10 +48,11 @@ class SprintServiceTest {
 
     @Test
     fun `loadSprintIssues uses configured board ID when available`() = runTest {
-        coEvery { apiClient.getActiveSprints(5) } returns ApiResult.Success(listOf(testSprint))
+        coEvery { apiClient.getBoards(any()) } returns ApiResult.Success(listOf(testBoard))
+        coEvery { apiClient.getActiveSprints(1) } returns ApiResult.Success(listOf(testSprint))
         coEvery { apiClient.getSprintIssues(42) } returns ApiResult.Success(listOf(testIssue))
 
-        val result = sprintService.loadSprintIssues(boardId = 5)
+        val result = sprintService.loadSprintIssues(boardId = 1)
 
         assertTrue(result.isSuccess)
     }
@@ -65,13 +67,29 @@ class SprintServiceTest {
     }
 
     @Test
-    fun `loadSprintIssues returns error when no active sprint`() = runTest {
+    fun `loadSprintIssues falls back to board issues when no active sprint`() = runTest {
         coEvery { apiClient.getBoards(any()) } returns ApiResult.Success(listOf(testBoard))
         coEvery { apiClient.getActiveSprints(1) } returns ApiResult.Success(emptyList())
+        coEvery { apiClient.getBoardIssues(1) } returns ApiResult.Success(listOf(testIssue))
 
         val result = sprintService.loadSprintIssues()
 
-        assertTrue(result.isError)
+        assertTrue(result.isSuccess)
+        assertNull(sprintService.activeSprint)
+        assertEquals(1, (result as ApiResult.Success).data.size)
+    }
+
+    @Test
+    fun `loadSprintIssues loads kanban board issues directly`() = runTest {
+        coEvery { apiClient.getBoards(any()) } returns ApiResult.Success(listOf(testKanbanBoard))
+        coEvery { apiClient.getBoardIssues(2) } returns ApiResult.Success(listOf(testIssue))
+
+        val result = sprintService.loadSprintIssues(boardTypeFilter = "kanban")
+
+        assertTrue(result.isSuccess)
+        assertNull(sprintService.activeSprint)
+        assertNotNull(sprintService.discoveredBoard)
+        assertEquals("kanban", sprintService.discoveredBoard?.type)
     }
 
     @Test

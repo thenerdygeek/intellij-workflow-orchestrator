@@ -58,6 +58,13 @@ class JiraApiClient(
             .map { it.issues }
     }
 
+    suspend fun getBoardIssues(boardId: Int): ApiResult<List<JiraIssue>> {
+        log.info("[Jira:API] GET board issues for boardId=$boardId (assignee=currentUser)")
+        val jql = URLEncoder.encode("assignee=currentUser() AND resolution=Unresolved", "UTF-8")
+        return get<JiraIssueSearchResult>("/rest/agile/1.0/board/$boardId/issue?jql=$jql&maxResults=50")
+            .map { it.issues }
+    }
+
     suspend fun getIssue(key: String): ApiResult<JiraIssue> {
         log.info("[Jira:API] GET /rest/api/2/issue/$key")
         return get("/rest/api/2/issue/$key?expand=issuelinks")

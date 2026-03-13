@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.jira.api.JiraApiClient
+import com.workflow.orchestrator.jira.api.dto.JiraBoard
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
 
@@ -14,28 +15,70 @@ class SprintService(private val apiClient: JiraApiClient) {
     var activeSprint: JiraSprint? = null
         private set
 
+    var discoveredBoard: JiraBoard? = null
+        private set
+
     private var cachedIssues: List<JiraIssue> = emptyList()
 
-    suspend fun loadSprintIssues(boardId: Int? = null): ApiResult<List<JiraIssue>> {
-        val resolvedBoardId = boardId ?: discoverBoardId()
-            ?: return ApiResult.Error(ErrorType.NOT_FOUND, "No Jira Scrum boards found. Create a board first.")
+    /**
+     * Load issues for the current board. Behavior depends on board type:
+     * - Scrum boards: fetches active sprint issues
+     * - Kanban/simple boards: fetches unresolved board issues (no sprint concept)
+     *
+     * @param boardId explicit board ID (from settings), or null to auto-discover
+     * @param boardTypeFilter board type filter from settings ("scrum", "kanban", or "" for all)
+     */
+    suspend fun loadSprintIssues(
+        boardId: Int? = null,
+        boardTypeFilter: String = ""
+    ): ApiResult<List<JiraIssue>> {
+        // Step 1: Resolve the board
+        val board = if (boardId != null && boardId > 0) {
+            log.info("[Jira:Sprint] Using configured board ID: $boardId")
+            // We don't know the type yet, try to fetch it
+            val boardsResult = apiClient.getBoards()
+            val found = if (boardsResult is ApiResult.Success) {
+                boardsResult.data.firstOrNull { it.id == boardId }
+            } else null
+            found ?: JiraBoard(boardId, "Board $boardId", "scrum", null)
+        } else {
+            discoverBoard(boardTypeFilter)
+                ?: return ApiResult.Error(ErrorType.NOT_FOUND, "No Jira boards found. Check your Jira connection and board type filter in Settings.")
+        }
 
-        log.info("[Jira:Sprint] Loading sprint issues for board $resolvedBoardId")
+        discoveredBoard = board
+        log.info("[Jira:Sprint] Using board: ${board.name} (id=${board.id}, type=${board.type})")
 
-        val sprintResult = apiClient.getActiveSprints(resolvedBoardId)
+        // Step 2: Load issues based on board type
+        return if (board.type == "scrum") {
+            loadScrumBoardIssues(board.id)
+        } else {
+            loadKanbanBoardIssues(board.id)
+        }
+    }
+
+    private suspend fun loadScrumBoardIssues(boardId: Int): ApiResult<List<JiraIssue>> {
+        val sprintResult = apiClient.getActiveSprints(boardId)
         val sprint = when (sprintResult) {
             is ApiResult.Success -> {
-                log.info("[Jira:Sprint] Found ${sprintResult.data.size} active sprint(s) on board $resolvedBoardId")
+                log.info("[Jira:Sprint] Found ${sprintResult.data.size} active sprint(s) on board $boardId")
                 sprintResult.data.forEach { s ->
                     log.info("[Jira:Sprint]   - ${s.name} (id=${s.id}, state=${s.state})")
                 }
                 sprintResult.data.firstOrNull()
             }
             is ApiResult.Error -> {
-                log.warn("[Jira:Sprint] Failed to fetch sprints for board $resolvedBoardId: ${sprintResult.message}")
-                return sprintResult
+                log.warn("[Jira:Sprint] Failed to fetch sprints for board $boardId: ${sprintResult.message}")
+                // Fall back to board issues if sprint endpoint fails
+                log.info("[Jira:Sprint] Falling back to board issues endpoint")
+                return loadKanbanBoardIssues(boardId)
             }
-        } ?: return ApiResult.Error(ErrorType.NOT_FOUND, "No active sprint found on board $resolvedBoardId. Check that the board has an active sprint in Jira.")
+        }
+
+        if (sprint == null) {
+            log.info("[Jira:Sprint] No active sprint on scrum board $boardId, falling back to board issues")
+            return loadKanbanBoardIssues(boardId)
+        }
 
         activeSprint = sprint
         log.info("[Jira:Sprint] Active sprint: ${sprint.name} (id=${sprint.id})")
@@ -43,39 +86,59 @@ class SprintService(private val apiClient: JiraApiClient) {
         val issuesResult = apiClient.getSprintIssues(sprint.id)
         if (issuesResult is ApiResult.Success) {
             cachedIssues = issuesResult.data
-            log.info("[Jira:Sprint] Loaded ${cachedIssues.size} issues")
+            log.info("[Jira:Sprint] Loaded ${cachedIssues.size} issues from sprint ${sprint.name}")
+        }
+        return issuesResult
+    }
+
+    private suspend fun loadKanbanBoardIssues(boardId: Int): ApiResult<List<JiraIssue>> {
+        activeSprint = null
+        log.info("[Jira:Sprint] Loading board issues (no sprint) for board $boardId")
+        val issuesResult = apiClient.getBoardIssues(boardId)
+        if (issuesResult is ApiResult.Success) {
+            cachedIssues = issuesResult.data
+            log.info("[Jira:Sprint] Loaded ${cachedIssues.size} board issues")
         }
         return issuesResult
     }
 
     fun getCachedIssues(): List<JiraIssue> = cachedIssues
 
-    private suspend fun discoverBoardId(): Int? {
-        log.info("[Jira:Sprint] Auto-discovering board...")
-        // Try scrum boards first (only scrum boards have sprints)
-        val boardsResult = apiClient.getBoards(boardType = "scrum")
-        return when (boardsResult) {
+    private suspend fun discoverBoard(boardTypeFilter: String): JiraBoard? {
+        log.info("[Jira:Sprint] Auto-discovering board (filter: '${boardTypeFilter.ifBlank { "all" }}')")
+
+        // If user specified a board type, search for that
+        if (boardTypeFilter.isNotBlank()) {
+            val result = apiClient.getBoards(boardType = boardTypeFilter)
+            if (result is ApiResult.Success && result.data.isNotEmpty()) {
+                val board = result.data.first()
+                log.info("[Jira:Sprint] Discovered $boardTypeFilter board: ${board.name} (id=${board.id})")
+                return board
+            }
+            log.warn("[Jira:Sprint] No '$boardTypeFilter' boards found")
+        }
+
+        // Try all boards
+        val allResult = apiClient.getBoards()
+        return when (allResult) {
             is ApiResult.Success -> {
-                val board = boardsResult.data.firstOrNull()
-                if (board != null) {
-                    log.info("[Jira:Sprint] Discovered scrum board: ${board.name} (id=${board.id})")
-                } else {
-                    log.warn("[Jira:Sprint] No scrum boards found, trying all boards...")
-                    // Fall back to any board type
-                    val allBoardsResult = apiClient.getBoards()
-                    if (allBoardsResult is ApiResult.Success) {
-                        val anyBoard = allBoardsResult.data.firstOrNull()
-                        if (anyBoard != null) {
-                            log.info("[Jira:Sprint] Found board: ${anyBoard.name} (id=${anyBoard.id}, type=${anyBoard.type})")
-                            return anyBoard.id
-                        }
-                        log.warn("[Jira:Sprint] No boards found at all")
-                    }
+                if (allResult.data.isEmpty()) {
+                    log.warn("[Jira:Sprint] No boards found at all")
+                    return null
                 }
-                board?.id
+                // Log all available boards for debugging
+                log.info("[Jira:Sprint] Available boards:")
+                allResult.data.forEach { b ->
+                    log.info("[Jira:Sprint]   - ${b.name} (id=${b.id}, type=${b.type})")
+                }
+                // Prefer scrum boards (they have sprints), fall back to any
+                val board = allResult.data.firstOrNull { it.type == "scrum" }
+                    ?: allResult.data.first()
+                log.info("[Jira:Sprint] Selected board: ${board.name} (id=${board.id}, type=${board.type})")
+                board
             }
             is ApiResult.Error -> {
-                log.error("[Jira:Sprint] Board discovery failed: ${boardsResult.message}")
+                log.error("[Jira:Sprint] Board discovery failed: ${allResult.message}")
                 null
             }
         }

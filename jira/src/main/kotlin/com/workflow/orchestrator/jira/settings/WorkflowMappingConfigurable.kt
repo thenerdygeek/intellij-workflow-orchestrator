@@ -1,13 +1,21 @@
 package com.workflow.orchestrator.jira.settings
 
 import com.intellij.openapi.options.BoundSearchableConfigurable
+import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.*
+import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowIntent
+import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.workflow.TransitionMapping
 import com.workflow.orchestrator.jira.workflow.TransitionMappingStore
+import kotlinx.coroutines.runBlocking
+import javax.swing.JLabel
+import javax.swing.SwingUtilities
 
 class WorkflowMappingConfigurable(private val project: Project) :
     BoundSearchableConfigurable("Workflow Mapping", "workflow.orchestrator.workflow") {
@@ -24,15 +32,76 @@ class WorkflowMappingConfigurable(private val project: Project) :
             intentFields[intent] = mapping?.transitionName ?: ""
         }
 
+        val boardStatusLabel = JLabel("")
+
         return panel {
-            group("Board Type") {
+            group("Board Configuration") {
                 row("Board type:") {
-                    comboBox(listOf("scrum", "kanban", ""))
+                    comboBox(listOf("", "scrum", "kanban", "simple"))
+                        .applyToComponent {
+                            renderer = com.intellij.ui.SimpleListCellRenderer.create("") { value ->
+                                when (value) {
+                                    "" -> "All (auto-detect)"
+                                    "scrum" -> "Scrum (has sprints)"
+                                    "kanban" -> "Kanban (continuous flow)"
+                                    "simple" -> "Simple (basic tracking)"
+                                    else -> value
+                                }
+                            }
+                        }
                         .bindItem(
-                            { settings.state.jiraBoardType ?: "scrum" },
-                            { settings.state.jiraBoardType = it ?: "scrum" }
+                            { settings.state.jiraBoardType ?: "" },
+                            { settings.state.jiraBoardType = it ?: "" }
                         )
-                        .comment("Filter Jira boards by type. Empty = show all.")
+                        .comment("Scrum boards have sprints. Kanban boards show unresolved issues instead.")
+                }
+                row("Board ID:") {
+                    intTextField(IntRange(0, 99999))
+                        .bindIntText(
+                            { settings.state.jiraBoardId },
+                            { settings.state.jiraBoardId = it }
+                        )
+                        .comment("Leave 0 to auto-discover the first matching board.")
+                }
+                row {
+                    button("Discover Boards") {
+                        val jiraUrl = settings.state.jiraUrl
+                        if (jiraUrl.isNullOrBlank()) {
+                            boardStatusLabel.text = "Configure Jira URL first"
+                            return@button
+                        }
+                        boardStatusLabel.text = "Discovering..."
+                        val credentialStore = CredentialStore()
+                        val apiClient = JiraApiClient(
+                            baseUrl = jiraUrl.trimEnd('/'),
+                            tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
+                        )
+                        runBackgroundableTask("Discovering Jira Boards", project, false) {
+                            val result = runBlocking { apiClient.getBoards() }
+                            SwingUtilities.invokeLater {
+                                when (result) {
+                                    is ApiResult.Success -> {
+                                        if (result.data.isEmpty()) {
+                                            boardStatusLabel.text = "No boards found"
+                                        } else {
+                                            val boards = result.data.joinToString("\n") { b ->
+                                                "  ${b.id}: ${b.name} (${b.type})"
+                                            }
+                                            boardStatusLabel.text = "<html>${result.data.size} board(s) found:<br>${
+                                                result.data.joinToString("<br>") { b ->
+                                                    "&nbsp;&nbsp;<b>${b.id}</b>: ${b.name} (${b.type})"
+                                                }
+                                            }</html>"
+                                        }
+                                    }
+                                    is ApiResult.Error -> {
+                                        boardStatusLabel.text = "Error: ${result.message}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    cell(boardStatusLabel)
                 }
             }
 
