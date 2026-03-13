@@ -38,13 +38,6 @@
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.ConnectionsConfigurable"
-            id="workflow.orchestrator.connections"
-            displayName="Connections"
-            nonDefaultProject="true"/>
-
-        <projectConfigurable
-            parentId="workflow.orchestrator"
             instance="com.workflow.orchestrator.jira.settings.WorkflowMappingConfigurable"
             id="workflow.orchestrator.workflow"
             displayName="Workflow Mapping"

@@ -54,4 +54,34 @@ class CommitPrefixServiceTest {
         )
         assertEquals("feat(PROJ-123): implemented auth logic", result)
     }
+
+    @Test
+    fun `rejects invalid ticket ID format - header key`() {
+        val result = CommitPrefixService.addPrefix(
+            message = "some commit message",
+            ticketId = "── John Doe (5) ──",
+            useConventionalCommits = false
+        )
+        assertEquals("some commit message", result)
+    }
+
+    @Test
+    fun `rejects empty ticket ID`() {
+        val result = CommitPrefixService.addPrefix(
+            message = "some commit message",
+            ticketId = "",
+            useConventionalCommits = false
+        )
+        assertEquals("some commit message", result)
+    }
+
+    @Test
+    fun `accepts valid multi-letter project keys`() {
+        val result = CommitPrefixService.addPrefix(
+            message = "fix something",
+            ticketId = "MYAPP-42",
+            useConventionalCommits = false
+        )
+        assertEquals("MYAPP-42: fix something", result)
+    }
 }

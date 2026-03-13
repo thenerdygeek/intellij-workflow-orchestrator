@@ -31,17 +31,14 @@ class SprintService(private val apiClient: JiraApiClient) {
     suspend fun loadSprintIssues(
         boardId: Int? = null,
         boardTypeFilter: String = "",
-        allUsers: Boolean = false
+        allUsers: Boolean = false,
+        boardName: String? = null
     ): ApiResult<List<JiraIssue>> {
         // Step 1: Resolve the board
         val board = if (boardId != null && boardId > 0) {
-            log.info("[Jira:Sprint] Using configured board ID: $boardId")
-            // We don't know the type yet, try to fetch it
-            val boardsResult = apiClient.getBoards()
-            val found = if (boardsResult is ApiResult.Success) {
-                boardsResult.data.firstOrNull { it.id == boardId }
-            } else null
-            found ?: JiraBoard(boardId, "Board $boardId", "scrum", null)
+            log.info("[Jira:Sprint] Using configured board ID: $boardId (type: $boardTypeFilter)")
+            // Use saved board type directly — no need to re-fetch from API
+            JiraBoard(boardId, boardName ?: "Board $boardId", boardTypeFilter.ifBlank { "scrum" }, null)
         } else {
             discoverBoard(boardTypeFilter)
                 ?: return ApiResult.Error(ErrorType.NOT_FOUND, "No Jira boards found. Check your Jira connection and board type filter in Settings.")

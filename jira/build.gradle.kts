@@ -42,4 +42,5 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    dependsOn(":core:prepareTestSandbox")
 }

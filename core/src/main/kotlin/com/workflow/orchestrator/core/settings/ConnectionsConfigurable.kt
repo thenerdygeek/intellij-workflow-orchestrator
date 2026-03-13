@@ -1,10 +1,11 @@
 package com.workflow.orchestrator.core.settings
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.SearchableConfigurable
+import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.*
-import com.intellij.openapi.progress.runBackgroundableTask
 import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
@@ -12,6 +13,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.runBlocking
 import javax.swing.JComponent
 import javax.swing.JLabel
+import javax.swing.JPasswordField
 import javax.swing.SwingUtilities
 
 class ConnectionsConfigurable(
@@ -23,6 +25,11 @@ class ConnectionsConfigurable(
     private val authTestService = AuthTestService()
 
     private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
+
+    // Deferred credential saves — only written on apply(), not on keystroke
+    private val pendingTokens = mutableMapOf<ServiceType, String>()
+    private var pendingNexusPassword: String? = null
+    private var pendingNexusUsername: String? = null
 
     override fun getId(): String = "workflow.orchestrator.connections"
     override fun getDisplayName(): String = "Connections"
@@ -51,10 +58,33 @@ class ConnectionsConfigurable(
         }
     }
 
-    override fun isModified(): Boolean = dialogPanel?.isModified() ?: false
+    override fun isModified(): Boolean {
+        if (pendingTokens.isNotEmpty() || pendingNexusPassword != null || pendingNexusUsername != null) return true
+        return dialogPanel?.isModified() ?: false
+    }
 
     override fun apply() {
         dialogPanel?.apply()
+
+        // Save credentials only on explicit Apply — not on every keystroke
+        for ((serviceType, token) in pendingTokens) {
+            if (token.isNotBlank()) {
+                credentialStore.storeToken(serviceType, token)
+            }
+        }
+        pendingTokens.clear()
+
+        pendingNexusPassword?.let { password ->
+            if (password.isNotBlank()) {
+                credentialStore.storeNexusPassword(password)
+            }
+        }
+        pendingNexusPassword = null
+
+        pendingNexusUsername?.let { username ->
+            settings.state.nexusUsername = username
+        }
+        pendingNexusUsername = null
     }
 
     override fun reset() {
@@ -88,10 +118,10 @@ class ConnectionsConfigurable(
         urlGetter: () -> String,
         urlSetter: (String) -> Unit
     ) {
-        val existingToken = credentialStore.getToken(serviceType) ?: ""
         val statusLabel = JLabel("")
         var currentUrl = urlGetter()
-        var currentToken = existingToken
+        var currentToken = ""
+        var tokenField: JPasswordField? = null
 
         collapsibleGroup(title) {
             row("Server URL:") {
@@ -105,14 +135,12 @@ class ConnectionsConfigurable(
                 passwordField()
                     .columns(40)
                     .applyToComponent {
-                        text = existingToken
+                        tokenField = this
                     }
                     .onChanged { field ->
                         val newToken = String(field.password)
                         currentToken = newToken
-                        if (newToken.isNotBlank()) {
-                            credentialStore.storeToken(serviceType, newToken)
-                        }
+                        pendingTokens[serviceType] = newToken
                     }
             }
             row {
@@ -130,13 +158,24 @@ class ConnectionsConfigurable(
                         }
                         SwingUtilities.invokeLater {
                             statusLabel.text = when (result) {
-                                is ApiResult.Success -> "✓ Connected successfully"
-                                is ApiResult.Error -> "✗ ${result.message}"
+                                is ApiResult.Success -> "\u2713 Connected successfully"
+                                is ApiResult.Error -> "\u2717 ${result.message}"
                             }
                         }
                     }
                 }
                 cell(statusLabel)
+            }
+        }
+
+        // Load existing token in background to avoid blocking EDT on PasswordSafe read
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val existingToken = credentialStore.getToken(serviceType) ?: ""
+            if (existingToken.isNotBlank()) {
+                currentToken = existingToken
+                SwingUtilities.invokeLater {
+                    tokenField?.text = existingToken
+                }
             }
         }
     }
@@ -150,12 +189,12 @@ class ConnectionsConfigurable(
         urlGetter: () -> String,
         urlSetter: (String) -> Unit
     ) {
-        val existingPassword = credentialStore.getNexusPassword() ?: ""
         val existingUsername = settings.state.nexusUsername.orEmpty()
         val statusLabel = JLabel("")
         var currentUrl = urlGetter()
         var currentUsername = existingUsername
-        var currentPassword = existingPassword
+        var currentPassword = ""
+        var passwordField: JPasswordField? = null
 
         collapsibleGroup(title) {
             row("Registry URL:") {
@@ -173,21 +212,19 @@ class ConnectionsConfigurable(
                     }
                     .onChanged { field ->
                         currentUsername = field.text
-                        settings.state.nexusUsername = field.text
+                        pendingNexusUsername = field.text
                     }
             }
             row("Password:") {
                 passwordField()
                     .columns(40)
                     .applyToComponent {
-                        text = existingPassword
+                        passwordField = this
                     }
                     .onChanged { field ->
                         val newPassword = String(field.password)
                         currentPassword = newPassword
-                        if (newPassword.isNotBlank()) {
-                            credentialStore.storeNexusPassword(newPassword)
-                        }
+                        pendingNexusPassword = newPassword
                     }
             }
             row {
@@ -206,13 +243,24 @@ class ConnectionsConfigurable(
                         }
                         SwingUtilities.invokeLater {
                             statusLabel.text = when (result) {
-                                is ApiResult.Success -> "✓ Connected successfully"
-                                is ApiResult.Error -> "✗ ${result.message}"
+                                is ApiResult.Success -> "\u2713 Connected successfully"
+                                is ApiResult.Error -> "\u2717 ${result.message}"
                             }
                         }
                     }
                 }
                 cell(statusLabel)
+            }
+        }
+
+        // Load existing password in background to avoid blocking EDT on PasswordSafe read
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val existingPassword = credentialStore.getNexusPassword() ?: ""
+            if (existingPassword.isNotBlank()) {
+                currentPassword = existingPassword
+                SwingUtilities.invokeLater {
+                    passwordField?.text = existingPassword
+                }
             }
         }
     }

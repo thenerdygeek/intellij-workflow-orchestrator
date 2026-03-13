@@ -6,9 +6,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
@@ -25,8 +23,13 @@ import com.workflow.orchestrator.jira.api.dto.JiraStatus
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
+import com.intellij.ui.AnimatedIcon
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -87,13 +90,18 @@ class SprintDashboardPanel(
         font = font.deriveFont(JBUI.scale(11).toFloat())
         border = JBUI.Borders.empty(4, 8)
     }
-    private val loadingIcon = JBLabel(AllIcons.Process.Step_1).apply {
+    private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply {
         border = JBUI.Borders.emptyRight(4)
+        isVisible = false
     }
 
     // -- State --
     private var allIssues: List<JiraIssue> = emptyList()
     private var showAllUsers: Boolean = false
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Check if a JiraIssue is a section header (used for assignee grouping). */
+    private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
 
     init {
         background = JBColor.PanelBackground
@@ -191,7 +199,7 @@ class SprintDashboardPanel(
         ticketList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 val selected = ticketList.selectedValue
-                if (selected != null) {
+                if (selected != null && !isHeader(selected)) {
                     detailPanel.showIssue(selected)
                 } else {
                     detailPanel.showEmpty()
@@ -238,12 +246,13 @@ class SprintDashboardPanel(
         val settings = PluginSettings.getInstance(project)
         val boardId = settings.state.jiraBoardId.takeIf { it > 0 }
         val boardType = settings.state.jiraBoardType ?: ""
+        val boardName = settings.state.jiraBoardName ?: ""
 
         setLoading(true, "Loading sprint tickets\u2026")
 
-        runBackgroundableTask("Loading Sprint", project, false) {
-            val result = runBlocking(Dispatchers.IO) { sprintService.loadSprintIssues(boardId, boardType, showAllUsers) }
-            invokeLater {
+        scope.launch {
+            val result = sprintService.loadSprintIssues(boardId, boardType, showAllUsers, boardName)
+            withContext(Dispatchers.Main) {
                 when (result) {
                     is ApiResult.Success -> {
                         allIssues = result.data
@@ -264,6 +273,7 @@ class SprintDashboardPanel(
     }
 
     private fun updateList(issues: List<JiraIssue>) {
+        ticketList.clearSelection()
         listModel.clear()
         if (showAllUsers && issues.isNotEmpty()) {
             // Group by assignee, sorted alphabetically, unassigned last
@@ -323,7 +333,7 @@ class SprintDashboardPanel(
     }
 
     private fun setLoading(loading: Boolean, message: String) {
-        loadingIcon.icon = if (loading) AllIcons.Process.Step_1 else null
+        loadingIcon.isVisible = loading
         statusLabel.text = message
     }
 
@@ -333,16 +343,19 @@ class SprintDashboardPanel(
 
     private fun applyFilter() {
         val query = searchField.text.trim().lowercase()
-        if (query.isEmpty()) {
-            updateList(allIssues)
+        val displayed = if (query.isEmpty()) {
+            allIssues
         } else {
-            val filtered = allIssues.filter { issue ->
+            allIssues.filter { issue ->
                 issue.key.lowercase().contains(query) ||
                         issue.fields.summary.lowercase().contains(query) ||
                         (issue.fields.assignee?.displayName?.lowercase()?.contains(query) == true)
             }
-            updateList(filtered)
         }
+        updateList(displayed)
+        // Update ticket count to reflect filtered results
+        ticketCountLabel.text = if (query.isEmpty()) "(${allIssues.size} tickets)"
+        else "(${displayed.size}/${allIssues.size} tickets)"
     }
 
     // ---------------------------------------------------------------
@@ -391,14 +404,15 @@ class SprintDashboardPanel(
     ) {
         override fun actionPerformed(e: AnActionEvent) {
             val selectedIssue = ticketList.selectedValue ?: return
+            if (isHeader(selectedIssue)) return
             val settings = PluginSettings.getInstance(project)
             val pattern = settings.state.branchPattern ?: "feature/{ticketId}-{summary}"
 
             setLoading(true, "Starting work on ${selectedIssue.key}\u2026")
 
-            runBackgroundableTask("Start Work: ${selectedIssue.key}", project, false) {
-                val result = runBlocking(Dispatchers.IO) { branchingService.startWork(selectedIssue, pattern) }
-                invokeLater {
+            scope.launch {
+                val result = branchingService.startWork(selectedIssue, pattern)
+                withContext(Dispatchers.Main) {
                     when (result) {
                         is ApiResult.Success -> {
                             setLoading(false, "Branch created: ${result.data}")
@@ -414,8 +428,11 @@ class SprintDashboardPanel(
         }
 
         override fun update(e: AnActionEvent) {
-            e.presentation.isEnabled = ticketList.selectedValue != null
+            val selected = ticketList.selectedValue
+            e.presentation.isEnabled = selected != null && !isHeader(selected)
         }
+
+        override fun getActionUpdateThread() = ActionUpdateThread.BGT
     }
 
     // ---------------------------------------------------------------

@@ -47,14 +47,15 @@ class SprintServiceTest {
     }
 
     @Test
-    fun `loadSprintIssues uses configured board ID when available`() = runTest {
-        coEvery { apiClient.getBoards(any(), any()) } returns ApiResult.Success(listOf(testBoard))
+    fun `loadSprintIssues uses configured board ID without fetching board list`() = runTest {
+        // When boardId is configured, getBoards should NOT be called — uses saved board directly
         coEvery { apiClient.getActiveSprints(1) } returns ApiResult.Success(listOf(testSprint))
         coEvery { apiClient.getSprintIssues(42, any()) } returns ApiResult.Success(listOf(testIssue))
 
-        val result = sprintService.loadSprintIssues(boardId = 1)
+        val result = sprintService.loadSprintIssues(boardId = 1, boardName = "My Board")
 
         assertTrue(result.isSuccess)
+        assertEquals("My Board", sprintService.discoveredBoard?.name)
     }
 
     @Test

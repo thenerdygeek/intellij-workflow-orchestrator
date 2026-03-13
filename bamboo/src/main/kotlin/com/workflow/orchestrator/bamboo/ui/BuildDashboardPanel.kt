@@ -1,12 +1,16 @@
 package com.workflow.orchestrator.bamboo.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.intellij.ui.JBSplitter
@@ -17,6 +21,8 @@ import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.service.BuildLogParser
 import com.workflow.orchestrator.bamboo.service.BuildMonitorService
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.maven.MavenBuildService
+import com.workflow.orchestrator.core.maven.SurefireReportParser
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -31,7 +37,9 @@ import javax.swing.JPanel
 
 class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
+    private val log = Logger.getInstance(BuildDashboardPanel::class.java)
     private val settings = PluginSettings.getInstance(project)
+    private var localBuildRunning = false
     private val credentialStore = CredentialStore()
     private val apiClient = BambooApiClient(
         baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
@@ -150,7 +158,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private fun createToolbar(): javax.swing.JComponent {
         val group = DefaultActionGroup()
 
-        group.add(object : AnAction("Refresh", "Force poll build status now", null) {
+        group.add(object : AnAction("Refresh", "Force poll build status now", AllIcons.Actions.Refresh) {
             override fun actionPerformed(e: AnActionEvent) {
                 scope.launch {
                     val planKey = settings.state.bambooPlanKey.orEmpty()
@@ -160,10 +168,85 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         })
 
+        group.add(Separator.getInstance())
+
+        // Local Maven build actions
+        group.add(object : AnAction("Compile", "Run local Maven compile", AllIcons.Actions.Compile) {
+            override fun actionPerformed(e: AnActionEvent) = runLocalMavenBuild("clean compile")
+            override fun update(e: AnActionEvent) { e.presentation.isEnabled = !localBuildRunning }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
+        })
+
+        group.add(object : AnAction("Test", "Run local Maven tests", AllIcons.Actions.Execute) {
+            override fun actionPerformed(e: AnActionEvent) = runLocalMavenBuild("clean test")
+            override fun update(e: AnActionEvent) { e.presentation.isEnabled = !localBuildRunning }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
+        })
+
         val actionToolbar = ActionManager.getInstance()
             .createActionToolbar(ActionPlaces.TOOLBAR, group, true)
         actionToolbar.targetComponent = this
         return actionToolbar.component
+    }
+
+    private fun runLocalMavenBuild(goals: String) {
+        localBuildRunning = true
+        statusLabel.text = "Running local: mvn $goals..."
+
+        scope.launch {
+            try {
+                val mavenService = MavenBuildService.getInstance(project)
+                val result = mavenService.runBuild(goals)
+
+                // Parse Surefire test results if this was a test run
+                val testResults = if (goals.contains("test")) {
+                    val basePath = project.basePath
+                    if (basePath != null) SurefireReportParser.parseProjectReports(basePath) else null
+                } else null
+
+                invokeLater {
+                    localBuildRunning = false
+                    val statusText = buildString {
+                        append(if (result.success) "Local build PASSED" else "Local build FAILED (exit ${result.exitCode})")
+                        if (testResults != null) {
+                            append(" — ${testResults.totalTests} tests, ${testResults.passed} passed")
+                            if (testResults.failures > 0) append(", ${testResults.failures} failed")
+                            if (testResults.errors > 0) append(", ${testResults.errors} errors")
+                            if (testResults.skipped > 0) append(", ${testResults.skipped} skipped")
+                        }
+                    }
+                    statusLabel.text = statusText
+
+                    // Show errors or test failures in the detail panel
+                    val logContent = buildString {
+                        appendLine("=== Local Maven Build: mvn $goals ===")
+                        appendLine()
+                        if (result.output.isNotBlank()) appendLine(result.output)
+                        if (result.errors.isNotBlank()) {
+                            appendLine("--- ERRORS ---")
+                            appendLine(result.errors)
+                        }
+                        if (testResults != null && testResults.failedTests.isNotEmpty()) {
+                            appendLine()
+                            appendLine("--- FAILED TESTS ---")
+                            for (failure in testResults.failedTests) {
+                                appendLine("  FAIL: ${failure.className}.${failure.testName}")
+                                if (failure.message.isNotBlank()) appendLine("        ${failure.message}")
+                            }
+                        }
+                    }
+                    val errors = BuildLogParser.parse(logContent)
+                    stageDetailPanel.showLog(logContent, errors)
+                    log.info("[Build:Local] mvn $goals -> ${if (result.success) "SUCCESS" else "FAILED"}")
+                }
+            } catch (e: Exception) {
+                invokeLater {
+                    localBuildRunning = false
+                    statusLabel.text = "Local build error: ${e.message}"
+                    log.warn("[Build:Local] mvn $goals failed with exception", e)
+                }
+            }
+        }
     }
 
     private fun loadBuildLog() {

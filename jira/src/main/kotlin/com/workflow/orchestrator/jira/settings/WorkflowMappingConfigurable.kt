@@ -237,6 +237,8 @@ class WorkflowMappingConfigurable(private val project: Project) :
         val settings = PluginSettings.getInstance(project)
         if (selectedBoardId != settings.state.jiraBoardId) return true
         if (selectedBoardType != (settings.state.jiraBoardType ?: "")) return true
+        if (selectedBoardName != (settings.state.jiraBoardName ?: "")) return true
+        if ((boardRegexFieldRef?.text?.trim() ?: "") != (settings.state.boardFilterRegex ?: "")) return true
         return super.isModified()
     }
 }

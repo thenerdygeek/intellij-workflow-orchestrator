@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.service.ActiveTicketService
+import com.intellij.openapi.application.invokeLater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,7 +43,10 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
         val jiraUrl = settings.state.jiraUrl
         if (jiraUrl.isNullOrBlank()) return
 
-        settings.state.activeTicketId = ticketId
+        // Write state on EDT since PersistentStateComponent is not thread-safe
+        invokeLater {
+            settings.state.activeTicketId = ticketId
+        }
 
         // Fetch ticket summary from Jira in background and update shared ActiveTicketService
         scope.launch {
@@ -55,7 +59,9 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
             val result = apiClient.getIssue(ticketId)
             if (result is ApiResult.Success) {
                 val summary = result.data.fields.summary
-                settings.state.activeTicketSummary = summary
+                invokeLater {
+                    settings.state.activeTicketSummary = summary
+                }
                 ActiveTicketService.getInstance(project).setActiveTicket(ticketId, summary)
                 log.info("[Jira:Branch] Updated active ticket summary for $ticketId")
             } else {

@@ -4,8 +4,6 @@ import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ServiceType
 import javax.swing.JComponent
 
 class WorkflowSettingsConfigurable(
@@ -13,7 +11,6 @@ class WorkflowSettingsConfigurable(
 ) : SearchableConfigurable, Configurable.Composite {
 
     private val settings = PluginSettings.getInstance(project)
-    private val credentialStore = CredentialStore()
     private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
 
     override fun getId(): String = "workflow.orchestrator"
@@ -110,26 +107,21 @@ class WorkflowSettingsConfigurable(
     }
 
     private fun buildConnectionSummary(): String {
+        // Only check URL presence on EDT — credential reads are deferred
+        // to avoid blocking EDT with PasswordSafe/Keychain calls
         val services = listOf(
-            "Jira" to (settings.state.jiraUrl to ServiceType.JIRA),
-            "Bamboo" to (settings.state.bambooUrl to ServiceType.BAMBOO),
-            "Bitbucket" to (settings.state.bitbucketUrl to ServiceType.BITBUCKET),
-            "SonarQube" to (settings.state.sonarUrl to ServiceType.SONARQUBE),
-            "Cody" to (settings.state.sourcegraphUrl to ServiceType.SOURCEGRAPH),
-            "Nexus" to (settings.state.nexusUrl to ServiceType.NEXUS),
+            "Jira" to settings.state.jiraUrl,
+            "Bamboo" to settings.state.bambooUrl,
+            "Bitbucket" to settings.state.bitbucketUrl,
+            "SonarQube" to settings.state.sonarUrl,
+            "Cody" to settings.state.sourcegraphUrl,
+            "Nexus" to settings.state.nexusUrl,
         )
 
-        return services.joinToString("<br>") { (name, pair) ->
-            val (url, serviceType) = pair
+        return services.joinToString("<br>") { (name, url) ->
             val hasUrl = !url.isNullOrBlank()
-            val hasToken = if (serviceType == ServiceType.NEXUS) {
-                !credentialStore.getNexusPassword().isNullOrBlank()
-            } else {
-                !credentialStore.getToken(serviceType).isNullOrBlank()
-            }
             val status = when {
-                hasUrl && hasToken -> "\u2705 $name — configured"
-                hasUrl && !hasToken -> "\u26A0\uFE0F $name — URL set, token missing"
+                hasUrl -> "\u2705 $name — URL configured"
                 else -> "\u274C $name — not configured"
             }
             status
