@@ -49,6 +49,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var activeTicketSummary by string("")
         var jiraBoardId by property(0)
         var jiraBoardName by string("")
+        var boardFilterRegex by string("")
 
         // Cody AI configuration
         var codyAgentPath by string("")
