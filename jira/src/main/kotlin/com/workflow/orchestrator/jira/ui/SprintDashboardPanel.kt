@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ai.BranchNameAiGenerator
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
@@ -24,6 +25,7 @@ import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraStatus
 import com.workflow.orchestrator.jira.service.ActiveTicketService
+import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
 import com.intellij.ui.AnimatedIcon
@@ -425,10 +427,24 @@ class SprintDashboardPanel(
                 tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
             )
 
-            val defaultBranchName = branchingService.generateBranchName(
-                selectedIssue, pattern, settings.state.branchMaxSummaryLength
+            val needsCody = BranchNameValidator.requiresCodySummary(pattern)
+            log.info("[Jira:StartWork] Pattern='$pattern', needsCody=$needsCody")
+
+            // Fallback branch name (uses {summary} in place of {cody-summary} when Cody fails)
+            val fallbackPattern = pattern.replace("{cody-summary}", "{summary}")
+            val fallbackBranchName = branchingService.generateBranchName(
+                selectedIssue, fallbackPattern, settings.state.branchMaxSummaryLength
             )
+
+            // If no Cody needed, generate the name immediately
+            val staticBranchName = if (!needsCody) {
+                branchingService.generateBranchName(
+                    selectedIssue, pattern, settings.state.branchMaxSummaryLength
+                )
+            } else ""
+
             val defaultSource = settings.state.defaultTargetBranch.orEmpty().ifBlank { "develop" }
+            val repoDisplay = "$projectKey / $repoSlug"
 
             setLoading(true, "Fetching branches\u2026")
 
@@ -450,10 +466,58 @@ class SprintDashboardPanel(
                     val dialog = StartWorkDialog(
                         project = project,
                         ticketKey = selectedIssue.key,
-                        defaultBranchName = defaultBranchName,
+                        defaultBranchName = staticBranchName,
                         remoteBranches = branches,
-                        defaultSourceBranch = defaultSource
+                        defaultSourceBranch = defaultSource,
+                        repoDisplay = repoDisplay,
+                        needsCodyGeneration = needsCody,
+                        fallbackBranchName = fallbackBranchName
                     )
+
+                    // If Cody is needed, launch generation in background AFTER dialog is shown
+                    if (needsCody) {
+                        scope.launch {
+                            log.info("[Jira:StartWork] Launching Cody branch name generation for ${selectedIssue.key}")
+                            try {
+                                val generator = BranchNameAiGenerator.getInstance()
+                                if (generator == null) {
+                                    log.warn("[Jira:StartWork] No BranchNameAiGenerator registered — Cody not available")
+                                    withContext(Dispatchers.Main) {
+                                        dialog.setCodyFailed("Cody AI not available")
+                                    }
+                                } else {
+                                    log.info("[Jira:StartWork] BranchNameAiGenerator found: ${generator.javaClass.name}")
+                                    val slug = generator.generateBranchSlug(
+                                        project = project,
+                                        ticketKey = selectedIssue.key,
+                                        title = selectedIssue.fields.summary,
+                                        description = selectedIssue.fields.description
+                                    )
+
+                                    if (slug != null) {
+                                        val codyBranchName = branchingService.generateBranchName(
+                                            selectedIssue, pattern, settings.state.branchMaxSummaryLength,
+                                            codySummary = slug
+                                        )
+                                        log.info("[Jira:StartWork] Cody generated full branch name: '$codyBranchName'")
+                                        withContext(Dispatchers.Main) {
+                                            dialog.setCodyResult(codyBranchName)
+                                        }
+                                    } else {
+                                        log.warn("[Jira:StartWork] Cody returned null slug")
+                                        withContext(Dispatchers.Main) {
+                                            dialog.setCodyFailed("Cody returned empty response")
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                log.error("[Jira:StartWork] Cody branch generation failed with exception", e)
+                                withContext(Dispatchers.Main) {
+                                    dialog.setCodyFailed(e.message ?: "Unknown error")
+                                }
+                            }
+                        }
+                    }
 
                     if (!dialog.showAndGet()) return@withContext
                     val dialogResult = dialog.result ?: return@withContext

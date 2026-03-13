@@ -39,7 +39,7 @@ class WorkflowSettingsConfigurable(
                             { settings.state.branchPattern ?: "feature/{ticketId}-{summary}" },
                             { settings.state.branchPattern = it }
                         )
-                        .comment("Placeholders: {ticketId}, {summary}")
+                        .comment("Placeholders: {ticketId}, {summary}, {type}, {cody-summary}")
                 }
                 row {
                     checkBox("Use conventional commits (feat:, fix:, etc.)")

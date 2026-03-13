@@ -28,13 +28,21 @@ class BranchingService(
 
     /**
      * Generates a branch name from the configured pattern and issue details.
+     * If codySummary is provided, it replaces the {cody-summary} placeholder.
      */
-    fun generateBranchName(issue: JiraIssue, branchPattern: String, maxSummaryLength: Int): String {
+    fun generateBranchName(
+        issue: JiraIssue,
+        branchPattern: String,
+        maxSummaryLength: Int,
+        codySummary: String? = null
+    ): String {
         return BranchNameValidator.generateBranchName(
             pattern = branchPattern,
             ticketId = issue.key,
             summary = issue.fields.summary,
-            maxSummaryLength = maxSummaryLength
+            maxSummaryLength = maxSummaryLength,
+            issueTypeName = issue.fields.issuetype?.name,
+            codySummary = codySummary
         )
     }
 

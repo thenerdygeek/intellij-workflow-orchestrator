@@ -9,7 +9,43 @@ object BranchNameValidator {
     private val TICKET_PATTERN = Regex("[A-Z][A-Z0-9]+-\\d+")
     private val INVALID_CHARS = Regex("[^a-z0-9/\\-]")
 
-    fun generateBranchName(pattern: String, ticketId: String, summary: String, maxSummaryLength: Int = 50): String {
+    /**
+     * Maps Jira issue type names to conventional branch prefixes.
+     * Unknown types default to "feature".
+     */
+    fun issueTypeToPrefix(issueTypeName: String?): String {
+        if (issueTypeName == null) return "feature"
+        return when (issueTypeName.lowercase()) {
+            "bug" -> "bugfix"
+            "story", "user story" -> "feature"
+            "task", "sub-task", "subtask" -> "task"
+            "improvement" -> "improvement"
+            "epic" -> "epic"
+            "spike" -> "spike"
+            "hotfix" -> "hotfix"
+            else -> "feature"
+        }
+    }
+
+    /**
+     * Generates a branch name from the pattern and issue details.
+     *
+     * Supported placeholders:
+     * - {ticketId} — the Jira ticket key (e.g. PROJ-123)
+     * - {summary} — sanitized ticket summary
+     * - {type} — issue type prefix (bugfix, feature, task, improvement, etc.)
+     * - {cody-summary} — replaced separately by AI-generated slug (caller must pre-replace)
+     *
+     * @param codySummary If non-null, replaces {cody-summary} in the pattern
+     */
+    fun generateBranchName(
+        pattern: String,
+        ticketId: String,
+        summary: String,
+        maxSummaryLength: Int = 50,
+        issueTypeName: String? = null,
+        codySummary: String? = null
+    ): String {
         val sanitizedSummary = summary
             .lowercase()
             .replace(INVALID_CHARS, "-")
@@ -18,10 +54,25 @@ object BranchNameValidator {
             .take(maxSummaryLength)
             .trimEnd('-')
 
-        return pattern
+        val typePrefix = issueTypeToPrefix(issueTypeName)
+
+        var result = pattern
             .replace("{ticketId}", ticketId)
             .replace("{summary}", sanitizedSummary)
+            .replace("{type}", typePrefix)
+
+        if (codySummary != null) {
+            result = result.replace("{cody-summary}", codySummary)
+        }
+
+        return result
     }
+
+    /**
+     * Whether the given pattern contains the {cody-summary} placeholder.
+     */
+    fun requiresCodySummary(pattern: String): Boolean =
+        pattern.contains("{cody-summary}")
 
     fun isValidBranchName(name: String): Boolean {
         if (name.isBlank()) {

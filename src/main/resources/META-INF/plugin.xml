@@ -27,6 +27,10 @@
             qualifiedName="com.workflow.orchestrator.codyAgentProvider"
             interface="com.workflow.orchestrator.cody.agent.CodyAgentProvider"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.branchNameAiGenerator"
+            interface="com.workflow.orchestrator.core.ai.BranchNameAiGenerator"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -286,6 +290,8 @@
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <codyAgentProvider
             implementation="com.workflow.orchestrator.cody.agent.StandaloneCodyAgentProvider"/>
+        <branchNameAiGenerator
+            implementation="com.workflow.orchestrator.cody.service.CodyBranchNameGeneratorImpl"/>
         <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
