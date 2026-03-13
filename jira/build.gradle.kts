@@ -24,6 +24,7 @@ dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
         bundledPlugin("Git4Idea")
+        bundledPlugin("com.intellij.tasks")
         testFramework(TestFrameworkType.Platform)
     }
 

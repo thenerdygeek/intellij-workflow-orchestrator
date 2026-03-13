@@ -7,6 +7,10 @@
         <!-- Commit message auto-prefix (requires GitVcs.getKey()) -->
         <vcsCheckinHandlerFactory
             implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
+
+        <!-- Jira ticket column in Git Log view -->
+        <vcsLogCustomColumn
+            implementation="com.workflow.orchestrator.jira.vcs.JiraVcsLogColumn"/>
     </extensions>
 
     <projectListeners>

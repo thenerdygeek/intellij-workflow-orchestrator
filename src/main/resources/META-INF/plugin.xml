@@ -13,6 +13,7 @@
     <depends optional="true" config-file="plugin-withCody.xml">com.sourcegraph.jetbrains</depends>
     <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
+    <depends optional="true" config-file="plugin-withTasks.xml">com.intellij.tasks</depends>
 
     <resource-bundle>messages.WorkflowBundle</resource-bundle>
 
@@ -231,6 +232,25 @@
 
         <!-- Handover Notification Group -->
         <notificationGroup id="workflow.handover" displayType="BALLOON"/>
+
+        <!-- Jira Ticket Reference TODO Pattern -->
+        <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
+
+        <!-- Editor Tab Ticket Badge -->
+        <editorTabTitleProvider
+            implementation="com.workflow.orchestrator.jira.editor.TicketEditorTabTitleProvider"/>
+
+        <!-- Commit Dialog: Jira Time Tracking -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.jira.vcs.TimeTrackingCheckinHandlerFactory"/>
+
+        <!-- Post-Commit Jira Transition -->
+        <vcsCheckinHandlerFactory
+            implementation="com.workflow.orchestrator.jira.vcs.PostCommitTransitionHandlerFactory"/>
+
+        <!-- Search Everywhere: Jira Tickets -->
+        <searchEverywhereContributor
+            implementation="com.workflow.orchestrator.jira.search.JiraSearchContributorFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">

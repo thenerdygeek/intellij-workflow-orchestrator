@@ -82,6 +82,16 @@ class JiraApiClient(
         return get("/rest/api/2/issue/$key?expand=issuelinks")
     }
 
+    suspend fun searchIssues(text: String, maxResults: Int = 20): ApiResult<List<JiraIssue>> {
+        val escaped = escapeJql(text)
+        val jql = "(text ~ \"$escaped\" OR key = \"$escaped\") AND assignee = currentUser() ORDER BY updated DESC"
+        val encodedJql = URLEncoder.encode(jql, "UTF-8")
+        log.info("[Jira:API] GET /rest/api/2/search (text=$text, maxResults=$maxResults)")
+        return get<JiraIssueSearchResult>(
+            "/rest/api/2/search?jql=$encodedJql&maxResults=$maxResults&fields=summary,status,issuetype,priority,assignee"
+        ).map { it.issues }
+    }
+
     suspend fun getTransitions(
         issueKey: String,
         expandFields: Boolean = false
@@ -90,6 +100,14 @@ class JiraApiClient(
         val expand = if (expandFields) "?expand=transitions.fields" else ""
         return get<JiraTransitionList>("/rest/api/2/issue/$issueKey/transitions$expand")
             .map { it.transitions }
+    }
+
+    suspend fun postWorklog(issueKey: String, timeSpent: String): ApiResult<Unit> {
+        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/worklog (timeSpent=$timeSpent)")
+        val body = buildJsonObject {
+            put("timeSpent", timeSpent)
+        }.toString()
+        return post("/rest/api/2/issue/$issueKey/worklog", body)
     }
 
     suspend fun transitionIssue(
@@ -141,6 +159,16 @@ class JiraApiClient(
             }
         }
         return payload.toString()
+    }
+
+    private fun escapeJql(text: String): String {
+        val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
+        return buildString {
+            for (c in text) {
+                if (c in reserved) append('\\')
+                append(c)
+            }
+        }
     }
 
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =

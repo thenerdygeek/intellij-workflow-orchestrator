@@ -1,0 +1,6 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <tasks.repositoryType
+            implementation="com.workflow.orchestrator.jira.tasks.JiraTaskRepositoryType"/>
+    </extensions>
+</idea-plugin>
