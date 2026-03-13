@@ -17,6 +17,11 @@ import kotlinx.coroutines.runBlocking
 import javax.swing.JLabel
 import javax.swing.SwingUtilities
 
+/** Wrapper for JiraBoard to customize toString for the combo box. */
+private data class BoardItem(val board: com.workflow.orchestrator.jira.api.dto.JiraBoard) {
+    override fun toString(): String = "${board.name} (${board.type}, ID: ${board.id})"
+}
+
 class WorkflowMappingConfigurable(private val project: Project) :
     BoundSearchableConfigurable("Workflow Mapping", "workflow.orchestrator.workflow") {
 
@@ -33,9 +38,97 @@ class WorkflowMappingConfigurable(private val project: Project) :
         }
 
         val boardStatusLabel = JLabel("")
+        val boardSearchField = javax.swing.JTextField(20)
+        val boardComboBox = javax.swing.JComboBox<BoardItem>()
+        boardComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
+            if (item == null) "Select a board..." else "${item.board.name} (${item.board.type}, ID: ${item.board.id})"
+        }
+        // Pre-populate with current board if set
+        val currentBoardId = settings.state.jiraBoardId
+        if (currentBoardId > 0) {
+            val currentBoardName = settings.state.jiraBoardName ?: "Board $currentBoardId"
+            val currentBoardType = settings.state.jiraBoardType ?: "scrum"
+            val placeholder = com.workflow.orchestrator.jira.api.dto.JiraBoard(
+                currentBoardId, currentBoardName, currentBoardType
+            )
+            boardComboBox.addItem(BoardItem(placeholder))
+            boardComboBox.selectedIndex = 0
+        }
+        boardComboBox.addActionListener {
+            val selected = boardComboBox.selectedItem as? BoardItem
+            if (selected != null) {
+                settings.state.jiraBoardId = selected.board.id
+                settings.state.jiraBoardType = selected.board.type
+                settings.state.jiraBoardName = selected.board.name
+            }
+        }
 
         return panel {
             group("Board Configuration") {
+                row {
+                    comment(
+                        "Search for your Jira board by name. " +
+                        "Type part of the board name and click Search to find matching boards."
+                    )
+                }
+                row("Search boards:") {
+                    cell(boardSearchField)
+                        .applyToComponent {
+                            toolTipText = "Enter part of your board name to search"
+                        }
+                    button("Search") {
+                        val jiraUrl = settings.state.jiraUrl
+                        if (jiraUrl.isNullOrBlank()) {
+                            boardStatusLabel.text = "Configure Jira URL in Connections first"
+                            return@button
+                        }
+                        val searchText = boardSearchField.text.trim()
+                        if (searchText.isBlank()) {
+                            boardStatusLabel.text = "Enter a board name to search"
+                            return@button
+                        }
+                        boardStatusLabel.text = "Searching..."
+                        val credentialStore = CredentialStore()
+                        val apiClient = JiraApiClient(
+                            baseUrl = jiraUrl.trimEnd('/'),
+                            tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
+                        )
+                        runBackgroundableTask("Searching Jira Boards", project, false) {
+                            val result = runBlocking { apiClient.getBoards(nameFilter = searchText) }
+                            SwingUtilities.invokeLater {
+                                when (result) {
+                                    is ApiResult.Success -> {
+                                        boardComboBox.removeAllItems()
+                                        if (result.data.isEmpty()) {
+                                            boardStatusLabel.text = "No boards matching \"$searchText\""
+                                        } else {
+                                            for (board in result.data) {
+                                                boardComboBox.addItem(BoardItem(board))
+                                            }
+                                            boardComboBox.selectedIndex = 0
+                                            boardStatusLabel.text = "${result.data.size} board(s) found"
+                                            // Auto-select the first result
+                                            val first = result.data.first()
+                                            settings.state.jiraBoardId = first.id
+                                            settings.state.jiraBoardType = first.type
+                                            settings.state.jiraBoardName = first.name
+                                        }
+                                    }
+                                    is ApiResult.Error -> {
+                                        boardStatusLabel.text = "Error: ${result.message}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                row("Selected board:") {
+                    cell(boardComboBox)
+                        .comment("Choose from search results. The selected board will be used for the Sprint Dashboard.")
+                }
+                row {
+                    cell(boardStatusLabel)
+                }
                 row("Board type:") {
                     comboBox(listOf("", "scrum", "kanban", "simple"))
                         .applyToComponent {
@@ -53,55 +146,15 @@ class WorkflowMappingConfigurable(private val project: Project) :
                             { settings.state.jiraBoardType ?: "" },
                             { settings.state.jiraBoardType = it ?: "" }
                         )
-                        .comment("Scrum boards have sprints. Kanban boards show unresolved issues instead.")
+                        .comment("Override board type. Usually auto-detected from the selected board.")
                 }
-                row("Board ID:") {
+                row("Board ID (manual):") {
                     intTextField(IntRange(0, 99999))
                         .bindIntText(
                             { settings.state.jiraBoardId },
                             { settings.state.jiraBoardId = it }
                         )
-                        .comment("Leave 0 to auto-discover the first matching board.")
-                }
-                row {
-                    button("Discover Boards") {
-                        val jiraUrl = settings.state.jiraUrl
-                        if (jiraUrl.isNullOrBlank()) {
-                            boardStatusLabel.text = "Configure Jira URL first"
-                            return@button
-                        }
-                        boardStatusLabel.text = "Discovering..."
-                        val credentialStore = CredentialStore()
-                        val apiClient = JiraApiClient(
-                            baseUrl = jiraUrl.trimEnd('/'),
-                            tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
-                        )
-                        runBackgroundableTask("Discovering Jira Boards", project, false) {
-                            val result = runBlocking { apiClient.getBoards() }
-                            SwingUtilities.invokeLater {
-                                when (result) {
-                                    is ApiResult.Success -> {
-                                        if (result.data.isEmpty()) {
-                                            boardStatusLabel.text = "No boards found"
-                                        } else {
-                                            val boards = result.data.joinToString("\n") { b ->
-                                                "  ${b.id}: ${b.name} (${b.type})"
-                                            }
-                                            boardStatusLabel.text = "<html>${result.data.size} board(s) found:<br>${
-                                                result.data.joinToString("<br>") { b ->
-                                                    "&nbsp;&nbsp;<b>${b.id}</b>: ${b.name} (${b.type})"
-                                                }
-                                            }</html>"
-                                        }
-                                    }
-                                    is ApiResult.Error -> {
-                                        boardStatusLabel.text = "Error: ${result.message}"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    cell(boardStatusLabel)
+                        .comment("Auto-filled when you select a board above. Or enter manually if you know the ID.")
                 }
             }
 
