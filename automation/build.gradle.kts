@@ -28,7 +28,9 @@ dependencies {
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
-    implementation(libs.sqlite.jdbc)
+    implementation(libs.sqlite.jdbc) {
+        exclude(group = "org.slf4j")
+    }
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)

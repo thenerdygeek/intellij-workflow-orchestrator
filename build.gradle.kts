@@ -62,7 +62,9 @@ dependencies {
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-    implementation(libs.sqlite.jdbc)
+    implementation(libs.sqlite.jdbc) {
+        exclude(group = "org.slf4j")
+    }
 
     // -- Test --
     testImplementation(libs.junit)
