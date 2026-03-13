@@ -33,7 +33,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
     private var selectedBoardId: Int = 0
     private var selectedBoardType: String = ""
     private var selectedBoardName: String = ""
-    private var boardRegexFieldRef: javax.swing.JTextField? = null
+    private var boardSearchFieldRef: javax.swing.JTextField? = null
 
     override fun createPanel(): DialogPanel {
         val settings = PluginSettings.getInstance(project)
@@ -50,9 +50,9 @@ class WorkflowMappingConfigurable(private val project: Project) :
         selectedBoardType = settings.state.jiraBoardType ?: ""
         selectedBoardName = settings.state.jiraBoardName ?: ""
         val boardStatusLabel = JLabel("")
-        val boardRegexField = javax.swing.JTextField(20)
-        boardRegexField.text = settings.state.boardFilterRegex ?: ""
-        boardRegexFieldRef = boardRegexField
+        val boardSearchField = javax.swing.JTextField(20)
+        boardSearchField.text = settings.state.boardFilterRegex ?: ""
+        boardSearchFieldRef = boardSearchField
         val boardComboBox = javax.swing.JComboBox<BoardItem>()
         boardComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
             if (item == null) "Select a board..." else "${item.board.name} (${item.board.type}, ID: ${item.board.id})"
@@ -81,77 +81,54 @@ class WorkflowMappingConfigurable(private val project: Project) :
             group("Board Configuration") {
                 row {
                     comment(
-                        "Filter boards by regex, pick one from the dropdown, then Apply."
+                        "Search for boards by name, pick one from the dropdown, then Apply."
                     )
                 }
-                row("Board filter:") {
-                    cell(boardRegexField)
+                row("Search:") {
+                    cell(boardSearchField)
                         .applyToComponent {
-                            toolTipText = "Case-insensitive regex matched against board names"
+                            toolTipText = "Board name to search for (server-side, leave blank to fetch all)"
                         }
-                        .comment("e.g. <code>^MyTeam</code> or <code>sprint|kanban</code>")
-                    button("Fetch Boards") {
+                        .comment("e.g. <code>MyTeam</code> or <code>Sprint Board</code> (leave blank for all)")
+                    button("Search Boards") {
                         val jiraUrl = settings.connections.jiraUrl
                         if (jiraUrl.isNullOrBlank()) {
                             boardStatusLabel.text = "Configure Jira URL in Connections first"
                             return@button
                         }
-                        val currentRegex = boardRegexField.text.trim()
-                        val regex = if (currentRegex.isNotBlank()) {
-                            try {
-                                Regex(currentRegex, RegexOption.IGNORE_CASE)
-                            } catch (_: Exception) {
-                                boardStatusLabel.text = "Invalid regex: $currentRegex"
-                                return@button
-                            }
-                        } else null
+                        val searchText = boardSearchField.text.trim()
 
-                        boardStatusLabel.text = "Fetching boards..."
+                        boardStatusLabel.text = "Searching boards..."
                         val credentialStore = CredentialStore()
                         val apiClient = JiraApiClient(
                             baseUrl = jiraUrl.trimEnd('/'),
                             tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
                         )
-                        runBackgroundableTask("Fetching Jira Boards", project, false) {
-                            val result = runBlocking { apiClient.getBoards() }
+                        runBackgroundableTask("Searching Jira Boards", project, false) {
+                            val result = runBlocking {
+                                apiClient.getBoards(nameFilter = searchText)
+                            }
                             SwingUtilities.invokeLater {
                                 when (result) {
                                     is ApiResult.Success -> {
-                                        val allBoards = result.data
-                                        log.info("[Jira:Settings] Fetched ${allBoards.size} boards from API")
-                                        for (board in allBoards) {
+                                        val boards = result.data
+                                        log.info("[Jira:Settings] Search '${searchText}' returned ${boards.size} boards")
+                                        for (board in boards) {
                                             log.info("[Jira:Settings]   Board: name='${board.name}', type='${board.type}', id=${board.id}")
                                         }
-                                        if (regex != null) {
-                                            log.info("[Jira:Settings] Applying regex '$currentRegex' (IGNORE_CASE)")
-                                        }
-                                        val filtered = if (regex != null) {
-                                            allBoards.filter { board ->
-                                                val matches = regex.containsMatchIn(board.name)
-                                                log.info("[Jira:Settings]   Regex test: '${board.name}' -> $matches")
-                                                matches
-                                            }
-                                        } else {
-                                            allBoards
-                                        }
                                         boardComboBox.removeAllItems()
-                                        if (filtered.isEmpty()) {
-                                            val msg = if (regex != null && allBoards.isNotEmpty()) {
-                                                "${allBoards.size} board(s) found, none match regex '$currentRegex'. " +
-                                                "Boards: ${allBoards.take(10).joinToString { it.name }}"
-                                            } else if (allBoards.isEmpty()) {
-                                                "No boards returned from Jira. Check your permissions."
+                                        if (boards.isEmpty()) {
+                                            boardStatusLabel.text = if (searchText.isNotBlank()) {
+                                                "No boards matching '$searchText'. Try a different search or leave blank."
                                             } else {
-                                                "No boards found"
+                                                "No boards returned from Jira. Check your permissions."
                                             }
-                                            boardStatusLabel.text = msg
                                         } else {
-                                            for (board in filtered) {
+                                            for (board in boards) {
                                                 boardComboBox.addItem(BoardItem(board))
                                             }
                                             boardComboBox.selectedIndex = 0
-                                            val note = if (regex != null) " (${filtered.size}/${allBoards.size} match)" else ""
-                                            boardStatusLabel.text = "${filtered.size} board(s)$note"
+                                            boardStatusLabel.text = "${boards.size} board(s) found"
                                         }
                                     }
                                     is ApiResult.Error -> {
@@ -221,7 +198,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
             settings.state.jiraBoardType = selectedBoardType
             settings.state.jiraBoardName = selectedBoardName
         }
-        settings.state.boardFilterRegex = boardRegexFieldRef?.text?.trim() ?: ""
+        settings.state.boardFilterRegex = boardSearchFieldRef?.text?.trim() ?: ""
 
         val store = TransitionMappingStore()
         store.loadFromJson(settings.state.workflowMappings ?: "")
@@ -243,7 +220,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
         if (selectedBoardId != settings.state.jiraBoardId) return true
         if (selectedBoardType != (settings.state.jiraBoardType ?: "")) return true
         if (selectedBoardName != (settings.state.jiraBoardName ?: "")) return true
-        if ((boardRegexFieldRef?.text?.trim() ?: "") != (settings.state.boardFilterRegex ?: "")) return true
+        if ((boardSearchFieldRef?.text?.trim() ?: "") != (settings.state.boardFilterRegex ?: "")) return true
         return super.isModified()
     }
 }
