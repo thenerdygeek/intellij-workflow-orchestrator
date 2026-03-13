@@ -89,7 +89,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
                         }
                         .comment("e.g. <code>^MyTeam</code> or <code>sprint|kanban</code>")
                     button("Fetch Boards") {
-                        val jiraUrl = settings.state.jiraUrl
+                        val jiraUrl = settings.connections.jiraUrl
                         if (jiraUrl.isNullOrBlank()) {
                             boardStatusLabel.text = "Configure Jira URL in Connections first"
                             return@button

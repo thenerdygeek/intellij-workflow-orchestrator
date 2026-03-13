@@ -25,7 +25,7 @@ class ConflictDetectorService {
         val settings = PluginSettings.getInstance(project)
         val credentialStore = CredentialStore()
         this.bambooClient = BambooApiClient(
-            baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
+            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
             tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
             connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
             readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()

@@ -58,6 +58,13 @@
 
         <projectConfigurable
             parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.core.settings.RepositoryConfigurable"
+            id="workflow.orchestrator.repository"
+            displayName="Repository"
+            nonDefaultProject="true"/>
+
+        <projectConfigurable
+            parentId="workflow.orchestrator"
             instance="com.workflow.orchestrator.core.settings.AdvancedConfigurable"
             id="workflow.orchestrator.advanced"
             displayName="Advanced"
@@ -210,6 +217,8 @@
             serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>
 
         <!-- App-level (cross-project) -->
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.core.settings.ConnectionSettings"/>
         <applicationService
             serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
 

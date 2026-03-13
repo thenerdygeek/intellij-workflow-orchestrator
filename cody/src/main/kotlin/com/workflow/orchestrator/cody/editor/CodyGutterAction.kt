@@ -20,7 +20,7 @@ class CodyGutterAction : LineMarkerProvider {
         val project = file.project
 
         val settings = PluginSettings.getInstance(project)
-        if (settings.state.sourcegraphUrl.isNullOrBlank()) return
+        if (settings.connections.sourcegraphUrl.isNullOrBlank()) return
         if (settings.state.codyEnabled == false) return
         if (!CredentialStore().hasToken(ServiceType.SOURCEGRAPH)) return
 

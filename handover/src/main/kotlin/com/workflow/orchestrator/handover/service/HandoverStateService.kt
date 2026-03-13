@@ -84,7 +84,7 @@ class HandoverStateService : Disposable {
             )
 
             is WorkflowEvent.AutomationTriggered -> {
-                val bambooUrl = settings.state.bambooUrl.orEmpty().trimEnd('/')
+                val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
                 val newSuite = SuiteResult(
                     suitePlanKey = event.suitePlanKey,
                     buildResultKey = event.buildResultKey,

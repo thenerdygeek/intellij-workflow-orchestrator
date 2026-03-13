@@ -109,13 +109,14 @@ class WorkflowSettingsConfigurable(
     private fun buildConnectionSummary(): String {
         // Only check URL presence on EDT — credential reads are deferred
         // to avoid blocking EDT with PasswordSafe/Keychain calls
+        val cs = ConnectionSettings.getInstance().state
         val services = listOf(
-            "Jira" to settings.state.jiraUrl,
-            "Bamboo" to settings.state.bambooUrl,
-            "Bitbucket" to settings.state.bitbucketUrl,
-            "SonarQube" to settings.state.sonarUrl,
-            "Cody" to settings.state.sourcegraphUrl,
-            "Nexus" to settings.state.nexusUrl,
+            "Jira" to cs.jiraUrl,
+            "Bamboo" to cs.bambooUrl,
+            "Bitbucket" to cs.bitbucketUrl,
+            "SonarQube" to cs.sonarUrl,
+            "Cody" to cs.sourcegraphUrl,
+            "Nexus" to cs.nexusUrl,
         )
 
         return services.joinToString("<br>") { (name, url) ->

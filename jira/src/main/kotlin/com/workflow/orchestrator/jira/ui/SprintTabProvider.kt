@@ -21,7 +21,7 @@ class SprintTabProvider : WorkflowTabProvider {
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
-        val jiraUrl = settings.state.jiraUrl
+        val jiraUrl = settings.connections.jiraUrl
         if (jiraUrl.isNullOrBlank()) {
             return EmptyStatePanel(project, "No tickets assigned.\nConnect to Jira in Settings to get started.")
         }

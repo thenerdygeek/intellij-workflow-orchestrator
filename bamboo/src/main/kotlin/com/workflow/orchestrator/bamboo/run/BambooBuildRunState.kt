@@ -59,7 +59,7 @@ class BambooBuildProcessHandler(
     private suspend fun runBuild() {
         val project = environment.project
         val settings = PluginSettings.getInstance(project)
-        val bambooUrl = settings.state.bambooUrl.orEmpty().trimEnd('/')
+        val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
 
         if (bambooUrl.isBlank()) {
             printOutput("ERROR: Bamboo URL is not configured. Go to Settings > Tools > Workflow Orchestrator.\n")

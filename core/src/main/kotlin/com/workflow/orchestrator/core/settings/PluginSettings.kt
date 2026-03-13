@@ -126,13 +126,69 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var bambooBuildVariableName by string("dockerTagsAsJson")
     }
 
+    /**
+     * Convenience accessor for global connection URLs.
+     * All code that previously read settings.state.jiraUrl should use settings.connections.jiraUrl.
+     */
+    val connections: ConnectionSettings.State
+        get() = ConnectionSettings.getInstance().state
+
+    /**
+     * Migrates any URLs stored in per-project settings to the global ConnectionSettings.
+     * Called once on first access. After migration, per-project URL fields are cleared.
+     */
+    fun migrateUrlsToGlobalIfNeeded() {
+        val global = ConnectionSettings.getInstance()
+        val gs = global.state
+        var migrated = false
+
+        fun migrate(localValue: String?, globalValue: String, setter: (String) -> Unit) {
+            if (!localValue.isNullOrBlank() && globalValue.isBlank()) {
+                setter(localValue)
+                migrated = true
+            }
+        }
+
+        migrate(state.jiraUrl, gs.jiraUrl) { gs.jiraUrl = it }
+        migrate(state.bambooUrl, gs.bambooUrl) { gs.bambooUrl = it }
+        migrate(state.bitbucketUrl, gs.bitbucketUrl) { gs.bitbucketUrl = it }
+        migrate(state.sonarUrl, gs.sonarUrl) { gs.sonarUrl = it }
+        migrate(state.sourcegraphUrl, gs.sourcegraphUrl) { gs.sourcegraphUrl = it }
+        migrate(state.nexusUrl, gs.nexusUrl) { gs.nexusUrl = it }
+        if (!state.nexusUsername.isNullOrBlank() && gs.nexusUsername.isBlank()) {
+            gs.nexusUsername = state.nexusUsername ?: ""
+            migrated = true
+        }
+
+        if (migrated) {
+            // Clear per-project URL fields after migration
+            state.jiraUrl = ""
+            state.bambooUrl = ""
+            state.bitbucketUrl = ""
+            state.sonarUrl = ""
+            state.sourcegraphUrl = ""
+            state.nexusUrl = ""
+            state.nexusUsername = ""
+        }
+    }
+
     val isAnyServiceConfigured: Boolean
-        get() = !state.jiraUrl.isNullOrBlank() ||
-                !state.bambooUrl.isNullOrBlank() ||
-                !state.bitbucketUrl.isNullOrBlank() ||
-                !state.sonarUrl.isNullOrBlank() ||
-                !state.sourcegraphUrl.isNullOrBlank() ||
-                !state.nexusUrl.isNullOrBlank()
+        get() {
+            val gs = ConnectionSettings.getInstance().state
+            return gs.jiraUrl.isNotBlank() ||
+                    gs.bambooUrl.isNotBlank() ||
+                    gs.bitbucketUrl.isNotBlank() ||
+                    gs.sonarUrl.isNotBlank() ||
+                    gs.sourcegraphUrl.isNotBlank() ||
+                    gs.nexusUrl.isNotBlank() ||
+                    // Fallback: check legacy per-project fields (pre-migration)
+                    !state.jiraUrl.isNullOrBlank() ||
+                    !state.bambooUrl.isNullOrBlank() ||
+                    !state.bitbucketUrl.isNullOrBlank() ||
+                    !state.sonarUrl.isNullOrBlank() ||
+                    !state.sourcegraphUrl.isNullOrBlank() ||
+                    !state.nexusUrl.isNullOrBlank()
+        }
 
     companion object {
         fun getInstance(project: Project): PluginSettings {

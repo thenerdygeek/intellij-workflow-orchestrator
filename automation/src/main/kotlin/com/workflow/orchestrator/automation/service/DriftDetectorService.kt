@@ -22,9 +22,9 @@ class DriftDetectorService {
         val settings = PluginSettings.getInstance(project)
         val registryUrl = (settings.state.dockerRegistryUrl
             .takeUnless { it.isNullOrBlank() }
-            ?: settings.state.nexusUrl.orEmpty()).trimEnd('/')
+            ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
         val credentialStore = CredentialStore()
-        val nexusUsername = settings.state.nexusUsername.orEmpty()
+        val nexusUsername = settings.connections.nexusUsername.orEmpty()
         this.registryClient = DockerRegistryClient(
             registryUrl = registryUrl,
             tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },

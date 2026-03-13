@@ -14,7 +14,7 @@ class QualityTabProvider : WorkflowTabProvider {
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
-        return if (!settings.state.sonarUrl.isNullOrBlank()) {
+        return if (!settings.connections.sonarUrl.isNullOrBlank()) {
             QualityDashboardPanel(project)
         } else {
             EmptyStatePanel(project, "No quality data available.\nConnect to SonarQube in Settings to get started.")

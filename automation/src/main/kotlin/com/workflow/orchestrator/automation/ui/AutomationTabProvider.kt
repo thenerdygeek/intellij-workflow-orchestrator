@@ -19,7 +19,7 @@ class AutomationTabProvider : WorkflowTabProvider {
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
-        return if (!settings.state.bambooUrl.isNullOrBlank() &&
+        return if (!settings.connections.bambooUrl.isNullOrBlank() &&
             settings.state.automationModuleEnabled) {
             AutomationPanel(project)
         } else {

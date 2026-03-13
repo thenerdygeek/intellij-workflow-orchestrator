@@ -40,7 +40,7 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
         log.info("[Jira:Branch] Detected ticket $ticketId from branch '$branchName'")
 
         val settings = PluginSettings.getInstance(project)
-        val jiraUrl = settings.state.jiraUrl
+        val jiraUrl = settings.connections.jiraUrl
         if (jiraUrl.isNullOrBlank()) return
 
         // Write state on EDT since PersistentStateComponent is not thread-safe

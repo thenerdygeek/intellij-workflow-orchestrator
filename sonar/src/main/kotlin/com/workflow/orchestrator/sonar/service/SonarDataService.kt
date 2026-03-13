@@ -31,7 +31,7 @@ class SonarDataService(private val project: Project) : Disposable {
     private val settings get() = PluginSettings.getInstance(project)
 
     private val apiClient: SonarApiClient? get() {
-        val url = settings.state.sonarUrl.orEmpty().trimEnd('/')
+        val url = settings.connections.sonarUrl.orEmpty().trimEnd('/')
         if (url.isBlank()) return null
         val credentialStore = CredentialStore()
         return SonarApiClient(

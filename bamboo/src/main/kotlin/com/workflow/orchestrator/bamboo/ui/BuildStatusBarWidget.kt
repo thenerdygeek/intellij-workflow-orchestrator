@@ -24,7 +24,7 @@ class BuildStatusBarWidgetFactory : StatusBarWidgetFactory {
     override fun getId(): String = "WorkflowBuildStatusBar"
     override fun getDisplayName(): String = "Workflow Build Status"
     override fun isAvailable(project: Project): Boolean {
-        return !PluginSettings.getInstance(project).state.bambooUrl.isNullOrBlank()
+        return !PluginSettings.getInstance(project).connections.bambooUrl.isNullOrBlank()
     }
 
     override fun createWidget(project: Project): StatusBarWidget {

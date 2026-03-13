@@ -36,11 +36,11 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         }
         separator()
 
-        connectionSection("Jira", ServiceType.JIRA) { settings.state.jiraUrl = it }
-        connectionSection("Bamboo", ServiceType.BAMBOO) { settings.state.bambooUrl = it }
-        connectionSection("Bitbucket", ServiceType.BITBUCKET) { settings.state.bitbucketUrl = it }
-        connectionSection("SonarQube", ServiceType.SONARQUBE) { settings.state.sonarUrl = it }
-        connectionSection("Cody Enterprise", ServiceType.SOURCEGRAPH) { settings.state.sourcegraphUrl = it }
+        connectionSection("Jira", ServiceType.JIRA) { settings.connections.jiraUrl = it }
+        connectionSection("Bamboo", ServiceType.BAMBOO) { settings.connections.bambooUrl = it }
+        connectionSection("Bitbucket", ServiceType.BITBUCKET) { settings.connections.bitbucketUrl = it }
+        connectionSection("SonarQube", ServiceType.SONARQUBE) { settings.connections.sonarUrl = it }
+        connectionSection("Cody Enterprise", ServiceType.SOURCEGRAPH) { settings.connections.sourcegraphUrl = it }
         nexusConnectionSection()
     }
 
@@ -129,8 +129,8 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                             when (result) {
                                 is ApiResult.Success -> {
                                     statusLabel.text = "Connected!"
-                                    settings.state.nexusUrl = url
-                                    settings.state.nexusUsername = username
+                                    settings.connections.nexusUrl = url
+                                    settings.connections.nexusUsername = username
                                     credentialStore.storeNexusPassword(password)
                                 }
                                 is ApiResult.Error -> {

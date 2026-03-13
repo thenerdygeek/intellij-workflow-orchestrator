@@ -36,7 +36,7 @@ private class JiraSearchContributor(
     private val credentialStore = CredentialStore()
     private val apiClient: JiraApiClient? by lazy {
         val proj = project ?: return@lazy null
-        val jiraUrl = PluginSettings.getInstance(proj).state.jiraUrl
+        val jiraUrl = PluginSettings.getInstance(proj).connections.jiraUrl
         if (jiraUrl.isNullOrBlank()) null
         else JiraApiClient(
             baseUrl = jiraUrl.trimEnd('/'),

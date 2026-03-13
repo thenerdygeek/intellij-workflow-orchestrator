@@ -103,7 +103,7 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         val ticketId = settings.state.activeTicketId
         if (ticketId.isNullOrBlank()) return
 
-        val baseUrl = settings.state.jiraUrl.orEmpty().trimEnd('/')
+        val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
         if (baseUrl.isBlank()) return
 
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)

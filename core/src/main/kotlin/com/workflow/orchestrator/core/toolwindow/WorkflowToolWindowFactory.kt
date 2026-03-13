@@ -73,7 +73,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                 override fun actionPerformed(e: AnActionEvent) {
                     val settings = PluginSettings.getInstance(project)
                     val ticketId = settings.state.activeTicketId
-                    val jiraUrl = settings.state.jiraUrl
+                    val jiraUrl = settings.connections.jiraUrl
                     if (!ticketId.isNullOrBlank() && !jiraUrl.isNullOrBlank()) {
                         BrowserUtil.browse("${jiraUrl.trimEnd('/')}/browse/$ticketId")
                     }
@@ -82,7 +82,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                 override fun update(e: AnActionEvent) {
                     val settings = PluginSettings.getInstance(project)
                     val hasTicket = !settings.state.activeTicketId.isNullOrBlank()
-                    val hasUrl = !settings.state.jiraUrl.isNullOrBlank()
+                    val hasUrl = !settings.connections.jiraUrl.isNullOrBlank()
                     e.presentation.isEnabled = hasTicket && hasUrl
                     if (hasTicket) {
                         e.presentation.text = "Open ${settings.state.activeTicketId} in Jira"
@@ -162,14 +162,14 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             add(object : DumbAwareAction("Open Jira Board", "Open Jira board in browser", AllIcons.General.Web) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val settings = PluginSettings.getInstance(project)
-                    val jiraUrl = settings.state.jiraUrl
+                    val jiraUrl = settings.connections.jiraUrl
                     if (!jiraUrl.isNullOrBlank()) {
                         BrowserUtil.browse("${jiraUrl.trimEnd('/')}/secure/RapidBoard.jspa")
                     }
                 }
 
                 override fun update(e: AnActionEvent) {
-                    e.presentation.isEnabled = !PluginSettings.getInstance(project).state.jiraUrl.isNullOrBlank()
+                    e.presentation.isEnabled = !PluginSettings.getInstance(project).connections.jiraUrl.isNullOrBlank()
                 }
 
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -179,14 +179,14 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             add(object : DumbAwareAction("Open SonarQube", "Open SonarQube dashboard in browser", AllIcons.General.Web) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val settings = PluginSettings.getInstance(project)
-                    val sonarUrl = settings.state.sonarUrl
+                    val sonarUrl = settings.connections.sonarUrl
                     if (!sonarUrl.isNullOrBlank()) {
                         BrowserUtil.browse(sonarUrl.trimEnd('/'))
                     }
                 }
 
                 override fun update(e: AnActionEvent) {
-                    e.presentation.isEnabled = !PluginSettings.getInstance(project).state.sonarUrl.isNullOrBlank()
+                    e.presentation.isEnabled = !PluginSettings.getInstance(project).connections.sonarUrl.isNullOrBlank()
                 }
 
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -196,14 +196,14 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             add(object : DumbAwareAction("Open Bamboo", "Open Bamboo build dashboard in browser", AllIcons.General.Web) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val settings = PluginSettings.getInstance(project)
-                    val bambooUrl = settings.state.bambooUrl
+                    val bambooUrl = settings.connections.bambooUrl
                     if (!bambooUrl.isNullOrBlank()) {
                         BrowserUtil.browse(bambooUrl.trimEnd('/'))
                     }
                 }
 
                 override fun update(e: AnActionEvent) {
-                    e.presentation.isEnabled = !PluginSettings.getInstance(project).state.bambooUrl.isNullOrBlank()
+                    e.presentation.isEnabled = !PluginSettings.getInstance(project).connections.bambooUrl.isNullOrBlank()
                 }
 
                 override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -248,10 +248,12 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     private fun settingsSnapshot(project: Project): String {
-        val s = PluginSettings.getInstance(project).state
+        val settings = PluginSettings.getInstance(project)
+        val s = settings.state
+        val c = settings.connections
         return buildString {
             // Connection URLs
-            append("${s.jiraUrl}|${s.bambooUrl}|${s.sonarUrl}|${s.bitbucketUrl}|${s.sourcegraphUrl}|${s.nexusUrl}")
+            append("${c.jiraUrl}|${c.bambooUrl}|${c.sonarUrl}|${c.bitbucketUrl}|${c.sourcegraphUrl}|${c.nexusUrl}")
             // Board config
             append("|board=${s.jiraBoardId}|boardType=${s.jiraBoardType}|boardName=${s.jiraBoardName}")
             // Module toggles

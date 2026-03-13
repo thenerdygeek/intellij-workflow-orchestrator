@@ -14,7 +14,7 @@ class BuildTabProvider : WorkflowTabProvider {
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
-        return if (!settings.state.bambooUrl.isNullOrBlank()) {
+        return if (!settings.connections.bambooUrl.isNullOrBlank()) {
             BuildDashboardPanel(project)
         } else {
             EmptyStatePanel(project, "No builds found.\nConnect to Bamboo in Settings to get started.")

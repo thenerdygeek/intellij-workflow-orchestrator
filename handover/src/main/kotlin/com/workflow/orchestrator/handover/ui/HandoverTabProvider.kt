@@ -14,8 +14,8 @@ class HandoverTabProvider : WorkflowTabProvider {
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
-        val hasJira = !settings.state.jiraUrl.isNullOrBlank()
-        val hasBitbucket = !settings.state.bitbucketUrl.isNullOrBlank()
+        val hasJira = !settings.connections.jiraUrl.isNullOrBlank()
+        val hasBitbucket = !settings.connections.bitbucketUrl.isNullOrBlank()
 
         return if (hasJira || hasBitbucket) {
             HandoverPanel(project)

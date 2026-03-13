@@ -43,7 +43,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private var localBuildRunning = false
     private val credentialStore = CredentialStore()
     private val apiClient = BambooApiClient(
-        baseUrl = settings.state.bambooUrl.orEmpty().trimEnd('/'),
+        baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
         tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
         connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
         readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()

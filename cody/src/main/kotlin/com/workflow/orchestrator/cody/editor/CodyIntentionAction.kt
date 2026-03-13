@@ -25,7 +25,7 @@ class CodyIntentionAction : IntentionAction {
     override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
         if (editor == null || file == null) return false
         val settings = PluginSettings.getInstance(project)
-        if (settings.state.sourcegraphUrl.isNullOrBlank()) return false
+        if (settings.connections.sourcegraphUrl.isNullOrBlank()) return false
         if (settings.state.codyEnabled == false) return false
         if (!CredentialStore().hasToken(ServiceType.SOURCEGRAPH)) return false
         val caretLine = editor.caretModel.logicalPosition.line

@@ -412,7 +412,7 @@ class SprintDashboardPanel(
             if (isHeader(selectedIssue)) return
             val settings = PluginSettings.getInstance(project)
             val pattern = settings.state.branchPattern ?: "feature/{ticketId}-{summary}"
-            val bitbucketUrl = settings.state.bitbucketUrl.orEmpty().trimEnd('/')
+            val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
             val projectKey = settings.state.bitbucketProjectKey.orEmpty()
             val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 

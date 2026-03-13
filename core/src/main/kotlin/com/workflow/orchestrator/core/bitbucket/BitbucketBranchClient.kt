@@ -19,10 +19,36 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 @Serializable
+data class BitbucketProject(
+    val key: String,
+    val name: String,
+    val description: String? = null
+)
+
+@Serializable
+data class BitbucketRepo(
+    val slug: String,
+    val name: String,
+    val project: BitbucketProject? = null
+)
+
+@Serializable
 data class BitbucketBranch(
     val id: String,
     val displayId: String,
     val isDefault: Boolean = false
+)
+
+@Serializable
+private data class ProjectListResponse(
+    val values: List<BitbucketProject>,
+    val isLastPage: Boolean = true
+)
+
+@Serializable
+private data class RepoListResponse(
+    val values: List<BitbucketRepo>,
+    val isLastPage: Boolean = true
 )
 
 @Serializable
@@ -57,6 +83,71 @@ class BitbucketBranchClient(
             .addInterceptor(RetryInterceptor())
             .build()
     }
+
+    /**
+     * Lists projects in Bitbucket Server.
+     * GET /rest/api/1.0/projects
+     */
+    suspend fun getProjects(): ApiResult<List<BitbucketProject>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching projects")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects?limit=100")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<ProjectListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} projects")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching projects", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Lists repositories in a Bitbucket Server project.
+     * GET /rest/api/1.0/projects/{projectKey}/repos
+     */
+    suspend fun getRepos(projectKey: String): ApiResult<List<BitbucketRepo>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching repos for project $projectKey")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos?limit=100")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<RepoListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} repos in $projectKey")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Project $projectKey not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching repos", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
 
     /**
      * Lists branches in a Bitbucket Server repository.

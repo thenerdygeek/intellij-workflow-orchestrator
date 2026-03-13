@@ -48,7 +48,7 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
     ): Boolean {
         val project = configuration.project
         val settings = PluginSettings.getInstance(project)
-        val registryUrl = settings.state.nexusUrl.orEmpty().trimEnd('/')
+        val registryUrl = settings.connections.nexusUrl.orEmpty().trimEnd('/')
         if (registryUrl.isBlank()) {
             log.warn("[Automation:TagValidation] No registry URL configured")
             return false
@@ -65,7 +65,7 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
         if (tags.isEmpty()) return true
 
         val credentialStore = CredentialStore()
-        val nexusUsername = settings.state.nexusUsername.orEmpty()
+        val nexusUsername = settings.connections.nexusUsername.orEmpty()
         val nexusPassword = credentialStore.getNexusPassword() ?: ""
 
         val httpClient = OkHttpClient.Builder()

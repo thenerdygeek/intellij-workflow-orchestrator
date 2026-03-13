@@ -57,7 +57,7 @@ class JiraVcsLogColumn : VcsLogCustomColumn<String> {
             pendingFetches.add(ticketId)
             val project = model.logData.project
             val settings = PluginSettings.getInstance(project)
-            val baseUrl = settings.state.jiraUrl.orEmpty().trimEnd('/')
+            val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
             if (baseUrl.isNotBlank()) {
                 scope.launch {
                     try {

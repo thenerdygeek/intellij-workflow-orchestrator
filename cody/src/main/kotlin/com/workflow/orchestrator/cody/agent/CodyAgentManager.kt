@@ -167,7 +167,7 @@ class CodyAgentManager(private val project: Project) : Disposable {
             ideVersion = ideVersion,
             workspaceRootUri = java.io.File(project.basePath ?: ".").toURI().toString().trimEnd('/'),
             extensionConfiguration = ExtensionConfiguration(
-                serverEndpoint = settings.state.sourcegraphUrl ?: "",
+                serverEndpoint = settings.connections.sourcegraphUrl ?: "",
                 accessToken = token
             ),
             capabilities = ClientCapabilities()
