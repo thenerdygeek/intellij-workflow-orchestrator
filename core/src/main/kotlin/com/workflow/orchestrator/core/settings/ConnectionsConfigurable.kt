@@ -103,6 +103,8 @@ class ConnectionsConfigurable(
     ) {
         if (serviceType == ServiceType.NEXUS) {
             nexusServiceGroup(title, urlGetter, urlSetter)
+        } else if (serviceType == ServiceType.BITBUCKET) {
+            bitbucketServiceGroup(title, urlGetter, urlSetter)
         } else {
             tokenServiceGroup(title, serviceType, urlGetter, urlSetter)
         }
@@ -171,6 +173,95 @@ class ConnectionsConfigurable(
         // Load existing token in background to avoid blocking EDT on PasswordSafe read
         ApplicationManager.getApplication().executeOnPooledThread {
             val existingToken = credentialStore.getToken(serviceType) ?: ""
+            if (existingToken.isNotBlank()) {
+                currentToken = existingToken
+                SwingUtilities.invokeLater {
+                    tokenField?.text = existingToken
+                }
+            }
+        }
+    }
+
+    /**
+     * Bitbucket-specific service group with additional Project Key and Repo Slug fields.
+     * These are needed for branch creation via the Bitbucket REST API.
+     */
+    private fun Panel.bitbucketServiceGroup(
+        title: String,
+        urlGetter: () -> String,
+        urlSetter: (String) -> Unit
+    ) {
+        val statusLabel = JLabel("")
+        var currentUrl = urlGetter()
+        var currentToken = ""
+        var tokenField: JPasswordField? = null
+
+        collapsibleGroup(title) {
+            row("Server URL:") {
+                textField()
+                    .columns(40)
+                    .bindText(urlGetter, urlSetter)
+                    .onChanged { field -> currentUrl = field.text }
+                    .comment("e.g., https://bitbucket.company.com")
+            }
+            row("Access Token:") {
+                passwordField()
+                    .columns(40)
+                    .applyToComponent {
+                        tokenField = this
+                    }
+                    .onChanged { field ->
+                        val newToken = String(field.password)
+                        currentToken = newToken
+                        pendingTokens[ServiceType.BITBUCKET] = newToken
+                    }
+            }
+            row("Project Key:") {
+                textField()
+                    .columns(20)
+                    .bindText(
+                        { settings.state.bitbucketProjectKey.orEmpty() },
+                        { settings.state.bitbucketProjectKey = it }
+                    )
+                    .comment("Bitbucket project key (e.g., MYPROJ)")
+            }
+            row("Repository Slug:") {
+                textField()
+                    .columns(20)
+                    .bindText(
+                        { settings.state.bitbucketRepoSlug.orEmpty() },
+                        { settings.state.bitbucketRepoSlug = it }
+                    )
+                    .comment("Repository slug (e.g., my-service)")
+            }
+            row {
+                button("Test Connection") {
+                    val url = currentUrl.trim()
+                    val token = currentToken.ifBlank { credentialStore.getToken(ServiceType.BITBUCKET) }
+                    if (url.isBlank() || token.isNullOrBlank()) {
+                        statusLabel.text = "Please enter URL and token"
+                        return@button
+                    }
+                    statusLabel.text = "Testing..."
+                    runBackgroundableTask("Testing $title", project, false) {
+                        val result = runBlocking {
+                            authTestService.testConnection(ServiceType.BITBUCKET, url, token)
+                        }
+                        SwingUtilities.invokeLater {
+                            statusLabel.text = when (result) {
+                                is ApiResult.Success -> "\u2713 Connected successfully"
+                                is ApiResult.Error -> "\u2717 ${result.message}"
+                            }
+                        }
+                    }
+                }
+                cell(statusLabel)
+            }
+        }
+
+        // Load existing token in background
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val existingToken = credentialStore.getToken(ServiceType.BITBUCKET) ?: ""
             if (existingToken.isNotBlank()) {
                 currentToken = existingToken
                 SwingUtilities.invokeLater {
