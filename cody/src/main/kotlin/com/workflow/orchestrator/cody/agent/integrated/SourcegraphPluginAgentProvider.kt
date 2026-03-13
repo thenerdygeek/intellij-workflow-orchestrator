@@ -64,7 +64,29 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
         return serverCache.computeIfAbsent(key) {
             val sourcegraphServer = extractServerProxy(project)
                 ?: throw IllegalStateException("Cannot acquire Sourcegraph Cody agent server")
+            logServerMethods(sourcegraphServer)
             createAdapter(sourcegraphServer)
+        }
+    }
+
+    /**
+     * Dumps all methods on the Sourcegraph server proxy to the log.
+     * Invaluable for debugging protocol mismatches between our interface and theirs.
+     */
+    private fun logServerMethods(server: Any) {
+        try {
+            val methods = server.javaClass.methods
+                .filter { it.declaringClass != Any::class.java }
+                .sortedBy { it.name }
+            log.info("[Cody:Integrated] Sourcegraph server proxy class: ${server.javaClass.name}")
+            log.info("[Cody:Integrated] Exposed methods (${methods.size}):")
+            for (m in methods) {
+                val params = m.parameterTypes.joinToString(", ") { it.simpleName }
+                val annotations = m.annotations.joinToString(" ") { "@${it.annotationClass.simpleName}" }
+                log.info("[Cody:Integrated]   ${m.name}($params) -> ${m.returnType.simpleName} $annotations")
+            }
+        } catch (e: Exception) {
+            log.debug("[Cody:Integrated] Failed to log server methods", e)
         }
     }
 
@@ -144,6 +166,9 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
             val serviceClass = loadAgentServiceClass() ?: return null
             val service = project.getService(serviceClass) ?: return null
 
+            // Log CodyAgentService structure for debugging
+            logClassStructure("CodyAgentService", serviceClass)
+
             // The field is "codyAgent: CompletableFuture<CodyAgent>"
             val future = tryGetField(service, "codyAgent") ?: run {
                 log.debug("Field 'codyAgent' not found on CodyAgentService, trying legacy 'agent'")
@@ -161,12 +186,33 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
                 future
             }
 
+            // Log CodyAgent structure
+            logClassStructure("CodyAgent", agent.javaClass)
+
             // Get the server proxy from the CodyAgent
             tryGetField(agent, "server")
                 ?: tryCallMethod(agent, "getServer")
         } catch (e: Exception) {
             log.warn("Failed to extract Sourcegraph server proxy", e)
             null
+        }
+    }
+
+    private fun logClassStructure(label: String, clazz: Class<*>) {
+        try {
+            val fields = clazz.declaredFields.sortedBy { it.name }
+            log.info("[Cody:Integrated] $label fields (${fields.size}):")
+            for (f in fields) {
+                log.info("[Cody:Integrated]   ${f.name}: ${f.type.simpleName}")
+            }
+            val methods = clazz.declaredMethods.filter { it.name != "access\$" }.sortedBy { it.name }
+            log.info("[Cody:Integrated] $label methods (${methods.size}):")
+            for (m in methods) {
+                val params = m.parameterTypes.joinToString(", ") { it.simpleName }
+                log.info("[Cody:Integrated]   ${m.name}($params) -> ${m.returnType.simpleName}")
+            }
+        } catch (e: Exception) {
+            log.debug("[Cody:Integrated] Failed to log $label structure", e)
         }
     }
 
