@@ -42,11 +42,19 @@ class CodyBranchNameGeneratorImpl : BranchNameAiGenerator {
 
             // Step 2: Create new chat session
             log.info("[Cody:BranchGen] Step 2: Creating new chat session...")
-            val chatId = withTimeoutOrNull(15_000) {
-                server.chatNew().await()
+            val chatId = try {
+                withTimeoutOrNull(15_000) {
+                    server.chatNew().await()
+                }
+            } catch (e: Exception) {
+                log.warn("[Cody:BranchGen] Step 2 FAILED: chatNew() threw: ${e.message}")
+                log.warn("[Cody:BranchGen] The Sourcegraph Cody IDE plugin does not expose chat/new. " +
+                    "Install the Cody CLI for standalone mode: npm install -g @sourcegraph/cody")
+                return null
             }
             if (chatId == null) {
-                log.error("[Cody:BranchGen] Step 2 FAILED: Timed out creating chat session (15s)")
+                log.error("[Cody:BranchGen] Step 2 FAILED: chatNew() returned null or timed out (15s). " +
+                    "If using Sourcegraph Cody plugin, install CLI instead: npm install -g @sourcegraph/cody")
                 return null
             }
             log.info("[Cody:BranchGen] Step 2 complete: Chat session created with id='$chatId'")

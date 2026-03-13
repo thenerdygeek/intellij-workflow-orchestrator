@@ -4,12 +4,16 @@ import com.intellij.openapi.project.Project
 
 /**
  * Provider that spawns our own Cody Agent subprocess.
- * This is the default fallback when the official Sourcegraph Cody plugin is not installed.
+ *
+ * Priority 200 (higher than Sourcegraph plugin's 100) because the standalone
+ * agent supports the full protocol including chat/new and chat/submitMessage,
+ * whereas the Sourcegraph IDE plugin's internal server has moved to webview-based
+ * chat and no longer exposes those methods.
  */
 class StandaloneCodyAgentProvider : CodyAgentProvider {
 
     override val displayName = "Standalone Agent"
-    override val priority = 0
+    override val priority = 200
 
     override suspend fun isAvailable(project: Project): Boolean {
         val manager = CodyAgentManager.getInstance(project)
