@@ -77,7 +77,16 @@ class CodyAgentManager(private val project: Project) : Disposable {
     }
 
     private fun startAgent(binaryPath: String, settings: PluginSettings, token: String): CodyAgentServer {
-        val pb = ProcessBuilder(binaryPath, "api", "jsonrpc-stdio")
+        // On Windows, .cmd files must be run via cmd.exe /c
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val command = if (isWindows && binaryPath.endsWith(".cmd", ignoreCase = true)) {
+            listOf("cmd.exe", "/c", binaryPath, "api", "jsonrpc-stdio")
+        } else {
+            listOf(binaryPath, "api", "jsonrpc-stdio")
+        }
+        log.info("[CodyAgent] Starting process: ${command.joinToString(" ")}")
+
+        val pb = ProcessBuilder(command)
             .redirectErrorStream(false)
 
         val env = pb.environment()
@@ -85,6 +94,15 @@ class CodyAgentManager(private val project: Project) : Disposable {
 
         val proc = pb.start()
         process = proc
+
+        // Log stderr in a daemon thread for debugging agent startup issues
+        Thread({
+            try {
+                proc.errorStream.bufferedReader().forEachLine { line ->
+                    log.warn("[CodyAgent:stderr] $line")
+                }
+            } catch (_: Exception) {}
+        }, "cody-agent-stderr").apply { isDaemon = true }.start()
 
         val agentClient = CodyAgentClient(project)
         _client = agentClient

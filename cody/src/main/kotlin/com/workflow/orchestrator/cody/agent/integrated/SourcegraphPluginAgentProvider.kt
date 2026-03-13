@@ -297,7 +297,13 @@ private class SourcegraphServerInvocationHandler(
 
         return try {
             if (args == null || args.isEmpty()) {
-                targetMethod.invoke(target)
+                // If target expects a Void param (Sourcegraph convention), pass null
+                if (targetMethod.parameterCount == 1 &&
+                    targetMethod.parameterTypes[0] == Void::class.java) {
+                    targetMethod.invoke(target, null as Any?)
+                } else {
+                    targetMethod.invoke(target)
+                }
             } else {
                 // Convert our DTO params to the Sourcegraph equivalent via JSON round-trip
                 val convertedArgs = args.mapIndexed { index, arg ->
@@ -320,7 +326,7 @@ private class SourcegraphServerInvocationHandler(
                 val paramCount = ourMethod.parameterCount
                 // Try exact name match first
                 target.javaClass.methods.firstOrNull { m ->
-                    m.name == ourMethod.name && m.parameterCount == paramCount
+                    m.name == ourMethod.name && paramsCompatible(paramCount, m)
                 }
                 // Sourcegraph uses underscore naming derived from JSON-RPC method names:
                 // "editTask/accept" → "editTask_accept" (slash replaced with underscore,
@@ -335,14 +341,14 @@ private class SourcegraphServerInvocationHandler(
                     if (jsonRpcName != null) {
                         val underscored = jsonRpcName.replace('/', '_')
                         target.javaClass.methods.firstOrNull { m ->
-                            m.name == underscored && m.parameterCount == paramCount
+                            m.name == underscored && paramsCompatible(paramCount, m)
                         }
                     } else {
                         // Fallback: naive camelCase to underscore conversion
                         val underscored = camelToUnderscore(ourMethod.name)
                         if (underscored != ourMethod.name) {
                             target.javaClass.methods.firstOrNull { m ->
-                                m.name == underscored && m.parameterCount == paramCount
+                                m.name == underscored && paramsCompatible(paramCount, m)
                             }
                         } else null
                     }
@@ -351,6 +357,19 @@ private class SourcegraphServerInvocationHandler(
                 null
             }
         }
+    }
+
+    /**
+     * Checks if our method's param count is compatible with the target method.
+     * Sourcegraph methods often take a Void parameter where ours take none
+     * (e.g., chat_new(Void) vs chatNew()). A Void param is effectively no-arg.
+     */
+    private fun paramsCompatible(ourParamCount: Int, targetMethod: Method): Boolean {
+        if (targetMethod.parameterCount == ourParamCount) return true
+        // Our 0-arg method matches target's 1-arg Void method
+        if (ourParamCount == 0 && targetMethod.parameterCount == 1 &&
+            targetMethod.parameterTypes[0] == Void::class.java) return true
+        return false
     }
 
     /**
