@@ -19,7 +19,7 @@ class CodyChatService(private val project: Project) {
                 id = chatId,
                 message = ChatMessage(
                     text = prompt,
-                    contextFiles = contextFiles
+                    contextItems = contextFiles
                 )
             )
         ).await()

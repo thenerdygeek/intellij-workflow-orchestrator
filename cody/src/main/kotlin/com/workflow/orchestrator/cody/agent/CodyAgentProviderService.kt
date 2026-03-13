@@ -68,6 +68,13 @@ class CodyAgentProviderService(private val project: Project) : Disposable {
     fun getServerOrNull(): CodyAgentServer? =
         activeProvider?.getServerOrNull(project)
 
+    /**
+     * Returns the [CodyAgentClient] for the standalone agent, or null if using integrated mode.
+     * Used to set state (e.g., pending edit instructions) on the client before server calls.
+     */
+    fun getClient(): CodyAgentClient? =
+        CodyAgentManager.getInstance(project).client
+
     fun isRunning(): Boolean =
         activeProvider?.isRunning(project) == true
 

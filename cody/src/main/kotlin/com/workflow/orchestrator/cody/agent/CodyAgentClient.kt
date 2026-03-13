@@ -64,4 +64,26 @@ class CodyAgentClient(private val project: Project) {
         log.info("Agent message: ${params.message}")
         return CompletableFuture.completedFuture(null)
     }
+
+    /**
+     * Handler for editTask/getUserInput — the agent asks for edit instructions.
+     * Auto-respond with the stored instruction (set by CodyEditService before requesting an edit).
+     */
+    @JsonRequest("editTask/getUserInput")
+    fun editTaskGetUserInput(params: Any?): CompletableFuture<EditTaskUserInputResponse> {
+        log.info("Agent requesting user input for edit task")
+        val instruction = pendingEditInstruction ?: "Fix the issue"
+        return CompletableFuture.completedFuture(
+            EditTaskUserInputResponse(instruction = instruction)
+        )
+    }
+
+    /** Set by CodyEditService before requesting an edit, consumed by editTask/getUserInput handler. */
+    @Volatile
+    var pendingEditInstruction: String? = null
 }
+
+data class EditTaskUserInputResponse(
+    val instruction: String,
+    val selectedModelId: String? = null
+)

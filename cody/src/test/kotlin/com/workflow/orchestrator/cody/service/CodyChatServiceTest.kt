@@ -71,9 +71,9 @@ class CodyChatServiceTest {
         assertEquals("feat: add new endpoint", result)
         verify {
             mockServer.chatSubmitMessage(match {
-                it.message.contextFiles.size == 2 &&
-                    it.message.contextFiles[0].uri.fsPath == "/src/main/kotlin/Foo.kt" &&
-                    it.message.contextFiles[1].uri.fsPath == "/src/main/kotlin/Bar.kt"
+                it.message.contextItems.size == 2 &&
+                    it.message.contextItems[0].uri.fsPath == "/src/main/kotlin/Foo.kt" &&
+                    it.message.contextItems[1].uri.fsPath == "/src/main/kotlin/Bar.kt"
             })
         }
     }
@@ -100,7 +100,7 @@ class TestCodyChatService(
                 id = chatId,
                 message = ChatMessage(
                     text = prompt,
-                    contextFiles = contextFiles
+                    contextItems = contextFiles
                 )
             )
         ).get()

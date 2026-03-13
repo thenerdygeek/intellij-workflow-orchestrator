@@ -15,7 +15,10 @@ class CodyEditService(private val project: Project) {
         instruction: String,
         contextFiles: List<ContextFile> = emptyList()
     ): EditTask {
-        val server = providerService().ensureRunning()
+        val providerSvc = providerService()
+        val server = providerSvc.ensureRunning()
+        // Set pending instruction so editTask/getUserInput handler can respond
+        setPendingEditInstruction(providerSvc, instruction)
         server.textDocumentDidFocus(TextDocumentIdentifier(filePath))
         return server.editCommandsCode(
             EditCommandsCodeParams(
@@ -32,7 +35,8 @@ class CodyEditService(private val project: Project) {
         targetRange: Range,
         existingTestFile: String? = null
     ): EditTask {
-        val server = providerService().ensureRunning()
+        val providerSvc = providerService()
+        val server = providerSvc.ensureRunning()
         server.textDocumentDidFocus(TextDocumentIdentifier(filePath))
         val instruction = buildString {
             append("Generate a unit test covering the code at lines ")
@@ -41,9 +45,17 @@ class CodyEditService(private val project: Project) {
                 append(". Add to existing test file: $existingTestFile")
             }
         }
+        setPendingEditInstruction(providerSvc, instruction)
         return server.editCommandsCode(
             EditCommandsCodeParams(instruction = instruction, mode = "edit", range = targetRange)
         ).await()
+    }
+
+    private fun setPendingEditInstruction(
+        providerSvc: CodyAgentProviderService,
+        instruction: String
+    ) {
+        providerSvc.getClient()?.pendingEditInstruction = instruction
     }
 
     suspend fun acceptEdit(taskId: String) {

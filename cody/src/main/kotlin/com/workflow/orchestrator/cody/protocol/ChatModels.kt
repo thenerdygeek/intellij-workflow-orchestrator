@@ -10,7 +10,7 @@ data class ChatMessage(
     val text: String,
     val submitType: String = "user",
     val addEnhancedContext: Boolean = true,
-    val contextFiles: List<ContextFile> = emptyList()
+    val contextItems: List<ContextFile> = emptyList()
 )
 
 data class ChatResponse(
@@ -48,6 +48,7 @@ data class ContextFile(
 }
 
 data class ContextFileUri(
+    val scheme: String = "file",
     val fsPath: String,
     val path: String
 )

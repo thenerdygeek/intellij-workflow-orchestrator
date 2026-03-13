@@ -15,7 +15,8 @@ data class ExtensionConfiguration(
     val serverEndpoint: String,
     val accessToken: String,
     val customHeaders: Map<String, String> = emptyMap(),
-    val codebase: String? = null
+    val codebase: String? = null,
+    val customConfiguration: Map<String, Any> = emptyMap()
 )
 
 data class ClientCapabilities(
