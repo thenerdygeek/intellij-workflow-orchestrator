@@ -115,15 +115,19 @@ class WorkflowMappingConfigurable(private val project: Project) :
                             SwingUtilities.invokeLater {
                                 when (result) {
                                     is ApiResult.Success -> {
+                                        val allBoards = result.data
                                         val filtered = if (regex != null) {
-                                            result.data.filter { regex.containsMatchIn(it.name) }
+                                            allBoards.filter { regex.containsMatchIn(it.name) }
                                         } else {
-                                            result.data
+                                            allBoards
                                         }
                                         boardComboBox.removeAllItems()
                                         if (filtered.isEmpty()) {
-                                            val msg = if (regex != null && result.data.isNotEmpty()) {
-                                                "${result.data.size} board(s) found, none match regex"
+                                            val msg = if (regex != null && allBoards.isNotEmpty()) {
+                                                "${allBoards.size} board(s) found, none match regex '$currentRegex'. " +
+                                                "Boards: ${allBoards.take(10).joinToString { it.name }}"
+                                            } else if (allBoards.isEmpty()) {
+                                                "No boards returned from Jira. Check your permissions."
                                             } else {
                                                 "No boards found"
                                             }
@@ -133,7 +137,7 @@ class WorkflowMappingConfigurable(private val project: Project) :
                                                 boardComboBox.addItem(BoardItem(board))
                                             }
                                             boardComboBox.selectedIndex = 0
-                                            val note = if (regex != null) " (${filtered.size}/${result.data.size} match)" else ""
+                                            val note = if (regex != null) " (${filtered.size}/${allBoards.size} match)" else ""
                                             boardStatusLabel.text = "${filtered.size} board(s)$note"
                                         }
                                     }

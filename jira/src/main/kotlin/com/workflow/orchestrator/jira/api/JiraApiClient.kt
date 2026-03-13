@@ -44,7 +44,7 @@ class JiraApiClient(
         val params = mutableListOf<String>()
         if (boardType.isNotBlank()) params.add("type=$boardType")
         if (nameFilter.isNotBlank()) params.add("name=${URLEncoder.encode(nameFilter, "UTF-8")}")
-        params.add("maxResults=50")
+        params.add("maxResults=200")
         val query = if (params.isNotEmpty()) "?${params.joinToString("&")}" else ""
         return get<JiraBoardSearchResult>("/rest/agile/1.0/board$query").map { it.values }
     }
