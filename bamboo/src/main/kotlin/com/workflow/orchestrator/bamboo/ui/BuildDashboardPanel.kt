@@ -23,6 +23,7 @@ import com.workflow.orchestrator.bamboo.service.BuildMonitorService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.maven.MavenBuildService
 import com.workflow.orchestrator.core.maven.SurefireReportParser
+import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -51,7 +52,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val monitorService = BuildMonitorService.getInstance(project)
 
     private val stageListPanel = StageListPanel()
-    private val stageDetailPanel = StageDetailPanel()
+    private val stageDetailPanel = StageDetailPanel(project, this)
 
     private val splitter = JBSplitter(false, 0.35f).apply {
         setSplitterProportionKey("workflow.build.splitter")
@@ -199,10 +200,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 val result = mavenService.runBuild(goals)
 
                 // Parse Surefire test results if this was a test run
-                val testResults = if (goals.contains("test")) {
-                    val basePath = project.basePath
-                    if (basePath != null) SurefireReportParser.parseProjectReports(basePath) else null
+                val basePath = project.basePath
+                val detailedResults = if (goals.contains("test") && basePath != null) {
+                    SurefireReportParser.parseDetailedReports(basePath)
                 } else null
+
+                val testResults = detailedResults?.first
+                val teamCityMessages = if (detailedResults != null) {
+                    TeamCityMessageConverter.convert(detailedResults.second)
+                } else emptyList()
 
                 invokeLater {
                     localBuildRunning = false
@@ -237,6 +243,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     }
                     val errors = BuildLogParser.parse(logContent)
                     stageDetailPanel.showLog(logContent, errors)
+
+                    // Feed native test runner UI with TeamCity messages
+                    if (teamCityMessages.isNotEmpty()) {
+                        stageDetailPanel.showTestResults(teamCityMessages)
+                    }
+
                     log.info("[Build:Local] mvn $goals -> ${if (result.success) "SUCCESS" else "FAILED"}")
                 }
             } catch (e: Exception) {
