@@ -268,6 +268,9 @@
         <!-- Bamboo Run Configuration -->
         <configurationType implementation="com.workflow.orchestrator.bamboo.run.BambooBuildConfigurationType"/>
 
+        <!-- Diff: Coverage Gutter Highlights -->
+        <diff.DiffExtension implementation="com.workflow.orchestrator.sonar.diff.CoverageDiffExtension"/>
+
         <!-- Before Run: Docker Tag Validation -->
         <stepsBeforeRunProvider
             implementation="com.workflow.orchestrator.automation.run.TagValidationBeforeRunProvider"/>

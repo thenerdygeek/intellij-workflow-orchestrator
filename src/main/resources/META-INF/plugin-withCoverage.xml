@@ -6,9 +6,6 @@
             implementation="com.workflow.orchestrator.sonar.coverage.SonarCoverageRunner"/>
         <coverageEngine
             implementation="com.workflow.orchestrator.sonar.coverage.SonarCoverageEngine"/>
-    </extensions>
-
-    <extensions defaultExtensionNs="com.intellij">
         <projectService
             serviceImplementation="com.workflow.orchestrator.sonar.coverage.SonarCoverageAnnotator"/>
     </extensions>

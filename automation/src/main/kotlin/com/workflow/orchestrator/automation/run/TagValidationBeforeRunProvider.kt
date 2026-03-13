@@ -8,6 +8,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.Key
 import com.intellij.icons.AllIcons
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.model.DockerTagsProvider
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -53,13 +54,9 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
             return false
         }
 
-        // Try to get docker tags from run configuration
-        val buildVariables = try {
-            val options = configuration.javaClass.getMethod("getOptions").invoke(configuration)
-            options.javaClass.getMethod("getBuildVariables").invoke(options) as? String ?: ""
-        } catch (e: Exception) {
-            return true // Not a Bamboo run config, skip
-        }
+        // Only validate configs that provide docker tags via the shared interface
+        if (configuration !is DockerTagsProvider) return true
+        val buildVariables = (configuration as DockerTagsProvider).getDockerTagsJson()
 
         val dockerTagsJson = TagValidationLogic.extractDockerTagsJson(buildVariables)
         if (dockerTagsJson.isBlank()) return true

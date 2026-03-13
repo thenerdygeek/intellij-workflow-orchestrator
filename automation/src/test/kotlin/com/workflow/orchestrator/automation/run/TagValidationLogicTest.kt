@@ -37,4 +37,32 @@ class TagValidationLogicTest {
         val url = TagValidationLogic.buildManifestUrl("https://nexus.example.com/", "myapp/svc", "latest")
         assertEquals("https://nexus.example.com/v2/myapp/svc/manifests/latest", url)
     }
+
+    // extractDockerTagsJson tests
+
+    @Test
+    fun `extracts dockerTagsAsJson from valid build variables`() {
+        val buildVars = """{"dockerTagsAsJson": "{\"svc-a\": \"1.0.0\"}", "other": "value"}"""
+        val result = TagValidationLogic.extractDockerTagsJson(buildVars)
+        assertEquals("""{"svc-a": "1.0.0"}""", result)
+    }
+
+    @Test
+    fun `returns empty when dockerTagsAsJson key missing`() {
+        val buildVars = """{"someOtherKey": "value"}"""
+        val result = TagValidationLogic.extractDockerTagsJson(buildVars)
+        assertEquals("", result)
+    }
+
+    @Test
+    fun `returns empty for malformed build variables JSON`() {
+        val result = TagValidationLogic.extractDockerTagsJson("not valid json {")
+        assertEquals("", result)
+    }
+
+    @Test
+    fun `returns empty for blank build variables`() {
+        val result = TagValidationLogic.extractDockerTagsJson("")
+        assertEquals("", result)
+    }
 }

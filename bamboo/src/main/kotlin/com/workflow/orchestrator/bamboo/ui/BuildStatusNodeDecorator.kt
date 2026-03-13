@@ -3,6 +3,7 @@ package com.workflow.orchestrator.bamboo.ui
 import com.intellij.ide.projectView.PresentationData
 import com.intellij.ide.projectView.ProjectViewNode
 import com.intellij.ide.projectView.ProjectViewNodeDecorator
+import com.intellij.openapi.project.guessProjectDir
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.workflow.orchestrator.bamboo.model.BuildStatus
@@ -17,11 +18,11 @@ class BuildStatusNodeDecorator : ProjectViewNodeDecorator {
 
     override fun decorate(node: ProjectViewNode<*>, data: PresentationData) {
         val project = node.project ?: return
-        val projectDir = project.basePath ?: return
+        val projectDir = project.guessProjectDir() ?: return
         val nodeFile = node.virtualFile ?: return
 
         // Only decorate the project root directory
-        if (nodeFile.path != projectDir) return
+        if (nodeFile != projectDir) return
 
         val state = try {
             BuildMonitorService.getInstance(project).stateFlow.value

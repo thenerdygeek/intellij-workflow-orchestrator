@@ -9,6 +9,7 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.rows
+import com.workflow.orchestrator.core.model.DockerTagsProvider
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepositoryManager
 import javax.swing.JComponent
@@ -34,7 +35,7 @@ class BambooBuildRunConfiguration(
     project: Project,
     factory: ConfigurationFactory,
     name: String
-) : RunConfigurationBase<BambooBuildRunConfigurationOptions>(project, factory, name) {
+) : RunConfigurationBase<BambooBuildRunConfigurationOptions>(project, factory, name), DockerTagsProvider {
 
     override fun getOptions(): BambooBuildRunConfigurationOptions {
         return super.getOptions() as BambooBuildRunConfigurationOptions
@@ -76,6 +77,8 @@ class BambooBuildRunConfiguration(
                 line.substring(0, idx).trim() to line.substring(idx + 1).trim()
             }
     }
+
+    override fun getDockerTagsJson(): String = options.buildVariables.orEmpty()
 
     // Public accessors for the settings editor
     var planKeyValue: String

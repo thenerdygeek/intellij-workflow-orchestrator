@@ -15,6 +15,7 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
 import java.io.OutputStream
 
@@ -42,7 +43,13 @@ class BambooBuildProcessHandler(
 ) : ProcessHandler() {
 
     private val log = Logger.getInstance(BambooBuildProcessHandler::class.java)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val parentJob = SupervisorJob()
+    private val scope = CoroutineScope(parentJob + Dispatchers.IO)
+
+    init {
+        // Cancel coroutine scope when project is disposed to prevent leaks
+        Disposer.register(environment.project, { parentJob.cancel() })
+    }
 
     override fun startNotify() {
         super.startNotify()
@@ -70,12 +77,20 @@ class BambooBuildProcessHandler(
         val branch = configuration.getBranch()
         val variables = configuration.getBuildVariables()
 
+        // Bamboo branch builds use planKey + branch suffix (e.g., PROJ-PLAN0 for branches)
+        // Pass the branch as a build variable so the Bamboo plan can use it
+        val effectiveVariables = if (branch.isNotBlank()) {
+            variables + ("bamboo.planRepository.1.branch" to branch)
+        } else {
+            variables
+        }
+
         printOutput("=== Bamboo Build Runner ===\n")
         printOutput("Plan Key: $planKey\n")
         if (branch.isNotBlank()) printOutput("Branch: $branch\n")
-        if (variables.isNotEmpty()) {
+        if (effectiveVariables.isNotEmpty()) {
             printOutput("Variables:\n")
-            variables.forEach { (k, v) -> printOutput("  $k = $v\n") }
+            effectiveVariables.forEach { (k, v) -> printOutput("  $k = $v\n") }
         }
         printOutput("\n")
 
@@ -89,7 +104,7 @@ class BambooBuildProcessHandler(
 
         printOutput("Triggering build...\n")
 
-        when (val triggerResult = client.triggerBuild(planKey, variables)) {
+        when (val triggerResult = client.triggerBuild(planKey, effectiveVariables)) {
             is ApiResult.Success -> {
                 val resultKey = triggerResult.data.buildResultKey
                 val buildNumber = triggerResult.data.buildNumber
