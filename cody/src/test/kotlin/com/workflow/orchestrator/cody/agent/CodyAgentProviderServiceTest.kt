@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test
 class CodyAgentProviderServiceTest {
 
     @Test
-    fun `StandaloneCodyAgentProvider has lowest priority`() {
+    fun `StandaloneCodyAgentProvider has highest priority`() {
         val provider = StandaloneCodyAgentProvider()
-        assertEquals(0, provider.priority)
+        assertEquals(200, provider.priority)
         assertEquals("Standalone Agent", provider.displayName)
         assertFalse(provider.handlesDocumentSync())
     }

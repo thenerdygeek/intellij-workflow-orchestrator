@@ -64,16 +64,16 @@ class CodyChatServiceTest {
         )
 
         val contextFiles = listOf(
-            ContextFile(uri = "/src/main/kotlin/Foo.kt"),
-            ContextFile(uri = "/src/main/kotlin/Bar.kt")
+            ContextFile.fromPath("/src/main/kotlin/Foo.kt"),
+            ContextFile.fromPath("/src/main/kotlin/Bar.kt")
         )
         val result = service.generateCommitMessage("diff --git a/...", contextFiles)
         assertEquals("feat: add new endpoint", result)
         verify {
             mockServer.chatSubmitMessage(match {
                 it.message.contextFiles.size == 2 &&
-                    it.message.contextFiles[0].uri == "/src/main/kotlin/Foo.kt" &&
-                    it.message.contextFiles[1].uri == "/src/main/kotlin/Bar.kt"
+                    it.message.contextFiles[0].uri.fsPath == "/src/main/kotlin/Foo.kt" &&
+                    it.message.contextFiles[1].uri.fsPath == "/src/main/kotlin/Bar.kt"
             })
         }
     }

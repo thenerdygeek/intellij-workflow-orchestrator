@@ -322,15 +322,30 @@ private class SourcegraphServerInvocationHandler(
                 target.javaClass.methods.firstOrNull { m ->
                     m.name == ourMethod.name && m.parameterCount == paramCount
                 }
-                // Sourcegraph uses underscore naming (chat_new) while we use
-                // camelCase (chatNew). Convert and retry.
+                // Sourcegraph uses underscore naming derived from JSON-RPC method names:
+                // "editTask/accept" → "editTask_accept" (slash replaced with underscore,
+                // camelCase preserved within each segment). Use the @JsonRequest annotation
+                // value to derive the correct Sourcegraph method name.
                 ?: run {
-                    val underscored = camelToUnderscore(ourMethod.name)
-                    if (underscored != ourMethod.name) {
+                    val jsonRpcName = ourMethod.getAnnotation(
+                        org.eclipse.lsp4j.jsonrpc.services.JsonRequest::class.java
+                    )?.value ?: ourMethod.getAnnotation(
+                        org.eclipse.lsp4j.jsonrpc.services.JsonNotification::class.java
+                    )?.value
+                    if (jsonRpcName != null) {
+                        val underscored = jsonRpcName.replace('/', '_')
                         target.javaClass.methods.firstOrNull { m ->
                             m.name == underscored && m.parameterCount == paramCount
                         }
-                    } else null
+                    } else {
+                        // Fallback: naive camelCase to underscore conversion
+                        val underscored = camelToUnderscore(ourMethod.name)
+                        if (underscored != ourMethod.name) {
+                            target.javaClass.methods.firstOrNull { m ->
+                                m.name == underscored && m.parameterCount == paramCount
+                            }
+                        } else null
+                    }
                 }
             } catch (e: Exception) {
                 null
@@ -365,7 +380,7 @@ private class SourcegraphServerInvocationHandler(
         }
     }
 
-    /** Converts camelCase to underscore: chatNew → chat_new, editTaskAccept → editTask_accept */
+    /** Fallback: naive camelCase to underscore. Only used when @JsonRequest annotation is absent. */
     private fun camelToUnderscore(name: String): String {
         val sb = StringBuilder()
         for ((i, c) in name.withIndex()) {
