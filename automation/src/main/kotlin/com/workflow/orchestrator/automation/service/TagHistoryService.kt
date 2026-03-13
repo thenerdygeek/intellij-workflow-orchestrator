@@ -41,6 +41,9 @@ class TagHistoryService {
     private val connection: Connection by lazy {
         val parentDir = File(dbPath).parentFile
         parentDir?.mkdirs()
+        // Explicitly load the SQLite JDBC driver — IntelliJ's plugin classloader
+        // isolates the driver JAR from DriverManager's system classloader SPI scan.
+        Class.forName("org.sqlite.JDBC")
         val conn = DriverManager.getConnection("jdbc:sqlite:$dbPath")
         conn.createStatement().use { stmt ->
             stmt.executeQuery("PRAGMA journal_mode = WAL").close()
