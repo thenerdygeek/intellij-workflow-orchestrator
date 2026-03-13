@@ -48,7 +48,6 @@ class WorkflowMappingConfigurable(private val project: Project) :
         selectedBoardType = settings.state.jiraBoardType ?: ""
         selectedBoardName = settings.state.jiraBoardName ?: ""
         val boardStatusLabel = JLabel("")
-        val boardSearchField = javax.swing.JTextField(20)
         val boardRegexField = javax.swing.JTextField(20)
         boardRegexField.text = settings.state.boardFilterRegex ?: ""
         boardRegexFieldRef = boardRegexField
@@ -80,23 +79,19 @@ class WorkflowMappingConfigurable(private val project: Project) :
             group("Board Configuration") {
                 row {
                     comment(
-                        "Search for your Jira board by name, then optionally filter results with a regex."
+                        "Filter boards by regex, pick one from the dropdown, then Apply."
                     )
                 }
-                row("Search boards:") {
-                    cell(boardSearchField)
+                row("Board filter:") {
+                    cell(boardRegexField)
                         .applyToComponent {
-                            toolTipText = "Enter part of your board name to search"
+                            toolTipText = "Case-insensitive regex matched against board names"
                         }
-                    button("Search") {
+                        .comment("e.g. <code>^MyTeam</code> or <code>sprint|kanban</code>")
+                    button("Fetch Boards") {
                         val jiraUrl = settings.state.jiraUrl
                         if (jiraUrl.isNullOrBlank()) {
                             boardStatusLabel.text = "Configure Jira URL in Connections first"
-                            return@button
-                        }
-                        val searchText = boardSearchField.text.trim()
-                        if (searchText.isBlank()) {
-                            boardStatusLabel.text = "Enter a board name to search"
                             return@button
                         }
                         val currentRegex = boardRegexField.text.trim()
@@ -109,14 +104,14 @@ class WorkflowMappingConfigurable(private val project: Project) :
                             }
                         } else null
 
-                        boardStatusLabel.text = "Searching..."
+                        boardStatusLabel.text = "Fetching boards..."
                         val credentialStore = CredentialStore()
                         val apiClient = JiraApiClient(
                             baseUrl = jiraUrl.trimEnd('/'),
                             tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
                         )
-                        runBackgroundableTask("Searching Jira Boards", project, false) {
-                            val result = runBlocking { apiClient.getBoards(nameFilter = searchText) }
+                        runBackgroundableTask("Fetching Jira Boards", project, false) {
+                            val result = runBlocking { apiClient.getBoards() }
                             SwingUtilities.invokeLater {
                                 when (result) {
                                     is ApiResult.Success -> {
@@ -128,9 +123,9 @@ class WorkflowMappingConfigurable(private val project: Project) :
                                         boardComboBox.removeAllItems()
                                         if (filtered.isEmpty()) {
                                             val msg = if (regex != null && result.data.isNotEmpty()) {
-                                                "${result.data.size} board(s) found but none match regex \"$currentRegex\""
+                                                "${result.data.size} board(s) found, none match regex"
                                             } else {
-                                                "No boards matching \"$searchText\""
+                                                "No boards found"
                                             }
                                             boardStatusLabel.text = msg
                                         } else {
@@ -138,8 +133,8 @@ class WorkflowMappingConfigurable(private val project: Project) :
                                                 boardComboBox.addItem(BoardItem(board))
                                             }
                                             boardComboBox.selectedIndex = 0
-                                            val regexNote = if (regex != null) " (${result.data.size} total, ${filtered.size} match regex)" else ""
-                                            boardStatusLabel.text = "${filtered.size} board(s) found$regexNote"
+                                            val note = if (regex != null) " (${filtered.size}/${result.data.size} match)" else ""
+                                            boardStatusLabel.text = "${filtered.size} board(s)$note"
                                         }
                                     }
                                     is ApiResult.Error -> {
@@ -150,16 +145,9 @@ class WorkflowMappingConfigurable(private val project: Project) :
                         }
                     }
                 }
-                row("Filter regex:") {
-                    cell(boardRegexField)
-                        .applyToComponent {
-                            toolTipText = "Regex applied to board names after search (case-insensitive)"
-                        }
-                        .comment("e.g. <code>^MyTeam</code> or <code>sprint|kanban</code> — only matching boards appear in the dropdown")
-                }
                 row("Selected board:") {
                     cell(boardComboBox)
-                        .comment("Choose from search results, then click Apply. The Sprint Dashboard will reload with this board.")
+                        .comment("Choose from results, then click Apply.")
                 }
                 row {
                     cell(boardStatusLabel)

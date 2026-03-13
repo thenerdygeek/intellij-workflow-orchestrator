@@ -15,7 +15,10 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
@@ -399,7 +402,7 @@ class SprintDashboardPanel(
 
     private inner class StartWorkAction : AnAction(
         "Start Work",
-        "Create branch and transition selected ticket to In Progress",
+        "Create branch on Bitbucket and transition selected ticket to In Progress",
         AllIcons.Actions.Execute
     ) {
         override fun actionPerformed(e: AnActionEvent) {
@@ -407,20 +410,77 @@ class SprintDashboardPanel(
             if (isHeader(selectedIssue)) return
             val settings = PluginSettings.getInstance(project)
             val pattern = settings.state.branchPattern ?: "feature/{ticketId}-{summary}"
+            val bitbucketUrl = settings.state.bitbucketUrl.orEmpty().trimEnd('/')
+            val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+            val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 
-            setLoading(true, "Starting work on ${selectedIssue.key}\u2026")
+            if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
+                setLoading(false, "Configure Bitbucket URL, project key, and repo slug in Settings first")
+                return
+            }
+
+            val credentialStore = CredentialStore()
+            val branchClient = BitbucketBranchClient(
+                baseUrl = bitbucketUrl,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
+
+            val defaultBranchName = branchingService.generateBranchName(
+                selectedIssue, pattern, settings.state.branchMaxSummaryLength
+            )
+            val defaultSource = settings.state.defaultTargetBranch.orEmpty().ifBlank { "develop" }
+
+            setLoading(true, "Fetching branches\u2026")
 
             scope.launch {
-                val result = branchingService.startWork(selectedIssue, pattern)
+                val branchesResult = branchingService.fetchRemoteBranches(branchClient, projectKey, repoSlug)
+
                 withContext(Dispatchers.Main) {
-                    when (result) {
-                        is ApiResult.Success -> {
-                            setLoading(false, "Branch created: ${result.data}")
-                            log.info("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")
-                        }
+                    setLoading(false, "")
+
+                    val branches = when (branchesResult) {
+                        is ApiResult.Success -> branchesResult.data
                         is ApiResult.Error -> {
-                            setLoading(false, "Start Work failed: ${result.message}")
-                            log.warn("[Jira:UI] Start Work failed for ${selectedIssue.key}: ${result.message}")
+                            setLoading(false, "Failed to fetch branches: ${branchesResult.message}")
+                            return@withContext
+                        }
+                    }
+
+                    // Show dialog on EDT
+                    val dialog = StartWorkDialog(
+                        project = project,
+                        ticketKey = selectedIssue.key,
+                        defaultBranchName = defaultBranchName,
+                        remoteBranches = branches,
+                        defaultSourceBranch = defaultSource
+                    )
+
+                    if (!dialog.showAndGet()) return@withContext
+                    val dialogResult = dialog.result ?: return@withContext
+
+                    setLoading(true, "Creating branch on Bitbucket\u2026")
+
+                    // Execute branch creation in background
+                    scope.launch {
+                        val result = branchingService.startWork(
+                            issue = selectedIssue,
+                            branchName = dialogResult.branchName,
+                            sourceBranch = dialogResult.sourceBranch,
+                            branchClient = branchClient,
+                            projectKey = projectKey,
+                            repoSlug = repoSlug
+                        )
+                        withContext(Dispatchers.Main) {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    setLoading(false, "Branch created: ${result.data}")
+                                    log.info("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")
+                                }
+                                is ApiResult.Error -> {
+                                    setLoading(false, "Start Work failed: ${result.message}")
+                                    log.warn("[Jira:UI] Start Work failed for ${selectedIssue.key}: ${result.message}")
+                                }
+                            }
                         }
                     }
                 }

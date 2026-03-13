@@ -1,12 +1,15 @@
 package com.workflow.orchestrator.jira.service
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.intellij.openapi.diagnostic.Logger
 import git4idea.branch.GitBrancher
+import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
 
 class BranchingService(
@@ -16,34 +19,86 @@ class BranchingService(
 ) {
     private val log = Logger.getInstance(BranchingService::class.java)
 
-    suspend fun startWork(issue: JiraIssue, branchPattern: String): ApiResult<String> {
-        log.info("[Jira:Branch] Resolving START_WORK intent for ticket ${issue.key}")
+    /**
+     * Fetches remote branches from Bitbucket for the Start Work dialog.
+     */
+    suspend fun fetchRemoteBranches(branchClient: BitbucketBranchClient, projectKey: String, repoSlug: String): ApiResult<List<BitbucketBranch>> {
+        return branchClient.getBranches(projectKey, repoSlug)
+    }
 
-        // 1. Generate branch name
-        val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
-        val branchName = BranchNameValidator.generateBranchName(
+    /**
+     * Generates a branch name from the configured pattern and issue details.
+     */
+    fun generateBranchName(issue: JiraIssue, branchPattern: String, maxSummaryLength: Int): String {
+        return BranchNameValidator.generateBranchName(
             pattern = branchPattern,
             ticketId = issue.key,
             summary = issue.fields.summary,
-            maxSummaryLength = settings.state.branchMaxSummaryLength
+            maxSummaryLength = maxSummaryLength
         )
-        log.info("[Jira:Branch] Creating branch $branchName for ticket ${issue.key}")
+    }
 
-        // 2. Create git branch
+    /**
+     * Creates a branch on Bitbucket, fetches it locally, checks it out,
+     * and transitions the Jira ticket to "In Progress".
+     *
+     * @param issue The Jira issue to start work on
+     * @param branchName The branch name (from the dialog)
+     * @param sourceBranch The source branch to create from (from the dialog)
+     * @param branchClient The Bitbucket branch client
+     * @param projectKey Bitbucket project key
+     * @param repoSlug Bitbucket repository slug
+     */
+    suspend fun startWork(
+        issue: JiraIssue,
+        branchName: String,
+        sourceBranch: String,
+        branchClient: BitbucketBranchClient,
+        projectKey: String,
+        repoSlug: String
+    ): ApiResult<String> {
+        log.info("[Jira:Branch] Creating remote branch '$branchName' from '$sourceBranch' for ${issue.key}")
+
+        // 1. Create branch on Bitbucket
+        val createResult = branchClient.createBranch(projectKey, repoSlug, branchName, sourceBranch)
+        when (createResult) {
+            is ApiResult.Error -> {
+                log.error("[Jira:Branch] Failed to create remote branch: ${createResult.message}")
+                return createResult
+            }
+            is ApiResult.Success -> {
+                log.info("[Jira:Branch] Remote branch '${createResult.data.displayId}' created")
+            }
+        }
+
+        // 2. Fetch and checkout locally
         val repositories = GitRepositoryManager.getInstance(project).repositories
         if (repositories.isEmpty()) {
-            log.error("[Jira:Branch] No Git repository found in project")
             return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
         }
 
         try {
-            GitBrancher.getInstance(project).checkoutNewBranch(branchName, repositories)
-            log.info("[Jira:Branch] Branch $branchName created and checked out successfully")
+            // Fetch from remote to get the new branch
+            val repo = repositories.first()
+            val git = Git.getInstance()
+            val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
+            if (!fetchResult.success()) {
+                log.warn("[Jira:Branch] Git fetch returned warnings: ${fetchResult.errorOutputAsJoinedString}")
+            }
+
+            // Checkout the remote branch as a local tracking branch
+            GitBrancher.getInstance(project).checkoutNewBranchStartingFrom(
+                branchName,
+                "origin/$branchName",
+                repositories,
+                null
+            )
+            log.info("[Jira:Branch] Checked out '$branchName' locally")
         } catch (e: Exception) {
-            log.error("[Jira:Branch] Failed to create branch '$branchName': ${e.message}", e)
+            log.error("[Jira:Branch] Failed to checkout branch locally: ${e.message}", e)
             return ApiResult.Error(
                 ErrorType.SERVER_ERROR,
-                "Failed to create branch '$branchName': ${e.message}",
+                "Branch created on Bitbucket but failed to checkout locally: ${e.message}",
                 e
             )
         }
@@ -52,8 +107,6 @@ class BranchingService(
         log.info("[Jira:Branch] Transitioning ${issue.key} to In Progress")
         val transitionResult = transitionToInProgress(issue.key)
         if (transitionResult is ApiResult.Error) {
-            // Branch was created, just warn about transition failure
-            // Don't fail the whole operation
             log.warn("[Jira:Branch] Jira transition failed for ${issue.key}, but branch was created: ${transitionResult.message}")
         }
 
