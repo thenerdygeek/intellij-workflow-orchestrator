@@ -98,8 +98,9 @@ class CodyBranchNameGeneratorImpl : BranchNameAiGenerator {
             log.info("[Cody:BranchGen] === Branch name generation SUCCESS for $ticketKey: '$slug' ===")
             slug
         } catch (e: IllegalStateException) {
-            log.warn("[Cody:BranchGen] Cody agent not available: ${e.message}")
-            log.warn("[Cody:BranchGen] Ensure Cody/Sourcegraph is configured in Settings > Tools > Workflow Orchestrator > Connections")
+            log.warn("[Cody:BranchGen] Cody agent not available: ${e.message}", e)
+            log.warn("[Cody:BranchGen] Troubleshooting: 1) Ensure Sourcegraph Cody plugin is installed and connected, " +
+                "OR 2) Configure cody-agent binary path in Settings > Tools > Workflow Orchestrator > Advanced")
             null
         } catch (e: Exception) {
             log.error("[Cody:BranchGen] Unexpected error during branch name generation", e)

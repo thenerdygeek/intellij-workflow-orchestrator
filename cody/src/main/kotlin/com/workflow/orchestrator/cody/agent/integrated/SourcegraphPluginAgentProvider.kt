@@ -35,13 +35,24 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
     override suspend fun isAvailable(project: Project): Boolean {
         return try {
             val agentServiceClass = loadAgentServiceClass() ?: return false
-            val service = project.getService(agentServiceClass) ?: return false
-            // Check if the agent is connected by looking for an isConnected-like method
-            val isConnected = findIsConnectedMethod(agentServiceClass, service)
-            if (!isConnected) {
+            // Use the static isConnected(project) method on CodyAgentService
+            val isConnectedMethod = try {
+                agentServiceClass.getMethod("isConnected", Project::class.java)
+            } catch (e: NoSuchMethodException) {
+                log.debug("CodyAgentService.isConnected(Project) not found, falling back")
+                null
+            }
+            val connected = if (isConnectedMethod != null) {
+                isConnectedMethod.invoke(null, project) as? Boolean ?: false
+            } else {
+                // Fallback: try instance-level check
+                val service = project.getService(agentServiceClass) ?: return false
+                findIsConnectedLegacy(agentServiceClass, service)
+            }
+            if (!connected) {
                 log.debug("Sourcegraph Cody plugin is installed but agent is not connected")
             }
-            isConnected
+            connected
         } catch (e: Exception) {
             log.debug("Sourcegraph Cody plugin availability check failed", e)
             false
@@ -60,8 +71,15 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
     override fun isRunning(project: Project): Boolean {
         return try {
             val agentServiceClass = loadAgentServiceClass() ?: return false
-            val service = project.getService(agentServiceClass) ?: return false
-            findIsConnectedMethod(agentServiceClass, service)
+            val isConnectedMethod = try {
+                agentServiceClass.getMethod("isConnected", Project::class.java)
+            } catch (e: NoSuchMethodException) { null }
+            if (isConnectedMethod != null) {
+                isConnectedMethod.invoke(null, project) as? Boolean ?: false
+            } else {
+                val service = project.getService(agentServiceClass) ?: return false
+                findIsConnectedLegacy(agentServiceClass, service)
+            }
         } catch (e: Exception) {
             false
         }
@@ -92,8 +110,8 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
         }
     }
 
-    private fun findIsConnectedMethod(serviceClass: Class<*>, service: Any): Boolean {
-        // Try common method names the Sourcegraph plugin might expose
+    private fun findIsConnectedLegacy(serviceClass: Class<*>, service: Any): Boolean {
+        // Try instance-level isConnected() (no-arg)
         for (methodName in listOf("isConnected", "getIsConnected")) {
             try {
                 val method = serviceClass.getMethod(methodName)
@@ -102,32 +120,48 @@ class SourcegraphPluginAgentProvider : CodyAgentProvider {
                 continue
             }
         }
-        // Fallback: try to get the agent and check if it's non-null
+        // Fallback: check if codyAgent future is completed with a non-null value
         return try {
-            val agentField = serviceClass.getDeclaredField("agent").apply { isAccessible = true }
-            agentField.get(service) != null
+            val future = tryGetField(service, "codyAgent")
+            if (future is java.util.concurrent.CompletableFuture<*>) {
+                future.getNow(null) != null
+            } else {
+                // Legacy: try "agent" field
+                val agentField = serviceClass.getDeclaredField("agent").apply { isAccessible = true }
+                agentField.get(service) != null
+            }
         } catch (e: Exception) {
-            // If we can't determine connection status, assume available
-            // (acquireServer will fail with a clear error if not)
-            true
+            false
         }
     }
 
     /**
      * Extracts the JSON-RPC server proxy from the Sourcegraph Cody plugin.
-     * Path: CodyAgentService → agent (CodyAgent) → server (CodyAgentServer proxy)
+     * Path: CodyAgentService → codyAgent (CompletableFuture<CodyAgent>) → .get() → server
      */
     private fun extractServerProxy(project: Project): Any? {
         return try {
             val serviceClass = loadAgentServiceClass() ?: return null
             val service = project.getService(serviceClass) ?: return null
 
-            // Try to access the agent field or method
-            val agent = tryGetField(service, "agent")
-                ?: tryCallMethod(service, "getAgent")
-                ?: return null
+            // The field is "codyAgent: CompletableFuture<CodyAgent>"
+            val future = tryGetField(service, "codyAgent") ?: run {
+                log.debug("Field 'codyAgent' not found on CodyAgentService, trying legacy 'agent'")
+                tryGetField(service, "agent")
+                    ?: tryCallMethod(service, "getAgent")
+            } ?: return null
 
-            // Get the server proxy from the agent
+            // Unwrap CompletableFuture if needed
+            val agent = if (future is java.util.concurrent.CompletableFuture<*>) {
+                future.getNow(null) ?: run {
+                    log.debug("CodyAgent CompletableFuture is not yet completed")
+                    return null
+                }
+            } else {
+                future
+            }
+
+            // Get the server proxy from the CodyAgent
             tryGetField(agent, "server")
                 ?: tryCallMethod(agent, "getServer")
         } catch (e: Exception) {
