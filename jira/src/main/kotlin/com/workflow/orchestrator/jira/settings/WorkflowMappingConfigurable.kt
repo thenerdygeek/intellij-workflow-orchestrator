@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.settings
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.BoundSearchableConfigurable
 import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
@@ -25,6 +26,7 @@ private data class BoardItem(val board: com.workflow.orchestrator.jira.api.dto.J
 class WorkflowMappingConfigurable(private val project: Project) :
     BoundSearchableConfigurable("Workflow Mapping", "workflow.orchestrator.workflow") {
 
+    private val log = Logger.getInstance(WorkflowMappingConfigurable::class.java)
     private val intentFields = mutableMapOf<WorkflowIntent, String>()
 
     // Track board selection outside the DSL so it survives apply/reset cycles
@@ -116,8 +118,19 @@ class WorkflowMappingConfigurable(private val project: Project) :
                                 when (result) {
                                     is ApiResult.Success -> {
                                         val allBoards = result.data
+                                        log.info("[Jira:Settings] Fetched ${allBoards.size} boards from API")
+                                        for (board in allBoards) {
+                                            log.info("[Jira:Settings]   Board: name='${board.name}', type='${board.type}', id=${board.id}")
+                                        }
+                                        if (regex != null) {
+                                            log.info("[Jira:Settings] Applying regex '$currentRegex' (IGNORE_CASE)")
+                                        }
                                         val filtered = if (regex != null) {
-                                            allBoards.filter { regex.containsMatchIn(it.name) }
+                                            allBoards.filter { board ->
+                                                val matches = regex.containsMatchIn(board.name)
+                                                log.info("[Jira:Settings]   Regex test: '${board.name}' -> $matches")
+                                                matches
+                                            }
                                         } else {
                                             allBoards
                                         }
