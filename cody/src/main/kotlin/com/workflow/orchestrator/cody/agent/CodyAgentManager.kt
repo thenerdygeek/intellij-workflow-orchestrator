@@ -90,7 +90,8 @@ class CodyAgentManager(private val project: Project) : Disposable {
             .redirectErrorStream(false)
 
         val env = pb.environment()
-        env["CODY_DEBUG"] = if (log.isDebugEnabled) "true" else "false"
+        env["CODY_DEBUG"] = "true"
+        env["CODY_AGENT_DEBUG_REMOTE"] = "false"
 
         val proc = pb.start()
         process = proc
@@ -110,11 +111,19 @@ class CodyAgentManager(private val project: Project) : Disposable {
         agentClient.storeSecret("token", token)
         _client = agentClient
 
+        // Log all JSON-RPC messages for debugging protocol issues
+        val traceWriter = object : java.io.PrintWriter(java.io.Writer.nullWriter(), true) {
+            override fun println(x: String?) {
+                if (x != null) log.info("[CodyAgent:jsonrpc] $x")
+            }
+        }
+
         val launcher = Launcher.Builder<CodyAgentServer>()
             .setInput(proc.inputStream)
             .setOutput(proc.outputStream)
             .setLocalService(agentClient)
             .setRemoteInterface(CodyAgentServer::class.java)
+            .traceMessages(traceWriter)
             .create()
 
         val agentServer = launcher.remoteProxy
