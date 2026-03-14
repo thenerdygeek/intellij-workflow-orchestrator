@@ -7,31 +7,26 @@ import kotlinx.coroutines.future.await
 
 class CodyChatService(private val project: Project) {
 
+    /**
+     * Generate a commit message. The prompt contains only instructions and metadata.
+     * The actual file content and diff are sent as contextItems so they use
+     * Cody's higher context-file token budget instead of the input token limit.
+     */
     suspend fun generateCommitMessage(
-        diff: String,
-        contextFiles: List<ContextFile> = emptyList()
+        prompt: String,
+        contextItems: List<ContextFile> = emptyList()
     ): String? {
         val server = CodyAgentProviderService.getInstance(project).ensureRunning()
         val chatId = server.chatNew().await()
-        val prompt = buildCommitMessagePrompt(diff)
         val response = server.chatSubmitMessage(
             ChatSubmitParams(
                 id = chatId,
                 message = ChatMessage(
                     text = prompt,
-                    contextItems = contextFiles
+                    contextItems = contextItems
                 )
             )
         ).await()
         return response.messages.lastOrNull { it.speaker == "assistant" }?.text
     }
-
-    internal fun buildCommitMessagePrompt(diff: String): String =
-        """Generate a concise git commit message for this diff.
-           |Use conventional commits format (feat/fix/refactor/etc).
-           |One line summary, optional body.
-           |
-           |```diff
-           |$diff
-           |```""".trimMargin()
 }

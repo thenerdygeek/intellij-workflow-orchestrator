@@ -2,10 +2,14 @@ package com.workflow.orchestrator.cody.vcs
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.vcs.CheckinProjectPanel
+import com.intellij.openapi.vcs.changes.Change
 import com.intellij.openapi.vcs.changes.CommitContext
 import com.intellij.openapi.vcs.checkin.CheckinHandler
 import com.intellij.openapi.vcs.checkin.VcsCheckinHandlerFactory
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.workflow.orchestrator.cody.protocol.ContextFile
+import com.workflow.orchestrator.cody.protocol.Position
+import com.workflow.orchestrator.cody.protocol.Range
 import com.workflow.orchestrator.cody.service.PsiContextEnricher
 import git4idea.GitVcs
 
@@ -28,36 +32,30 @@ class CodyCommitMessageHandler(
     override fun getBeforeCheckinConfigurationPanel() = null
 
     /**
-     * Generates a commit message using Cody with PSI-enriched context.
-     * Called from the commit dialog when user clicks "Generate with Cody".
+     * Generates a commit message using Cody.
+     *
+     * Strategy: keep the prompt text small (instructions + metadata only) and send
+     * the actual changed files as contextItems with line ranges. This uses Cody's
+     * higher context-file token budget instead of the input token limit.
      */
     suspend fun generateMessage(): String? {
-        val prompt = buildEnrichedPrompt()
-        val diff = getDiff()
-        val enrichedPrompt = "$prompt\n```diff\n$diff\n```"
-        val changedFiles = panel.virtualFiles.toList()
         return try {
+            val prompt = buildPrompt()
+            val contextItems = buildContextItems()
+
             com.workflow.orchestrator.cody.service.CodyChatService(panel.project)
-                .generateCommitMessage(
-                    diff = enrichedPrompt,
-                    contextFiles = changedFiles.map {
-                        com.workflow.orchestrator.cody.protocol.ContextFile.fromPath(it.path)
-                    }
-                )
+                .generateCommitMessage(prompt, contextItems)
         } catch (e: Exception) {
             log.warn("Cody commit message generation failed: ${e.message}")
             null
         }
     }
 
-    private suspend fun getDiff(): String {
-        return try {
-            val changes = panel.selectedChanges.toList()
-            changes.joinToString("\n") { it.toString() }
-        } catch (_: Exception) { "" }
-    }
-
-    internal suspend fun buildEnrichedPrompt(): String {
+    /**
+     * Build a lightweight prompt with instructions and metadata only.
+     * No diff or file content — those go as contextItems.
+     */
+    internal suspend fun buildPrompt(): String {
         val project = panel.project
         val changedFiles = panel.virtualFiles.toList()
 
@@ -86,9 +84,9 @@ class CodyCommitMessageHandler(
         }
 
         return buildString {
-            append("Generate a concise git commit message for this diff.\n")
+            append("Generate a concise git commit message for the changed files provided as context.\n")
             append("Use conventional commits format (feat/fix/refactor/etc).\n")
-            append("One line summary, optional body.\n\n")
+            append("One line summary, optional body. No quotes or backticks.\n\n")
             if (modules.isNotEmpty()) {
                 append("Affected Maven modules: ${modules.joinToString(", ")}\n")
             }
@@ -96,6 +94,94 @@ class CodyCommitMessageHandler(
                 append("Changed classes:\n")
                 fileContexts.forEach { append("- $it\n") }
             }
+            append("\nFiles with changes are attached as context. Focus on WHAT changed and WHY.")
         }
+    }
+
+    /**
+     * Build contextItems from the selected changes.
+     * Each changed file is sent with the line range of the modification,
+     * so Cody indexes only the relevant portions with its higher token budget.
+     */
+    internal fun buildContextItems(): List<ContextFile> {
+        val changes = panel.selectedChanges.toList()
+        return changes.mapNotNull { change -> changeToContextFile(change) }
+    }
+
+    /**
+     * Convert a VCS Change to a ContextFile with the changed line range.
+     * Uses afterRevision (the new state) since that's what we're committing.
+     */
+    private fun changeToContextFile(change: Change): ContextFile? {
+        val afterRevision = change.afterRevision ?: return null
+        val filePath = afterRevision.file.path
+
+        // Try to get line-level change info from the content revision
+        val content = try {
+            afterRevision.content
+        } catch (_: Exception) {
+            null
+        }
+
+        if (content != null) {
+            val lineCount = content.count { it == '\n' } + 1
+
+            // If we have the before-revision, compute the changed range
+            val beforeContent = try {
+                change.beforeRevision?.content
+            } catch (_: Exception) {
+                null
+            }
+
+            val range = if (beforeContent != null) {
+                computeChangedRange(beforeContent, content)
+            } else {
+                // New file — entire file is the change
+                Range(
+                    start = Position(line = 0, character = 0),
+                    end = Position(line = lineCount - 1, character = 0)
+                )
+            }
+
+            return ContextFile.fromPath(filePath, range)
+        }
+
+        // Fallback: no content available, send without range
+        return ContextFile.fromPath(filePath)
+    }
+
+    /**
+     * Compute the line range that contains all changes between before and after content.
+     * Returns a Range covering from the first changed line to the last changed line.
+     */
+    private fun computeChangedRange(before: String, after: String): Range {
+        val beforeLines = before.lines()
+        val afterLines = after.lines()
+
+        // Find first differing line
+        var firstChanged = 0
+        val minLen = minOf(beforeLines.size, afterLines.size)
+        while (firstChanged < minLen && beforeLines[firstChanged] == afterLines[firstChanged]) {
+            firstChanged++
+        }
+
+        // Find last differing line (from the end)
+        var lastChangedBefore = beforeLines.size - 1
+        var lastChangedAfter = afterLines.size - 1
+        while (lastChangedBefore > firstChanged && lastChangedAfter > firstChanged &&
+            beforeLines[lastChangedBefore] == afterLines[lastChangedAfter]) {
+            lastChangedBefore--
+            lastChangedAfter--
+        }
+
+        // Expand range by a few lines for context (capped at file boundaries)
+        val contextPadding = 5
+        val startLine = maxOf(0, firstChanged - contextPadding)
+        val endLine = minOf(afterLines.size - 1, lastChangedAfter + contextPadding)
+
+        return Range(
+            start = Position(line = startLine, character = 0),
+            end = Position(line = endLine, character = 0)
+        )
     }
 }

@@ -31,12 +31,12 @@ class CodyChatServiceTest {
             )
         )
 
-        val result = service.generateCommitMessage("diff --git a/...")
+        val result = service.generateCommitMessage("Generate a commit message for these changes")
         assertEquals("fix: handle NPE in UserService", result)
         verify { mockServer.chatNew(any()) }
         verify {
             mockServer.chatSubmitMessage(match {
-                it.id == "chat-001" && it.message.text.contains("diff")
+                it.id == "chat-001" && it.message.text.contains("Generate a commit message")
             })
         }
     }
@@ -47,12 +47,12 @@ class CodyChatServiceTest {
         every { mockServer.chatSubmitMessage(any()) } returns CompletableFuture.completedFuture(
             ChatResponse(type = "transcript", messages = emptyList())
         )
-        val result = service.generateCommitMessage("diff")
+        val result = service.generateCommitMessage("Generate a commit message")
         assertNull(result)
     }
 
     @Test
-    fun `generateCommitMessage passes contextFiles in ChatMessage`() = runTest {
+    fun `generateCommitMessage sends context items with ranges`() = runTest {
         every { mockServer.chatNew(any()) } returns CompletableFuture.completedFuture("chat-003")
         every { mockServer.chatSubmitMessage(any()) } returns CompletableFuture.completedFuture(
             ChatResponse(
@@ -63,56 +63,48 @@ class CodyChatServiceTest {
             )
         )
 
-        val contextFiles = listOf(
-            ContextFile.fromPath("/src/main/kotlin/Foo.kt"),
+        val contextItems = listOf(
+            ContextFile.fromPath(
+                "/src/main/kotlin/Foo.kt",
+                Range(start = Position(line = 10, character = 0), end = Position(line = 25, character = 0))
+            ),
             ContextFile.fromPath("/src/main/kotlin/Bar.kt")
         )
-        val result = service.generateCommitMessage("diff --git a/...", contextFiles)
+        val result = service.generateCommitMessage("Generate a commit message", contextItems)
         assertEquals("feat: add new endpoint", result)
         verify {
             mockServer.chatSubmitMessage(match {
                 it.message.contextItems.size == 2 &&
                     it.message.contextItems[0].uri.fsPath == "/src/main/kotlin/Foo.kt" &&
-                    it.message.contextItems[1].uri.fsPath == "/src/main/kotlin/Bar.kt"
+                    it.message.contextItems[0].range != null &&
+                    it.message.contextItems[0].range!!.start.line == 10 &&
+                    it.message.contextItems[1].uri.fsPath == "/src/main/kotlin/Bar.kt" &&
+                    it.message.contextItems[1].range == null
             })
         }
     }
-
-    @Test
-    fun `buildCommitMessagePrompt includes diff content`() {
-        val prompt = service.buildCommitMessagePromptForTest("--- a/Foo.kt\n+++ b/Foo.kt")
-        assertTrue(prompt.contains("--- a/Foo.kt"))
-        assertTrue(prompt.contains("conventional commits"))
-    }
 }
 
+/**
+ * Test helper that mirrors CodyChatService without the IntelliJ Project dependency.
+ */
 class TestCodyChatService(
     private val server: com.workflow.orchestrator.cody.agent.CodyAgentServer
 ) {
     suspend fun generateCommitMessage(
-        diff: String,
-        contextFiles: List<ContextFile> = emptyList()
+        prompt: String,
+        contextItems: List<ContextFile> = emptyList()
     ): String? {
         val chatId = server.chatNew().get()
-        val prompt = buildCommitMessagePromptForTest(diff)
         val response = server.chatSubmitMessage(
             ChatSubmitParams(
                 id = chatId,
                 message = ChatMessage(
                     text = prompt,
-                    contextItems = contextFiles
+                    contextItems = contextItems
                 )
             )
         ).get()
         return response.messages.lastOrNull { it.speaker == "assistant" }?.text
     }
-
-    fun buildCommitMessagePromptForTest(diff: String): String =
-        """Generate a concise git commit message for this diff.
-           |Use conventional commits format (feat/fix/refactor/etc).
-           |One line summary, optional body.
-           |
-           |```diff
-           |$diff
-           |```""".trimMargin()
 }

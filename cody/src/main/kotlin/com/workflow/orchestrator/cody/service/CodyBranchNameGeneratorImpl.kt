@@ -115,42 +115,59 @@ class CodyBranchNameGeneratorImpl : BranchNameAiGenerator {
 
     private fun buildPrompt(title: String, description: String?): String {
         val descPart = if (!description.isNullOrBlank()) {
-            "\nTicket description (lower priority): ${description.take(500)}"
+            "\nTicket description: $description"
         } else ""
 
-        return """Generate a short, professional git branch name slug from this Jira ticket title.
+        return """Generate a short, professional git branch name slug from this Jira ticket.
 
 Rules:
-- Output ONLY the slug, nothing else (no explanation, no quotes, no backticks)
+- Output ONLY the slug on a single line, nothing else
+- No explanation, no quotes, no backticks, no markdown
 - Use lowercase words separated by hyphens
 - Maximum 5 words (aim for 3-4)
 - Capture the core intent/fix, not every detail
 - No ticket ID, no prefix like "feature/" or "fix/" — just the descriptive slug
-- Examples of good slugs: "fix-null-pointer-order-service", "add-retry-payment-api", "update-user-validation"
+
+Examples:
+  "Fix NPE in OrderService" → fix-null-pointer-order-service
+  "Add retry logic for payment API" → add-retry-payment-api
+  "Update user email validation" → update-user-validation
 
 Ticket title: $title$descPart"""
     }
 
     /**
      * Clean up Cody's response to produce a valid branch slug.
-     * Handles cases where Cody adds backticks, quotes, explanations, etc.
+     * Handles chatty responses like "Here's a branch name: fix-something"
+     * by extracting the last hyphenated slug from the response.
      */
     internal fun sanitizeSlug(raw: String): String {
-        return raw.trim()
-            // Remove markdown code backticks
+        val firstLine = raw.trim()
             .removePrefix("```").removeSuffix("```")
             .removePrefix("`").removeSuffix("`")
-            // Remove quotes
             .removePrefix("\"").removeSuffix("\"")
             .removePrefix("'").removeSuffix("'")
-            // Take only the first line (in case Cody adds explanation)
             .lines().first().trim()
-            // Sanitize for branch name validity
-            .lowercase()
+
+        // If the line looks like a clean slug already, use it directly
+        val cleanSlug = firstLine.lowercase()
+        if (cleanSlug.matches(Regex("^[a-z0-9]+(-[a-z0-9]+)*$")) && cleanSlug.count { it == '-' } >= 1) {
+            return cleanSlug.take(60)
+        }
+
+        // Chatty response: extract the last hyphenated-word sequence (the slug)
+        // e.g., "Here's a good name: fix-null-pointer-order" → "fix-null-pointer-order"
+        val slugPattern = Regex("[a-z][a-z0-9]*(-[a-z][a-z0-9]*){1,6}")
+        val match = slugPattern.findAll(cleanSlug).lastOrNull()
+        if (match != null) {
+            return match.value.take(60)
+        }
+
+        // Fallback: brute-force sanitize
+        return cleanSlug
             .replace(Regex("[^a-z0-9-]"), "-")
             .replace(Regex("-+"), "-")
             .trim('-')
-            // Cap length
             .take(60)
             .trimEnd('-')
     }
