@@ -6,10 +6,7 @@ import com.intellij.openapi.project.Project
 /**
  * Abstraction for acquiring a [CodyAgentServer] proxy.
  *
- * Two implementations exist:
- * - [StandaloneCodyAgentProvider] — spawns our own agent process (always available)
- * - `SourcegraphPluginAgentProvider` — reuses the official Cody plugin's agent
- *   (loaded only when `com.sourcegraph.jetbrains` is installed, via plugin-withCody.xml)
+ * Default implementation: [StandaloneCodyAgentProvider] — spawns a Cody CLI agent process.
  */
 interface CodyAgentProvider {
 

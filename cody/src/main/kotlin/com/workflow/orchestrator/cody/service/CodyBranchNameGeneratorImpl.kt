@@ -47,14 +47,11 @@ class CodyBranchNameGeneratorImpl : BranchNameAiGenerator {
                     server.chatNew().await()
                 }
             } catch (e: Exception) {
-                log.warn("[Cody:BranchGen] Step 2 FAILED: chatNew() threw: ${e.message}")
-                log.warn("[Cody:BranchGen] The Sourcegraph Cody IDE plugin does not expose chat/new. " +
-                    "Install the Cody CLI for standalone mode: npm install -g @sourcegraph/cody")
+                log.warn("[Cody:BranchGen] Step 2 FAILED: chatNew() threw: ${e.message}", e)
                 return null
             }
             if (chatId == null) {
-                log.error("[Cody:BranchGen] Step 2 FAILED: chatNew() returned null or timed out (15s). " +
-                    "If using Sourcegraph Cody plugin, install CLI instead: npm install -g @sourcegraph/cody")
+                log.error("[Cody:BranchGen] Step 2 FAILED: chatNew() returned null or timed out (15s)")
                 return null
             }
             log.info("[Cody:BranchGen] Step 2 complete: Chat session created with id='$chatId'")
@@ -107,8 +104,8 @@ class CodyBranchNameGeneratorImpl : BranchNameAiGenerator {
             slug
         } catch (e: IllegalStateException) {
             log.warn("[Cody:BranchGen] Cody agent not available: ${e.message}", e)
-            log.warn("[Cody:BranchGen] Troubleshooting: 1) Ensure Sourcegraph Cody plugin is installed and connected, " +
-                "OR 2) Configure cody-agent binary path in Settings > Tools > Workflow Orchestrator > Advanced")
+            log.warn("[Cody:BranchGen] Install Cody CLI (npm install -g @sourcegraph/cody) " +
+                "or configure path in Settings > Tools > Workflow Orchestrator > Advanced")
             null
         } catch (e: Exception) {
             log.error("[Cody:BranchGen] Unexpected error during branch name generation", e)

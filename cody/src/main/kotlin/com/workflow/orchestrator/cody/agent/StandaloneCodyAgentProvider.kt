@@ -3,12 +3,8 @@ package com.workflow.orchestrator.cody.agent
 import com.intellij.openapi.project.Project
 
 /**
- * Provider that spawns our own Cody Agent subprocess.
- *
- * Priority 200 (higher than Sourcegraph plugin's 100) because the standalone
- * agent supports the full protocol including chat/new and chat/submitMessage,
- * whereas the Sourcegraph IDE plugin's internal server has moved to webview-based
- * chat and no longer exposes those methods.
+ * Provider that spawns a Cody CLI agent subprocess via JSON-RPC over stdio.
+ * Supports the full protocol: chat/new, chat/submitMessage, editCommands/code, etc.
  */
 class StandaloneCodyAgentProvider : CodyAgentProvider {
 

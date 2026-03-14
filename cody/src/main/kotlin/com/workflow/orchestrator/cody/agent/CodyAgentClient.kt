@@ -15,6 +15,37 @@ class CodyAgentClient(private val project: Project) {
     val editListeners = CopyOnWriteArrayList<(WorkspaceEditParams) -> Boolean>()
     val editTaskStateListeners = CopyOnWriteArrayList<(EditTask) -> Unit>()
 
+    /**
+     * Stored secrets map. Populated with the Sourcegraph access token during agent startup.
+     * The agent sends secrets/get requests when it needs to retrieve stored credentials.
+     */
+    private val secrets = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Store a secret that the agent can retrieve via secrets/get. */
+    fun storeSecret(key: String, value: String) {
+        secrets[key] = value
+    }
+
+    @JsonRequest("secrets/get")
+    fun secretsGet(params: SecretsKeyParams): CompletableFuture<String?> {
+        log.info("Agent requesting secret for key: ${params.key}")
+        return CompletableFuture.completedFuture(secrets[params.key])
+    }
+
+    @JsonRequest("secrets/store")
+    fun secretsStore(params: SecretsStoreParams): CompletableFuture<Unit?> {
+        log.info("Agent storing secret for key: ${params.key}")
+        secrets[params.key] = params.value
+        return CompletableFuture.completedFuture(null)
+    }
+
+    @JsonRequest("secrets/delete")
+    fun secretsDelete(params: SecretsKeyParams): CompletableFuture<Unit?> {
+        log.info("Agent deleting secret for key: ${params.key}")
+        secrets.remove(params.key)
+        return CompletableFuture.completedFuture(null)
+    }
+
     @JsonRequest("workspace/edit")
     fun workspaceEdit(params: WorkspaceEditParams): CompletableFuture<Boolean> {
         log.info("Received workspace/edit with ${params.operations.size} operations")
@@ -86,4 +117,13 @@ class CodyAgentClient(private val project: Project) {
 data class EditTaskUserInputResponse(
     val instruction: String,
     val selectedModelId: String? = null
+)
+
+data class SecretsKeyParams(
+    val key: String = ""
+)
+
+data class SecretsStoreParams(
+    val key: String = "",
+    val value: String = ""
 )

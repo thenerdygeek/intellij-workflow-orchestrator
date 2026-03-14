@@ -10,8 +10,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
     <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
-    <depends optional="true" config-file="plugin-withCody.xml">com.sourcegraph.jetbrains</depends>
-    <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
+<depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
     <depends optional="true" config-file="plugin-withTasks.xml">com.intellij.tasks</depends>
     <depends optional="true" config-file="plugin-withCoverage.xml">Coverage</depends>

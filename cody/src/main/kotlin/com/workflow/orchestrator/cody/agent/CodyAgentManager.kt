@@ -105,6 +105,9 @@ class CodyAgentManager(private val project: Project) : Disposable {
         }, "cody-agent-stderr").apply { isDaemon = true }.start()
 
         val agentClient = CodyAgentClient(project)
+        // Pre-populate secrets so the agent can retrieve the token via secrets/get
+        agentClient.storeSecret("cody.access-token", token)
+        agentClient.storeSecret("token", token)
         _client = agentClient
 
         val launcher = Launcher.Builder<CodyAgentServer>()

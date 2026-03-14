@@ -5,96 +5,41 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
- * Project-level service that resolves the best available [CodyAgentProvider]
- * and provides a single entry point for acquiring a [CodyAgentServer].
- *
- * Resolution order: providers sorted by [CodyAgentProvider.priority] descending.
- * If the highest-priority provider fails, falls back to lower-priority ones.
+ * Project-level service providing a single entry point for acquiring a [CodyAgentServer].
+ * Delegates to [CodyAgentManager] which spawns and manages the Cody CLI agent process.
  */
 @Service(Service.Level.PROJECT)
 class CodyAgentProviderService(private val project: Project) : Disposable {
 
     private val log = Logger.getInstance(CodyAgentProviderService::class.java)
-    private val resolveMutex = Mutex()
 
-    @Volatile
-    private var activeProvider: CodyAgentProvider? = null
+    private val manager get() = CodyAgentManager.getInstance(project)
 
     /**
-     * Acquire a [CodyAgentServer], starting an agent if necessary.
-     * Tries the active provider first (fast path), then resolves from all registered providers.
-     * Protected by a mutex to prevent concurrent resolution races.
+     * Acquire a [CodyAgentServer], starting the agent if necessary.
      */
-    suspend fun ensureRunning(): CodyAgentServer = resolveMutex.withLock {
-        // Fast path: reuse active provider
-        activeProvider?.let { provider ->
-            try {
-                if (provider.isAvailable(project)) {
-                    return provider.acquireServer(project)
-                }
-            } catch (e: Exception) {
-                log.warn("Active provider '${provider.displayName}' failed, resolving fallback", e)
-                activeProvider = null
-            }
-        }
+    suspend fun ensureRunning(): CodyAgentServer = manager.ensureRunning()
 
-        // Full resolution: try all providers in priority order
-        val providers = CodyAgentProvider.EP_NAME.extensionList
-            .sortedByDescending { it.priority }
-
-        for (provider in providers) {
-            try {
-                if (provider.isAvailable(project)) {
-                    val server = provider.acquireServer(project)
-                    activeProvider = provider
-                    log.info("Using Cody agent provider: ${provider.displayName}")
-                    return server
-                }
-            } catch (e: Exception) {
-                log.warn("Provider '${provider.displayName}' failed, trying next", e)
-            }
-        }
-
-        throw IllegalStateException(
-            "No Cody agent provider available. " +
-            "Install the Sourcegraph Cody plugin or configure the agent binary path in Settings."
-        )
-    }
-
-    fun getServerOrNull(): CodyAgentServer? =
-        activeProvider?.getServerOrNull(project)
+    fun getServerOrNull(): CodyAgentServer? = manager.getServerOrNull()
 
     /**
-     * Returns the [CodyAgentClient] for the standalone agent, or null if using integrated mode.
-     * Used to set state (e.g., pending edit instructions) on the client before server calls.
+     * Returns the [CodyAgentClient] for setting state (e.g., pending edit instructions)
+     * before server calls.
      */
-    fun getClient(): CodyAgentClient? =
-        CodyAgentManager.getInstance(project).client
+    fun getClient(): CodyAgentClient? = manager.client
 
-    fun isRunning(): Boolean =
-        activeProvider?.isRunning(project) == true
+    fun isRunning(): Boolean = manager.isRunning()
 
-    /**
-     * True when using the official Cody plugin's agent (document sync handled externally).
-     * When the active provider hasn't been resolved yet, checks the extension list directly
-     * to determine if the highest-priority provider handles document sync.
-     */
-    val isIntegratedMode: Boolean
-        get() = activeProvider?.handlesDocumentSync()
-            ?: CodyAgentProvider.EP_NAME.extensionList
-                .maxByOrNull { it.priority }
-                ?.handlesDocumentSync()
-            ?: false
+    /** Standalone agent always manages its own document sync. */
+    val isIntegratedMode: Boolean = false
 
     val activeProviderName: String?
-        get() = activeProvider?.displayName
+        get() = if (isRunning()) "Standalone Agent" else null
 
     override fun dispose() {
-        activeProvider?.dispose(project)
+        manager.dispose()
     }
 
     companion object {
