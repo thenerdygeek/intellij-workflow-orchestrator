@@ -96,6 +96,24 @@ class CodyAgentClient(private val project: Project) {
         return CompletableFuture.completedFuture(null)
     }
 
+    // --- Webview handlers (agent sends these during chat panel creation) ---
+
+    @JsonNotification("webview/postMessage")
+    fun webviewPostMessage(params: Any?) {
+        log.debug("Received webview/postMessage")
+    }
+
+    @JsonRequest("webview/createWebviewPanel")
+    fun webviewCreateWebviewPanel(params: Any?): CompletableFuture<Any?> {
+        log.debug("Agent requesting webview panel creation")
+        return CompletableFuture.completedFuture(null)
+    }
+
+    @JsonNotification("debug/message")
+    fun debugMessage(params: Any?) {
+        // Silently handle debug/message to prevent "Unsupported notification" warnings
+    }
+
     /**
      * Handler for editTask/getUserInput — the agent asks for edit instructions.
      * Auto-respond with the stored instruction (set by CodyEditService before requesting an edit).

@@ -19,16 +19,22 @@ data class ExtensionConfiguration(
     val customConfiguration: Map<String, Any> = emptyMap()
 )
 
+/**
+ * Client capabilities sent during initialize.
+ * Must match what the Cody CLI agent expects — fields and values
+ * aligned with the working cody_agentic_tool reference implementation.
+ */
 data class ClientCapabilities(
     val chat: String = "streaming",
+    val completions: String = "none",
+    val git: String = "none",
+    val progressBars: String = "none",
     val edit: String = "enabled",
     val editWorkspace: String = "enabled",
-    val showDocument: String = "enabled",
-    val codeActions: String = "enabled",
+    val untitledDocuments: String = "none",
+    val showDocument: String = "none",
     val codeLenses: String = "none",
-    val completions: String = "none",
-    val git: String = "enabled",
-    val globalState: String = "server-managed",
+    val showWindowMessage: String = "notification",
     val secrets: String = "client-managed"
 )
 

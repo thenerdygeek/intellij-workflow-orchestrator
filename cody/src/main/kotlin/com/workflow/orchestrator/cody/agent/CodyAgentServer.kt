@@ -11,13 +11,13 @@ interface CodyAgentServer {
     fun initialize(params: ClientInfo): CompletableFuture<ServerInfo>
 
     @JsonNotification("initialized")
-    fun initialized()
+    fun initialized(params: Void? = null)
 
     @JsonRequest("shutdown")
-    fun shutdown(): CompletableFuture<Unit?>
+    fun shutdown(params: Void? = null): CompletableFuture<Unit?>
 
     @JsonNotification("exit")
-    fun exit()
+    fun exit(params: Void? = null)
 
     @JsonRequest("editCommands/code")
     fun editCommandsCode(params: EditCommandsCodeParams): CompletableFuture<EditTask>
@@ -32,7 +32,7 @@ interface CodyAgentServer {
     fun editTaskCancel(params: EditTaskParams): CompletableFuture<Unit?>
 
     @JsonRequest("chat/new")
-    fun chatNew(): CompletableFuture<String>
+    fun chatNew(params: Void? = null): CompletableFuture<String>
 
     @JsonRequest("chat/submitMessage")
     fun chatSubmitMessage(params: ChatSubmitParams): CompletableFuture<ChatResponse>
@@ -56,7 +56,7 @@ interface CodyAgentServer {
     fun codeActionsTrigger(params: CodeActionsTriggerParams): CompletableFuture<EditTask>
 
     @JsonRequest("commands/test")
-    fun commandsTest(): CompletableFuture<EditTask>
+    fun commandsTest(params: Void? = null): CompletableFuture<EditTask>
 
     @JsonRequest("command/execute")
     fun commandExecute(params: ExecuteCommandParams): CompletableFuture<Any>

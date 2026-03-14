@@ -20,7 +20,7 @@ class CodyChatServiceTest {
 
     @Test
     fun `generateCommitMessage creates chat and returns assistant response`() = runTest {
-        every { mockServer.chatNew() } returns CompletableFuture.completedFuture("chat-001")
+        every { mockServer.chatNew(any()) } returns CompletableFuture.completedFuture("chat-001")
         every { mockServer.chatSubmitMessage(any()) } returns CompletableFuture.completedFuture(
             ChatResponse(
                 type = "transcript",
@@ -33,7 +33,7 @@ class CodyChatServiceTest {
 
         val result = service.generateCommitMessage("diff --git a/...")
         assertEquals("fix: handle NPE in UserService", result)
-        verify { mockServer.chatNew() }
+        verify { mockServer.chatNew(any()) }
         verify {
             mockServer.chatSubmitMessage(match {
                 it.id == "chat-001" && it.message.text.contains("diff")
@@ -43,7 +43,7 @@ class CodyChatServiceTest {
 
     @Test
     fun `generateCommitMessage returns null when no assistant response`() = runTest {
-        every { mockServer.chatNew() } returns CompletableFuture.completedFuture("chat-002")
+        every { mockServer.chatNew(any()) } returns CompletableFuture.completedFuture("chat-002")
         every { mockServer.chatSubmitMessage(any()) } returns CompletableFuture.completedFuture(
             ChatResponse(type = "transcript", messages = emptyList())
         )
@@ -53,7 +53,7 @@ class CodyChatServiceTest {
 
     @Test
     fun `generateCommitMessage passes contextFiles in ChatMessage`() = runTest {
-        every { mockServer.chatNew() } returns CompletableFuture.completedFuture("chat-003")
+        every { mockServer.chatNew(any()) } returns CompletableFuture.completedFuture("chat-003")
         every { mockServer.chatSubmitMessage(any()) } returns CompletableFuture.completedFuture(
             ChatResponse(
                 type = "transcript",
