@@ -132,36 +132,56 @@ Key endpoints:
   HEAD /v2/{name}/manifests/{tag}                                  → Check tag exists
 ```
 
-### Cody Enterprise (Cody Agent JSON-RPC over stdio)
+### Cody Enterprise (Standalone Cody CLI Agent, JSON-RPC over stdio)
 ```
 Auth: Sourcegraph access token passed in ExtensionConfiguration.accessToken
+  + client handles secrets/get requests (agent asks for stored tokens)
 Protocol: JSON-RPC 2.0 over stdin/stdout with Content-Length framing
-Binary: Node.js agent from @sourcegraph/cody npm package
+Binary: Cody CLI from @sourcegraph/cody npm package (cody api jsonrpc-stdio)
+  On Windows: launched via cmd.exe /c cody.cmd api jsonrpc-stdio
 
 Key JSON-RPC methods (Plugin → Agent):
-  initialize           → Auth + capabilities setup
-  chat/new             → Create chat session
-  chat/submitMessage   → Send message, get streaming response
+  initialize           → Auth + capabilities setup (params: ClientInfo)
+  initialized          → Notification after init (params: null required)
+  chat/new             → Create chat session (params: null required)
+  chat/submitMessage   → Send message, get response (contextItems for file context)
   editCommands/code    → "Fix with Cody" inline edits
   editTask/accept      → Accept edit result
   editTask/undo        → Reject edit result
-  codeActions/provide  → Get available fixes for a code range
-  codeActions/trigger  → Execute a specific fix action
-  command/execute      → Named commands: /fix, /test, /explain
   textDocument/didOpen → Notify agent of open files
   textDocument/didChange → Notify agent of file changes
-  shutdown             → Graceful shutdown
+  shutdown             → Graceful shutdown (params: null required)
 
 Key JSON-RPC methods (Agent → Plugin):
-  workspace/edit       → Agent sends file edits to apply
-  textDocument/edit    → Text edits for specific document
-  textDocument/show    → Show document in editor
+  workspace/edit           → Agent sends file edits to apply
+  textDocument/edit        → Text edits for specific document
+  secrets/get              → Agent requests stored credentials
+  secrets/store            → Agent stores credentials
+  editTask/getUserInput    → Agent asks for edit instructions
+  webview/createWebviewPanel → Chat panel creation
+  debug/message            → Debug logging (silently handled)
 
-ClientCapabilities must include:
+ClientCapabilities must match cody_agentic_tool reference:
+  chat: "streaming"
+  completions: "none"
+  git: "none"
+  progressBars: "none"
   edit: "enabled"
   editWorkspace: "enabled"
-  chat: "streaming"
-  showDocument: "enabled"
+  untitledDocuments: "none"
+  showDocument: "none"
+  codeLenses: "none"
+  showWindowMessage: "notification"
+  secrets: "client-managed"
+
+IMPORTANT: Zero-arg methods (chatNew, initialized, shutdown, exit) MUST send
+  "params": null in the JSON-RPC message. LSP4J achieves this with Void? parameter.
+  Without this, the agent returns "chatID is undefined".
+
+NOTE: The Sourcegraph Cody IDE plugin integration was removed in v0.11.0.
+  The plugin's internal agent uses webview-based chat incompatible with JSON-RPC.
+  Reference implementations: /Desktop/Programs/Cody/cody_agentic_tool (Python)
+  and /Desktop/Programs/Cody/codypy (Python).
 ```
 
 ---
@@ -198,6 +218,8 @@ ClientCapabilities must include:
 <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
 <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
 <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
+<depends optional="true" config-file="plugin-withTasks.xml">com.intellij.tasks</depends>
+<depends optional="true" config-file="plugin-withCoverage.xml">Coverage</depends>
 ```
 
 ---
@@ -253,76 +275,38 @@ ClientCapabilities must include:
 
 ---
 
-## Phased Development Gates
+## Implementation Status
 
-Each gate must be verified before proceeding to the next phase.
+All phases through 2B are implemented. The plugin is in alpha testing.
 
-### Gate 1 — Plugin boots and connects (Phase 1A)
-- [ ] Plugin installs in IntelliJ 2025.1+
-- [ ] "Workflow" tool window with 5 empty tabs
-- [ ] Settings > Tools > Workflow Orchestrator > Connections (6 services)
-- [ ] "Test Connection" works for each service
-- [ ] Credentials stored in OS keychain (PasswordSafe)
-- [ ] GotItTooltip onboarding on first run
-- [ ] `./gradlew verifyPlugin` passes
-- [ ] `./gradlew buildPlugin` produces installable ZIP
+### Phase 1A — Foundation (DONE)
+Plugin boots, 5-tab tool window, 6 service connections with Test Connection, PasswordSafe credentials, GotItTooltip onboarding, verifyPlugin/buildPlugin passing.
 
-### Gate 2 — Daily workflow starts here (Phase 1B)
-- [ ] Sprint Dashboard shows Jira tickets assigned to current user
-- [ ] Cross-team dependency view (blocked-by links)
-- [ ] "Start Work" creates branch via GitBrancher + transitions Jira to "In Progress"
-- [ ] Branch naming follows configurable pattern with ticket ID
-- [ ] Commit messages auto-prefixed with ticket ID (standard + conventional commits)
-- [ ] Status bar shows current ticket
-- [ ] Switching branches auto-detects active ticket
-- [ ] **START ALPHA TESTING HERE**
+### Phase 1B — Daily Workflow (DONE)
+Sprint dashboard (scrum + kanban), Start Work (branch creation on Bitbucket + Jira transition), branch reuse for existing branches, Cody-powered branch name generation, commit prefix with ticket ID, status bar widget, time tracking in commit dialog, Search Everywhere for tickets.
 
-### Gate 3 — CI feedback in IDE (Phase 1C)
-- [ ] Build Dashboard shows 3 parallel Bamboo lanes (Artifact, OSS, Sonar)
-- [ ] Background polling updates build status automatically
-- [ ] Build pass/fail notifications (toast)
-- [ ] Build status in status bar widget
+### Phase 1C — CI Feedback (DONE)
+Build dashboard with stage list + log viewer, background polling, build status bar widget, project tree build status badges, manual stage trigger run configuration.
 
-### Gate 4 — Coverage visible in editor (Phase 1D)
-- [ ] Quality tab shows SonarQube quality gate status + issue list
-- [ ] Gutter markers on uncovered lines (severity-coded)
-- [ ] ExternalAnnotator for Sonar inline warnings
-- [ ] File tree badges showing coverage %
-- [ ] Editor banner on low-coverage files
+### Phase 1D — Quality Visibility (DONE)
+Quality tab (overview + issues + coverage), gutter markers (severity-coded), ExternalAnnotator for inline Sonar warnings, editor banners on low-coverage files, project tree coverage badges, diff view coverage highlighting, global inspection tool.
 
-### Gate 5 — AI-powered code fixes (Phase 1E)
-- [ ] Cody Agent spawns and authenticates
-- [ ] "Fix with Cody" gutter action on Sonar markers
-- [ ] Alt+Enter "Ask Cody to fix" IntentionAction
-- [ ] Diff preview before accepting Cody edits
-- [ ] "Cover this branch" test generation with style matching
-- [ ] Cody-generated commit messages in commit dialog
-- [ ] Spring-aware context (beans, @Transactional, endpoints)
+### Phase 1E — AI-Powered Fixes (DONE)
+Standalone Cody CLI agent (JSON-RPC over stdio), "Fix with Cody" gutter action, Alt+Enter intention action, test generation gutter action, Cody-generated commit messages with context items + line ranges, Spring-aware context enrichment (beans, endpoints, @Transactional).
 
-### Gate 6 — Quality enforcement (Phase 1F)
-- [ ] PrePushHandler gates push on health check
-- [ ] Incremental Maven build (changed modules only via MavenRunner)
-- [ ] CVE auto-bumper (IntentionAction on pom.xml)
-- [ ] Copyright enforcer (com.intellij.copyright.updater)
-- [ ] **PHASE 1 COMPLETE**
+### Phase 1F — Quality Enforcement (DONE)
+Pre-commit health check (Maven compile + test + copyright + Sonar gate + CVE), incremental Maven build, CVE auto-bumper (IntentionAction on pom.xml), CVE inline annotator, copyright header enforcement with year consolidation.
 
-### Gate 7 — Automation orchestration (Phase 2A)
-- [ ] Staging panel: service table + tag selector + JSON preview
-- [ ] Tag validation (ping Docker Registry before trigger)
-- [ ] Diff view (your config vs last successful run)
-- [ ] Configuration drift detector ("Update All to Latest")
-- [ ] Smart queue (position, wait time, auto-trigger)
-- [ ] Conflict detector (overlapping service tags)
-- [ ] Last 5 configs persisted in SQLite
+### Phase 2A — Automation Orchestration (DONE)
+Tag staging panel (service table + tag selector + JSON preview), Docker Registry tag validation, drift detector, conflict detector, smart queue (position, wait time, auto-trigger), last 5 configs persisted, queue recovery on IDE restart, status bar queue indicator.
 
-### Gate 8 — End-to-end lifecycle (Phase 2B)
-- [ ] "Complete Task" button (gated on automation pass)
-- [ ] Jira rich-text closure comment (docker tags + test results + links)
-- [ ] Jira status transition ("In Progress" → "In Review")
-- [ ] Time tracking (auto timestamps + worklog dialog)
-- [ ] Cody pre-review (diff analysis for Spring Boot issues)
-- [ ] One-click PR creation (Bitbucket + Cody-generated description)
-- [ ] **PRODUCTION-READY**
+### Phase 2B — Handover (DONE)
+One-click PR creation (Bitbucket + Cody-generated description), Jira rich-text closure comment (docker tags + test results + links), time tracking with worklog dialog, Cody pre-review (diff analysis), copyright fix panel, QA clipboard (formatted copy for email/Slack).
+
+**Note:** There is no single "Complete Task" button. PR creation, automation, Jira closure, and QA handover are separate actions because the real workflow is: PR → Bamboo builds → docker tags → automation suites → QA handover. Each step depends on the previous one completing.
+
+### Phase 3+ — Deferred
+Regression blame, analytics dashboard, timeline view, error tracing UI, epic summarization. See `memory/project_deferred_features.md`.
 
 ---
 

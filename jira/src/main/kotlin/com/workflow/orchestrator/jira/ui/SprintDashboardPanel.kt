@@ -451,16 +451,21 @@ class SprintDashboardPanel(
             scope.launch {
                 val branchesResult = branchingService.fetchRemoteBranches(branchClient, projectKey, repoSlug)
 
+                val branches = when (branchesResult) {
+                    is ApiResult.Success -> branchesResult.data
+                    is ApiResult.Error -> {
+                        withContext(Dispatchers.Main) {
+                            setLoading(false, "Failed to fetch branches: ${branchesResult.message}")
+                        }
+                        return@launch
+                    }
+                }
+
+                // Fetch linked branches from Jira dev-status (with Bitbucket fallback)
+                val linkedBranches = branchingService.fetchLinkedBranches(selectedIssue, branches)
+
                 withContext(Dispatchers.Main) {
                     setLoading(false, "")
-
-                    val branches = when (branchesResult) {
-                        is ApiResult.Success -> branchesResult.data
-                        is ApiResult.Error -> {
-                            setLoading(false, "Failed to fetch branches: ${branchesResult.message}")
-                            return@withContext
-                        }
-                    }
 
                     // Show dialog on EDT
                     val dialog = StartWorkDialog(
@@ -471,7 +476,8 @@ class SprintDashboardPanel(
                         defaultSourceBranch = defaultSource,
                         repoDisplay = repoDisplay,
                         needsCodyGeneration = needsCody,
-                        fallbackBranchName = fallbackBranchName
+                        fallbackBranchName = fallbackBranchName,
+                        existingBranches = linkedBranches
                     )
 
                     // If Cody is needed, launch generation in background AFTER dialog is shown
@@ -522,27 +528,49 @@ class SprintDashboardPanel(
                     if (!dialog.showAndGet()) return@withContext
                     val dialogResult = dialog.result ?: return@withContext
 
-                    setLoading(true, "Creating branch on Bitbucket\u2026")
+                    if (dialogResult.useExisting) {
+                        setLoading(true, "Checking out branch\u2026")
 
-                    // Execute branch creation in background
-                    scope.launch {
-                        val result = branchingService.startWork(
-                            issue = selectedIssue,
-                            branchName = dialogResult.branchName,
-                            sourceBranch = dialogResult.sourceBranch,
-                            branchClient = branchClient,
-                            projectKey = projectKey,
-                            repoSlug = repoSlug
-                        )
-                        withContext(Dispatchers.Main) {
-                            when (result) {
-                                is ApiResult.Success -> {
-                                    setLoading(false, "Branch created: ${result.data}")
-                                    log.info("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")
+                        scope.launch {
+                            val result = branchingService.useExistingBranch(
+                                issue = selectedIssue,
+                                branchName = dialogResult.branchName
+                            )
+                            withContext(Dispatchers.Main) {
+                                when (result) {
+                                    is ApiResult.Success -> {
+                                        setLoading(false, "Checked out: ${result.data}")
+                                        log.info("[Jira:UI] Started work on ${selectedIssue.key}, existing branch: ${result.data}")
+                                    }
+                                    is ApiResult.Error -> {
+                                        setLoading(false, "Start Work failed: ${result.message}")
+                                        log.warn("[Jira:UI] Start Work failed for ${selectedIssue.key}: ${result.message}")
+                                    }
                                 }
-                                is ApiResult.Error -> {
-                                    setLoading(false, "Start Work failed: ${result.message}")
-                                    log.warn("[Jira:UI] Start Work failed for ${selectedIssue.key}: ${result.message}")
+                            }
+                        }
+                    } else {
+                        setLoading(true, "Creating branch on Bitbucket\u2026")
+
+                        scope.launch {
+                            val result = branchingService.startWork(
+                                issue = selectedIssue,
+                                branchName = dialogResult.branchName,
+                                sourceBranch = dialogResult.sourceBranch,
+                                branchClient = branchClient,
+                                projectKey = projectKey,
+                                repoSlug = repoSlug
+                            )
+                            withContext(Dispatchers.Main) {
+                                when (result) {
+                                    is ApiResult.Success -> {
+                                        setLoading(false, "Branch created: ${result.data}")
+                                        log.info("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")
+                                    }
+                                    is ApiResult.Error -> {
+                                        setLoading(false, "Start Work failed: ${result.message}")
+                                        log.warn("[Jira:UI] Start Work failed for ${selectedIssue.key}: ${result.message}")
+                                    }
                                 }
                             }
                         }

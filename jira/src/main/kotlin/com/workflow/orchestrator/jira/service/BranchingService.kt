@@ -47,15 +47,104 @@ class BranchingService(
     }
 
     /**
+     * Fetches branches linked to a Jira issue from the Development Panel.
+     * Primary: Jira dev-status API. Fallback: search Bitbucket branches by ticket key.
+     */
+    suspend fun fetchLinkedBranches(
+        issue: JiraIssue,
+        allBranches: List<BitbucketBranch>
+    ): List<String> {
+        // Primary: Jira dev-status API
+        val devResult = apiClient.getDevStatusBranches(issue.id)
+        if (devResult is ApiResult.Success && devResult.data.isNotEmpty()) {
+            val names = devResult.data.map { it.name }
+            log.info("[Jira:Branch] Found ${names.size} linked branches from dev-status for ${issue.key}: $names")
+            return names
+        }
+
+        // Fallback: search Bitbucket branches containing the ticket key
+        log.info("[Jira:Branch] Dev-status returned no branches, falling back to Bitbucket search for ${issue.key}")
+        val matching = allBranches
+            .filter { it.displayId.contains(issue.key, ignoreCase = true) }
+            .map { it.displayId }
+        if (matching.isNotEmpty()) {
+            log.info("[Jira:Branch] Found ${matching.size} matching branches in Bitbucket for ${issue.key}: $matching")
+        }
+        return matching
+    }
+
+    /**
+     * Uses an existing branch: fetch from remote, checkout locally,
+     * and transition the Jira ticket to "In Progress".
+     */
+    suspend fun useExistingBranch(
+        issue: JiraIssue,
+        branchName: String
+    ): ApiResult<String> {
+        log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key}")
+
+        val repositories = GitRepositoryManager.getInstance(project).repositories
+        if (repositories.isEmpty()) {
+            return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
+        }
+
+        try {
+            val repo = repositories.first()
+            val git = Git.getInstance()
+
+            // Fetch to update remote tracking refs (safe, doesn't touch local branches)
+            val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
+            if (!fetchResult.success()) {
+                log.warn("[Jira:Branch] Git fetch returned warnings: ${fetchResult.errorOutputAsJoinedString}")
+            }
+
+            // Check if branch exists locally
+            val localBranch = repo.branches.findLocalBranch(branchName)
+            if (localBranch != null) {
+                // Branch exists locally — just checkout (preserves local commits)
+                GitBrancher.getInstance(project).checkout(
+                    branchName,
+                    false,
+                    repositories,
+                    null
+                )
+                log.info("[Jira:Branch] Checked out existing local branch '$branchName'")
+            } else {
+                // Branch only on remote — create local tracking branch
+                GitBrancher.getInstance(project).checkoutNewBranchStartingFrom(
+                    branchName,
+                    "origin/$branchName",
+                    repositories,
+                    null
+                )
+                log.info("[Jira:Branch] Checked out remote branch '$branchName' as new local tracking branch")
+            }
+        } catch (e: Exception) {
+            log.error("[Jira:Branch] Failed to checkout existing branch: ${e.message}", e)
+            return ApiResult.Error(
+                ErrorType.SERVER_ERROR,
+                "Failed to checkout branch '$branchName': ${e.message}",
+                e
+            )
+        }
+
+        // Transition ticket to "In Progress"
+        log.info("[Jira:Branch] Transitioning ${issue.key} to In Progress")
+        val transitionResult = transitionToInProgress(issue.key)
+        if (transitionResult is ApiResult.Error) {
+            log.warn("[Jira:Branch] Jira transition failed for ${issue.key}, but branch was checked out: ${transitionResult.message}")
+        }
+
+        // Set active ticket
+        activeTicketService.setActiveTicket(issue.key, issue.fields.summary)
+        log.info("[Jira:Branch] Start work completed for ${issue.key} on existing branch $branchName")
+
+        return ApiResult.Success(branchName)
+    }
+
+    /**
      * Creates a branch on Bitbucket, fetches it locally, checks it out,
      * and transitions the Jira ticket to "In Progress".
-     *
-     * @param issue The Jira issue to start work on
-     * @param branchName The branch name (from the dialog)
-     * @param sourceBranch The source branch to create from (from the dialog)
-     * @param branchClient The Bitbucket branch client
-     * @param projectKey Bitbucket project key
-     * @param repoSlug Bitbucket repository slug
      */
     suspend fun startWork(
         issue: JiraIssue,

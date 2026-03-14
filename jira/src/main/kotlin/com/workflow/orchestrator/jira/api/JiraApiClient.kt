@@ -161,6 +161,30 @@ class JiraApiClient(
         return payload.toString()
     }
 
+    /**
+     * Fetches branches linked to a Jira issue via the dev-status API.
+     * This is the same data shown in the Development Panel on the issue.
+     *
+     * GET /rest/dev-status/1.0/issue/detail?issueId={numericId}&applicationType=stash&dataType=branch
+     *
+     * Note: This is an internal Jira API (not officially supported) but has been
+     * stable since Jira 7.x and powers Jira's own Development Panel.
+     */
+    suspend fun getDevStatusBranches(issueId: String): ApiResult<List<DevStatusBranch>> {
+        log.info("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=branch)")
+        return try {
+            val result = get<DevStatusResponse>(
+                "/rest/dev-status/1.0/issue/detail?issueId=$issueId&applicationType=stash&dataType=branch"
+            )
+            result.map { response ->
+                response.detail.flatMap { it.branches }
+            }
+        } catch (e: Exception) {
+            log.warn("[Jira:API] Dev-status API failed (may not be available): ${e.message}")
+            ApiResult.Error(ErrorType.SERVER_ERROR, "Dev-status API unavailable: ${e.message}", e)
+        }
+    }
+
     private fun escapeJql(text: String): String {
         val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
         return buildString {

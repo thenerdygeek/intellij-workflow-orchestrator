@@ -10,21 +10,27 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.openapi.vcs.changes.ChangeListManager
-import com.workflow.orchestrator.core.ai.BranchNameAiGenerator
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Color
 import java.awt.FlowLayout
 import javax.swing.*
 
 data class StartWorkResult(
     val sourceBranch: String,
-    val branchName: String
+    val branchName: String,
+    val useExisting: Boolean = false
 )
 
 /**
- * Dialog for "Start Work" flow — lets user pick source branch, edit branch name,
- * and shows Cody-generated branch names with loading/fallback states.
+ * Dialog for "Start Work" flow.
+ *
+ * Dual-mode when existing branches are found:
+ *   - "Use existing branch" (radio, default) with dropdown if multiple
+ *   - "Create new branch" (radio) with source branch + branch name fields
+ *
+ * Single-mode (no existing branches): shows create flow only (same as before).
  */
 class StartWorkDialog(
     private val project: Project,
@@ -34,11 +40,21 @@ class StartWorkDialog(
     private val defaultSourceBranch: String,
     private val repoDisplay: String,
     private val needsCodyGeneration: Boolean,
-    private val fallbackBranchName: String
+    private val fallbackBranchName: String,
+    private val existingBranches: List<String> = emptyList()
 ) : DialogWrapper(project, true) {
 
     private val log = Logger.getInstance(StartWorkDialog::class.java)
+    private val isDualMode = existingBranches.isNotEmpty()
 
+    // Dual-mode components
+    private var useExistingRadio: JRadioButton? = null
+    private var createNewRadio: JRadioButton? = null
+    private var existingBranchCombo: JComboBox<String>? = null
+    private var existingBranchLabel: JBLabel? = null
+    private var createPanel: JPanel? = null
+
+    // Create-mode components
     private var selectedSourceBranch: String = defaultSourceBranch
     private val branchNameField = JBTextField(40)
     private val loadingPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
@@ -54,15 +70,22 @@ class StartWorkDialog(
 
     init {
         title = "Start Work \u2014 $ticketKey"
-        setOKButtonText("Create Branch")
+        setOKButtonText(if (isDualMode) "Start Work" else "Create Branch")
         init()
 
-        if (needsCodyGeneration) {
-            log.info("[Jira:StartWork] Dialog opened with Cody generation pending for $ticketKey")
-            setCodyLoading(true)
+        if (!isDualMode) {
+            if (needsCodyGeneration) {
+                log.info("[Jira:StartWork] Dialog opened with Cody generation pending for $ticketKey")
+                setCodyLoading(true)
+            } else {
+                log.info("[Jira:StartWork] Dialog opened with static branch name for $ticketKey")
+                branchNameField.text = defaultBranchName
+            }
         } else {
-            log.info("[Jira:StartWork] Dialog opened with static branch name for $ticketKey")
+            log.info("[Jira:StartWork] Dialog opened in dual-mode with ${existingBranches.size} existing branches for $ticketKey")
+            // Default: use existing selected, create fields disabled
             branchNameField.text = defaultBranchName
+            updateCreatePanelEnabled(false)
         }
     }
 
@@ -97,8 +120,82 @@ class StartWorkDialog(
             foreground = JBColor(0x0969DA, 0x58A6FF)
         })
         mainPanel.add(repoRow)
-        mainPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(12)))
 
+        if (isDualMode) {
+            buildDualModePanel(mainPanel)
+        } else {
+            buildCreateOnlyPanel(mainPanel)
+        }
+
+        return mainPanel
+    }
+
+    private fun buildDualModePanel(mainPanel: JPanel) {
+        val radioGroup = ButtonGroup()
+
+        // --- Use existing branch radio ---
+        useExistingRadio = JRadioButton("Use existing branch", true).apply {
+            addActionListener { onRadioChanged() }
+        }
+        radioGroup.add(useExistingRadio)
+        mainPanel.add(useExistingRadio)
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+
+        // Existing branch selector (indented)
+        val existingRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            border = JBUI.Borders.emptyLeft(JBUI.scale(24))
+        }
+        if (existingBranches.size == 1) {
+            existingBranchLabel = JBLabel(existingBranches.first()).apply {
+                foreground = JBColor(0x0969DA, 0x58A6FF)
+            }
+            existingRow.add(existingBranchLabel)
+        } else {
+            existingBranchCombo = JComboBox(existingBranches.toTypedArray())
+            existingRow.add(existingBranchCombo)
+        }
+        mainPanel.add(existingRow)
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(12)))
+
+        // --- Create new branch radio ---
+        createNewRadio = JRadioButton("Create new branch", false).apply {
+            addActionListener { onRadioChanged() }
+        }
+        radioGroup.add(createNewRadio)
+        mainPanel.add(createNewRadio)
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+
+        // Create panel (indented, contains source + branch name)
+        createPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.emptyLeft(JBUI.scale(24))
+        }
+        addCreateFields(createPanel!!)
+        mainPanel.add(createPanel)
+
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        val comment = JBLabel("Branch will be checked out locally").apply {
+            foreground = JBColor(0x656D76, 0x8B949E)
+            font = font.deriveFont(font.size2D - 1f)
+            border = JBUI.Borders.emptyLeft(JBUI.scale(8))
+        }
+        mainPanel.add(comment)
+    }
+
+    private fun buildCreateOnlyPanel(mainPanel: JPanel) {
+        addCreateFields(mainPanel)
+
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+        val branchComment = JBLabel("Branch will be created on Bitbucket and checked out locally").apply {
+            foreground = JBColor(0x656D76, 0x8B949E)
+            font = font.deriveFont(font.size2D - 1f)
+            border = JBUI.Borders.emptyLeft(JBUI.scale(8))
+        }
+        mainPanel.add(branchComment)
+    }
+
+    private fun addCreateFields(panel: JPanel) {
         // Source branch row
         val sourceRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         sourceRow.add(JBLabel("Source branch:"))
@@ -110,48 +207,69 @@ class StartWorkDialog(
             }
         }
         sourceRow.add(comboBox)
-        mainPanel.add(sourceRow)
-        mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+        panel.add(sourceRow)
+        panel.add(Box.createVerticalStrut(JBUI.scale(4)))
 
         val sourceComment = JBLabel("Branch to create from").apply {
             foreground = JBColor(0x656D76, 0x8B949E)
             font = font.deriveFont(font.size2D - 1f)
             border = JBUI.Borders.emptyLeft(JBUI.scale(8))
         }
-        mainPanel.add(sourceComment)
-        mainPanel.add(Box.createVerticalStrut(JBUI.scale(12)))
+        panel.add(sourceComment)
+        panel.add(Box.createVerticalStrut(JBUI.scale(12)))
 
         // Branch name row
         val branchRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         branchRow.add(JBLabel("New branch name:"), BorderLayout.WEST)
         branchRow.add(branchNameField, BorderLayout.CENTER)
-        mainPanel.add(branchRow)
+        panel.add(branchRow)
 
-        // Loading indicator (below branch name)
+        // Loading indicator
         loadingPanel.apply {
             isOpaque = false
             add(loadingIcon)
             add(loadingLabel)
             isVisible = false
         }
-        mainPanel.add(loadingPanel)
+        panel.add(loadingPanel)
 
-        // Error label (below branch name)
+        // Error label
         errorLabel.border = JBUI.Borders.emptyLeft(JBUI.scale(8))
-        mainPanel.add(errorLabel)
+        panel.add(errorLabel)
+    }
 
-        mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
-        val branchComment = JBLabel("Branch will be created on Bitbucket and checked out locally").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
-            font = font.deriveFont(font.size2D - 1f)
-            border = JBUI.Borders.emptyLeft(JBUI.scale(8))
+    private fun onRadioChanged() {
+        val useExisting = useExistingRadio?.isSelected == true
+        updateCreatePanelEnabled(!useExisting)
+
+        // Trigger Cody generation when switching to "Create new" if needed
+        if (!useExisting && needsCodyGeneration && branchNameField.text.isBlank()) {
+            setCodyLoading(true)
         }
-        mainPanel.add(branchComment)
+    }
 
-        return mainPanel
+    private fun updateCreatePanelEnabled(enabled: Boolean) {
+        branchNameField.isEnabled = enabled
+        existingBranchCombo?.isEnabled = !enabled
+        existingBranchLabel?.isEnabled = !enabled
+
+        // Enable/disable all components in createPanel recursively
+        createPanel?.let { setEnabledRecursive(it, enabled) }
+    }
+
+    private fun setEnabledRecursive(component: java.awt.Component, enabled: Boolean) {
+        component.isEnabled = enabled
+        if (component is java.awt.Container) {
+            component.components.forEach { setEnabledRecursive(it, enabled) }
+        }
     }
 
     override fun doValidate(): ValidationInfo? {
+        if (isDualMode && useExistingRadio?.isSelected == true) {
+            // Using existing — no validation needed beyond having a selection
+            return null
+        }
+
         val name = branchNameField.text.orEmpty()
         if (name.isBlank()) {
             return ValidationInfo("Branch name cannot be empty", branchNameField)
@@ -166,17 +284,28 @@ class StartWorkDialog(
     }
 
     override fun doOKAction() {
-        result = StartWorkResult(
-            sourceBranch = selectedSourceBranch,
-            branchName = branchNameField.text.orEmpty().trim()
-        )
-        log.info("[Jira:StartWork] User confirmed: branch='${result?.branchName}' from='${result?.sourceBranch}'")
+        if (isDualMode && useExistingRadio?.isSelected == true) {
+            val selectedBranch = existingBranchCombo?.selectedItem as? String
+                ?: existingBranches.firstOrNull()
+                ?: return
+
+            result = StartWorkResult(
+                sourceBranch = "",
+                branchName = selectedBranch,
+                useExisting = true
+            )
+            log.info("[Jira:StartWork] User chose existing branch: '$selectedBranch'")
+        } else {
+            result = StartWorkResult(
+                sourceBranch = selectedSourceBranch,
+                branchName = branchNameField.text.orEmpty().trim(),
+                useExisting = false
+            )
+            log.info("[Jira:StartWork] User confirmed new branch: '${result?.branchName}' from '${result?.sourceBranch}'")
+        }
         super.doOKAction()
     }
 
-    /**
-     * Show loading state: disable branch name field, show spinner.
-     */
     fun setCodyLoading(loading: Boolean) {
         log.info("[Jira:StartWork] setCodyLoading($loading)")
         branchNameField.isEnabled = !loading
@@ -185,28 +314,25 @@ class StartWorkDialog(
             branchNameField.emptyText.setText("Waiting for Cody\u2026")
         }
         loadingPanel.isVisible = loading
-        isOKActionEnabled = !loading
+        // Only disable OK when loading AND create-new is the active mode
+        if (!isDualMode || createNewRadio?.isSelected == true) {
+            isOKActionEnabled = !loading
+        }
     }
 
-    /**
-     * Called when Cody successfully generates a branch name.
-     */
     fun setCodyResult(branchName: String) {
         log.info("[Jira:StartWork] Cody generated branch name: '$branchName'")
         branchNameField.text = branchName
-        branchNameField.isEnabled = true
+        branchNameField.isEnabled = createNewRadio?.isSelected != false
         loadingPanel.isVisible = false
         errorLabel.isVisible = false
         isOKActionEnabled = true
     }
 
-    /**
-     * Called when Cody generation fails. Falls back to summary-based name.
-     */
     fun setCodyFailed(errorMessage: String) {
         log.warn("[Jira:StartWork] Cody generation failed: $errorMessage — falling back to '$fallbackBranchName'")
         branchNameField.text = fallbackBranchName
-        branchNameField.isEnabled = true
+        branchNameField.isEnabled = createNewRadio?.isSelected != false
         loadingPanel.isVisible = false
         errorLabel.text = "Cody branch generation failed: $errorMessage. Using fallback name."
         errorLabel.isVisible = true

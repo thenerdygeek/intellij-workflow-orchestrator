@@ -192,3 +192,29 @@ data class JiraIssueSearchResult(
 data class JiraTransitionList(
     val transitions: List<JiraTransition> = emptyList()
 )
+
+// --- Dev-Status DTOs (Development Panel branch/PR info) ---
+
+@Serializable
+data class DevStatusResponse(
+    val detail: List<DevStatusDetail> = emptyList()
+)
+
+@Serializable
+data class DevStatusDetail(
+    val branches: List<DevStatusBranch> = emptyList(),
+    val pullRequests: List<DevStatusPullRequest> = emptyList()
+)
+
+@Serializable
+data class DevStatusBranch(
+    val name: String,
+    val url: String = ""
+)
+
+@Serializable
+data class DevStatusPullRequest(
+    val name: String = "",
+    val url: String = "",
+    val status: String = ""
+)
