@@ -240,7 +240,7 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.PreReviewService"/>
         <projectService
-            serviceImplementation="com.workflow.orchestrator.handover.service.PrService"/>
+            serviceImplementation="com.workflow.orchestrator.core.bitbucket.PrService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.JiraClosureService"/>
         <projectService

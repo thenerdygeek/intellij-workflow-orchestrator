@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.handover.api
 
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.test.runTest
@@ -16,7 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 class BitbucketApiClientTest {
 
     private lateinit var server: MockWebServer
-    private lateinit var client: BitbucketApiClient
+    private lateinit var client: BitbucketBranchClient
 
     private fun fixture(name: String): String =
         javaClass.classLoader.getResource("fixtures/$name")!!.readText()
@@ -25,7 +26,7 @@ class BitbucketApiClientTest {
     fun setUp() {
         server = MockWebServer()
         server.start()
-        client = BitbucketApiClient(
+        client = BitbucketBranchClient(
             baseUrl = server.url("/").toString().trimEnd('/'),
             tokenProvider = { "test-token" }
         )
@@ -34,28 +35,6 @@ class BitbucketApiClientTest {
     @AfterEach
     fun tearDown() {
         server.shutdown()
-    }
-
-    @Test
-    fun `testConnection returns success on 200`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
-
-        val result = client.testConnection()
-
-        assertTrue(result.isSuccess)
-        val recorded = server.takeRequest()
-        assertEquals("/rest/api/1.0/users", recorded.path)
-        assertEquals("Bearer test-token", recorded.getHeader("Authorization"))
-    }
-
-    @Test
-    fun `testConnection returns AUTH_FAILED on 401`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(401))
-
-        val result = client.testConnection()
-
-        assertTrue(result.isError)
-        assertEquals(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type)
     }
 
     @Test
@@ -96,16 +75,6 @@ class BitbucketApiClientTest {
 
         assertTrue(result.isError)
         assertEquals(ErrorType.VALIDATION_ERROR, (result as ApiResult.Error).type)
-    }
-
-    @Test
-    fun `testConnection returns NETWORK_ERROR on IOException`() = runTest {
-        server.shutdown()
-
-        val result = client.testConnection()
-
-        assertTrue(result.isError)
-        assertEquals(ErrorType.NETWORK_ERROR, (result as ApiResult.Error).type)
     }
 
     @Test

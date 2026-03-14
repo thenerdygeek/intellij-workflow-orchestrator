@@ -16,7 +16,6 @@ class HandoverToolbar(private val panelSwitcher: PanelSwitcher) {
     companion object {
         const val PANEL_COPYRIGHT = "copyright"
         const val PANEL_CODY = "cody"
-        const val PANEL_PR = "pr"
         const val PANEL_JIRA = "jira"
         const val PANEL_TIME = "time"
         const val PANEL_QA = "qa"
@@ -27,7 +26,6 @@ class HandoverToolbar(private val panelSwitcher: PanelSwitcher) {
         val group = DefaultActionGroup().apply {
             add(toolbarAction("Copyright", AllIcons.Nodes.CopyOfFolder, PANEL_COPYRIGHT))
             add(toolbarAction("Cody Review", AllIcons.Actions.Preview, PANEL_CODY))
-            add(toolbarAction("Pull Request", AllIcons.Vcs.Branch, PANEL_PR))
             add(toolbarAction("Jira Comment", AllIcons.Toolwindows.ToolWindowMessages, PANEL_JIRA))
             add(toolbarAction("Time Log", AllIcons.Actions.Profile, PANEL_TIME))
             add(toolbarAction("QA Clipboard", AllIcons.Actions.Copy, PANEL_QA))

@@ -53,6 +53,16 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private val stageListPanel = StageListPanel()
     private val stageDetailPanel = StageDetailPanel(project, this)
+    private val prBar = PrBar(project, scope) { branchName ->
+        // When a PR is selected, switch build monitoring to that branch
+        if (branchName.isNotBlank()) {
+            val planKey = settings.state.bambooPlanKey.orEmpty()
+            if (planKey.isNotBlank()) {
+                val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
+                monitorService.switchBranch(planKey, branchName, interval)
+            }
+        }
+    }
 
     private val splitter = JBSplitter(false, 0.35f).apply {
         setSplitterProportionKey("workflow.build.splitter")
@@ -75,8 +85,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
         add(headerPanel, BorderLayout.NORTH)
 
-        // Splitter (master-detail)
-        add(splitter, BorderLayout.CENTER)
+        // PR bar on top, build splitter fills remaining space
+        val contentPanel = JPanel(BorderLayout()).apply {
+            add(prBar, BorderLayout.NORTH)
+            add(splitter, BorderLayout.CENTER)
+        }
+        add(contentPanel, BorderLayout.CENTER)
 
         // Status bar
         val statusPanel = JPanel(BorderLayout()).apply {
@@ -110,7 +124,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     if (planKey.isNotBlank()) {
                         val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
                         monitorService.switchBranch(planKey, branchName, interval)
-                        invokeLater { headerLabel.text = "Plan: $planKey / $branchName" }
+                        invokeLater {
+                            headerLabel.text = "Plan: $planKey / $branchName"
+                            prBar.refreshPrs()
+                        }
                     }
                 }
             }
@@ -131,6 +148,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         // Start polling
         startMonitoring()
+
+        // Fetch PRs for current branch
+        prBar.refreshPrs()
     }
 
     override fun dispose() {

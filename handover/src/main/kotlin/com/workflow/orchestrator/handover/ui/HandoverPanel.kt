@@ -29,7 +29,6 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     // Detail panels
     private val copyrightPanel = CopyrightPanel(project)
     private val preReviewPanel = PreReviewPanel(project)
-    private val prCreationPanel = PrCreationPanel(project)
     private val jiraCommentPanel = JiraCommentPanel(project)
     private val timeLogPanel = TimeLogPanel(project)
     private val qaClipboardPanel = QaClipboardPanel(project)
@@ -41,7 +40,6 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         // Register detail panels in card layout
         detailContainer.add(copyrightPanel, HandoverToolbar.PANEL_COPYRIGHT)
         detailContainer.add(preReviewPanel, HandoverToolbar.PANEL_CODY)
-        detailContainer.add(prCreationPanel, HandoverToolbar.PANEL_PR)
         detailContainer.add(jiraCommentPanel, HandoverToolbar.PANEL_JIRA)
         detailContainer.add(timeLogPanel, HandoverToolbar.PANEL_TIME)
         detailContainer.add(qaClipboardPanel, HandoverToolbar.PANEL_QA)

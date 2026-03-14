@@ -1,0 +1,460 @@
+package com.workflow.orchestrator.bamboo.ui
+
+import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.components.JBTextField
+import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrResponse
+import com.workflow.orchestrator.core.bitbucket.PrService
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.settings.PluginSettings
+import git4idea.repo.GitRepositoryManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.awt.BorderLayout
+import java.awt.CardLayout
+import java.awt.Color
+import java.awt.FlowLayout
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import javax.swing.*
+
+/**
+ * PR bar for the Build tab — thin adaptive strip that shows PR status.
+ *
+ * Three states:
+ * 1. No PR: blue banner with "Create PR" button (expandable inline form)
+ * 2. Single PR: green info bar with PR title, target branch, status
+ * 3. Multiple PRs: green bar with dropdown selector
+ *
+ * PR detection uses BitbucketBranchClient.getPullRequestsForBranch() from :core.
+ */
+class PrBar(
+    private val project: Project,
+    private val scope: CoroutineScope,
+    private val onPrSelected: (branchName: String) -> Unit
+) : JPanel(BorderLayout()) {
+
+    private val log = Logger.getInstance(PrBar::class.java)
+    private val settings = PluginSettings.getInstance(project)
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+
+    // State
+    private var currentPrs: List<BitbucketPrResponse> = emptyList()
+    private var selectedPr: BitbucketPrResponse? = null
+    private var formExpanded = false
+
+    // --- No PR state components ---
+    private val noPrPanel = JPanel(BorderLayout())
+    private val createButton = JButton("Create PR")
+
+    // --- Create form components ---
+    private val formPanel = JPanel(BorderLayout())
+    private val titleField = JBTextField()
+    private val descriptionArea = JBTextArea(4, 40).apply { lineWrap = true; wrapStyleWord = true }
+    private val submitButton = JButton("Create PR")
+    private val regenerateButton = JButton("Regenerate Description")
+    private val cancelButton = JButton("✕ Cancel").apply { isBorderPainted = false }
+    private val formResultLabel = JBLabel("")
+
+    // --- Single PR state components ---
+    private val singlePrPanel = JPanel(BorderLayout())
+    private val prInfoLabel = JBLabel("")
+    private val openInBrowserLink = JBLabel("Open in browser ↗").apply {
+        foreground = JBColor(0x0969DA, 0x58A6FF)
+        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+    }
+
+    // --- Multiple PRs state components ---
+    private val multiPrPanel = JPanel(BorderLayout())
+    private val prDropdown = JComboBox<PrComboItem>()
+    private val multiOpenLink = JBLabel("Open in browser ↗").apply {
+        foreground = JBColor(0x0969DA, 0x58A6FF)
+        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+    }
+
+    companion object {
+        private const val CARD_NO_PR = "no-pr"
+        private const val CARD_FORM = "form"
+        private const val CARD_SINGLE = "single"
+        private const val CARD_MULTI = "multi"
+
+        private val BLUE_BG = JBColor(Color(0xE3, 0xF2, 0xFD), Color(0x1e, 0x3a, 0x5f))
+        private val GREEN_BG = JBColor(Color(0xE8, 0xF5, 0xE9), Color(0x1a, 0x3d, 0x1a))
+        private val BLUE_BORDER = JBColor(Color(0x42, 0xA5, 0xF5), Color(0x89, 0xb4, 0xfa))
+        private val GREEN_BORDER = JBColor(Color(0x66, 0xBB, 0x6A), Color(0xa6, 0xe3, 0xa1))
+    }
+
+    init {
+        buildNoPrPanel()
+        buildFormPanel()
+        buildSinglePrPanel()
+        buildMultiPrPanel()
+
+        cardPanel.add(noPrPanel, CARD_NO_PR)
+        cardPanel.add(formPanel, CARD_FORM)
+        cardPanel.add(singlePrPanel, CARD_SINGLE)
+        cardPanel.add(multiPrPanel, CARD_MULTI)
+
+        add(cardPanel, BorderLayout.CENTER)
+
+        // Default state
+        showState(CARD_NO_PR)
+    }
+
+    private fun buildNoPrPanel() {
+        noPrPanel.background = BLUE_BG
+        noPrPanel.border = JBUI.Borders.customLine(BLUE_BORDER, 0, 0, 1, 0)
+
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
+            isOpaque = false
+            add(JBLabel("🔀").apply { font = font.deriveFont(14f) })
+            add(JBLabel("No pull request for this branch"))
+            add(JBLabel("Create a PR to trigger Bamboo builds").apply {
+                foreground = JBColor(0x757575, 0x6c7086)
+                font = font.deriveFont(font.size2D - 1f)
+            })
+        }
+
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
+            isOpaque = false
+            add(createButton)
+        }
+
+        noPrPanel.add(left, BorderLayout.CENTER)
+        noPrPanel.add(right, BorderLayout.EAST)
+
+        createButton.addActionListener { expandForm() }
+    }
+
+    private fun buildFormPanel() {
+        formPanel.background = BLUE_BG
+        formPanel.border = JBUI.Borders.customLine(BLUE_BORDER, 0, 0, 1, 0)
+
+        val inner = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(8, 12)
+        }
+
+        // Header
+        val header = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(JBLabel("🔀 Create Pull Request").apply { font = font.deriveFont(font.style or java.awt.Font.BOLD) }, BorderLayout.WEST)
+            add(cancelButton, BorderLayout.EAST)
+        }
+
+        // Fields
+        val fields = JPanel(GridBagLayout()).apply { isOpaque = false }
+        val gbc = GridBagConstraints().apply { fill = GridBagConstraints.HORIZONTAL; insets = JBUI.insets(2, 0) }
+
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0
+        fields.add(JBLabel("Target:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 1.0
+        val targetLabel = JBLabel(settings.state.defaultTargetBranch?.ifBlank { "develop" } ?: "develop")
+        fields.add(targetLabel, gbc)
+
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
+        fields.add(JBLabel("Title:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 1.0
+        fields.add(titleField, gbc)
+
+        // Buttons
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(submitButton)
+            add(regenerateButton)
+            add(formResultLabel)
+        }
+
+        inner.add(header, BorderLayout.NORTH)
+        val center = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+            isOpaque = false
+            add(fields, BorderLayout.NORTH)
+            add(JBScrollPane(descriptionArea).apply { preferredSize = java.awt.Dimension(0, JBUI.scale(70)) }, BorderLayout.CENTER)
+            add(buttons, BorderLayout.SOUTH)
+        }
+        inner.add(center, BorderLayout.CENTER)
+        formPanel.add(inner, BorderLayout.CENTER)
+
+        cancelButton.addActionListener { collapseForm() }
+        submitButton.addActionListener { onSubmitPr() }
+        regenerateButton.addActionListener { onRegenerateDescription() }
+    }
+
+    private fun buildSinglePrPanel() {
+        singlePrPanel.background = GREEN_BG
+        singlePrPanel.border = JBUI.Borders.customLine(GREEN_BORDER, 0, 0, 1, 0)
+
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
+            isOpaque = false
+            add(JBLabel("✓").apply { foreground = JBColor(0x2E7D32, 0xa6e3a1) })
+            add(prInfoLabel)
+        }
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
+            isOpaque = false
+            add(openInBrowserLink)
+        }
+
+        singlePrPanel.add(left, BorderLayout.CENTER)
+        singlePrPanel.add(right, BorderLayout.EAST)
+
+        openInBrowserLink.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                selectedPr?.links?.self?.firstOrNull()?.href?.let { BrowserUtil.browse(it) }
+            }
+        })
+    }
+
+    private fun buildMultiPrPanel() {
+        multiPrPanel.background = GREEN_BG
+        multiPrPanel.border = JBUI.Borders.customLine(GREEN_BORDER, 0, 0, 1, 0)
+
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
+            isOpaque = false
+            add(JBLabel("✓").apply { foreground = JBColor(0x2E7D32, 0xa6e3a1) })
+            add(prDropdown)
+        }
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
+            isOpaque = false
+            add(multiOpenLink)
+        }
+
+        multiPrPanel.add(left, BorderLayout.CENTER)
+        multiPrPanel.add(right, BorderLayout.EAST)
+
+        prDropdown.addActionListener {
+            val item = prDropdown.selectedItem as? PrComboItem ?: return@addActionListener
+            selectedPr = item.pr
+            onPrSelected(item.pr.fromRef?.displayId ?: "")
+        }
+
+        multiOpenLink.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                selectedPr?.links?.self?.firstOrNull()?.href?.let { BrowserUtil.browse(it) }
+            }
+        })
+    }
+
+    // --- State management ---
+
+    private fun showState(card: String) {
+        cardLayout.show(cardPanel, card)
+    }
+
+    private fun expandForm() {
+        formExpanded = true
+        populateForm()
+        showState(CARD_FORM)
+    }
+
+    private fun collapseForm() {
+        formExpanded = false
+        showState(CARD_NO_PR)
+    }
+
+    private fun populateForm() {
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        val branch = repos.firstOrNull()?.currentBranchName ?: ""
+        val ticketId = settings.state.activeTicketId.orEmpty()
+        val ticketSummary = settings.state.activeTicketSummary.orEmpty()
+        val prService = PrService.getInstance(project)
+
+        titleField.text = if (ticketId.isNotBlank()) {
+            prService.buildPrTitle(ticketId, ticketSummary, branch)
+        } else branch
+
+        descriptionArea.text = prService.buildFallbackDescription(
+            ticketId.ifBlank { "" }, ticketSummary.ifBlank { branch }, branch
+        )
+    }
+
+    // --- Actions ---
+
+    fun refreshPrs() {
+        val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+
+        if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
+            isVisible = false
+            return
+        }
+        isVisible = true
+
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        val currentBranch = repos.firstOrNull()?.currentBranchName ?: return
+
+        val credentialStore = CredentialStore()
+        val client = BitbucketBranchClient(
+            baseUrl = bitbucketUrl,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+
+        scope.launch {
+            val result = client.getPullRequestsForBranch(projectKey, repoSlug, currentBranch)
+            invokeLater {
+                when (result) {
+                    is ApiResult.Success -> setPrs(result.data)
+                    is ApiResult.Error -> {
+                        log.warn("[Build:PrBar] Failed to fetch PRs: ${result.message}")
+                        setPrs(emptyList())
+                    }
+                }
+            }
+        }
+    }
+
+    private fun setPrs(prs: List<BitbucketPrResponse>) {
+        currentPrs = prs
+        when {
+            prs.isEmpty() -> {
+                selectedPr = null
+                if (formExpanded) showState(CARD_FORM) else showState(CARD_NO_PR)
+            }
+            prs.size == 1 -> {
+                selectedPr = prs[0]
+                formExpanded = false
+                updateSinglePrInfo(prs[0])
+                showState(CARD_SINGLE)
+                onPrSelected(prs[0].fromRef?.displayId ?: "")
+            }
+            else -> {
+                formExpanded = false
+                prDropdown.removeAllItems()
+                prs.forEach { prDropdown.addItem(PrComboItem(it)) }
+                selectedPr = prs[0]
+                showState(CARD_MULTI)
+                onPrSelected(prs[0].fromRef?.displayId ?: "")
+            }
+        }
+    }
+
+    private fun updateSinglePrInfo(pr: BitbucketPrResponse) {
+        val target = pr.toRef?.displayId ?: "?"
+        prInfoLabel.text = "<html><b>PR #${pr.id}</b> &nbsp; ${escapeHtml(pr.title)} &nbsp; <font color='gray'>→ $target</font> &nbsp; <font color='${statusColor(pr.state)}'>${pr.state}</font></html>"
+    }
+
+    private fun statusColor(state: String): String = when (state.uppercase()) {
+        "OPEN" -> "#4CAF50"
+        "MERGED" -> "#7B1FA2"
+        "DECLINED" -> "#F44336"
+        else -> "#9E9E9E"
+    }
+
+    private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    private fun onSubmitPr() {
+        val title = titleField.text.orEmpty().trim()
+        if (title.isBlank()) {
+            formResultLabel.text = "Title cannot be empty"
+            formResultLabel.foreground = JBColor.RED
+            return
+        }
+
+        val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        val fromBranch = repos.firstOrNull()?.currentBranchName ?: ""
+        val toBranch = settings.state.defaultTargetBranch?.ifBlank { "develop" } ?: "develop"
+
+        submitButton.isEnabled = false
+        regenerateButton.isEnabled = false
+        formResultLabel.text = "Creating PR..."
+        formResultLabel.foreground = JBColor.foreground()
+
+        val credentialStore = CredentialStore()
+        val client = BitbucketBranchClient(
+            baseUrl = bitbucketUrl,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+        val prService = PrService.getInstance(project)
+        val reviewers = prService.buildDefaultReviewers()
+
+        scope.launch {
+            val result = client.createPullRequest(
+                projectKey, repoSlug, title, descriptionArea.text.orEmpty(),
+                fromBranch, toBranch, reviewers
+            )
+            invokeLater {
+                submitButton.isEnabled = true
+                regenerateButton.isEnabled = true
+                when (result) {
+                    is ApiResult.Success -> {
+                        val prUrl = result.data.links.self.firstOrNull()?.href ?: ""
+                        log.info("[Build:PrBar] PR #${result.data.id} created: $prUrl")
+                        formExpanded = false
+
+                        val ticketId = settings.state.activeTicketId.orEmpty()
+                        scope.launch {
+                            project.getService(EventBus::class.java)
+                                .emit(WorkflowEvent.PullRequestCreated(prUrl, result.data.id, ticketId))
+                        }
+
+                        // Refresh to show the new PR
+                        refreshPrs()
+                    }
+                    is ApiResult.Error -> {
+                        formResultLabel.text = result.message
+                        formResultLabel.foreground = JBColor.RED
+                    }
+                }
+            }
+        }
+    }
+
+    private fun onRegenerateDescription() {
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        val branch = repos.firstOrNull()?.currentBranchName ?: ""
+        val ticketId = settings.state.activeTicketId.orEmpty()
+        val ticketSummary = settings.state.activeTicketSummary.orEmpty()
+        val prService = PrService.getInstance(project)
+
+        regenerateButton.isEnabled = false
+        formResultLabel.text = "Generating..."
+
+        scope.launch {
+            val changedFiles = withContext(Dispatchers.IO) {
+                try {
+                    val repo = repos.firstOrNull()
+                    repo?.let {
+                        val changes = com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project).allChanges
+                        changes.mapNotNull { it.virtualFile }
+                    } ?: emptyList()
+                } catch (_: Exception) { emptyList() }
+            }
+
+            val description = prService.buildEnrichedDescription(
+                ticketId.ifBlank { "" }, ticketSummary.ifBlank { branch }, branch, changedFiles
+            )
+
+            invokeLater {
+                descriptionArea.text = description
+                regenerateButton.isEnabled = true
+                formResultLabel.text = ""
+            }
+        }
+    }
+}
+
+/** ComboBox item wrapper to show PR info in the dropdown. */
+private data class PrComboItem(val pr: BitbucketPrResponse) {
+    override fun toString(): String {
+        val target = pr.toRef?.displayId ?: "?"
+        return "PR #${pr.id}  ${pr.title}  → $target"
+    }
+}

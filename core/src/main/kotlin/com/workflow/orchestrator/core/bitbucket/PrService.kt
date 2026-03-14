@@ -1,19 +1,16 @@
-package com.workflow.orchestrator.handover.service
+package com.workflow.orchestrator.core.bitbucket
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.handover.api.dto.BitbucketReviewer
-import com.workflow.orchestrator.handover.api.dto.BitbucketReviewerUser
 import java.lang.reflect.Method
 
 object PrTitleRenderer {
     private val log = Logger.getInstance(PrTitleRenderer::class.java)
 
     fun render(format: String, ticketId: String, summary: String, branch: String, maxLength: Int): String {
-        log.debug("[Handover:PR] Rendering PR title: format='$format', ticketId=$ticketId, maxLength=$maxLength")
         val rendered = format
             .replace("{ticketId}", ticketId)
             .replace("{branch}", branch)
@@ -67,15 +64,9 @@ class PrService {
     }
 
     fun parseGitRemote(remoteUrl: String): Pair<String, String>? {
-        SSH_URL_PATTERN.find(remoteUrl)?.let { match ->
-            return Pair(match.groupValues[1], match.groupValues[2])
-        }
-        HTTPS_URL_PATTERN.find(remoteUrl)?.let { match ->
-            return Pair(match.groupValues[1], match.groupValues[2])
-        }
-        SCP_URL_PATTERN.find(remoteUrl)?.let { match ->
-            return Pair(match.groupValues[1], match.groupValues[2])
-        }
+        SSH_URL_PATTERN.find(remoteUrl)?.let { return Pair(it.groupValues[1], it.groupValues[2]) }
+        HTTPS_URL_PATTERN.find(remoteUrl)?.let { return Pair(it.groupValues[1], it.groupValues[2]) }
+        SCP_URL_PATTERN.find(remoteUrl)?.let { return Pair(it.groupValues[1], it.groupValues[2]) }
         return null
     }
 
@@ -83,53 +74,32 @@ class PrService {
         val settings = project?.let { PluginSettings.getInstance(it).state }
         val format = settings?.prTitleFormat?.takeIf { it.isNotBlank() } ?: DEFAULT_PR_TITLE_FORMAT
         val maxLength = settings?.maxPrTitleLength?.takeIf { it > 0 } ?: DEFAULT_MAX_TITLE_LENGTH
-        val title = PrTitleRenderer.render(format, ticketId, ticketSummary, branchName, maxLength)
-        log.info("[Handover:PR] Built PR title: '$title' using format '$format'")
-        return title
+        return PrTitleRenderer.render(format, ticketId, ticketSummary, branchName, maxLength)
     }
 
     fun buildDefaultReviewers(): List<BitbucketReviewer> {
         val raw = project?.let { PluginSettings.getInstance(it).state.prDefaultReviewers } ?: return emptyList()
-        val reviewers = raw.split(",")
+        return raw.split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .map { BitbucketReviewer(BitbucketReviewerUser(it)) }
-        log.info("[Handover:PR] Built ${reviewers.size} default reviewers")
-        return reviewers
     }
 
     fun buildFallbackDescription(ticketId: String, ticketSummary: String, branchName: String): String {
         return "$ticketId: $ticketSummary\n\nBranch: $branchName"
     }
 
-    /**
-     * Generates enriched PR description with Maven modules and REST endpoint info.
-     * Falls back to buildFallbackDescription() when PSI unavailable.
-     *
-     * Uses reflection to access PsiContextEnricher from the :cody module and
-     * MavenProjectsManager (optional dependency) to avoid compile-time cross-module
-     * dependencies. At runtime, the classes are available because all modules are
-     * loaded into the same plugin classloader.
-     */
     suspend fun buildEnrichedDescription(
         ticketId: String,
         ticketSummary: String,
         branchName: String,
         changedFiles: List<VirtualFile>
     ): String {
-        val proj = project ?: run {
-            log.warn("[Handover:PR] No project available, using fallback description")
-            return buildFallbackDescription(ticketId, ticketSummary, branchName)
-        }
-        if (changedFiles.isEmpty()) {
-            log.warn("[Handover:PR] No changed files, using fallback description")
-            return buildFallbackDescription(ticketId, ticketSummary, branchName)
-        }
+        val proj = project ?: return buildFallbackDescription(ticketId, ticketSummary, branchName)
+        if (changedFiles.isEmpty()) return buildFallbackDescription(ticketId, ticketSummary, branchName)
 
-        log.info("[Handover:PR] Building enriched description for $ticketId with ${changedFiles.size} changed files")
         val modules = detectAffectedModules(proj, changedFiles)
         val endpoints = detectControllerEndpoints(proj, changedFiles)
-        log.debug("[Handover:PR] Detected ${modules.size} affected modules, ${endpoints.size} controller endpoints")
 
         return buildString {
             append("## $ticketId: $ticketSummary\n\n")
@@ -152,10 +122,8 @@ class PrService {
             val mavenManagerClass = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
             val getInstanceMethod = mavenManagerClass.getMethod("getInstance", Project::class.java)
             val mavenManager = getInstanceMethod.invoke(null, proj)
-
             val isMavenized = mavenManagerClass.getMethod("isMavenizedProject").invoke(mavenManager) as Boolean
             if (!isMavenized) return emptyList()
-
             val projects = mavenManagerClass.getMethod("getProjects").invoke(mavenManager) as List<Any>
             projects.filter { mp ->
                 val dirFile = mp.javaClass.getMethod("getDirectoryFile").invoke(mp) as VirtualFile
@@ -172,10 +140,7 @@ class PrService {
     }
 
     @Suppress("UNCHECKED_CAST")
-    private suspend fun detectControllerEndpoints(
-        proj: Project,
-        changedFiles: List<VirtualFile>
-    ): List<String> {
+    private suspend fun detectControllerEndpoints(proj: Project, changedFiles: List<VirtualFile>): List<String> {
         val endpoints = mutableListOf<String>()
         try {
             val psiEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
@@ -183,20 +148,16 @@ class PrService {
             val enrichMethod = psiEnricherClass.getMethod(
                 "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
             )
-
             for (file in changedFiles) {
                 try {
                     val psi = invokeSuspend(psiEnricher, enrichMethod, file.path) ?: continue
                     val classAnnotations = psi.javaClass.getMethod("getClassAnnotations").invoke(psi) as List<String>
-                    val isController = classAnnotations.any {
-                        it in listOf("RestController", "Controller")
-                    }
-                    if (isController) {
+                    if (classAnnotations.any { it in listOf("RestController", "Controller") }) {
                         endpoints.add("${file.nameWithoutExtension} (${classAnnotations.joinToString(", ") { "@$it" }})")
                     }
-                } catch (_: Exception) { /* skip */ }
+                } catch (_: Exception) {}
             }
-        } catch (_: Exception) { /* PsiContextEnricher not available */ }
+        } catch (_: Exception) {}
         return endpoints
     }
 

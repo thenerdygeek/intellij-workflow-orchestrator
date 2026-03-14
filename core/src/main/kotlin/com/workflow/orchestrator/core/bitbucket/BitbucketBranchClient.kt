@@ -63,6 +63,60 @@ private data class CreateBranchRequest(
     val startPoint: String
 )
 
+// --- Pull Request DTOs ---
+
+@Serializable
+data class BitbucketPrResponse(
+    val id: Int,
+    val title: String,
+    val state: String,
+    val links: BitbucketLinks,
+    val fromRef: BitbucketPrRef? = null,
+    val toRef: BitbucketPrRef? = null
+)
+
+@Serializable
+data class BitbucketPrRef(
+    val id: String = "",
+    val displayId: String = ""
+)
+
+@Serializable
+data class BitbucketLinks(
+    val self: List<BitbucketLink>
+)
+
+@Serializable
+data class BitbucketLink(
+    val href: String
+)
+
+@Serializable
+private data class BitbucketPrListResponse(
+    val size: Int,
+    val values: List<BitbucketPrResponse>
+)
+
+@Serializable
+data class BitbucketPrRequest(
+    val title: String,
+    val description: String,
+    val fromRef: BitbucketRef,
+    val toRef: BitbucketRef,
+    val reviewers: List<BitbucketReviewer>? = null
+)
+
+@Serializable
+data class BitbucketReviewer(val user: BitbucketReviewerUser)
+
+@Serializable
+data class BitbucketReviewerUser(val name: String)
+
+@Serializable
+data class BitbucketRef(
+    val id: String
+)
+
 /**
  * Lightweight Bitbucket Server REST client for branch operations only.
  * Lives in :core so both :jira (Start Work) and :handover (PR creation)
@@ -236,6 +290,98 @@ class BitbucketBranchClient(
                 }
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error creating branch", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Creates a pull request in a Bitbucket Server repository.
+     * POST /rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests
+     */
+    suspend fun createPullRequest(
+        projectKey: String,
+        repoSlug: String,
+        title: String,
+        description: String,
+        fromBranch: String,
+        toBranch: String,
+        reviewers: List<BitbucketReviewer>? = null
+    ): ApiResult<BitbucketPrResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Creating PR in $projectKey/$repoSlug: $fromBranch -> $toBranch")
+            try {
+                val payload = json.encodeToString(
+                    BitbucketPrRequest(
+                        title = title,
+                        description = description,
+                        fromRef = BitbucketRef("refs/heads/$fromBranch"),
+                        toRef = BitbucketRef("refs/heads/$toBranch"),
+                        reviewers = reviewers
+                    )
+                ).toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests")
+                    .post(payload)
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val pr = json.decodeFromString<BitbucketPrResponse>(body)
+                            log.info("[Core:Bitbucket] PR #${pr.id} created: ${pr.links.self.firstOrNull()?.href}")
+                            ApiResult.Success(pr)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Bitbucket token lacks permission to create PRs")
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient permissions to create PR in $projectKey/$repoSlug")
+                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR already exists for branch $fromBranch")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error creating PR", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets open pull requests for a branch in a Bitbucket Server repository.
+     * GET /rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests?direction=OUTGOING&at=refs/heads/{branch}&state=OPEN
+     */
+    suspend fun getPullRequestsForBranch(
+        projectKey: String,
+        repoSlug: String,
+        branchName: String
+    ): ApiResult<List<BitbucketPrResponse>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching PRs for branch $branchName in $projectKey/$repoSlug")
+            try {
+                val branchRef = "refs/heads/$branchName"
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?direction=OUTGOING&at=$branchRef&state=OPEN")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} PRs for branch $branchName")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching PRs", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
