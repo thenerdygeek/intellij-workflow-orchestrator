@@ -216,7 +216,16 @@ class BitbucketBranchClient(
                             log.info("[Core:Bitbucket] Branch '${branch.displayId}' created successfully")
                             ApiResult.Success(branch)
                         }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        401 -> ApiResult.Error(
+                            ErrorType.AUTH_FAILED,
+                            "Bitbucket token lacks write permission. " +
+                            "Ensure your HTTP access token has Repository Write (or Admin) permission."
+                        )
+                        403 -> ApiResult.Error(
+                            ErrorType.AUTH_FAILED,
+                            "Bitbucket token lacks permission to create branches in $projectKey/$repoSlug. " +
+                            "Check Repository Write permission."
+                        )
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
                         409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "Branch '$branchName' already exists")
                         else -> {

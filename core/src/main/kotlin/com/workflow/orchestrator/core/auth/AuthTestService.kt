@@ -202,6 +202,18 @@ class AuthTestService {
                 when (it.code) {
                     in 200..299 -> {
                         log.info("[Core:Auth] Connection test successful for ${serviceType.name} at $normalizedBaseUrl (${it.code})")
+
+                        // For Bitbucket, check if the token has write permissions
+                        if (serviceType == ServiceType.BITBUCKET) {
+                            val writeWarning = checkBitbucketWritePermission(
+                                normalizedBaseUrl,
+                                request.header("Authorization") ?: ""
+                            )
+                            if (writeWarning != null) {
+                                return ApiResult.Success("Connected — $writeWarning")
+                            }
+                        }
+
                         ApiResult.Success(body)
                     }
                     401 -> {
@@ -266,6 +278,44 @@ class AuthTestService {
         ServiceType.SOURCEGRAPH -> "token"
         ServiceType.NEXUS -> "Basic"
         else -> "Bearer"
+    }
+
+    /**
+     * After Bitbucket auth succeeds, check if the token has write access to any repo.
+     * GET /rest/api/1.0/repos?permission=REPO_WRITE&limit=1
+     * Returns a warning string if no write-accessible repos found, null if OK.
+     */
+    private fun checkBitbucketWritePermission(baseUrl: String, authHeader: String): String? {
+        return try {
+            val request = Request.Builder()
+                .url("$baseUrl/rest/api/1.0/repos?permission=REPO_WRITE&limit=1")
+                .header("Authorization", authHeader)
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            val response = testClient.newCall(request).execute()
+            response.use {
+                if (it.code !in 200..299) {
+                    log.warn("[Core:Auth] Bitbucket write permission check returned ${it.code}")
+                    return@use "WARNING: Could not verify write permissions (HTTP ${it.code}). " +
+                        "Branch creation requires Repository Write permission."
+                }
+                val body = it.body?.string() ?: ""
+                // Check if any repos are returned with write access
+                val hasWriteAccess = body.contains("\"slug\"")
+                if (!hasWriteAccess) {
+                    log.warn("[Core:Auth] Bitbucket token has no REPO_WRITE permission on any repository")
+                    "WARNING: Token has no write access to any repository. " +
+                        "Branch creation will fail. Ensure the token has Repository Write permission."
+                } else {
+                    log.info("[Core:Auth] Bitbucket token has write access confirmed")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            log.debug("[Core:Auth] Bitbucket write permission check failed: ${e.message}")
+            null // Don't block connection test for a permission check failure
+        }
     }
 
     private fun healthEndpoint(serviceType: ServiceType): String = when (serviceType) {
