@@ -54,21 +54,40 @@ class SonarDataService(private val project: Project) : Disposable {
         scope.launch { refreshWith(client, projectKey, currentBranch) }
     }
 
-    /** Testable core — accepts explicit dependencies. */
+    /**
+     * Switch between new code and overall mode.
+     * No API call — just flips the cached view. EDT-safe (updates state flow only).
+     */
+    fun setNewCodeMode(newCode: Boolean) {
+        _stateFlow.value = _stateFlow.value.copy(newCodeMode = newCode)
+    }
+
+    /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */
     internal suspend fun refreshWith(client: SonarApiClient, projectKey: String, branch: String) {
+        // Fetch overall + new code issues in parallel
+        val overallIssuesDeferred = scope.async { client.getIssues(projectKey, branch) }
+        val newCodeIssuesDeferred = scope.async { client.getIssues(projectKey, branch, inNewCodePeriod = true) }
+
         val gateResult = client.getQualityGateStatus(projectKey, branch)
-        val issuesResult = client.getIssues(projectKey, branch)
         val metricKeys = settings.state.sonarMetricKeys.orEmpty()
         val measuresResult = client.getMeasures(projectKey, branch, metricKeys)
+
+        val overallIssuesResult = overallIssuesDeferred.await()
+        val newCodeIssuesResult = newCodeIssuesDeferred.await()
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> mapQualityGate(gateResult.data)
             is ApiResult.Error -> QualityGateState(QualityGateStatus.NONE, emptyList())
         }
 
-        val issues = when (issuesResult) {
-            is ApiResult.Success -> IssueMapper.mapIssues(issuesResult.data, projectKey)
+        val issues = when (overallIssuesResult) {
+            is ApiResult.Success -> IssueMapper.mapIssues(overallIssuesResult.data, projectKey)
             is ApiResult.Error -> _stateFlow.value.issues
+        }
+
+        val newCodeIssues = when (newCodeIssuesResult) {
+            is ApiResult.Success -> IssueMapper.mapIssues(newCodeIssuesResult.data, projectKey)
+            is ApiResult.Error -> emptyList()
         }
 
         val fileCoverage = when (measuresResult) {
@@ -78,6 +97,15 @@ class SonarDataService(private val project: Project) : Disposable {
 
         val overallCoverage = calculateOverallCoverage(fileCoverage)
 
+        // Build new-code coverage from the same measures response (new_* fields)
+        val newCodeFileCoverage = fileCoverage
+            .filter { (_, data) -> data.newLinesToCover != null && data.newLinesToCover > 0 }
+        val newCodeOverallCoverage = calculateNewCodeCoverage(newCodeFileCoverage)
+
+        // Count issues by type
+        val overallCounts = countIssues(issues)
+        val newCodeCounts = countIssues(newCodeIssues)
+
         val newState = SonarState(
             projectKey = projectKey,
             branch = branch,
@@ -85,7 +113,13 @@ class SonarDataService(private val project: Project) : Disposable {
             issues = issues,
             fileCoverage = fileCoverage,
             overallCoverage = overallCoverage,
-            lastUpdated = Instant.now()
+            lastUpdated = Instant.now(),
+            newCodeMode = _stateFlow.value.newCodeMode,
+            newCodeIssues = newCodeIssues,
+            newCodeFileCoverage = newCodeFileCoverage,
+            newCodeOverallCoverage = newCodeOverallCoverage,
+            newCodeIssueCounts = newCodeCounts,
+            overallIssueCounts = overallCounts
         )
 
         _stateFlow.value = newState
@@ -142,6 +176,26 @@ class SonarDataService(private val project: Project) : Disposable {
         val avgLine = fileCoverage.values.map { it.lineCoverage }.average()
         val avgBranch = fileCoverage.values.map { it.branchCoverage }.average()
         return CoverageMetrics(avgLine, avgBranch)
+    }
+
+    private fun calculateNewCodeCoverage(newCodeFiles: Map<String, FileCoverageData>): CoverageMetrics {
+        if (newCodeFiles.isEmpty()) return CoverageMetrics(0.0, 0.0)
+        val avgLine = newCodeFiles.values.mapNotNull { it.newCoverage }.let {
+            if (it.isEmpty()) 0.0 else it.average()
+        }
+        val avgBranch = newCodeFiles.values.mapNotNull { it.newBranchCoverage }.let {
+            if (it.isEmpty()) 0.0 else it.average()
+        }
+        return CoverageMetrics(avgLine, avgBranch)
+    }
+
+    private fun countIssues(issues: List<MappedIssue>): IssueCounts {
+        return IssueCounts(
+            bugs = issues.count { it.type == IssueType.BUG },
+            vulnerabilities = issues.count { it.type == IssueType.VULNERABILITY },
+            codeSmells = issues.count { it.type == IssueType.CODE_SMELL },
+            securityHotspots = issues.count { it.type == IssueType.SECURITY_HOTSPOT }
+        )
     }
 
     override fun dispose() {

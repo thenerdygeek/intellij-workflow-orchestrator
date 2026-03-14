@@ -43,10 +43,19 @@ data class FileCoverageData(
     val uncoveredConditions: Int,
     val lineStatuses: Map<Int, LineCoverageStatus>,
     val newCoverage: Double? = null,
-    val newBranchCoverage: Double? = null
+    val newBranchCoverage: Double? = null,
+    val newUncoveredLines: Int? = null,
+    val newLinesToCover: Int? = null
 )
 
 data class CoverageMetrics(
     val lineCoverage: Double,
     val branchCoverage: Double
+)
+
+data class IssueCounts(
+    val bugs: Int = 0,
+    val vulnerabilities: Int = 0,
+    val codeSmells: Int = 0,
+    val securityHotspots: Int = 0
 )

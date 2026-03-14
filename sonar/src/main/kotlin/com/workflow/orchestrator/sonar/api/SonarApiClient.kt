@@ -22,6 +22,14 @@ class SonarApiClient(
     private val connectTimeoutSeconds: Long = 10,
     private val readTimeoutSeconds: Long = 30
 ) {
+    companion object {
+        /** Fetches both overall + new code metrics in one call. */
+        const val DEFAULT_METRIC_KEYS =
+            "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,lines_to_cover," +
+            "new_coverage,new_branch_coverage,new_uncovered_lines,new_uncovered_conditions,new_lines_to_cover," +
+            "bugs,vulnerabilities,code_smells," +
+            "new_bugs,new_vulnerabilities,new_code_smells"
+    }
     private val log = Logger.getInstance(SonarApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -57,15 +65,17 @@ class SonarApiClient(
     suspend fun getIssues(
         projectKey: String,
         branch: String? = null,
-        filePath: String? = null
+        filePath: String? = null,
+        inNewCodePeriod: Boolean = false
     ): ApiResult<List<SonarIssueDto>> {
-        log.info("[Sonar:API] GET /api/issues/search for project '$projectKey' branch='${branch ?: "default"}' file='${filePath ?: "all"}'")
+        log.info("[Sonar:API] GET /api/issues/search for project '$projectKey' branch='${branch ?: "default"}' file='${filePath ?: "all"}' newCode=$inNewCodePeriod")
         val params = buildString {
             append("/api/issues/search?componentKeys=")
             append(URLEncoder.encode(projectKey, "UTF-8"))
             append("&resolved=false&ps=500")
             branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
             filePath?.let { append("&components=${URLEncoder.encode(filePath, "UTF-8")}") }
+            if (inNewCodePeriod) append("&inNewCodePeriod=true")
         }
         return get<SonarIssueSearchResult>(params).map { it.issues }
     }
@@ -73,10 +83,10 @@ class SonarApiClient(
     suspend fun getMeasures(
         projectKey: String,
         branch: String? = null,
-        metricKeys: String = "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions"
+        metricKeys: String = DEFAULT_METRIC_KEYS
     ): ApiResult<List<SonarMeasureComponentDto>> {
         log.info("[Sonar:API] GET /api/measures/component_tree for project '$projectKey' branch='${branch ?: "default"}'")
-        val metrics = metricKeys.ifBlank { "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions" }
+        val metrics = metricKeys.ifBlank { DEFAULT_METRIC_KEYS }
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
         return get<SonarMeasureSearchResult>(
             "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +

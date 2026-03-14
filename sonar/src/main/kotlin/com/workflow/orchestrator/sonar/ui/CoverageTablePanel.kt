@@ -40,8 +40,10 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         })
     }
 
-    fun update(fileCoverage: Map<String, FileCoverageData>) {
-        tableModel.setData(fileCoverage.values.toList().sortedBy { it.lineCoverage })
+    fun update(fileCoverage: Map<String, FileCoverageData>, newCodeMode: Boolean = false) {
+        tableModel.setData(fileCoverage.values.toList().sortedBy {
+            if (newCodeMode) it.newCoverage ?: 0.0 else it.lineCoverage
+        }, newCodeMode)
     }
 
     private fun navigateToFile(filePath: String) {
@@ -53,28 +55,43 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
 private class CoverageTableModel : AbstractTableModel() {
     private var data: List<FileCoverageData> = emptyList()
-    private val columns = arrayOf("File", "Line %", "Branch %", "Uncovered Lines", "Uncovered Conditions")
+    private var newCodeMode: Boolean = false
 
-    fun setData(newData: List<FileCoverageData>) {
+    private val overallColumns = arrayOf("File", "Line %", "Branch %", "Uncovered Lines", "Uncovered Conditions")
+    private val newCodeColumns = arrayOf("File", "New Coverage %", "New Branch %", "New Uncov. Lines", "New Lines")
+
+    fun setData(newData: List<FileCoverageData>, isNewCode: Boolean) {
         data = newData
-        fireTableDataChanged()
+        newCodeMode = isNewCode
+        fireTableStructureChanged()
     }
 
     fun getFilePath(row: Int): String = data[row].filePath
 
     override fun getRowCount() = data.size
-    override fun getColumnCount() = columns.size
-    override fun getColumnName(col: Int) = columns[col]
+    override fun getColumnCount() = if (newCodeMode) newCodeColumns.size else overallColumns.size
+    override fun getColumnName(col: Int) = if (newCodeMode) newCodeColumns[col] else overallColumns[col]
 
     override fun getValueAt(row: Int, col: Int): Any {
         val file = data[row]
-        return when (col) {
-            0 -> java.io.File(file.filePath).name
-            1 -> "%.1f%%".format(file.lineCoverage)
-            2 -> "%.1f%%".format(file.branchCoverage)
-            3 -> file.uncoveredLines
-            4 -> file.uncoveredConditions
-            else -> ""
+        return if (newCodeMode) {
+            when (col) {
+                0 -> java.io.File(file.filePath).name
+                1 -> "%.1f%%".format(file.newCoverage ?: 0.0)
+                2 -> "%.1f%%".format(file.newBranchCoverage ?: 0.0)
+                3 -> file.newUncoveredLines ?: 0
+                4 -> file.newLinesToCover ?: 0
+                else -> ""
+            }
+        } else {
+            when (col) {
+                0 -> java.io.File(file.filePath).name
+                1 -> "%.1f%%".format(file.lineCoverage)
+                2 -> "%.1f%%".format(file.branchCoverage)
+                3 -> file.uncoveredLines
+                4 -> file.uncoveredConditions
+                else -> ""
+            }
         }
     }
 

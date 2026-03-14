@@ -18,7 +18,7 @@ import kotlinx.coroutines.*
 
 class CodyIntentionAction : IntentionAction {
 
-    override fun getText(): String = "Workflow: Fix with Cody"
+    override fun getText(): String = "Fix with Cody (Workflow)"
 
     override fun getFamilyName(): String = "Workflow Orchestrator"
 
