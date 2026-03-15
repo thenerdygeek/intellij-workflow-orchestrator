@@ -116,6 +116,10 @@
         <!-- Jira Active Ticket -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.jira.service.ActiveTicketService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.jira.service.TicketKeyCache"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.jira.service.IssueDetailCache"/>
 
         <!-- Bamboo Services -->
         <projectService

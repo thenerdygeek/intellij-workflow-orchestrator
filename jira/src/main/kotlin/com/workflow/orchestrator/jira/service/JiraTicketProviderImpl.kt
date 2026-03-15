@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
+import kotlinx.coroutines.launch
 import com.workflow.orchestrator.core.workflow.WorkflowIntent
 import com.workflow.orchestrator.jira.api.JiraApiClient
 
@@ -76,6 +77,66 @@ class JiraTicketProviderImpl : JiraTicketProvider {
             is ApiResult.Error -> {
                 log.warn("[Jira:TicketProvider] Failed to transition $ticketId: ${result.message}")
                 false
+            }
+        }
+    }
+
+    override fun showTransitionDialog(
+        project: com.intellij.openapi.project.Project,
+        ticketId: String,
+        onTransitioned: () -> Unit
+    ) {
+        val client = createClient() ?: return
+        val scope = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+        )
+
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val result = client.getTransitions(ticketId, expandFields = true)
+            val transitions = when (result) {
+                is ApiResult.Success -> result.data
+                is ApiResult.Error -> {
+                    log.warn("[Jira:TicketProvider] Failed to get transitions for $ticketId")
+                    return@launch
+                }
+            }
+
+            com.intellij.openapi.application.invokeLater {
+                if (transitions.isEmpty()) {
+                    log.warn("[Jira:TicketProvider] No transitions available for $ticketId")
+                    return@invokeLater
+                }
+
+                if (transitions.size == 1 && transitions[0].fields.isNullOrEmpty()) {
+                    // Single transition, no required fields — execute directly
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        transitionTicket(ticketId, transitions[0].id)
+                        com.intellij.openapi.application.invokeLater { onTransitioned() }
+                    }
+                } else {
+                    // Show popup to pick transition, then show dialog if fields required
+                    val popup = javax.swing.JPopupMenu()
+                    for (transition in transitions) {
+                        val item = javax.swing.JMenuItem(transition.name)
+                        item.addActionListener {
+                            val hasRequiredFields = transition.fields?.any { it.value.required } == true
+                            if (hasRequiredFields) {
+                                com.workflow.orchestrator.jira.ui.TransitionDialog(
+                                    project, ticketId, transition, scope, onTransitioned
+                                ).show()
+                            } else {
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    transitionTicket(ticketId, transition.id)
+                                    com.intellij.openapi.application.invokeLater { onTransitioned() }
+                                }
+                            }
+                        }
+                        popup.add(item)
+                    }
+                    // Show popup near the mouse
+                    val mousePos = java.awt.MouseInfo.getPointerInfo().location
+                    popup.show(null, mousePos.x, mousePos.y)
+                }
             }
         }
     }

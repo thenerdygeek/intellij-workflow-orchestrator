@@ -164,18 +164,33 @@ class SprintDashboardPanel(
 
         add(topPanel, BorderLayout.NORTH)
 
-        // -- Center: search + list + detail in splitter --
+        // -- Center: current work + search + list + detail in splitter --
+        val currentWorkSection = CurrentWorkSection(project)
+
         val leftPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(4, 8, 4, 0)
+            border = JBUI.Borders.empty(0, 8, 4, 0)
+        }
+
+        // Top of left: current work section
+        leftPanel.add(currentWorkSection, BorderLayout.NORTH)
+
+        // Bottom of left: search + ticket list
+        val sprintListPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(4)
         }
         searchField.preferredSize = Dimension(0, JBUI.scale(28))
-        leftPanel.add(searchField, BorderLayout.NORTH)
-        leftPanel.add(JBScrollPane(ticketList).apply {
+        sprintListPanel.add(searchField, BorderLayout.NORTH)
+        sprintListPanel.add(JBScrollPane(ticketList).apply {
             border = JBUI.Borders.emptyTop(4)
             isOpaque = false
             viewport.isOpaque = false
         }, BorderLayout.CENTER)
+        leftPanel.add(sprintListPanel, BorderLayout.CENTER)
+
+        // Refresh current work on init and branch changes
+        currentWorkSection.refresh()
 
         val splitter = JBSplitter(false, 0.4f).apply {
             setSplitterProportionKey("workflow.sprint.splitter")

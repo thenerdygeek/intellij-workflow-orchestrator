@@ -115,6 +115,11 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var maxPrTitleLength by property(120)
         var prDefaultReviewers by string("")
 
+        // Jira custom fields
+        var epicLinkFieldId by string("customfield_10014")
+        var reviewerFieldId by string("")
+        var testerFieldId by string("")
+
         // Cody AI
         var maxDiffLinesForReview by property(10000)
 

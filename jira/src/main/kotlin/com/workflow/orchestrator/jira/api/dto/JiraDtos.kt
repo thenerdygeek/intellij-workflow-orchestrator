@@ -24,7 +24,11 @@ data class JiraIssueFields(
     val created: String? = null,
     val updated: String? = null,
     val issuelinks: List<JiraIssueLink> = emptyList(),
-    val sprint: JiraSprintRef? = null
+    val sprint: JiraSprintRef? = null,
+    val labels: List<String> = emptyList(),
+    val components: List<JiraComponent> = emptyList(),
+    val subtasks: List<JiraSubtask> = emptyList(),
+    val attachment: List<JiraAttachment> = emptyList()
 )
 
 @Serializable
@@ -217,4 +221,63 @@ data class DevStatusPullRequest(
     val name: String = "",
     val url: String = "",
     val status: String = ""
+)
+
+// --- Components, Subtasks, Attachments, Comments ---
+
+@Serializable
+data class JiraComponent(
+    val id: String? = null,
+    val name: String,
+    val description: String? = null
+)
+
+@Serializable
+data class JiraSubtask(
+    val id: String,
+    val key: String,
+    val fields: JiraSubtaskFields
+)
+
+@Serializable
+data class JiraSubtaskFields(
+    val summary: String,
+    val status: JiraStatus,
+    val issuetype: JiraIssueType? = null
+)
+
+@Serializable
+data class JiraAttachment(
+    val id: String,
+    val filename: String,
+    val author: JiraUser? = null,
+    val mimeType: String? = null,
+    val size: Long = 0,
+    val created: String? = null,
+    val content: String = ""
+)
+
+@Serializable
+data class JiraComment(
+    val id: String,
+    val author: JiraUser? = null,
+    val body: String = "",
+    val created: String = "",
+    val updated: String? = null
+)
+
+@Serializable
+data class JiraCommentSearchResult(
+    val startAt: Int = 0,
+    val maxResults: Int = 50,
+    val total: Int = 0,
+    val comments: List<JiraComment> = emptyList()
+)
+
+// --- Ticket Key Validation ---
+
+data class TicketKeyInfo(
+    val key: String,
+    val summary: String,
+    val status: String
 )

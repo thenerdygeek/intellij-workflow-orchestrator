@@ -7,6 +7,8 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
+import com.workflow.orchestrator.jira.service.IssueDetailCache
+import kotlinx.coroutines.launch
 import java.awt.*
 import java.awt.geom.Ellipse2D
 import java.awt.geom.RoundRectangle2D
@@ -62,20 +64,353 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
         repaint()
     }
 
+    private var currentIssueKey: String? = null
+    private var lazyLoadJob: kotlinx.coroutines.Job? = null
+    private val lazyScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
+
+    // Lazy-loaded section placeholders
+    private val commentsPlaceholder = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(JBLabel("Loading comments...").apply {
+            foreground = JBColor.GRAY; border = JBUI.Borders.empty(8)
+        }, BorderLayout.CENTER)
+    }
+
     fun showIssue(issue: JiraIssue) {
         log.info("[Jira:UI] Showing detail for ${issue.key}")
+        currentIssueKey = issue.key
+        lazyLoadJob?.cancel()
         contentPanel.removeAll()
 
+        // Immediate sections (from cached sprint data)
         addHeader(issue)
+        addVerticalSpace(8)
+        addTransitionButton(issue)
         addVerticalSpace(12)
         addInfoCards(issue)
-        addDependencies(issue)
+        addLabelsAndComponents(issue)
         addDescription(issue)
+        addSubtasks(issue)
+        addDependencies(issue)
+
+        // Lazy-loaded sections (show placeholders, fetch in background)
+        if (issue.fields.attachment.isNotEmpty()) {
+            addVerticalSpace(12)
+            addSectionHeader("Attachments (${issue.fields.attachment.size})")
+            addAttachments(issue.fields.attachment)
+        }
+
+        addVerticalSpace(12)
+        addSectionHeader("Comments")
+        addVerticalSpace(4)
+        addFullWidthComponent(commentsPlaceholder)
 
         removeAll()
         add(scrollPane, BorderLayout.CENTER)
         revalidate()
         repaint()
+
+        // Lazy load comments
+        lazyLoadComments(issue.key)
+    }
+
+    private fun addTransitionButton(issue: JiraIssue) {
+        val buttonPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+        }
+
+        val transitionBtn = javax.swing.JButton("Transition ▾").apply {
+            addActionListener {
+                com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
+                    ?.showTransitionDialog(
+                        com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                            ?: return@addActionListener,
+                        issue.key
+                    ) {
+                        // Refresh after transition
+                        log.info("[Jira:UI] Ticket ${issue.key} transitioned, refreshing")
+                    }
+            }
+        }
+        buttonPanel.add(transitionBtn)
+
+        val jiraUrl = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(
+            com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                ?: return
+        ).connections.jiraUrl.orEmpty().trimEnd('/')
+        if (jiraUrl.isNotBlank()) {
+            val openLink = JBLabel("<html><a href=''>Open in Jira ↗</a></html>").apply {
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                addMouseListener(object : java.awt.event.MouseAdapter() {
+                    override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                        com.intellij.ide.BrowserUtil.browse("$jiraUrl/browse/${issue.key}")
+                    }
+                })
+            }
+            buttonPanel.add(openLink)
+        }
+
+        addFullWidthComponent(buttonPanel)
+    }
+
+    private fun addLabelsAndComponents(issue: JiraIssue) {
+        val labels = issue.fields.labels
+        val components = issue.fields.components
+        if (labels.isEmpty() && components.isEmpty()) return
+
+        addVerticalSpace(12)
+        val tagsPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2))).apply {
+            isOpaque = false
+        }
+
+        for (comp in components) {
+            tagsPanel.add(createTextTag("📦 ${comp.name}"))
+        }
+        for (label in labels) {
+            tagsPanel.add(JBLabel(label).apply {
+                foreground = SECONDARY_TEXT
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(BORDER_COLOR, 1, true),
+                    JBUI.Borders.empty(2, 6)
+                )
+            })
+        }
+
+        addFullWidthComponent(tagsPanel)
+    }
+
+    private fun addSubtasks(issue: JiraIssue) {
+        val subtasks = issue.fields.subtasks
+        if (subtasks.isEmpty()) return
+
+        addVerticalSpace(12)
+        addSectionHeader("Subtasks (${subtasks.size})")
+        addVerticalSpace(4)
+
+        val subtaskPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
+
+        for (subtask in subtasks) {
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(4, 8)
+                maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(28))
+            }
+
+            val leftPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                isOpaque = false
+            }
+
+            val statusKey = subtask.fields.status.statusCategory?.key ?: ""
+            val statusIcon = when (statusKey) {
+                "done" -> "✓"
+                "indeterminate" -> "⟳"
+                else -> "○"
+            }
+            val statusColor = TicketListCellRenderer.getStatusColor(statusKey)
+            leftPanel.add(JBLabel(statusIcon).apply { foreground = statusColor })
+            leftPanel.add(JBLabel(subtask.key).apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                foreground = JBColor(0x0969DA, 0x58A6FF)
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            })
+            leftPanel.add(JBLabel(truncate(subtask.fields.summary, 50)).apply {
+                font = font.deriveFont(JBUI.scale(11).toFloat())
+                foreground = SECONDARY_TEXT
+            })
+
+            row.add(leftPanel, BorderLayout.CENTER)
+            row.add(createStatusPill(subtask.fields.status.name, statusKey), BorderLayout.EAST)
+
+            subtaskPanel.add(row)
+        }
+
+        addFullWidthComponent(subtaskPanel)
+    }
+
+    private fun addAttachments(attachments: List<com.workflow.orchestrator.jira.api.dto.JiraAttachment>) {
+        addVerticalSpace(4)
+        val attPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4))).apply {
+            isOpaque = false
+        }
+
+        for (att in attachments) {
+            val icon = when {
+                att.mimeType?.startsWith("image/") == true -> "🖼️"
+                att.filename.endsWith(".pdf") -> "📄"
+                else -> "📎"
+            }
+            val sizeStr = when {
+                att.size < 1024 -> "${att.size} B"
+                att.size < 1024 * 1024 -> "${att.size / 1024} KB"
+                else -> "${"%.1f".format(att.size / (1024.0 * 1024.0))} MB"
+            }
+
+            val card = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(BORDER_COLOR, 1, true),
+                    JBUI.Borders.empty(4, 8)
+                )
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                add(JBLabel(icon))
+                val infoPanel = JPanel().apply {
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    isOpaque = false
+                    add(JBLabel(att.filename).apply {
+                        font = font.deriveFont(JBUI.scale(11).toFloat())
+                    })
+                    add(JBLabel(sizeStr).apply {
+                        font = font.deriveFont(JBUI.scale(9).toFloat())
+                        foreground = SECONDARY_TEXT
+                    })
+                }
+                add(infoPanel)
+
+                // Click to download
+                if (att.content.isNotBlank()) {
+                    addMouseListener(object : java.awt.event.MouseAdapter() {
+                        override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                            com.intellij.ide.BrowserUtil.browse(att.content)
+                        }
+                    })
+                }
+            }
+            attPanel.add(card)
+        }
+
+        addFullWidthComponent(attPanel)
+    }
+
+    private fun lazyLoadComments(issueKey: String) {
+        lazyLoadJob = lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            kotlinx.coroutines.delay(200) // debounce
+            if (currentIssueKey != issueKey) return@launch
+
+            val project = com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                ?: return@launch
+            val cache = IssueDetailCache.getInstance(project)
+            val cached = cache.get(issueKey)
+
+            val comments = if (cached?.comments != null) {
+                cached.comments
+            } else {
+                val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                val url = settings.connections.jiraUrl.orEmpty().trimEnd('/')
+                if (url.isBlank()) return@launch
+                val client = com.workflow.orchestrator.jira.api.JiraApiClient(
+                    baseUrl = url,
+                    tokenProvider = { com.workflow.orchestrator.core.auth.CredentialStore().getToken(com.workflow.orchestrator.core.model.ServiceType.JIRA) }
+                )
+                when (val result = client.getComments(issueKey)) {
+                    is com.workflow.orchestrator.core.model.ApiResult.Success -> {
+                        cache.updateComments(issueKey, result.data)
+                        result.data
+                    }
+                    is com.workflow.orchestrator.core.model.ApiResult.Error -> {
+                        log.warn("[Jira:UI] Failed to load comments for $issueKey: ${result.message}")
+                        emptyList()
+                    }
+                }
+            }
+
+            javax.swing.SwingUtilities.invokeLater {
+                if (currentIssueKey != issueKey) return@invokeLater
+                renderComments(comments)
+            }
+        }
+    }
+
+    private fun renderComments(comments: List<com.workflow.orchestrator.jira.api.dto.JiraComment>) {
+        // Replace placeholder with actual comments
+        contentPanel.remove(commentsPlaceholder)
+
+        if (comments.isEmpty()) {
+            val emptyPanel = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                add(JBLabel("No comments").apply {
+                    foreground = SECONDARY_TEXT
+                    border = JBUI.Borders.empty(8)
+                }, BorderLayout.CENTER)
+            }
+            addFullWidthComponent(emptyPanel)
+        } else {
+            addSectionHeader("Comments (${comments.size})")
+            addVerticalSpace(4)
+            for (comment in comments.take(20)) {
+                addComment(comment)
+            }
+            if (comments.size > 20) {
+                val morePanel = JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(JBLabel("${comments.size - 20} more comments — open in Jira to see all").apply {
+                        foreground = SECONDARY_TEXT
+                        font = font.deriveFont(JBUI.scale(10).toFloat())
+                        border = JBUI.Borders.empty(4, 8)
+                    }, BorderLayout.CENTER)
+                }
+                addFullWidthComponent(morePanel)
+            }
+        }
+
+        contentPanel.revalidate()
+        contentPanel.repaint()
+    }
+
+    private fun addComment(comment: com.workflow.orchestrator.jira.api.dto.JiraComment) {
+        val commentPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(6, 8)
+        }
+
+        val authorName = comment.author?.displayName ?: "Unknown"
+        val timeAgo = formatRelativeTime(comment.created)
+
+        val headerRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+        }
+        headerRow.add(AvatarCircle(authorName).apply {
+            preferredSize = java.awt.Dimension(JBUI.scale(20), JBUI.scale(20))
+            minimumSize = preferredSize
+            maximumSize = preferredSize
+        })
+        headerRow.add(JBLabel(authorName).apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+        })
+        headerRow.add(JBLabel("• $timeAgo").apply {
+            foreground = SECONDARY_TEXT
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+        })
+
+        commentPanel.add(headerRow, BorderLayout.NORTH)
+
+        val bodyLabel = JBLabel("<html><body style='font-size:${JBUI.scale(11)}px; color:${colorToHex(SECONDARY_TEXT)};'>" +
+            escapeHtml(comment.body).replace("\n", "<br>") +
+            "</body></html>").apply {
+            border = JBUI.Borders.emptyLeft(JBUI.scale(26))
+        }
+        commentPanel.add(bodyLabel, BorderLayout.CENTER)
+
+        addFullWidthComponent(commentPanel)
+    }
+
+    private fun formatRelativeTime(isoDate: String): String {
+        return try {
+            val created = java.time.Instant.parse(isoDate.replace("+0000", "Z"))
+            val duration = java.time.Duration.between(created, java.time.Instant.now())
+            when {
+                duration.toMinutes() < 60 -> "${duration.toMinutes()}m ago"
+                duration.toHours() < 24 -> "${duration.toHours()}h ago"
+                duration.toDays() < 30 -> "${duration.toDays()}d ago"
+                else -> isoDate.take(10)
+            }
+        } catch (_: Exception) {
+            isoDate.take(10)
+        }
     }
 
     // ---------------------------------------------------------------

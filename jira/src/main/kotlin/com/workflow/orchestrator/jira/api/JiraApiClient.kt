@@ -185,6 +185,54 @@ class JiraApiClient(
         }
     }
 
+    /**
+     * Fetches comments for a Jira issue.
+     * GET /rest/api/2/issue/{key}/comment
+     */
+    suspend fun getComments(
+        issueKey: String,
+        maxResults: Int = 50
+    ): ApiResult<List<JiraComment>> {
+        log.info("[Jira:API] GET /rest/api/2/issue/$issueKey/comment")
+        return get<JiraCommentSearchResult>(
+            "/rest/api/2/issue/$issueKey/comment?maxResults=$maxResults&orderBy=-created"
+        ).map { it.comments }
+    }
+
+    /**
+     * Validates ticket keys by batch search.
+     * Returns a map of valid key → TicketKeyInfo. Missing keys are not in the map.
+     */
+    suspend fun validateTicketKeys(keys: List<String>): ApiResult<Map<String, TicketKeyInfo>> {
+        if (keys.isEmpty()) return ApiResult.Success(emptyMap())
+
+        // Batch in groups of 100 (JQL IN clause limit)
+        val allResults = mutableMapOf<String, TicketKeyInfo>()
+        for (batch in keys.chunked(100)) {
+            val jql = "key in (${batch.joinToString(",")})"
+            val encodedJql = URLEncoder.encode(jql, "UTF-8")
+            log.info("[Jira:API] Validating ${batch.size} ticket keys")
+            val result = get<JiraIssueSearchResult>(
+                "/rest/api/2/search?jql=$encodedJql&maxResults=${batch.size}&fields=summary,status"
+            )
+            when (result) {
+                is ApiResult.Success -> {
+                    for (issue in result.data.issues) {
+                        allResults[issue.key] = TicketKeyInfo(
+                            key = issue.key,
+                            summary = issue.fields.summary,
+                            status = issue.fields.status.name
+                        )
+                    }
+                }
+                is ApiResult.Error -> {
+                    log.warn("[Jira:API] Ticket key validation failed: ${result.message}")
+                }
+            }
+        }
+        return ApiResult.Success(allResults)
+    }
+
     private fun escapeJql(text: String): String {
         val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
         return buildString {

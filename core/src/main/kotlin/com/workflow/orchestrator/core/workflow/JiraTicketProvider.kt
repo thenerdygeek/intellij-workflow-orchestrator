@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.workflow
 
 import com.intellij.openapi.extensions.ExtensionPointName
+import com.intellij.openapi.project.Project
 
 /**
  * Interface for cross-module Jira ticket access.
@@ -13,6 +14,17 @@ interface JiraTicketProvider {
     suspend fun getAvailableTransitions(ticketId: String): List<TicketTransition>
 
     suspend fun transitionTicket(ticketId: String, transitionId: String): Boolean
+
+    /**
+     * Shows a transition dialog if the transition has mandatory fields,
+     * or executes the transition immediately if no fields required.
+     * @param onTransitioned callback after successful transition
+     */
+    fun showTransitionDialog(
+        project: Project,
+        ticketId: String,
+        onTransitioned: () -> Unit = {}
+    )
 
     companion object {
         val EP_NAME = ExtensionPointName.create<JiraTicketProvider>(
