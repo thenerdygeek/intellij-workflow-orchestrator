@@ -78,7 +78,8 @@ class BambooApiClient(
 
     suspend fun getBuildLog(resultKey: String): ApiResult<String> {
         log.info("[Bamboo:API] Fetching build log for resultKey=$resultKey")
-        return getRaw("/rest/api/latest/result/$resultKey?expand=logEntries&max-results=2000")
+        // Use the download endpoint for plain text logs (not the REST API logEntries which returns XML)
+        return getRaw("/download/$resultKey/build_logs/$resultKey.log")
     }
 
     suspend fun getVariables(planKey: String): ApiResult<List<BambooPlanVariableDto>> =

@@ -230,13 +230,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
         add(statusPanel, BorderLayout.SOUTH)
 
-        // Selection listener — load log for selected job
+        // Selection listener — load log for selected job (skip headers)
         stageListPanel.stageList.addListSelectionListener { e ->
             if (!e.valueIsAdjusting) {
                 val selected = stageListPanel.stageList.selectedValue
-                if (selected != null && selected.resultKey.isNotBlank()) {
+                if (selected == null || selected.name.startsWith("§")) {
+                    stageDetailPanel.showEmpty()
+                } else if (selected.resultKey.isNotBlank()) {
                     loadJobLog(selected.resultKey)
-                } else if (selected != null && selected.status == BuildStatus.FAILED) {
+                } else if (selected.status == BuildStatus.FAILED) {
                     loadBuildLog()
                 } else {
                     stageDetailPanel.showEmpty()
@@ -432,17 +434,18 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun loadJobLog(resultKey: String) {
         log.info("[Build:Dashboard] Loading job log for $resultKey")
+        invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
         scope.launch {
             val logResult = apiClient.getBuildLog(resultKey)
-            invokeLater {
-                when (logResult) {
-                    is ApiResult.Success -> {
-                        val errors = BuildLogParser.parse(logResult.data)
-                        stageDetailPanel.showLog(logResult.data, errors)
-                    }
-                    is ApiResult.Error -> {
-                        stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList())
-                    }
+            when (logResult) {
+                is ApiResult.Success -> {
+                    val logText = logResult.data
+                    log.info("[Build:Dashboard] Log loaded: ${logText.length} chars")
+                    // ConsoleView handles display — pass full text, it manages truncation internally
+                    invokeLater { stageDetailPanel.showLog(logText, emptyList()) }
+                }
+                is ApiResult.Error -> {
+                    invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList()) }
                 }
             }
         }
@@ -452,17 +455,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val state = monitorService.stateFlow.value ?: return
         val resultKey = "${state.planKey}-${state.buildNumber}"
 
+        invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
         scope.launch {
             val logResult = apiClient.getBuildLog(resultKey)
-            invokeLater {
-                when (logResult) {
-                    is ApiResult.Success -> {
-                        val errors = BuildLogParser.parse(logResult.data)
-                        stageDetailPanel.showLog(logResult.data, errors)
-                    }
-                    is ApiResult.Error -> {
-                        stageDetailPanel.showLog("Failed to load log: ${logResult.message}", emptyList())
-                    }
+            when (logResult) {
+                is ApiResult.Success -> {
+                    invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
+                }
+                is ApiResult.Error -> {
+                    invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.message}", emptyList()) }
                 }
             }
         }

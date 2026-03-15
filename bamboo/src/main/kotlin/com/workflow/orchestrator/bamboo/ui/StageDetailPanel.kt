@@ -3,53 +3,49 @@ package com.workflow.orchestrator.bamboo.ui
 import com.intellij.execution.Executor
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.filters.RegexpFilter
+import com.intellij.execution.filters.TextConsoleBuilderFactory
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
+import com.intellij.execution.ui.ConsoleView
+import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
-import com.intellij.ui.ColoredListCellRenderer
-import com.intellij.ui.JBColor
-import com.intellij.ui.SimpleTextAttributes
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildError
-import com.workflow.orchestrator.bamboo.model.ErrorSeverity
 import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Font
+import java.awt.FlowLayout
 import java.io.OutputStream
 import javax.swing.*
-import javax.swing.text.SimpleAttributeSet
-import javax.swing.text.StyleConstants
 
+/**
+ * Detail panel for viewing build job output.
+ *
+ * Uses IntelliJ's native ConsoleView which provides:
+ * - Efficient rendering for huge logs (virtual scrolling)
+ * - Auto-clickable file paths + line numbers (navigate to source)
+ * - Java stack trace parsing (clickable exception traces)
+ * - Color-coded output (ERROR = red, WARNING = yellow)
+ * - Built-in search, copy, scroll-to-end
+ */
 class StageDetailPanel(
     private val project: Project,
     private val parentDisposable: Disposable
 ) : JPanel(BorderLayout()) {
 
-    companion object {
-        private val ERROR_COLOR = JBColor(Color(0xCC, 0x33, 0x33), Color(0xFF, 0x66, 0x66))
-        private val WARNING_COLOR = JBColor(Color(0xCC, 0x99, 0x33), Color(0xFF, 0xCC, 0x66))
-        private const val TESTS_TAB_INDEX = 2
-    }
+    private val log = Logger.getInstance(StageDetailPanel::class.java)
 
-    private val logPane = JTextPane().apply {
-        isEditable = false
-        font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(12f).toInt())
-        border = JBUI.Borders.empty(8)
-    }
-
-    private val errorListModel = DefaultListModel<BuildError>()
-    private val errorList = JBList(errorListModel).apply {
-        cellRenderer = ErrorListCellRenderer()
-    }
+    private var consoleView: ConsoleView? = null
+    private val consolePanel = JPanel(BorderLayout())
 
     private val testsPlaceholder = JPanel(BorderLayout()).apply {
         add(JBLabel("No test results available.").apply {
@@ -57,48 +53,155 @@ class StageDetailPanel(
         }, BorderLayout.CENTER)
     }
 
+    // "Open full log in editor" button bar
+    private val logActionBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        isVisible = false
+    }
+    private val truncationLabel = JBLabel("").apply {
+        foreground = com.intellij.ui.JBColor(0xCC6600, 0xFFAA33)
+        font = font.deriveFont(JBUI.scale(10).toFloat())
+    }
+    private val openInEditorButton = JButton("Open full log in editor").apply {
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+    }
+
     private val tabbedPane = JBTabbedPane().apply {
-        addTab("Log", JBScrollPane(logPane))
-        addTab("Errors", JBScrollPane(errorList))
+        val logTab = JPanel(BorderLayout()).apply {
+            add(logActionBar, BorderLayout.NORTH)
+            add(consolePanel, BorderLayout.CENTER)
+        }
+        addTab("Log", logTab)
         addTab("Tests", testsPlaceholder)
+    }
+
+    // Store full log for "Open in editor"
+    private var fullLogText: String? = null
+
+    companion object {
+        private const val MAX_DISPLAY_CHARS = 50_000
+        private const val MAX_DOWNLOAD_CHARS = 2_000_000
     }
 
     init {
         border = JBUI.Borders.empty()
         add(tabbedPane, BorderLayout.CENTER)
+
+        logActionBar.add(truncationLabel)
+        logActionBar.add(openInEditorButton)
+
+        openInEditorButton.addActionListener { openFullLogInEditor() }
+
+        createConsoleView()
     }
 
-    fun showLog(log: String, errors: List<BuildError>) {
-        val doc = logPane.styledDocument
-        doc.remove(0, doc.length)
-        for (line in log.lines()) {
-            val attrs = SimpleAttributeSet()
-            when {
-                line.contains("[ERROR]") -> {
-                    StyleConstants.setForeground(attrs, ERROR_COLOR)
-                    StyleConstants.setBold(attrs, true)
-                }
-                line.contains("[WARNING]") -> {
-                    StyleConstants.setForeground(attrs, WARNING_COLOR)
-                }
-            }
-            doc.insertString(doc.length, line + "\n", attrs)
+    private fun createConsoleView() {
+        // Dispose old console if exists
+        consoleView?.let { Disposer.dispose(it) }
+
+        val builder = TextConsoleBuilderFactory.getInstance().createBuilder(project)
+        builder.setViewer(true)
+
+        val console = builder.getConsole()
+        Disposer.register(parentDisposable, console)
+
+        // Add filters for clickable file navigation
+        try {
+            // Maven-style file:line filter (clickable file paths in build output)
+            console.addMessageFilter(
+                RegexpFilter(project, RegexpFilter.FILE_PATH_MACROS + ":" + RegexpFilter.LINE_MACROS)
+            )
+        } catch (_: Exception) {}
+
+        consoleView = console
+        consolePanel.removeAll()
+        consolePanel.add(console.component, BorderLayout.CENTER)
+        consolePanel.revalidate()
+    }
+
+    /**
+     * Show build log in the console.
+     * @param logText The full log text
+     * @param errors Parsed errors (unused now — ConsoleView handles highlighting natively)
+     */
+    fun showLog(logText: String, errors: List<BuildError>) {
+        val console = consoleView ?: return
+        console.clear()
+
+        fullLogText = logText
+        val truncated = logText.length > MAX_DISPLAY_CHARS
+
+        if (truncated) {
+            val displayText = logText.takeLast(MAX_DISPLAY_CHARS)
+            truncationLabel.text = "Log truncated (${logText.length / 1000}K chars). Showing last ${MAX_DISPLAY_CHARS / 1000}K."
+            logActionBar.isVisible = true
+
+            console.print("... [Log truncated — showing last ${MAX_DISPLAY_CHARS / 1000}K chars] ...\n\n",
+                ConsoleViewContentType.SYSTEM_OUTPUT)
+
+            // Print lines with appropriate content types for coloring
+            printLogLines(console, displayText)
+        } else {
+            logActionBar.isVisible = false
+            printLogLines(console, logText)
         }
-        logPane.caretPosition = 0
 
-        errorListModel.clear()
-        errors.forEach { errorListModel.addElement(it) }
+        console.scrollTo(0)
+        tabbedPane.selectedIndex = 0
+    }
 
-        if (errors.any { it.severity == ErrorSeverity.ERROR }) {
-            tabbedPane.selectedIndex = 1
+    private fun printLogLines(console: ConsoleView, text: String) {
+        // Feed lines in chunks for better performance
+        val lines = text.lines()
+        val sb = StringBuilder()
+        var currentType = ConsoleViewContentType.NORMAL_OUTPUT
+
+        for (line in lines) {
+            val lineType = classifyLine(line)
+            if (lineType != currentType && sb.isNotEmpty()) {
+                console.print(sb.toString(), currentType)
+                sb.clear()
+            }
+            currentType = lineType
+            sb.append(line).append('\n')
+        }
+        if (sb.isNotEmpty()) {
+            console.print(sb.toString(), currentType)
+        }
+    }
+
+    private fun classifyLine(line: String): ConsoleViewContentType {
+        return when {
+            line.contains("[ERROR]") || line.contains("BUILD FAILURE") ||
+            line.contains("FAILED") || line.contains("Exception") ||
+            line.contains("error:") -> ConsoleViewContentType.ERROR_OUTPUT
+            line.contains("[WARNING]") || line.contains("warning:") ->
+                ConsoleViewContentType.LOG_WARNING_OUTPUT
+            line.contains("[INFO]") -> ConsoleViewContentType.NORMAL_OUTPUT
+            line.startsWith("\tat ") || line.startsWith("Caused by:") ->
+                ConsoleViewContentType.ERROR_OUTPUT
+            else -> ConsoleViewContentType.NORMAL_OUTPUT
+        }
+    }
+
+    private fun openFullLogInEditor() {
+        val text = fullLogText ?: return
+        try {
+            val tempFile = java.io.File.createTempFile("bamboo-build-", ".log")
+            tempFile.writeText(text)
+            tempFile.deleteOnExit()
+
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(tempFile)
+            if (vf != null) {
+                FileEditorManager.getInstance(project).openFile(vf, true)
+                log.info("[Build:Detail] Opened full log in editor: ${tempFile.absolutePath}")
+            }
+        } catch (e: Exception) {
+            log.warn("[Build:Detail] Failed to open log in editor: ${e.message}")
         }
     }
 
     /**
      * Shows test results using IntelliJ's native SMTRunnerConsoleView.
-     * Creates an interactive test tree with green/red markers, timing, and
-     * clickable navigation to test source. Falls back to plain text if
-     * the SMTRunner integration fails.
      */
     fun showTestResults(teamCityMessages: List<String>) {
         if (teamCityMessages.isEmpty()) return
@@ -114,15 +217,15 @@ class StageDetailPanel(
                 executor
             )
 
-            val consoleView = SMTestRunnerConnectionUtil.createAndAttachConsole(
+            val testConsole = SMTestRunnerConnectionUtil.createAndAttachConsole(
                 "Surefire Tests",
                 processHandler,
                 consoleProperties
             )
-            Disposer.register(parentDisposable, consoleView)
+            Disposer.register(parentDisposable, testConsole)
 
-            tabbedPane.setComponentAt(TESTS_TAB_INDEX, consoleView.component)
-            tabbedPane.selectedIndex = TESTS_TAB_INDEX
+            tabbedPane.setComponentAt(1, testConsole.component)
+            tabbedPane.selectedIndex = 1
 
             processHandler.startNotify()
             for (message in teamCityMessages) {
@@ -130,68 +233,29 @@ class StageDetailPanel(
             }
             processHandler.destroyProcess()
         } catch (e: Exception) {
-            // Fallback: plain text display of test results
-            val fallbackPane = JTextPane().apply {
-                isEditable = false
-                font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(12f).toInt())
+            log.warn("[Build:Detail] SMTRunner failed, using fallback", e)
+            val fallbackLabel = JBLabel("Test results: ${teamCityMessages.size} messages").apply {
                 border = JBUI.Borders.empty(8)
-                text = teamCityMessages.joinToString("\n")
             }
-            tabbedPane.setComponentAt(TESTS_TAB_INDEX, JBScrollPane(fallbackPane))
-            tabbedPane.selectedIndex = TESTS_TAB_INDEX
+            tabbedPane.setComponentAt(1, fallbackLabel)
+            tabbedPane.selectedIndex = 1
         }
     }
 
     fun showEmpty() {
-        logPane.text = ""
-        errorListModel.clear()
-        tabbedPane.setComponentAt(TESTS_TAB_INDEX, testsPlaceholder)
-    }
-
-    private class ErrorListCellRenderer : ColoredListCellRenderer<BuildError>() {
-        override fun customizeCellRenderer(
-            list: JList<out BuildError>,
-            value: BuildError?,
-            index: Int,
-            selected: Boolean,
-            hasFocus: Boolean
-        ) {
-            value ?: return
-            border = JBUI.Borders.empty(4, 8)
-
-            val prefix = when (value.severity) {
-                ErrorSeverity.ERROR -> "ERROR"
-                ErrorSeverity.WARNING -> "WARN"
-            }
-            val location = if (value.filePath != null) {
-                val line = value.lineNumber?.let { ":$it" } ?: ""
-                " ${value.filePath}$line"
-            } else ""
-
-            val attrs = when (value.severity) {
-                ErrorSeverity.ERROR -> SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, ERROR_COLOR)
-                ErrorSeverity.WARNING -> SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, WARNING_COLOR)
-            }
-            append("[$prefix]$location — ${value.message}", attrs)
-        }
+        consoleView?.clear()
+        fullLogText = null
+        logActionBar.isVisible = false
+        tabbedPane.setComponentAt(1, testsPlaceholder)
     }
 }
 
-/**
- * Minimal [RunProfile] so we can construct [SMTRunnerConsoleProperties]
- * without a real [RunConfiguration]. The console only needs the project
- * and framework name — it never executes this profile.
- */
 private object SurefireTestRunProfile : RunProfile {
     override fun getState(executor: Executor, environment: ExecutionEnvironment) = null
     override fun getName(): String = "Surefire Tests"
     override fun getIcon() = null
 }
 
-/**
- * Lightweight [ProcessHandler] that feeds pre-built TeamCity service
- * messages to [SMTRunnerConsoleView]. No real process is spawned.
- */
 private class TeamCityMessageProcessHandler : ProcessHandler() {
     override fun destroyProcessImpl() { notifyProcessTerminated(0) }
     override fun detachProcessImpl() { notifyProcessDetached() }
