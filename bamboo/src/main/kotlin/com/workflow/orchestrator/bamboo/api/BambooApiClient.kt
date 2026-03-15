@@ -64,7 +64,7 @@ class BambooApiClient(
             .map { it.branches.branch }
 
     suspend fun getLatestResult(planKey: String, branch: String): ApiResult<BambooResultDto> {
-        log.debug("[Bamboo:API] Fetching latest result for planKey=$planKey, branch=$branch")
+        log.info("[Bamboo:API] Fetching latest result for planKey=$planKey, branch=$branch")
         val encodedBranch = URLEncoder.encode(branch, "UTF-8")
         return get("/rest/api/latest/result/$planKey/branch/$encodedBranch/latest?expand=stages.stage")
     }
@@ -140,7 +140,7 @@ class BambooApiClient(
                     .build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
-                    log.debug("[Bamboo:API] GET $path responded with status=${it.code}")
+                    log.info("[Bamboo:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
                             val bodyStr = it.body?.string() ?: ""

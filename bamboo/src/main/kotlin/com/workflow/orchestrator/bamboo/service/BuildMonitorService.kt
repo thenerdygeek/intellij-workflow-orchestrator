@@ -104,8 +104,9 @@ class BuildMonitorService : Disposable {
     }
 
     suspend fun pollOnce(planKey: String, branch: String) {
-        log.debug("[Bamboo:Monitor] Polling planKey=$planKey, branch=$branch")
+        log.info("[Bamboo:Monitor] pollOnce planKey=$planKey, branch=$branch")
         val result = apiClient.getLatestResult(planKey, branch)
+        log.info("[Bamboo:Monitor] pollOnce result: ${if (result is ApiResult.Success) "SUCCESS" else "FAILED: $result"}")
         if (result is ApiResult.Success) {
             val dto = result.data
             val buildState = mapToBuildState(dto, planKey, branch)
