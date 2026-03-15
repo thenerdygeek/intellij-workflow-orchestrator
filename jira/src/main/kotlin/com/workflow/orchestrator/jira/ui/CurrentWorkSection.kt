@@ -16,7 +16,10 @@ import javax.swing.JPanel
  * "Currently Working On" section at the top of the Sprint tab left panel.
  * Shows the active ticket with branch name, status, and quick stats.
  */
-class CurrentWorkSection(private val project: Project) : JPanel(BorderLayout()) {
+class CurrentWorkSection(
+    private val project: Project,
+    private val onTicketClicked: ((String) -> Unit)? = null
+) : JPanel(BorderLayout()) {
 
     private val settings get() = PluginSettings.getInstance(project)
 
@@ -97,6 +100,14 @@ class CurrentWorkSection(private val project: Project) : JPanel(BorderLayout()) 
 
         inner.add(metaRow)
         add(inner, BorderLayout.CENTER)
+
+        // Click to select ticket in the list
+        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                onTicketClicked?.invoke(ticketId)
+            }
+        })
     }
 
     private fun buildEmptyState() {

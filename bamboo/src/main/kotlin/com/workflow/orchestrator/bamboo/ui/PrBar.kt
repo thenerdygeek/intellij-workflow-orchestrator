@@ -119,6 +119,8 @@ class PrBar(
     private fun buildNoPrPanel() {
         noPrPanel.background = BLUE_BG
         noPrPanel.border = JBUI.Borders.customLine(BLUE_BORDER, 0, 0, 1, 0)
+        noPrPanel.preferredSize = java.awt.Dimension(0, JBUI.scale(36))
+        noPrPanel.maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(36))
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
@@ -198,6 +200,8 @@ class PrBar(
     private fun buildSinglePrPanel() {
         singlePrPanel.background = GREEN_BG
         singlePrPanel.border = JBUI.Borders.customLine(GREEN_BORDER, 0, 0, 1, 0)
+        singlePrPanel.preferredSize = java.awt.Dimension(0, JBUI.scale(36))
+        singlePrPanel.maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(36))
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
@@ -222,6 +226,8 @@ class PrBar(
     private fun buildMultiPrPanel() {
         multiPrPanel.background = GREEN_BG
         multiPrPanel.border = JBUI.Borders.customLine(GREEN_BORDER, 0, 0, 1, 0)
+        multiPrPanel.preferredSize = java.awt.Dimension(0, JBUI.scale(36))
+        multiPrPanel.maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(36))
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
@@ -354,6 +360,10 @@ class PrBar(
 
     private fun setPrs(prs: List<BitbucketPrResponse>) {
         currentPrs = prs
+        log.info("[Build:PrBar] setPrs called with ${prs.size} PRs")
+        for (pr in prs) {
+            log.info("[Build:PrBar]   PR #${pr.id}: '${pr.title}' fromRef=${pr.fromRef?.displayId} toRef=${pr.toRef?.displayId}")
+        }
         when {
             prs.isEmpty() -> {
                 selectedPr = null
@@ -364,7 +374,9 @@ class PrBar(
                 formExpanded = false
                 updateSinglePrInfo(prs[0])
                 showState(CARD_SINGLE)
-                onPrSelected(prs[0].fromRef?.displayId ?: "")
+                val branchName = prs[0].fromRef?.displayId ?: ""
+                log.info("[Build:PrBar] Single PR selected, branch='$branchName'")
+                onPrSelected(branchName)
             }
             else -> {
                 formExpanded = false
@@ -372,7 +384,9 @@ class PrBar(
                 prs.forEach { prDropdown.addItem(PrComboItem(it)) }
                 selectedPr = prs[0]
                 showState(CARD_MULTI)
-                onPrSelected(prs[0].fromRef?.displayId ?: "")
+                val branchName = prs[0].fromRef?.displayId ?: ""
+                log.info("[Build:PrBar] Multi PR, first selected, branch='$branchName'")
+                onPrSelected(branchName)
             }
         }
     }

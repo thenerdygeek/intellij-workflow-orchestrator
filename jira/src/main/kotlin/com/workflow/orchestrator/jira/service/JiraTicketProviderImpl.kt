@@ -133,9 +133,19 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                         }
                         popup.add(item)
                     }
-                    // Show popup near the mouse
-                    val mousePos = java.awt.MouseInfo.getPointerInfo().location
-                    popup.show(null, mousePos.x, mousePos.y)
+                    // Show popup relative to the focused component
+                    val focusOwner = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+                    if (focusOwner != null) {
+                        popup.show(focusOwner, 0, focusOwner.height)
+                    } else {
+                        // Fallback: show relative to the IDE frame
+                        val frame = com.intellij.openapi.wm.WindowManager.getInstance().getFrame(project)
+                        if (frame != null) {
+                            val mousePos = java.awt.MouseInfo.getPointerInfo().location
+                            javax.swing.SwingUtilities.convertPointFromScreen(mousePos, frame)
+                            popup.show(frame, mousePos.x, mousePos.y)
+                        }
+                    }
                 }
             }
         }

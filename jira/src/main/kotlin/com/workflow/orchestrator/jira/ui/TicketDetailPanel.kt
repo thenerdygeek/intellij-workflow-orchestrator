@@ -121,7 +121,7 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
             isOpaque = false
         }
 
-        val transitionBtn = javax.swing.JButton("Transition ▾").apply {
+        val transitionBtn = javax.swing.JButton("${issue.fields.status.name} ▾").apply {
             addActionListener {
                 com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
                     ?.showTransitionDialog(

@@ -55,12 +55,18 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val stageDetailPanel = StageDetailPanel(project, this)
     private val prBar = PrBar(project, scope) { branchName ->
         // When a PR is selected, switch build monitoring to that branch
+        log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
         if (branchName.isNotBlank()) {
             val planKey = settings.state.bambooPlanKey.orEmpty()
+            log.info("[Build:Dashboard] planKey='$planKey', switching build monitoring")
             if (planKey.isNotBlank()) {
                 val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
                 monitorService.switchBranch(planKey, branchName, interval)
+            } else {
+                log.warn("[Build:Dashboard] bambooPlanKey is blank — cannot monitor builds")
             }
+        } else {
+            log.warn("[Build:Dashboard] Branch name is blank — fromRef may not be in API response")
         }
     }
 

@@ -104,6 +104,7 @@ class SprintDashboardPanel(
     private var allIssues: List<JiraIssue> = emptyList()
     private var showAllUsers: Boolean = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private lateinit var currentWorkSection: CurrentWorkSection
 
     /** Check if a JiraIssue is a section header (used for assignee grouping). */
     private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
@@ -164,32 +165,60 @@ class SprintDashboardPanel(
 
         add(topPanel, BorderLayout.NORTH)
 
-        // -- Center: current work + search + list + detail in splitter --
-        val currentWorkSection = CurrentWorkSection(project)
-
-        val leftPanel = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(0, 8, 4, 0)
+        // -- Center: collapsible sections + detail in splitter --
+        currentWorkSection = CurrentWorkSection(project) { ticketId ->
+            // Find and select the ticket in the list
+            for (i in 0 until listModel.size()) {
+                val issue = listModel.getElementAt(i)
+                if (issue.key == ticketId) {
+                    ticketList.selectedIndex = i
+                    ticketList.ensureIndexIsVisible(i)
+                    detailPanel.showIssue(issue)
+                    break
+                }
+            }
         }
+        val currentWorkCollapsible = CollapsibleSection(
+            title = "CURRENTLY WORKING ON",
+            content = currentWorkSection,
+            initiallyExpanded = true
+        )
 
-        // Top of left: current work section
-        leftPanel.add(currentWorkSection, BorderLayout.NORTH)
-
-        // Bottom of left: search + ticket list
-        val sprintListPanel = JPanel(BorderLayout()).apply {
+        // Sprint ticket list with search
+        val sprintListInner = JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyTop(4)
         }
         searchField.preferredSize = Dimension(0, JBUI.scale(28))
-        sprintListPanel.add(searchField, BorderLayout.NORTH)
-        sprintListPanel.add(JBScrollPane(ticketList).apply {
+        sprintListInner.add(searchField, BorderLayout.NORTH)
+        sprintListInner.add(JBScrollPane(ticketList).apply {
             border = JBUI.Borders.emptyTop(4)
             isOpaque = false
             viewport.isOpaque = false
         }, BorderLayout.CENTER)
-        leftPanel.add(sprintListPanel, BorderLayout.CENTER)
 
-        // Refresh current work on init and branch changes
+        val sprintCollapsible = CollapsibleSection(
+            title = "SPRINT TICKETS",
+            content = sprintListInner,
+            initiallyExpanded = true
+        )
+
+        // Left panel: stacked collapsible sections
+        val leftPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(0, 8, 4, 0)
+        }
+        val sectionsPanel = JPanel().apply {
+            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
+        sectionsPanel.add(currentWorkCollapsible)
+        sectionsPanel.add(sprintCollapsible)
+
+        // Current work section is fixed at top, sprint fills remaining space
+        leftPanel.add(currentWorkCollapsible, BorderLayout.NORTH)
+        leftPanel.add(sprintCollapsible, BorderLayout.CENTER)
+
+        // Refresh current work on init
         currentWorkSection.refresh()
 
         val splitter = JBSplitter(false, 0.4f).apply {
@@ -556,6 +585,8 @@ class SprintDashboardPanel(
                                     is ApiResult.Success -> {
                                         setLoading(false, "Checked out: ${result.data}")
                                         log.info("[Jira:UI] Started work on ${selectedIssue.key}, existing branch: ${result.data}")
+                                        currentWorkSection.refresh()
+                                        loadData()
                                     }
                                     is ApiResult.Error -> {
                                         setLoading(false, "Start Work failed: ${result.message}")
@@ -581,6 +612,8 @@ class SprintDashboardPanel(
                                     is ApiResult.Success -> {
                                         setLoading(false, "Branch created: ${result.data}")
                                         log.info("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")
+                                        currentWorkSection.refresh()
+                                        loadData()
                                     }
                                     is ApiResult.Error -> {
                                         setLoading(false, "Start Work failed: ${result.message}")
