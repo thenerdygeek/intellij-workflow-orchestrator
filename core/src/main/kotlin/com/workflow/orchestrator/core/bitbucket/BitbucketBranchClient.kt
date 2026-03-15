@@ -517,7 +517,7 @@ class BitbucketBranchClient(
             }
 
             // Last resort: strip trailing digits from end of key
-            // e.g., SCSP-M2GOONBOARDINGSERVICE514 → SCSP-M2GOONBOARDINGSERVICE
+            // e.g., PROJ-SERVICE514 → PROJ-SERVICE
             return key.trimEnd { it.isDigit() }.ifEmpty { key }
         }
     }
