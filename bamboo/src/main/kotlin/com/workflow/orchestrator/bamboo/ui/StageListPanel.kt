@@ -3,6 +3,7 @@ package com.workflow.orchestrator.bamboo.ui
 import com.intellij.icons.AllIcons
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -10,6 +11,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.model.StageState
 import java.awt.BorderLayout
+import java.awt.Font
 import javax.swing.*
 
 class StageListPanel : JPanel(BorderLayout()) {
@@ -33,7 +35,7 @@ class StageListPanel : JPanel(BorderLayout()) {
                     val index = stageList.locationToIndex(e.point)
                     if (index >= 0) {
                         val stage = listModel.getElementAt(index)
-                        if (stage.manual && stage.status != BuildStatus.IN_PROGRESS) {
+                        if (stage.manual && stage.status != BuildStatus.IN_PROGRESS && !isHeader(stage)) {
                             onRunStage?.invoke(stage)
                         }
                     }
@@ -42,10 +44,30 @@ class StageListPanel : JPanel(BorderLayout()) {
         })
     }
 
+    /** Header items have name prefixed with "§" marker */
+    private fun isHeader(state: StageState): Boolean = state.name.startsWith("§")
+
     fun updateStages(stages: List<StageState>) {
         val selectedIndex = stageList.selectedIndex
         listModel.clear()
-        stages.forEach { listModel.addElement(it) }
+
+        // Insert stage headers before jobs, grouped by stageName
+        var currentStageName = ""
+        for (stage in stages) {
+            if (stage.stageName.isNotBlank() && stage.stageName != currentStageName) {
+                currentStageName = stage.stageName
+                // Add a header item
+                listModel.addElement(StageState(
+                    name = "§${stage.stageName}",
+                    status = BuildStatus.UNKNOWN,
+                    manual = false,
+                    durationMs = null,
+                    stageName = stage.stageName
+                ))
+            }
+            listModel.addElement(stage)
+        }
+
         if (selectedIndex in 0 until listModel.size()) {
             stageList.selectedIndex = selectedIndex
         }
@@ -54,6 +76,10 @@ class StageListPanel : JPanel(BorderLayout()) {
     private inner class StageListCellRenderer : ColoredListCellRenderer<StageState>() {
 
         private val spinnerIcon = AnimatedIcon.Default()
+        private val headerAttributes = SimpleTextAttributes(
+            SimpleTextAttributes.STYLE_BOLD,
+            JBColor(0x656D76, 0x8B949E)
+        )
 
         override fun customizeCellRenderer(
             list: JList<out StageState>,
@@ -63,7 +89,17 @@ class StageListPanel : JPanel(BorderLayout()) {
             hasFocus: Boolean
         ) {
             value ?: return
-            border = JBUI.Borders.empty(4, 8)
+
+            // Stage header (non-selectable group label)
+            if (value.name.startsWith("§")) {
+                border = JBUI.Borders.empty(6, 4, 2, 4)
+                icon = null
+                append(value.name.removePrefix("§"), headerAttributes)
+                return
+            }
+
+            // Job item (indented under stage header)
+            border = JBUI.Borders.empty(4, 20)
 
             icon = when (value.status) {
                 BuildStatus.SUCCESS -> AllIcons.RunConfigurations.TestPassed

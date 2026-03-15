@@ -442,17 +442,17 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         log.info("[Build:Dashboard] Loading job log + test results for $resultKey")
         invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
         scope.launch {
-            // Fetch log and test results in parallel
-            val logJob = scope.launch logJob@{
-                val logResult = apiClient.getBuildLog(resultKey)
-                when (logResult) {
-                    is ApiResult.Success -> {
-                        log.info("[Build:Dashboard] Log loaded: ${logResult.data.length} chars")
-                        invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
-                    }
-                    is ApiResult.Error -> {
-                        invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList()) }
-                    }
+            // Fetch log first (needed for both display and test error extraction)
+            var buildLogText: String? = null
+            val logResult = apiClient.getBuildLog(resultKey)
+            when (logResult) {
+                is ApiResult.Success -> {
+                    buildLogText = logResult.data
+                    log.info("[Build:Dashboard] Log loaded: ${buildLogText.length} chars")
+                    invokeLater { stageDetailPanel.showLog(buildLogText, emptyList()) }
+                }
+                is ApiResult.Error -> {
+                    invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList()) }
                 }
             }
 
@@ -463,8 +463,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     val testData = testResult.data.testResults
                     if (testData.all > 0) {
                         log.info("[Build:Dashboard] Test results: ${testData.all} total, ${testData.failed} failed, ${testData.successful} passed")
+                        // Pass build log so failed test errors can be extracted from it
                         val messages = com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
-                            .toTeamCityMessages(testData)
+                            .toTeamCityMessages(testData, buildLogText)
                         if (messages.isNotEmpty()) {
                             invokeLater { stageDetailPanel.showTestResults(messages) }
                         }
