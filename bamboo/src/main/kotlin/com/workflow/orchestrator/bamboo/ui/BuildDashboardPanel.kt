@@ -230,11 +230,13 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
         add(statusPanel, BorderLayout.SOUTH)
 
-        // Selection listener — load log for selected stage
+        // Selection listener — load log for selected job
         stageListPanel.stageList.addListSelectionListener { e ->
             if (!e.valueIsAdjusting) {
                 val selected = stageListPanel.stageList.selectedValue
-                if (selected != null && selected.status == BuildStatus.FAILED) {
+                if (selected != null && selected.resultKey.isNotBlank()) {
+                    loadJobLog(selected.resultKey)
+                } else if (selected != null && selected.status == BuildStatus.FAILED) {
                     loadBuildLog()
                 } else {
                     stageDetailPanel.showEmpty()
@@ -423,6 +425,24 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     localBuildRunning = false
                     statusLabel.text = "Local build error: ${e.message}"
                     log.warn("[Build:Local] mvn $goals failed with exception", e)
+                }
+            }
+        }
+    }
+
+    private fun loadJobLog(resultKey: String) {
+        log.info("[Build:Dashboard] Loading job log for $resultKey")
+        scope.launch {
+            val logResult = apiClient.getBuildLog(resultKey)
+            invokeLater {
+                when (logResult) {
+                    is ApiResult.Success -> {
+                        val errors = BuildLogParser.parse(logResult.data)
+                        stageDetailPanel.showLog(logResult.data, errors)
+                    }
+                    is ApiResult.Error -> {
+                        stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList())
+                    }
                 }
             }
         }

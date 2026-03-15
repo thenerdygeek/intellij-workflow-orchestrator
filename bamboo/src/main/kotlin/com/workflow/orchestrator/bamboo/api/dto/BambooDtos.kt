@@ -88,7 +88,25 @@ data class BambooStageDto(
     val state: String = "",               // Successful, Failed, Unknown
     val lifeCycleState: String = "",      // Queued, Pending, InProgress, Finished
     val manual: Boolean = false,
-    val buildDurationInSeconds: Long = 0
+    val buildDurationInSeconds: Long = 0,
+    val results: BambooJobResultCollection = BambooJobResultCollection()
+)
+
+@Serializable
+data class BambooJobResultCollection(
+    val size: Int = 0,
+    val result: List<BambooJobResultDto> = emptyList()
+)
+
+@Serializable
+data class BambooJobResultDto(
+    val key: String = "",
+    val buildResultKey: String = "",
+    val state: String = "",
+    val lifeCycleState: String = "",
+    val buildDurationInSeconds: Long = 0,
+    val buildDuration: Long = 0,
+    val plan: BambooPlanDto? = null
 )
 
 // --- Plan Variables DTOs ---

@@ -163,19 +163,40 @@ class BuildMonitorService : Disposable {
     }
 
     private fun mapToBuildState(dto: BambooResultDto, planKey: String, branch: String): BuildState {
-        val stages = dto.stages.stage.map { stage ->
-            StageState(
-                name = stage.name,
-                status = BuildStatus.fromBambooState(stage.state, stage.lifeCycleState),
-                manual = stage.manual,
-                durationMs = stage.buildDurationInSeconds * 1000
-            )
+        // Flatten stages into jobs — each job is a StageState with its parent stage name
+        val jobs = mutableListOf<StageState>()
+        for (stage in dto.stages.stage) {
+            val jobResults = stage.results.result
+            if (jobResults.isNotEmpty()) {
+                // Stage has jobs — show individual jobs
+                for (job in jobResults) {
+                    val jobName = job.plan?.shortName ?: job.buildResultKey
+                    jobs.add(StageState(
+                        name = jobName,
+                        status = BuildStatus.fromBambooState(job.state, job.lifeCycleState),
+                        manual = stage.manual,
+                        durationMs = job.buildDurationInSeconds * 1000,
+                        stageName = stage.name,
+                        resultKey = job.buildResultKey
+                    ))
+                }
+            } else {
+                // Stage has no expanded jobs — show stage itself
+                jobs.add(StageState(
+                    name = stage.name,
+                    status = BuildStatus.fromBambooState(stage.state, stage.lifeCycleState),
+                    manual = stage.manual,
+                    durationMs = stage.buildDurationInSeconds * 1000,
+                    stageName = stage.name,
+                    resultKey = ""
+                ))
+            }
         }
         return BuildState(
             planKey = planKey,
             branch = branch,
             buildNumber = dto.buildNumber,
-            stages = stages,
+            stages = jobs,
             overallStatus = BuildStatus.fromBambooState(dto.state, dto.lifeCycleState),
             lastUpdated = Instant.now()
         )

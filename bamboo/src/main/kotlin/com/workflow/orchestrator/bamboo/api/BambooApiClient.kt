@@ -68,9 +68,9 @@ class BambooApiClient(
         // Otherwise, use the branch path format
         val path = if (branch != null && !planKey.last().isDigit()) {
             val encodedBranch = URLEncoder.encode(branch, "UTF-8")
-            "/rest/api/latest/result/$planKey/branch/$encodedBranch/latest?expand=stages.stage"
+            "/rest/api/latest/result/$planKey/branch/$encodedBranch/latest?expand=stages.stage.results.result"
         } else {
-            "/rest/api/latest/result/$planKey/latest?expand=stages.stage"
+            "/rest/api/latest/result/$planKey/latest?expand=stages.stage.results.result"
         }
         log.info("[Bamboo:API] Fetching latest result: $path")
         return get(path)

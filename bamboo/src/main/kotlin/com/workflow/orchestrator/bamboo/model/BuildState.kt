@@ -31,5 +31,7 @@ data class StageState(
     val name: String,
     val status: BuildStatus,
     val manual: Boolean,
-    val durationMs: Long?
+    val durationMs: Long?,
+    val stageName: String = "",
+    val resultKey: String = ""
 )
