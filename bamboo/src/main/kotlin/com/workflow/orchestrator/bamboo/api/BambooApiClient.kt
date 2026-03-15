@@ -82,6 +82,15 @@ class BambooApiClient(
         return getRaw("/download/$resultKey/build_logs/$resultKey.log")
     }
 
+    /**
+     * Fetches test results for a job, including failed test details.
+     * GET /rest/api/latest/result/{jobResultKey}?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult
+     */
+    suspend fun getTestResults(jobResultKey: String): ApiResult<BambooJobTestResultDto> {
+        log.info("[Bamboo:API] Fetching test results for jobResultKey=$jobResultKey")
+        return get("/rest/api/latest/result/$jobResultKey?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult")
+    }
+
     suspend fun getVariables(planKey: String): ApiResult<List<BambooPlanVariableDto>> =
         get<BambooVariableListResponse>("/rest/api/latest/plan/$planKey/variable")
             .map { it.variables.variable }

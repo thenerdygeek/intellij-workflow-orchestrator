@@ -268,14 +268,20 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         )
 
-        // Observe state changes
+        // Observe state changes — only rebuild stage list if build number changes
+        var lastDisplayedBuildNumber: Int? = null
         scope.launch {
             monitorService.stateFlow.collect { state ->
                 invokeLater {
                     if (state != null) {
                         headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
-                        stageListPanel.updateStages(state.stages)
                         statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
+
+                        // Only rebuild stage list if build number changed (avoids resetting selection + re-fetching log)
+                        if (state.buildNumber != lastDisplayedBuildNumber) {
+                            lastDisplayedBuildNumber = state.buildNumber
+                            stageListPanel.updateStages(state.stages)
+                        }
                     }
                 }
             }
@@ -433,19 +439,39 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun loadJobLog(resultKey: String) {
-        log.info("[Build:Dashboard] Loading job log for $resultKey")
+        log.info("[Build:Dashboard] Loading job log + test results for $resultKey")
         invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
         scope.launch {
-            val logResult = apiClient.getBuildLog(resultKey)
-            when (logResult) {
+            // Fetch log and test results in parallel
+            val logJob = scope.launch logJob@{
+                val logResult = apiClient.getBuildLog(resultKey)
+                when (logResult) {
+                    is ApiResult.Success -> {
+                        log.info("[Build:Dashboard] Log loaded: ${logResult.data.length} chars")
+                        invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
+                    }
+                    is ApiResult.Error -> {
+                        invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList()) }
+                    }
+                }
+            }
+
+            // Fetch test results for this job
+            val testResult = apiClient.getTestResults(resultKey)
+            when (testResult) {
                 is ApiResult.Success -> {
-                    val logText = logResult.data
-                    log.info("[Build:Dashboard] Log loaded: ${logText.length} chars")
-                    // ConsoleView handles display — pass full text, it manages truncation internally
-                    invokeLater { stageDetailPanel.showLog(logText, emptyList()) }
+                    val testData = testResult.data.testResults
+                    if (testData.all > 0) {
+                        log.info("[Build:Dashboard] Test results: ${testData.all} total, ${testData.failed} failed, ${testData.successful} passed")
+                        val messages = com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
+                            .toTeamCityMessages(testData)
+                        if (messages.isNotEmpty()) {
+                            invokeLater { stageDetailPanel.showTestResults(messages) }
+                        }
+                    }
                 }
                 is ApiResult.Error -> {
-                    invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList()) }
+                    log.warn("[Build:Dashboard] Failed to fetch test results: ${testResult.message}")
                 }
             }
         }

@@ -161,6 +161,40 @@ data class BambooQueueResponse(
     val planKey: String = ""
 )
 
+// --- Test Result DTOs ---
+
+@Serializable
+data class BambooJobTestResultDto(
+    val testResults: BambooTestResultsDto = BambooTestResultsDto()
+)
+
+@Serializable
+data class BambooTestResultsDto(
+    val all: Int = 0,
+    val successful: Int = 0,
+    val failed: Int = 0,
+    val skipped: Int = 0,
+    val quarantined: Int = 0,
+    val failedTests: BambooTestCaseCollection = BambooTestCaseCollection(),
+    val successfulTests: BambooTestCaseCollection = BambooTestCaseCollection()
+)
+
+@Serializable
+data class BambooTestCaseCollection(
+    val size: Int = 0,
+    val testResult: List<BambooTestCaseDto> = emptyList()
+)
+
+@Serializable
+data class BambooTestCaseDto(
+    val testCaseId: Long = 0,
+    val className: String = "",
+    val methodName: String = "",
+    val status: String = "",
+    val duration: Long = 0,
+    val durationInSeconds: Long = 0
+)
+
 // --- Build Status DTOs (Phase 2A: Automation) ---
 
 /** Wraps result list for running/queued builds query */
