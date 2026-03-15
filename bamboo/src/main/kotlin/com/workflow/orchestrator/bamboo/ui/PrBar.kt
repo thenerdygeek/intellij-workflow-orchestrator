@@ -50,8 +50,7 @@ class PrBar(
 
     private val log = Logger.getInstance(PrBar::class.java)
     private val settings = PluginSettings.getInstance(project)
-    private val cardLayout = CardLayout()
-    private val cardPanel = JPanel(cardLayout)
+    private val contentPanel = JPanel(BorderLayout())
 
     // State
     private var currentPrs: List<BitbucketPrResponse> = emptyList()
@@ -88,11 +87,6 @@ class PrBar(
     }
 
     companion object {
-        private const val CARD_NO_PR = "no-pr"
-        private const val CARD_FORM = "form"
-        private const val CARD_SINGLE = "single"
-        private const val CARD_MULTI = "multi"
-
         private val BLUE_BG = JBColor(Color(0xE3, 0xF2, 0xFD), Color(0x1e, 0x3a, 0x5f))
         private val GREEN_BG = JBColor(Color(0xE8, 0xF5, 0xE9), Color(0x1a, 0x3d, 0x1a))
         private val BLUE_BORDER = JBColor(Color(0x42, 0xA5, 0xF5), Color(0x89, 0xb4, 0xfa))
@@ -105,15 +99,10 @@ class PrBar(
         buildSinglePrPanel()
         buildMultiPrPanel()
 
-        cardPanel.add(noPrPanel, CARD_NO_PR)
-        cardPanel.add(formPanel, CARD_FORM)
-        cardPanel.add(singlePrPanel, CARD_SINGLE)
-        cardPanel.add(multiPrPanel, CARD_MULTI)
-
-        add(cardPanel, BorderLayout.CENTER)
+        add(contentPanel, BorderLayout.CENTER)
 
         // Default state
-        showState(CARD_NO_PR)
+        showPanel(noPrPanel)
     }
 
     private fun buildNoPrPanel() {
@@ -192,7 +181,7 @@ class PrBar(
         inner.add(center, BorderLayout.CENTER)
         formPanel.add(inner, BorderLayout.CENTER)
 
-        cancelButton.addActionListener { showState(CARD_NO_PR) }
+        cancelButton.addActionListener { showPanel(noPrPanel) }
         submitButton.addActionListener { onSubmitPr() }
         regenerateButton.addActionListener { onRegenerateDescription() }
     }
@@ -257,8 +246,14 @@ class PrBar(
 
     // --- State management ---
 
-    private fun showState(card: String) {
-        cardLayout.show(cardPanel, card)
+    private fun showPanel(panel: JPanel) {
+        contentPanel.removeAll()
+        contentPanel.add(panel, BorderLayout.CENTER)
+        contentPanel.revalidate()
+        contentPanel.repaint()
+        // Force parent to recalculate layout since our preferred size changed
+        this.revalidate()
+        this.repaint()
     }
 
     /**
@@ -329,14 +324,20 @@ class PrBar(
         val projectKey = settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 
+        log.info("[Build:PrBar] refreshPrs: url='$bitbucketUrl' project='$projectKey' repo='$repoSlug'")
         if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
+            log.warn("[Build:PrBar] Bitbucket not configured, hiding PrBar")
             isVisible = false
             return
         }
         isVisible = true
 
         val repos = GitRepositoryManager.getInstance(project).repositories
-        val currentBranch = repos.firstOrNull()?.currentBranchName ?: return
+        val currentBranch = repos.firstOrNull()?.currentBranchName ?: run {
+            log.warn("[Build:PrBar] No Git branch detected")
+            return
+        }
+        log.info("[Build:PrBar] Fetching PRs for branch '$currentBranch'")
 
         val credentialStore = CredentialStore()
         val client = BitbucketBranchClient(
@@ -367,13 +368,13 @@ class PrBar(
         when {
             prs.isEmpty() -> {
                 selectedPr = null
-                if (formExpanded) showState(CARD_FORM) else showState(CARD_NO_PR)
+                if (formExpanded) showPanel(formPanel) else showPanel(noPrPanel)
             }
             prs.size == 1 -> {
                 selectedPr = prs[0]
                 formExpanded = false
                 updateSinglePrInfo(prs[0])
-                showState(CARD_SINGLE)
+                showPanel(singlePrPanel)
                 val branchName = prs[0].fromRef?.displayId ?: ""
                 log.info("[Build:PrBar] Single PR selected, branch='$branchName'")
                 onPrSelected(branchName)
@@ -383,7 +384,7 @@ class PrBar(
                 prDropdown.removeAllItems()
                 prs.forEach { prDropdown.addItem(PrComboItem(it)) }
                 selectedPr = prs[0]
-                showState(CARD_MULTI)
+                showPanel(multiPrPanel)
                 val branchName = prs[0].fromRef?.displayId ?: ""
                 log.info("[Build:PrBar] Multi PR, first selected, branch='$branchName'")
                 onPrSelected(branchName)
