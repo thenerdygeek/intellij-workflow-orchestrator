@@ -487,17 +487,38 @@ class BitbucketBranchClient(
 
     companion object {
         /**
-         * Extract Bamboo plan key from a build status key.
-         * e.g., "PROJ-BUILD-42" → "PROJ-BUILD"
+         * Extract Bamboo plan key from a build status.
+         * Prefers extracting from the URL (e.g., ".../browse/PROJ-PLAN-42" → "PROJ-PLAN")
+         * Falls back to stripping trailing digits from the key.
          */
-        fun extractPlanKey(buildKey: String): String {
-            // Build key format: PLAN-KEY-BUILD_NUMBER (last segment after dash is the number)
-            val lastDash = buildKey.lastIndexOf('-')
-            if (lastDash <= 0) return buildKey
-            val candidate = buildKey.substring(0, lastDash)
-            // Verify the suffix was numeric
-            val suffix = buildKey.substring(lastDash + 1)
-            return if (suffix.all { it.isDigit() }) candidate else buildKey
+        fun extractPlanKey(buildStatus: BitbucketBuildStatus): String {
+            // Try URL first: https://bamboo.example.com/browse/PROJ-PLAN-42
+            val url = buildStatus.url
+            if (url.contains("/browse/")) {
+                val browseKey = url.substringAfter("/browse/").substringBefore("?").trim('/')
+                val lastDash = browseKey.lastIndexOf('-')
+                if (lastDash > 0) {
+                    val suffix = browseKey.substring(lastDash + 1)
+                    if (suffix.all { it.isDigit() }) {
+                        return browseKey.substring(0, lastDash)
+                    }
+                }
+            }
+
+            // Fallback: strip trailing digits from key
+            val key = buildStatus.key
+            // Try last-dash approach: PROJ-BUILD-42 → PROJ-BUILD
+            val lastDash = key.lastIndexOf('-')
+            if (lastDash > 0) {
+                val suffix = key.substring(lastDash + 1)
+                if (suffix.all { it.isDigit() }) {
+                    return key.substring(0, lastDash)
+                }
+            }
+
+            // Last resort: strip trailing digits from end of key
+            // e.g., SCSP-M2GOONBOARDINGSERVICE514 → SCSP-M2GOONBOARDINGSERVICE
+            return key.trimEnd { it.isDigit() }.ifEmpty { key }
         }
     }
 }

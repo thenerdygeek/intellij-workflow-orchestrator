@@ -148,7 +148,7 @@ class BambooApiClient(
                         }
                         401 -> { log.error("[Bamboo:API] Authentication failed for GET $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
                         403 -> { log.error("[Bamboo:API] Forbidden for GET $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        404 -> { log.error("[Bamboo:API] Not found for GET $path"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
+                        404 -> { log.warn("[Bamboo:API] Not found for GET $path (plan key or branch may be incorrect)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
                         429 -> { log.error("[Bamboo:API] Rate limited for GET $path"); ApiResult.Error(ErrorType.RATE_LIMITED, "Bamboo rate limit exceeded") }
                         else -> { log.error("[Bamboo:API] Server error ${it.code} for GET $path"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
@@ -170,7 +170,7 @@ class BambooApiClient(
                         in 200..299 -> ApiResult.Success(it.body?.string() ?: "")
                         401 -> { log.error("[Bamboo:API] Authentication failed for GET $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
                         403 -> { log.error("[Bamboo:API] Forbidden for GET $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        404 -> { log.error("[Bamboo:API] Not found for GET $path"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
+                        404 -> { log.warn("[Bamboo:API] Not found for GET $path (plan key or branch may be incorrect)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
                         else -> { log.error("[Bamboo:API] Server error ${it.code} for GET $path"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }

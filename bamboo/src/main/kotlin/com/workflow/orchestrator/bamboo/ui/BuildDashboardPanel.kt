@@ -119,8 +119,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             is ApiResult.Success -> {
                 val statuses = result.data
                 if (statuses.isNotEmpty()) {
-                    val planKey = BitbucketBranchClient.extractPlanKey(statuses.first().key)
-                    log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status '${statuses.first().key}'")
+                    val planKey = BitbucketBranchClient.extractPlanKey(statuses.first())
+                    log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status key='${statuses.first().key}' url='${statuses.first().url}'")
                     planKey
                 } else {
                     log.info("[Build:Dashboard] No build statuses found for commit ${commitId.take(8)}")
