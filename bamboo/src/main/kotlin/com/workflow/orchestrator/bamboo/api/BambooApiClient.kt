@@ -63,10 +63,17 @@ class BambooApiClient(
         get<BambooBranchListResponse>("/rest/api/latest/plan/$planKey/branch?max-results=100")
             .map { it.branches.branch }
 
-    suspend fun getLatestResult(planKey: String, branch: String): ApiResult<BambooResultDto> {
-        log.info("[Bamboo:API] Fetching latest result for planKey=$planKey, branch=$branch")
-        val encodedBranch = URLEncoder.encode(branch, "UTF-8")
-        return get("/rest/api/latest/result/$planKey/branch/$encodedBranch/latest?expand=stages.stage")
+    suspend fun getLatestResult(planKey: String, branch: String? = null): ApiResult<BambooResultDto> {
+        // If planKey already includes the branch number (e.g., PROJ-PLAN123), use it directly
+        // Otherwise, use the branch path format
+        val path = if (branch != null && !planKey.last().isDigit()) {
+            val encodedBranch = URLEncoder.encode(branch, "UTF-8")
+            "/rest/api/latest/result/$planKey/branch/$encodedBranch/latest?expand=stages.stage"
+        } else {
+            "/rest/api/latest/result/$planKey/latest?expand=stages.stage"
+        }
+        log.info("[Bamboo:API] Fetching latest result: $path")
+        return get(path)
     }
 
     suspend fun getBuildLog(resultKey: String): ApiResult<String> {

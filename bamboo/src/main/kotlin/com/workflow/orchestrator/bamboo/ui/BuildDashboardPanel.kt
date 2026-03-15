@@ -85,21 +85,26 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             checkDivergence(latestCommit)
         }
 
-        // Try auto-detect Bamboo plan key from build statuses
-        var planKey = settings.state.bambooPlanKey.orEmpty()
-        if (planKey.isBlank() && latestCommit.isNotBlank()) {
-            planKey = detectPlanKeyFromBuildStatus(latestCommit) ?: ""
-            if (planKey.isNotBlank()) {
-                log.info("[Build:Dashboard] Auto-detected Bamboo plan key: $planKey")
-                settings.state.bambooPlanKey = planKey
-                invokeLater { headerLabel.text = "Plan: $planKey / $branchName (auto-detected)" }
+        // Try auto-detect Bamboo branch plan key from build statuses
+        val configuredPlanKey = settings.state.bambooPlanKey.orEmpty()
+
+        if (latestCommit.isNotBlank()) {
+            val detectedKey = detectPlanKeyFromBuildStatus(latestCommit)
+            if (detectedKey != null) {
+                // Use the detected branch plan key directly (e.g., PROJ-PLAN123)
+                log.info("[Build:Dashboard] Using auto-detected branch plan key: $detectedKey")
+                val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
+                monitorService.switchBranch(detectedKey, branchName, interval)
+                invokeLater { headerLabel.text = "Plan: $detectedKey / $branchName" }
+                return
             }
         }
 
-        if (planKey.isNotBlank()) {
+        // Fallback to configured plan key
+        if (configuredPlanKey.isNotBlank()) {
             val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-            monitorService.switchBranch(planKey, branchName, interval)
-            invokeLater { headerLabel.text = "Plan: $planKey / $branchName" }
+            monitorService.switchBranch(configuredPlanKey, branchName, interval)
+            invokeLater { headerLabel.text = "Plan: $configuredPlanKey / $branchName" }
         } else {
             log.warn("[Build:Dashboard] No Bamboo plan key — configure in Settings or create a build")
             invokeLater { headerLabel.text = "No Bamboo builds found for this branch" }
@@ -119,8 +124,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             is ApiResult.Success -> {
                 val statuses = result.data
                 if (statuses.isNotEmpty()) {
-                    val planKey = BitbucketBranchClient.extractPlanKey(statuses.first())
-                    log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status key='${statuses.first().key}' url='${statuses.first().url}'")
+                    // Use the build status key directly — it's the Bamboo branch plan key
+                    // e.g., "PROJ-PLAN123" is the key for this branch's builds
+                    val planKey = statuses.first().key
+                    log.info("[Build:Dashboard] Using build status key as plan key: '$planKey' (url='${statuses.first().url}')")
                     planKey
                 } else {
                     log.info("[Build:Dashboard] No build statuses found for commit ${commitId.take(8)}")
