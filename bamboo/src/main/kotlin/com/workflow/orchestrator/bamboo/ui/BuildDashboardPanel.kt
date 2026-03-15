@@ -24,6 +24,8 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.maven.MavenBuildService
 import com.workflow.orchestrator.core.maven.SurefireReportParser
 import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
+import com.intellij.ui.JBColor
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -53,20 +55,131 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private val stageListPanel = StageListPanel()
     private val stageDetailPanel = StageDetailPanel(project, this)
+
+    // Divergence warning bar
+    private val warningLabel = com.intellij.ui.components.JBLabel("").apply {
+        foreground = JBColor(java.awt.Color(0xCC, 0x66, 0x00), java.awt.Color(0xFF, 0xAA, 0x33))
+        icon = com.intellij.icons.AllIcons.General.Warning
+        border = com.intellij.util.ui.JBUI.Borders.empty(4, 8)
+        isVisible = false
+    }
+
     private val prBar = PrBar(project, scope) { branchName ->
-        // When a PR is selected, switch build monitoring to that branch
         log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
         if (branchName.isNotBlank()) {
-            val planKey = settings.state.bambooPlanKey.orEmpty()
-            log.info("[Build:Dashboard] planKey='$planKey', switching build monitoring")
-            if (planKey.isNotBlank()) {
-                val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-                monitorService.switchBranch(planKey, branchName, interval)
-            } else {
-                log.warn("[Build:Dashboard] bambooPlanKey is blank — cannot monitor builds")
+            // Auto-detect Bamboo plan + check divergence
+            scope.launch {
+                autoDetectAndMonitor(branchName)
             }
         } else {
             log.warn("[Build:Dashboard] Branch name is blank — fromRef may not be in API response")
+        }
+    }
+
+    private suspend fun autoDetectAndMonitor(branchName: String) {
+        val selectedPr = prBar.getSelectedPr()
+        val latestCommit = selectedPr?.fromRef?.latestCommit.orEmpty()
+
+        // Check divergence
+        if (latestCommit.isNotBlank()) {
+            checkDivergence(latestCommit)
+        }
+
+        // Try auto-detect Bamboo plan key from build statuses
+        var planKey = settings.state.bambooPlanKey.orEmpty()
+        if (planKey.isBlank() && latestCommit.isNotBlank()) {
+            planKey = detectPlanKeyFromBuildStatus(latestCommit) ?: ""
+            if (planKey.isNotBlank()) {
+                log.info("[Build:Dashboard] Auto-detected Bamboo plan key: $planKey")
+                settings.state.bambooPlanKey = planKey
+                invokeLater { headerLabel.text = "Plan: $planKey / $branchName (auto-detected)" }
+            }
+        }
+
+        if (planKey.isNotBlank()) {
+            val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
+            monitorService.switchBranch(planKey, branchName, interval)
+            invokeLater { headerLabel.text = "Plan: $planKey / $branchName" }
+        } else {
+            log.warn("[Build:Dashboard] No Bamboo plan key — configure in Settings or create a build")
+            invokeLater { headerLabel.text = "No Bamboo builds found for this branch" }
+        }
+    }
+
+    private suspend fun detectPlanKeyFromBuildStatus(commitId: String): String? {
+        val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
+        if (bitbucketUrl.isBlank()) return null
+
+        val client = BitbucketBranchClient(
+            baseUrl = bitbucketUrl,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+
+        return when (val result = client.getBuildStatuses(commitId)) {
+            is ApiResult.Success -> {
+                val statuses = result.data
+                if (statuses.isNotEmpty()) {
+                    val planKey = BitbucketBranchClient.extractPlanKey(statuses.first().key)
+                    log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status '${statuses.first().key}'")
+                    planKey
+                } else {
+                    log.info("[Build:Dashboard] No build statuses found for commit ${commitId.take(8)}")
+                    null
+                }
+            }
+            is ApiResult.Error -> {
+                log.warn("[Build:Dashboard] Failed to get build statuses: ${result.message}")
+                null
+            }
+            else -> null
+        }
+    }
+
+    private suspend fun checkDivergence(remoteCommit: String) {
+        try {
+            val repos = GitRepositoryManager.getInstance(project).repositories
+            val repo = repos.firstOrNull() ?: return
+            val localHead = repo.currentRevision ?: return
+
+            if (localHead == remoteCommit) {
+                invokeLater { warningLabel.isVisible = false }
+                return
+            }
+
+            // Count commits ahead/behind using git
+            val git = git4idea.commands.Git.getInstance()
+
+            // Local ahead: commits in local but not in remote
+            val aheadHandler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.REV_LIST)
+            aheadHandler.addParameters("--count", "$remoteCommit..HEAD")
+            val aheadResult = git.runCommand(aheadHandler)
+            val ahead = if (aheadResult.success()) aheadResult.getOutputOrThrow().trim().toIntOrNull() ?: 0 else 0
+
+            // Remote ahead: commits in remote but not in local
+            val behindHandler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.REV_LIST)
+            behindHandler.addParameters("--count", "HEAD..$remoteCommit")
+            val behindResult = git.runCommand(behindHandler)
+            val behind = if (behindResult.success()) behindResult.getOutputOrThrow().trim().toIntOrNull() ?: 0 else 0
+
+            invokeLater {
+                when {
+                    ahead > 0 && behind > 0 -> {
+                        warningLabel.text = "Local and PR have diverged ($ahead local, $behind remote). Pull and push to sync."
+                        warningLabel.isVisible = true
+                    }
+                    ahead > 0 -> {
+                        warningLabel.text = "Local branch is $ahead commit(s) ahead of PR. Push to trigger new builds."
+                        warningLabel.isVisible = true
+                    }
+                    behind > 0 -> {
+                        warningLabel.text = "PR has $behind commit(s) not in your local branch. Pull to sync."
+                        warningLabel.isVisible = true
+                    }
+                    else -> warningLabel.isVisible = false
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("[Build:Dashboard] Failed to check divergence: ${e.message}")
         }
     }
 
@@ -91,9 +204,14 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
         add(headerPanel, BorderLayout.NORTH)
 
-        // PR bar on top, build splitter fills remaining space
+        // PR bar + warning + build splitter
+        val topPanel2 = JPanel().apply {
+            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+            add(prBar)
+            add(warningLabel)
+        }
         val contentPanel = JPanel(BorderLayout()).apply {
-            add(prBar, BorderLayout.NORTH)
+            add(topPanel2, BorderLayout.NORTH)
             add(splitter, BorderLayout.CENTER)
         }
         add(contentPanel, BorderLayout.CENTER)
@@ -155,8 +273,18 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // Start polling
         startMonitoring()
 
-        // Fetch PRs for current branch
-        prBar.refreshPrs()
+        // Fetch PRs for current branch — delay to wait for Git repository initialization
+        scope.launch {
+            // Wait for Git to be ready (repositories list becomes non-empty)
+            var retries = 0
+            while (retries < 10) {
+                val repos = GitRepositoryManager.getInstance(project).repositories
+                if (repos.isNotEmpty()) break
+                kotlinx.coroutines.delay(1000)
+                retries++
+            }
+            invokeLater { prBar.refreshPrs() }
+        }
     }
 
     override fun dispose() {
@@ -187,11 +315,17 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         group.add(object : AnAction("Refresh", "Force poll build status now", AllIcons.Actions.Refresh) {
             override fun actionPerformed(e: AnActionEvent) {
+                val planKey = settings.state.bambooPlanKey.orEmpty()
+                if (planKey.isBlank()) {
+                    headerLabel.text = "No Bamboo plan configured. Set plan key in Settings."
+                    return
+                }
                 scope.launch {
-                    val planKey = settings.state.bambooPlanKey.orEmpty()
                     val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
                     monitorService.pollOnce(planKey, branch)
                 }
+                // Also refresh PR bar
+                prBar.refreshPrs()
             }
         })
 

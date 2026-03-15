@@ -99,6 +99,17 @@ class AdvancedConfigurable(private val project: Project) :
                 }
             }
 
+            group("Bamboo") {
+                row("Bamboo plan key:") {
+                    textField()
+                        .bindText(
+                            { settings.state.bambooPlanKey ?: "" },
+                            { settings.state.bambooPlanKey = it }
+                        )
+                        .comment("e.g., PROJ-BUILD. Auto-detected from PR build status if blank.")
+                }
+            }
+
             group("Automation") {
                 row("Tag history entries:") {
                     intTextField(range = 1..50)
@@ -111,6 +122,33 @@ class AdvancedConfigurable(private val project: Project) :
                             { settings.state.bambooBuildVariableName = it }
                         )
                         .comment("Bamboo build variable containing Docker tag JSON")
+                }
+            }
+
+            group("Jira Custom Fields") {
+                row("Epic link field ID:") {
+                    textField()
+                        .bindText(
+                            { settings.state.epicLinkFieldId ?: "" },
+                            { settings.state.epicLinkFieldId = it }
+                        )
+                        .comment("e.g., customfield_10014")
+                }
+                row("Reviewer field ID:") {
+                    textField()
+                        .bindText(
+                            { settings.state.reviewerFieldId ?: "" },
+                            { settings.state.reviewerFieldId = it }
+                        )
+                        .comment("e.g., customfield_10050 (leave blank if not used)")
+                }
+                row("Tester field ID:") {
+                    textField()
+                        .bindText(
+                            { settings.state.testerFieldId ?: "" },
+                            { settings.state.testerFieldId = it }
+                        )
+                        .comment("e.g., customfield_10051 (leave blank if not used)")
                 }
             }
         }

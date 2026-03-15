@@ -55,6 +55,8 @@ class PrBar(
     // State
     private var currentPrs: List<BitbucketPrResponse> = emptyList()
     private var selectedPr: BitbucketPrResponse? = null
+
+    fun getSelectedPr(): BitbucketPrResponse? = selectedPr
     private var formExpanded = false
 
     // --- No PR state components ---

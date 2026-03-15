@@ -91,7 +91,26 @@ data class BitbucketPrResponse(
 @Serializable
 data class BitbucketPrRef(
     val id: String = "",
-    val displayId: String = ""
+    val displayId: String = "",
+    val latestCommit: String = ""
+)
+
+// --- Build Status DTOs ---
+
+@Serializable
+data class BitbucketBuildStatus(
+    val state: String,
+    val key: String,
+    val name: String? = null,
+    val url: String = "",
+    val description: String? = null,
+    val dateAdded: Long? = null
+)
+
+@Serializable
+private data class BuildStatusListResponse(
+    val values: List<BitbucketBuildStatus> = emptyList(),
+    val size: Int = 0
 )
 
 @Serializable
@@ -431,4 +450,54 @@ class BitbucketBranchClient(
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
+
+    /**
+     * Gets build statuses for a commit from Bitbucket Server.
+     * GET /rest/build-status/1.0/commits/{commitId}
+     * Returns Bamboo build results linked to this commit.
+     */
+    suspend fun getBuildStatuses(commitId: String): ApiResult<List<BitbucketBuildStatus>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching build statuses for commit ${commitId.take(8)}")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/build-status/1.0/commits/$commitId")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BuildStatusListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} build statuses for commit ${commitId.take(8)}")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Success(emptyList()) // No builds for this commit
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching build statuses", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    companion object {
+        /**
+         * Extract Bamboo plan key from a build status key.
+         * e.g., "PROJ-BUILD-42" → "PROJ-BUILD"
+         */
+        fun extractPlanKey(buildKey: String): String {
+            // Build key format: PLAN-KEY-BUILD_NUMBER (last segment after dash is the number)
+            val lastDash = buildKey.lastIndexOf('-')
+            if (lastDash <= 0) return buildKey
+            val candidate = buildKey.substring(0, lastDash)
+            // Verify the suffix was numeric
+            val suffix = buildKey.substring(lastDash + 1)
+            return if (suffix.all { it.isDigit() }) candidate else buildKey
+        }
+    }
 }
