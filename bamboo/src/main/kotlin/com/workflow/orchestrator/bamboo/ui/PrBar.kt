@@ -138,7 +138,7 @@ class PrBar(
         noPrPanel.add(left, BorderLayout.CENTER)
         noPrPanel.add(right, BorderLayout.EAST)
 
-        createButton.addActionListener { expandForm() }
+        createButton.addActionListener { openCreatePrDialog() }
     }
 
     private fun buildFormPanel() {
@@ -190,7 +190,7 @@ class PrBar(
         inner.add(center, BorderLayout.CENTER)
         formPanel.add(inner, BorderLayout.CENTER)
 
-        cancelButton.addActionListener { collapseForm() }
+        cancelButton.addActionListener { showState(CARD_NO_PR) }
         submitButton.addActionListener { onSubmitPr() }
         regenerateButton.addActionListener { onRegenerateDescription() }
     }
@@ -255,31 +255,65 @@ class PrBar(
         cardLayout.show(cardPanel, card)
     }
 
-    private fun expandForm() {
-        formExpanded = true
-        populateForm()
-        showState(CARD_FORM)
-    }
-
-    private fun collapseForm() {
-        formExpanded = false
-        showState(CARD_NO_PR)
-    }
-
-    private fun populateForm() {
+    /**
+     * Opens the full Create PR dialog. Prefetches all data in background,
+     * then shows the dialog on EDT.
+     */
+    private fun openCreatePrDialog() {
         val repos = GitRepositoryManager.getInstance(project).repositories
-        val branch = repos.firstOrNull()?.currentBranchName ?: ""
+        val currentBranch = repos.firstOrNull()?.currentBranchName ?: return
         val ticketId = settings.state.activeTicketId.orEmpty()
-        val ticketSummary = settings.state.activeTicketSummary.orEmpty()
         val prService = PrService.getInstance(project)
+        val defaultReviewers = prService.buildDefaultReviewers().map { it.user.name }
 
-        titleField.text = if (ticketId.isNotBlank()) {
-            prService.buildPrTitle(ticketId, ticketSummary, branch)
-        } else branch
+        // Fetch data in background, show dialog when ready
+        scope.launch {
+            val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
+            val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+            val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 
-        descriptionArea.text = prService.buildFallbackDescription(
-            ticketId.ifBlank { "" }, ticketSummary.ifBlank { branch }, branch
-        )
+            val remoteBranches = if (bitbucketUrl.isNotBlank()) {
+                val client = BitbucketBranchClient(
+                    baseUrl = bitbucketUrl,
+                    tokenProvider = { CredentialStore().getToken(ServiceType.BITBUCKET) }
+                )
+                when (val r = client.getBranches(projectKey, repoSlug)) {
+                    is ApiResult.Success -> r.data.map { it.displayId }
+                    is ApiResult.Error -> emptyList()
+                }
+            } else emptyList()
+
+            val jiraProvider = com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
+            val ticketDetails = if (ticketId.isNotBlank()) {
+                jiraProvider?.getTicketDetails(ticketId)
+            } else null
+
+            val transitions = if (ticketId.isNotBlank()) {
+                jiraProvider?.getAvailableTransitions(ticketId) ?: emptyList()
+            } else emptyList()
+
+            val defaultTitle = com.workflow.orchestrator.bamboo.service.PrDescriptionGenerator
+                .generateTitle(project, ticketDetails, currentBranch)
+
+            invokeLater {
+                val dialog = CreatePrDialog(
+                    project = project,
+                    scope = scope,
+                    sourceBranch = currentBranch,
+                    remoteBranches = remoteBranches,
+                    ticketDetails = ticketDetails,
+                    transitions = transitions,
+                    defaultTitle = defaultTitle,
+                    defaultReviewers = defaultReviewers
+                )
+
+                if (dialog.showAndGet()) {
+                    // Dialog handles PR creation internally
+                    // Refresh PR bar to show the new PR
+                    refreshPrs()
+                }
+            }
+        }
     }
 
     // --- Actions ---

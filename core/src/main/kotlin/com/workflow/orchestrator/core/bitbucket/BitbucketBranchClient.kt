@@ -40,6 +40,19 @@ data class BitbucketBranch(
 )
 
 @Serializable
+data class BitbucketUser(
+    val name: String,
+    val displayName: String = "",
+    val emailAddress: String? = null
+)
+
+@Serializable
+private data class UserListResponse(
+    val values: List<BitbucketUser>,
+    val isLastPage: Boolean = true
+)
+
+@Serializable
 private data class ProjectListResponse(
     val values: List<BitbucketProject>,
     val isLastPage: Boolean = true
@@ -382,6 +395,39 @@ class BitbucketBranchClient(
                 }
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error fetching PRs", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Searches Bitbucket Server users by filter text.
+     * GET /rest/api/1.0/users?filter={filter}
+     * Used for reviewer autocomplete in PR creation dialog.
+     */
+    suspend fun getUsers(filter: String): ApiResult<List<BitbucketUser>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Searching users: filter='$filter'")
+            try {
+                val encodedFilter = java.net.URLEncoder.encode(filter, "UTF-8")
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/users?filter=$encodedFilter&limit=10")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<UserListResponse>(body)
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error searching users", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
