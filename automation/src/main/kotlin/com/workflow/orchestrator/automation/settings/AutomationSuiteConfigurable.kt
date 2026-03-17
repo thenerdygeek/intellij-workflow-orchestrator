@@ -30,7 +30,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     private var mainPanel: JPanel? = null
     private val suiteRows = mutableListOf<SuiteRow>()
     private var suitesContainer: JPanel? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val projectCombo = JComboBox<ProjectItem>()
     private val planCombo = JComboBox<PlanItem>()
@@ -57,6 +57,8 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     override fun getDisplayName(): String = "Automation Suites"
 
     override fun createComponent(): JComponent {
+        // Recreate scope in case it was cancelled by a previous disposeUIResources()
+        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val settings = AutomationSettingsService.getInstance()
         initBambooClient()
 
