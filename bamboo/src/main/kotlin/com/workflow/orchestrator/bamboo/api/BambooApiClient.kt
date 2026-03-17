@@ -156,6 +156,12 @@ class BambooApiClient(
         ).map { it.results.result }
     }
 
+    /** Rerun failed/incomplete jobs for a build via PUT to queue endpoint. */
+    suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ApiResult<Unit> {
+        log.info("[Bamboo:API] Rerunning failed jobs for $planKey-$buildNumber")
+        return put("/rest/api/latest/queue/$planKey-$buildNumber")
+    }
+
     /** Cancel a queued (not yet running) build. */
     suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
         log.info("[Bamboo:API] Cancelling queued build resultKey=$resultKey")

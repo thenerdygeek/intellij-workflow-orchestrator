@@ -353,6 +353,48 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         })
 
+        group.add(object : AnAction("Rerun Failed Jobs", "Rerun failed/incomplete jobs on Bamboo", AllIcons.Actions.Restart) {
+            override fun actionPerformed(e: AnActionEvent) {
+                val state = monitorService.stateFlow.value
+                if (state == null) {
+                    statusLabel.text = "No build to rerun"
+                    return
+                }
+                val planKey = activePlanKey.ifBlank { state.planKey }
+                val buildNumber = state.buildNumber
+                if (planKey.isBlank() || buildNumber <= 0) {
+                    statusLabel.text = "No build to rerun"
+                    return
+                }
+                statusLabel.text = "Rerunning failed jobs..."
+                scope.launch {
+                    val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+                    val result = apiClient.rerunFailedJobs(planKey, buildNumber)
+                    invokeLater {
+                        when (result) {
+                            is ApiResult.Success -> {
+                                statusLabel.text = "Rerun triggered for $planKey #$buildNumber"
+                                // Poll immediately to get updated status
+                                scope.launch {
+                                    kotlinx.coroutines.delay(2000)
+                                    monitorService.pollOnce(planKey, state.branch)
+                                }
+                            }
+                            is ApiResult.Error -> {
+                                statusLabel.text = "Rerun failed: ${result.message}"
+                            }
+                        }
+                    }
+                }
+            }
+            override fun update(e: AnActionEvent) {
+                val state = monitorService.stateFlow.value
+                e.presentation.isEnabled = state != null &&
+                    state.overallStatus == com.workflow.orchestrator.bamboo.model.BuildStatus.FAILED
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
+        })
+
         group.add(Separator.getInstance())
 
         // Local Maven build actions

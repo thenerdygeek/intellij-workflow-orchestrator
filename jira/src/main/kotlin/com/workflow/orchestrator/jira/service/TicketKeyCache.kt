@@ -23,15 +23,25 @@ class TicketKeyCache {
 
     companion object {
         private const val MAX_SIZE = 500
-        private val TICKET_KEY_REGEX = Regex("\\b([A-Z][A-Z0-9]+-\\d+)\\b")
+        private val DEFAULT_REGEX = Regex("\\b([A-Z][A-Z0-9]+-\\d+)\\b")
 
         fun getInstance(project: Project): TicketKeyCache =
             project.getService(TicketKeyCache::class.java)
     }
 
-    /** Extract all potential ticket keys from text. */
-    fun extractKeys(text: String): Set<String> =
-        TICKET_KEY_REGEX.findAll(text).map { it.groupValues[1] }.toSet()
+    /** Extract all potential ticket keys from text using the configured regex. */
+    fun extractKeys(text: String): Set<String> {
+        val regex = try {
+            val pattern = com.workflow.orchestrator.core.settings.ConnectionSettings
+                .getInstance().state.ticketKeyRegex
+            if (pattern.isNotBlank()) Regex(pattern) else DEFAULT_REGEX
+        } catch (_: Exception) {
+            DEFAULT_REGEX
+        }
+        return regex.findAll(text).map { match ->
+            match.groupValues.getOrElse(1) { match.value }
+        }.toSet()
+    }
 
     /** Get cached info for a key. Returns null if not cached or cached as invalid. */
     fun get(key: String): TicketKeyInfo? = cache[key]

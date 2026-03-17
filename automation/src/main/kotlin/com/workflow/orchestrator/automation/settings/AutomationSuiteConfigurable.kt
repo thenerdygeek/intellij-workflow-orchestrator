@@ -39,6 +39,9 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     private val searchField = JBTextField(20).apply {
         emptyText.setText("Search pattern (e.g., REGRESSION, E2E.*)")
     }
+
+    // Ticket key regex
+    private val ticketKeyRegexField = JBTextField(30)
     private val searchResultsPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
     }
@@ -109,11 +112,34 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
             addSuiteRow(suite.displayName, suite.planKey)
         }
 
+        // === Ticket key regex ===
+        val regexPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.emptyBottom(12)
+        }
+        regexPanel.add(JBLabel("Jira Ticket Key Detection Pattern:").apply {
+            foreground = JBColor(0x656D76, 0x8B949E)
+            border = JBUI.Borders.emptyBottom(4)
+        })
+        val regexRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
+        val connSettings = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+        ticketKeyRegexField.text = connSettings.state.ticketKeyRegex
+        regexRow.add(JBLabel("Regex:"))
+        regexRow.add(ticketKeyRegexField)
+        regexPanel.add(regexRow)
+        regexPanel.add(JBLabel("Used to detect and hyperlink Jira ticket keys in descriptions and comments").apply {
+            foreground = JBColor(0x999999, 0x585b70)
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            border = JBUI.Borders.emptyLeft(JBUI.scale(6))
+        })
+
         val topPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(addByProjectPanel)
             add(JSeparator())
             add(addBySearchPanel)
+            add(JSeparator())
+            add(regexPanel)
             add(JSeparator())
             add(JBLabel("Configured Suites:").apply {
                 font = font.deriveFont(font.size + 1f)
@@ -274,11 +300,13 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     }
 
     override fun isModified(): Boolean {
-        val current = AutomationSettingsService.getInstance().getAllSuites()
-            .map { it.planKey to it.displayName }.toSet()
-        val edited = suiteRows.filter { it.planKeyField.text.isNotBlank() }
+        val settings = AutomationSettingsService.getInstance()
+        val currentSuites = settings.getAllSuites().map { it.planKey to it.displayName }.toSet()
+        val editedSuites = suiteRows.filter { it.planKeyField.text.isNotBlank() }
             .map { it.planKeyField.text to it.displayNameField.text }.toSet()
-        return current != edited
+        val regexChanged = ticketKeyRegexField.text !=
+            com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance().state.ticketKeyRegex
+        return currentSuites != editedSuites || regexChanged
     }
 
     override fun apply() {
@@ -294,14 +322,19 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                 ))
             }
         }
+        com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance().state.ticketKeyRegex =
+            ticketKeyRegexField.text.trim().ifBlank { "\\b([A-Z][A-Z0-9]+-\\d+)\\b" }
     }
 
     override fun reset() {
         suiteRows.clear()
         suitesContainer?.removeAll()
-        for (suite in AutomationSettingsService.getInstance().getAllSuites()) {
+        val settings = AutomationSettingsService.getInstance()
+        for (suite in settings.getAllSuites()) {
             addSuiteRow(suite.displayName, suite.planKey)
         }
+        ticketKeyRegexField.text = com.workflow.orchestrator.core.settings.ConnectionSettings
+            .getInstance().state.ticketKeyRegex
         suitesContainer?.revalidate()
     }
 

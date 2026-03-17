@@ -335,4 +335,14 @@
         <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
     </projectListeners>
+
+    <actions>
+        <action
+            id="Workflow.GenerateCommitMessage"
+            text="Generate with Workflow"
+            description="Generate commit message using Cody AI"
+            class="com.workflow.orchestrator.cody.vcs.GenerateCommitMessageAction">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+    </actions>
 </idea-plugin>

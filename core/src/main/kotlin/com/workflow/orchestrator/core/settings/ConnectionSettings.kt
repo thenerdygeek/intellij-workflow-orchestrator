@@ -27,7 +27,8 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         var sonarUrl: String = "",
         var sourcegraphUrl: String = "",
         var nexusUrl: String = "",
-        var nexusUsername: String = ""
+        var nexusUsername: String = "",
+        var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b"
     )
 
     private var myState = State()
