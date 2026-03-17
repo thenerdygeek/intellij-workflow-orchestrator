@@ -47,6 +47,18 @@ class BambooApiClient(
             .map { it.plans.plan }
     }
 
+    suspend fun getProjects(): ApiResult<List<BambooProjectDto>> {
+        log.info("[Bamboo:API] Fetching all projects")
+        return get<BambooProjectListResponse>("/rest/api/latest/project?max-results=100")
+            .map { it.projects.project }
+    }
+
+    suspend fun getProjectPlans(projectKey: String): ApiResult<List<BambooPlanDto>> {
+        log.info("[Bamboo:API] Fetching plans for project $projectKey")
+        return get<BambooProjectDetailResponse>("/rest/api/latest/project/$projectKey?expand=plans.plan")
+            .map { it.plans.plan }
+    }
+
     suspend fun searchPlans(query: String): ApiResult<List<BambooSearchEntity>> {
         log.info("[Bamboo:API] Searching plans with query='$query'")
         val encoded = URLEncoder.encode(query, "UTF-8")

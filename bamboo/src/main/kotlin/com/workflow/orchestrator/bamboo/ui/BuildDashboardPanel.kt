@@ -51,6 +51,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
     )
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Auto-detected plan key (not saved to settings — it's branch-specific)
+    @Volatile
+    private var activePlanKey: String = ""
     private val monitorService = BuildMonitorService.getInstance(project)
 
     private val stageListPanel = StageListPanel()
@@ -93,6 +96,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             if (detectedKey != null) {
                 // Use the detected branch plan key directly (e.g., PROJ-PLAN123)
                 log.info("[Build:Dashboard] Using auto-detected branch plan key: $detectedKey")
+                activePlanKey = detectedKey
                 val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
                 monitorService.switchBranch(detectedKey, branchName, interval)
                 invokeLater { headerLabel.text = "Plan: $detectedKey / $branchName" }
@@ -310,9 +314,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun startMonitoring() {
-        val planKey = settings.state.bambooPlanKey.orEmpty()
+        val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
         if (planKey.isBlank()) {
-            headerLabel.text = "No Bamboo plan configured. Set plan key in Settings."
+            // Don't show error — PR detection will auto-detect the plan key
+            headerLabel.text = "Waiting for PR detection to find Bamboo plan..."
             return
         }
 
@@ -332,9 +337,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         group.add(object : AnAction("Refresh", "Force poll build status now", AllIcons.Actions.Refresh) {
             override fun actionPerformed(e: AnActionEvent) {
-                val planKey = settings.state.bambooPlanKey.orEmpty()
+                val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
                 if (planKey.isBlank()) {
-                    headerLabel.text = "No Bamboo plan configured. Set plan key in Settings."
+                    // Try to re-detect from PR
+                    prBar.refreshPrs()
+                    headerLabel.text = "Detecting Bamboo plan..."
                     return
                 }
                 scope.launch {

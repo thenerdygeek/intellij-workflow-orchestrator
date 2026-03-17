@@ -3,6 +3,33 @@ package com.workflow.orchestrator.bamboo.api.dto
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+// --- Project DTOs ---
+
+@Serializable
+data class BambooProjectListResponse(
+    val projects: BambooProjectCollection = BambooProjectCollection()
+)
+
+@Serializable
+data class BambooProjectCollection(
+    val size: Int = 0,
+    val project: List<BambooProjectDto> = emptyList()
+)
+
+@Serializable
+data class BambooProjectDto(
+    val key: String,
+    val name: String,
+    val description: String? = null
+)
+
+@Serializable
+data class BambooProjectDetailResponse(
+    val key: String = "",
+    val name: String = "",
+    val plans: BambooPlanCollection = BambooPlanCollection()
+)
+
 // --- Plan DTOs ---
 
 @Serializable
