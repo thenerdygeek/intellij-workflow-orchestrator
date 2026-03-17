@@ -241,6 +241,8 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     private fun loadPlansForProject(projectKey: String) {
         if (projectKey.isBlank()) return
         val client = bambooClient ?: return
+        // Get the selected project name to strip from plan names
+        val projectName = (projectCombo.selectedItem as? ProjectItem)?.name ?: ""
         runOnEdt {
             planCombo.removeAllItems()
             planCombo.addItem(PlanItem("", "Loading plans..."))
@@ -255,7 +257,11 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                             planCombo.addItem(PlanItem("", "No plans in this project"))
                         } else {
                             for (plan in result.data.sortedBy { it.name }) {
-                                planCombo.addItem(PlanItem(plan.key, plan.name))
+                                // Strip "ProjectName - " prefix since user already selected the project
+                                val displayName = plan.name
+                                    .removePrefix("$projectName - ")
+                                    .removePrefix("$projectName-")
+                                planCombo.addItem(PlanItem(plan.key, displayName))
                             }
                         }
                     }
