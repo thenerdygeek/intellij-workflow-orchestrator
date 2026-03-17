@@ -176,23 +176,32 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
             projectCombo.addItem(ProjectItem("", "Loading projects..."))
         }
         scope.launch {
-            val result = client.getProjects()
-            invokeLater {
-                projectCombo.removeAllItems()
-                when (result) {
-                    is ApiResult.Success -> {
-                        if (result.data.isEmpty()) {
-                            projectCombo.addItem(ProjectItem("", "No projects found"))
-                        } else {
-                            projectCombo.addItem(ProjectItem("", "Select a project..."))
-                            for (proj in result.data.sortedBy { it.name }) {
-                                projectCombo.addItem(ProjectItem(proj.key, proj.name))
+            try {
+                val result = kotlinx.coroutines.withTimeout(15_000) {
+                    client.getProjects()
+                }
+                invokeLater {
+                    projectCombo.removeAllItems()
+                    when (result) {
+                        is ApiResult.Success -> {
+                            if (result.data.isEmpty()) {
+                                projectCombo.addItem(ProjectItem("", "No projects found"))
+                            } else {
+                                projectCombo.addItem(ProjectItem("", "Select a project..."))
+                                for (proj in result.data.sortedBy { it.name }) {
+                                    projectCombo.addItem(ProjectItem(proj.key, proj.name))
+                                }
                             }
                         }
+                        is ApiResult.Error -> {
+                            projectCombo.addItem(ProjectItem("", "Failed: ${result.message}"))
+                        }
                     }
-                    is ApiResult.Error -> {
-                        projectCombo.addItem(ProjectItem("", "Failed: ${result.message}"))
-                    }
+                }
+            } catch (e: Exception) {
+                invokeLater {
+                    projectCombo.removeAllItems()
+                    projectCombo.addItem(ProjectItem("", "Error: ${e.message ?: "Connection failed"}"))
                 }
             }
         }
@@ -374,9 +383,9 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
 }
 
 private data class ProjectItem(val key: String, val name: String) {
-    override fun toString() = "$name ($key)"
+    override fun toString() = if (key.isBlank()) name else "$name ($key)"
 }
 
 private data class PlanItem(val key: String, val name: String) {
-    override fun toString() = "$name ($key)"
+    override fun toString() = if (key.isBlank()) name else "$name ($key)"
 }

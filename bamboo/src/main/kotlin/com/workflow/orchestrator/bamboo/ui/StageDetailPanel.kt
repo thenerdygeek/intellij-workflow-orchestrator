@@ -10,6 +10,8 @@ import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
+import com.intellij.execution.testframework.sm.runner.SMTestLocator
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.Disposable
@@ -210,12 +212,14 @@ class StageDetailPanel(
             val processHandler = TeamCityMessageProcessHandler()
             val executor = DefaultRunExecutor.getRunExecutorInstance()
 
-            val consoleProperties = SMTRunnerConsoleProperties(
+            val consoleProperties = object : SMTRunnerConsoleProperties(
                 project,
                 SurefireTestRunProfile,
                 "Surefire Tests",
                 executor
-            )
+            ) {
+                override fun getTestLocator(): SMTestLocator = BambooTestLocator
+            }
 
             val testConsole = SMTestRunnerConnectionUtil.createAndAttachConsole(
                 "Surefire Tests",
@@ -261,4 +265,88 @@ private class TeamCityMessageProcessHandler : ProcessHandler() {
     override fun detachProcessImpl() { notifyProcessDetached() }
     override fun detachIsDefault(): Boolean = false
     override fun getProcessInput(): OutputStream? = null
+}
+
+/**
+ * Resolves java:test:// and java:suite:// location hints to PSI elements.
+ * Enables double-click navigation from Bamboo test results to source code.
+ *
+ * Uses generic PSI APIs (FilenameIndex) instead of JavaPsiFacade to avoid
+ * a compile dependency on the Java plugin.
+ *
+ * Format:
+ *   java:suite://com.example.ClassName
+ *   java:test://com.example.ClassName/methodName
+ */
+private object BambooTestLocator : SMTestLocator {
+    override fun getLocation(
+        protocol: String,
+        path: String,
+        project: com.intellij.openapi.project.Project,
+        scope: GlobalSearchScope
+    ): List<com.intellij.execution.Location<*>> {
+        val results = mutableListOf<com.intellij.execution.Location<*>>()
+        try {
+            val cleanPath = path.removePrefix("//")
+            val className = when (protocol) {
+                "java:suite" -> cleanPath
+                "java:test" -> cleanPath.split("/", limit = 2)[0]
+                else -> return emptyList()
+            }
+            val methodName = if (protocol == "java:test") {
+                cleanPath.split("/", limit = 2).getOrNull(1)
+            } else null
+
+            val simpleClassName = className.substringAfterLast('.')
+            val expectedPackage = className.substringBeforeLast('.', "")
+
+            // Find files matching the simple class name (.java or .kt)
+            for (ext in listOf("$simpleClassName.java", "$simpleClassName.kt")) {
+                @Suppress("DEPRECATION")
+                val files = com.intellij.psi.search.FilenameIndex.getFilesByName(
+                    project, ext, scope
+                )
+                for (psiFile in files) {
+                    // Verify package matches by checking the file path
+                    val packagePath = expectedPackage.replace('.', '/')
+                    if (packagePath.isEmpty() || psiFile.virtualFile.path.contains(packagePath)) {
+                        if (methodName != null) {
+                            // Try to find the method by text search in the file
+                            val methodElement = findMethodInFile(psiFile, methodName)
+                            if (methodElement != null) {
+                                results.add(com.intellij.execution.PsiLocation.fromPsiElement(methodElement))
+                            } else {
+                                results.add(com.intellij.execution.PsiLocation.fromPsiElement(psiFile))
+                            }
+                        } else {
+                            results.add(com.intellij.execution.PsiLocation.fromPsiElement(psiFile))
+                        }
+                        break
+                    }
+                }
+                if (results.isNotEmpty()) break
+            }
+        } catch (_: Exception) {}
+        return results
+    }
+
+    private fun findMethodInFile(psiFile: com.intellij.psi.PsiFile, methodName: String): com.intellij.psi.PsiElement? {
+        // Walk the PSI tree to find a method/function with the given name
+        var found: com.intellij.psi.PsiElement? = null
+        psiFile.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
+            override fun visitElement(element: com.intellij.psi.PsiElement) {
+                if (found != null) return
+                // Match method declarations: "void methodName(" or "fun methodName("
+                if (element is com.intellij.psi.PsiNamedElement && element.name == methodName) {
+                    val text = element.text
+                    if (text.contains("(")) {
+                        found = element
+                        return
+                    }
+                }
+                super.visitElement(element)
+            }
+        })
+        return found
+    }
 }
