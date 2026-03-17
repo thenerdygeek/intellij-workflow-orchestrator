@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.automation.settings
 
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.ui.JBColor
@@ -29,6 +30,12 @@ import javax.swing.*
 class AutomationSuiteConfigurable : SearchableConfigurable {
 
     private val log = Logger.getInstance(AutomationSuiteConfigurable::class.java)
+
+    /** invokeLater that works inside modal dialogs (Settings dialog is modal). */
+    private fun runOnEdt(action: () -> Unit) {
+        ApplicationManager.getApplication().invokeLater(action, ModalityState.any())
+    }
+
     private var mainPanel: JPanel? = null
     private val suiteRows = mutableListOf<SuiteRow>()
     private var suitesContainer: JPanel? = null
@@ -164,7 +171,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
         log.info("[AutoSuite] Bamboo URL from ConnectionSettings: '${url}'")
         if (url.isBlank()) {
             log.warn("[AutoSuite] Bamboo URL is blank — showing configure message")
-            invokeLater {
+            runOnEdt {
                 projectCombo.removeAllItems()
                 projectCombo.addItem(ProjectItem("", "Configure Bamboo URL in Connections first"))
             }
@@ -186,7 +193,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
             return
         }
         log.info("[AutoSuite] loadProjects() starting, scope active: ${scope.isActive}")
-        invokeLater {
+        runOnEdt {
             projectCombo.removeAllItems()
             projectCombo.addItem(ProjectItem("", "Loading projects..."))
         }
@@ -201,7 +208,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                     is ApiResult.Success -> log.info("[AutoSuite] Success: ${result.data.size} projects")
                     is ApiResult.Error -> log.warn("[AutoSuite] Error: type=${result.type}, message=${result.message}")
                 }
-                invokeLater {
+                runOnEdt {
                     log.info("[AutoSuite] invokeLater: updating projectCombo")
                     projectCombo.removeAllItems()
                     when (result) {
@@ -223,7 +230,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                 }
             } catch (e: Exception) {
                 log.warn("[AutoSuite] loadProjects() exception: ${e::class.simpleName}: ${e.message}", e)
-                invokeLater {
+                runOnEdt {
                     projectCombo.removeAllItems()
                     projectCombo.addItem(ProjectItem("", "Error: ${e.message ?: "Connection failed"}"))
                 }
@@ -234,13 +241,13 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     private fun loadPlansForProject(projectKey: String) {
         if (projectKey.isBlank()) return
         val client = bambooClient ?: return
-        invokeLater {
+        runOnEdt {
             planCombo.removeAllItems()
             planCombo.addItem(PlanItem("", "Loading plans..."))
         }
         scope.launch {
             val result = client.getProjectPlans(projectKey)
-            invokeLater {
+            runOnEdt {
                 planCombo.removeAllItems()
                 when (result) {
                     is ApiResult.Success -> {
@@ -289,7 +296,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                     regex.containsMatchIn(it.key) || regex.containsMatchIn(it.name)
                 }
 
-                invokeLater {
+                runOnEdt {
                     searchResultsPanel.removeAll()
                     if (matches.isEmpty()) {
                         searchResultsPanel.add(JBLabel("No plans matching '$pattern'").apply {
