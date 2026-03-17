@@ -67,6 +67,18 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         isVisible = false
     }
 
+    // Newer build running banner
+    private val newerBuildBanner = JPanel(BorderLayout()).apply {
+        background = JBColor(java.awt.Color(0xE8, 0xF0, 0xFE), java.awt.Color(0x1E, 0x3A, 0x5F))
+        border = com.intellij.util.ui.JBUI.Borders.empty(4, 8)
+        isVisible = false
+        add(com.intellij.ui.components.JBLabel("").apply {
+            foreground = JBColor(java.awt.Color(0x1A, 0x73, 0xE8), java.awt.Color(0x8A, 0xB4, 0xF8))
+            icon = com.intellij.icons.AllIcons.Toolwindows.ToolWindowRun
+            name = "newerBuildLabel"
+        }, BorderLayout.CENTER)
+    }
+
     private val prBar = PrBar(project, scope) { branchName ->
         log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
         if (branchName.isNotBlank()) {
@@ -215,11 +227,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
         add(headerPanel, BorderLayout.NORTH)
 
-        // PR bar + warning + build splitter
+        // PR bar + warning + newer build banner + build splitter
         val topPanel2 = JPanel().apply {
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
             add(prBar)
             add(warningLabel)
+            add(newerBuildBanner)
         }
         val contentPanel = JPanel(BorderLayout()).apply {
             add(topPanel2, BorderLayout.NORTH)
@@ -285,6 +298,23 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                         if (state.buildNumber != lastDisplayedBuildNumber) {
                             lastDisplayedBuildNumber = state.buildNumber
                             stageListPanel.updateStages(state.stages)
+                        }
+
+                        // Show/hide newer build banner
+                        val newer = state.newerBuild
+                        if (newer != null) {
+                            val statusText = when (newer.status) {
+                                BuildStatus.IN_PROGRESS -> "running"
+                                BuildStatus.PENDING -> "queued"
+                                else -> newer.status.name.lowercase()
+                            }
+                            val label = newerBuildBanner.components
+                                .filterIsInstance<com.intellij.ui.components.JBLabel>()
+                                .firstOrNull()
+                            label?.text = "Build #${newer.buildNumber} is $statusText — will update automatically when complete"
+                            newerBuildBanner.isVisible = true
+                        } else {
+                            newerBuildBanner.isVisible = false
                         }
                     }
                 }

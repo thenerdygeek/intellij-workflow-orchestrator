@@ -24,7 +24,14 @@ data class BuildState(
     val buildNumber: Int,
     val stages: List<StageState>,
     val overallStatus: BuildStatus,
-    val lastUpdated: Instant
+    val lastUpdated: Instant,
+    /** If a newer build is running/queued, its build number and status are tracked here. */
+    val newerBuild: NewerBuild? = null
+)
+
+data class NewerBuild(
+    val buildNumber: Int,
+    val status: BuildStatus
 )
 
 data class StageState(

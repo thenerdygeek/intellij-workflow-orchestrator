@@ -8,6 +8,7 @@ import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
 import com.workflow.orchestrator.bamboo.model.BuildState
 import com.workflow.orchestrator.bamboo.model.BuildStatus
+import com.workflow.orchestrator.bamboo.model.NewerBuild
 import com.workflow.orchestrator.bamboo.model.StageState
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
@@ -109,7 +110,14 @@ class BuildMonitorService : Disposable {
         log.info("[Bamboo:Monitor] pollOnce result: ${if (result is ApiResult.Success) "SUCCESS" else "FAILED: $result"}")
         if (result is ApiResult.Success) {
             val dto = result.data
-            val buildState = mapToBuildState(dto, planKey, branch)
+            var buildState = mapToBuildState(dto, planKey, branch)
+
+            // Check if a newer build is running/queued
+            val newerBuild = checkForNewerBuild(planKey, dto.buildNumber)
+            if (newerBuild != null) {
+                buildState = buildState.copy(newerBuild = newerBuild)
+            }
+
             _stateFlow.value = buildState
 
             // Only emit event and notify on terminal state changes
@@ -200,6 +208,31 @@ class BuildMonitorService : Disposable {
             overallStatus = BuildStatus.fromBambooState(dto.state, dto.lifeCycleState),
             lastUpdated = Instant.now()
         )
+    }
+
+    /**
+     * Check if there's a build with a higher build number that is running or queued.
+     * Returns null if no newer build exists.
+     */
+    private suspend fun checkForNewerBuild(planKey: String, currentBuildNumber: Int): NewerBuild? {
+        return try {
+            val result = apiClient.getRunningAndQueuedBuilds(planKey)
+            if (result is ApiResult.Success) {
+                val newer = result.data
+                    .filter { it.buildNumber > currentBuildNumber }
+                    .maxByOrNull { it.buildNumber }
+                if (newer != null) {
+                    log.info("[Bamboo:Monitor] Newer build detected: #${newer.buildNumber} (${newer.lifeCycleState})")
+                    NewerBuild(
+                        buildNumber = newer.buildNumber,
+                        status = BuildStatus.fromBambooState(newer.state, newer.lifeCycleState)
+                    )
+                } else null
+            } else null
+        } catch (e: Exception) {
+            log.debug("[Bamboo:Monitor] Failed to check for newer builds: ${e.message}")
+            null
+        }
     }
 
     companion object {
