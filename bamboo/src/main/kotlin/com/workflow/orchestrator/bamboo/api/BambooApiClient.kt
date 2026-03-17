@@ -156,11 +156,32 @@ class BambooApiClient(
         ).map { it.results.result }
     }
 
-    /** Rerun failed/incomplete jobs for a build via PUT to queue endpoint. */
-    suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ApiResult<Unit> {
-        log.info("[Bamboo:API] Rerunning failed jobs for $planKey-$buildNumber")
-        return put("/rest/api/latest/queue/$planKey-$buildNumber")
-    }
+    /** Rerun failed/incomplete jobs for a build via Bamboo's restartBuild action. */
+    suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val url = "$baseUrl/build/admin/restartBuild.action?planKey=$planKey&buildNumber=$buildNumber"
+                log.info("[Bamboo:API] Rerunning failed jobs: POST $url")
+                val request = Request.Builder().url(url)
+                    .post("".toRequestBody(null))
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.info("[Bamboo:API] restartBuild response: ${it.code}")
+                    when (it.code) {
+                        in 200..399 -> ApiResult.Success(Unit) // 302 redirect = success
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient permissions to restart build")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Build not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Bamboo:API] restartBuild network error: ${e.message}", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
+            }
+        }
 
     /** Cancel a queued (not yet running) build. */
     suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
