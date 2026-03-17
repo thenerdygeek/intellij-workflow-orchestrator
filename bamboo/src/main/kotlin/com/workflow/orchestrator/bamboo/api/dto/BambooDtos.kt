@@ -94,13 +94,15 @@ data class BambooResultCollection(
 @Serializable
 data class BambooResultDto(
     val key: String = "",
+    val buildResultKey: String = "",
     val buildNumber: Int = 0,
     val state: String = "",               // Successful, Failed, Unknown
     val lifeCycleState: String = "",      // Queued, Pending, InProgress, Finished
     val buildDurationInSeconds: Long = 0,
     val buildRelativeTime: String = "",
     val plan: BambooPlanDto? = null,
-    val stages: BambooStageCollection = BambooStageCollection()
+    val stages: BambooStageCollection = BambooStageCollection(),
+    val variables: BambooVariableCollection = BambooVariableCollection()
 )
 
 @Serializable

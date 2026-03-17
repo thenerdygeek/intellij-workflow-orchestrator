@@ -57,15 +57,27 @@ class TagBuilderService {
         log.info("[Automation:Tags] Found ${buildsResult.data.size} recent builds for '$suitePlanKey'")
 
         return buildsResult.data.mapNotNull { dto ->
-            log.info("[Automation:Tags] Checking build #${dto.buildNumber} (key=${dto.key}, state=${dto.state})")
-            val varsResult = bambooClient.getBuildVariables(dto.key)
-            if (varsResult !is ApiResult.Success) {
-                log.info("[Automation:Tags]   Build #${dto.buildNumber}: failed to get variables: $varsResult")
-                return@mapNotNull null
+            log.info("[Automation:Tags] Checking build #${dto.buildNumber} (key=${dto.key}, buildResultKey=${dto.buildResultKey}, state=${dto.state})")
+
+            // Use inline variables from expand=variables if available, otherwise fetch separately
+            val variables: Map<String, String> = if (dto.variables.variable.isNotEmpty()) {
+                dto.variables.variable.associate { it.name to it.value }.also {
+                    log.info("[Automation:Tags]   Build #${dto.buildNumber}: using inline variables: ${it.keys}")
+                }
+            } else {
+                val resultKey = dto.buildResultKey.ifBlank { dto.key }
+                log.info("[Automation:Tags]   Build #${dto.buildNumber}: no inline variables, fetching from API with key='$resultKey'")
+                val varsResult = bambooClient.getBuildVariables(resultKey)
+                if (varsResult !is ApiResult.Success) {
+                    log.info("[Automation:Tags]   Build #${dto.buildNumber}: failed to get variables: $varsResult")
+                    return@mapNotNull null
+                }
+                varsResult.data.also {
+                    log.info("[Automation:Tags]   Build #${dto.buildNumber}: fetched variables: ${it.keys}")
+                }
             }
 
-            log.info("[Automation:Tags]   Build #${dto.buildNumber}: variables=${varsResult.data.keys}")
-            val dockerTagsJson = varsResult.data[buildVariableName]
+            val dockerTagsJson = variables[buildVariableName]
             if (dockerTagsJson == null) {
                 log.info("[Automation:Tags]   Build #${dto.buildNumber}: no '$buildVariableName' variable found")
                 return@mapNotNull null
