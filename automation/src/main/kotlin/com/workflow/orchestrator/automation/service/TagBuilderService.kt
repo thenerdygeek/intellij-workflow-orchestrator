@@ -47,25 +47,42 @@ class TagBuilderService {
         suitePlanKey: String,
         maxResults: Int = 10
     ): List<BaselineRun> {
-        log.debug("[Automation:Tags] Scoring and ranking runs for plan '$suitePlanKey', maxResults=$maxResults")
+        log.info("[Automation:Tags] Scoring and ranking runs for plan '$suitePlanKey', maxResults=$maxResults")
         val buildsResult = bambooClient.getRecentResults(suitePlanKey, maxResults)
         if (buildsResult !is ApiResult.Success) {
-            log.debug("[Automation:Tags] No builds found for plan '$suitePlanKey'")
+            log.info("[Automation:Tags] getRecentResults failed for '$suitePlanKey': $buildsResult")
             return emptyList()
         }
 
-        return buildsResult.data.mapNotNull { dto ->
-            val varsResult = bambooClient.getBuildVariables(dto.key)
-            if (varsResult !is ApiResult.Success) return@mapNotNull null
+        log.info("[Automation:Tags] Found ${buildsResult.data.size} recent builds for '$suitePlanKey'")
 
-            val dockerTagsJson = varsResult.data[buildVariableName] ?: return@mapNotNull null
+        return buildsResult.data.mapNotNull { dto ->
+            log.info("[Automation:Tags] Checking build #${dto.buildNumber} (key=${dto.key}, state=${dto.state})")
+            val varsResult = bambooClient.getBuildVariables(dto.key)
+            if (varsResult !is ApiResult.Success) {
+                log.info("[Automation:Tags]   Build #${dto.buildNumber}: failed to get variables: $varsResult")
+                return@mapNotNull null
+            }
+
+            log.info("[Automation:Tags]   Build #${dto.buildNumber}: variables=${varsResult.data.keys}")
+            val dockerTagsJson = varsResult.data[buildVariableName]
+            if (dockerTagsJson == null) {
+                log.info("[Automation:Tags]   Build #${dto.buildNumber}: no '$buildVariableName' variable found")
+                return@mapNotNull null
+            }
+
             val tags = parseDockerTagsJson(dockerTagsJson)
-            if (tags.isEmpty()) return@mapNotNull null
+            if (tags.isEmpty()) {
+                log.info("[Automation:Tags]   Build #${dto.buildNumber}: dockerTagsJson parsed to empty map: ${dockerTagsJson.take(200)}")
+                return@mapNotNull null
+            }
 
             val releaseCount = tags.values.count { semverPattern.matches(it) }
             val successStages = dto.stages.stage.count { it.state.equals("Successful", ignoreCase = true) }
             val failedStages = dto.stages.stage.count { it.state.equals("Failed", ignoreCase = true) }
             val score = (releaseCount * 10) + (successStages * 5) - (failedStages * 20)
+
+            log.info("[Automation:Tags]   Build #${dto.buildNumber}: ${tags.size} services, score=$score")
 
             BaselineRun(
                 buildNumber = dto.buildNumber,
@@ -79,7 +96,7 @@ class TagBuilderService {
                 score = score
             )
         }.sortedByDescending { it.score }.also { ranked ->
-            log.debug("[Automation:Tags] Scored ${ranked.size} baseline runs for plan '$suitePlanKey'")
+            log.info("[Automation:Tags] Scored ${ranked.size} baseline runs for plan '$suitePlanKey'")
         }
     }
 
