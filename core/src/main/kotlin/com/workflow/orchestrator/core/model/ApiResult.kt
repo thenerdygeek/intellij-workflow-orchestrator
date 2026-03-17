@@ -8,7 +8,8 @@ enum class ErrorType {
     SERVER_ERROR,
     NETWORK_ERROR,
     TIMEOUT,
-    VALIDATION_ERROR
+    VALIDATION_ERROR,
+    PARSE_ERROR
 }
 
 sealed class ApiResult<out T> {

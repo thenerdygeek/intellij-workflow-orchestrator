@@ -191,7 +191,13 @@ class BambooApiClient(
                     when (it.code) {
                         in 200..299 -> {
                             val bodyStr = it.body?.string() ?: ""
-                            ApiResult.Success(json.decodeFromString<T>(bodyStr))
+                            try {
+                                ApiResult.Success(json.decodeFromString<T>(bodyStr))
+                            } catch (e: Exception) {
+                                log.warn("[Bamboo:API] Parse failed for GET $path: ${e.message}")
+                                log.info("[Bamboo:API] Response body (first 500): ${bodyStr.take(500)}")
+                                ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse response: ${e.message}")
+                            }
                         }
                         401 -> { log.error("[Bamboo:API] Authentication failed for GET $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
                         403 -> { log.error("[Bamboo:API] Forbidden for GET $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
