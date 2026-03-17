@@ -9,7 +9,7 @@ data class ChatMessage(
     val command: String = "submit",
     val text: String,
     val submitType: String = "user",
-    val addEnhancedContext: Boolean = true,
+    val addEnhancedContext: Boolean = false,
     val contextItems: List<ContextFile> = emptyList()
 )
 
@@ -36,11 +36,17 @@ data class ContextFile(
     val range: Range? = null
 ) {
     companion object {
-        /** Convenience factory: creates a ContextFile from a file path string. */
+        /**
+         * Convenience factory: creates a ContextFile from an absolute file path.
+         *
+         * Both `fsPath` and `path` must be the raw absolute path (NOT file:// URI).
+         * The `scheme` field already indicates the URI type.
+         * Matches the reference implementations (cody_agentic_tool, codypy).
+         */
         fun fromPath(path: String, range: Range? = null): ContextFile {
-            val fileUri = if (path.startsWith("file://")) path else "file://$path"
+            val absPath = if (path.startsWith("file://")) path.removePrefix("file://") else path
             return ContextFile(
-                uri = ContextFileUri(fsPath = path, path = fileUri),
+                uri = ContextFileUri(fsPath = absPath, path = absPath),
                 range = range
             )
         }
