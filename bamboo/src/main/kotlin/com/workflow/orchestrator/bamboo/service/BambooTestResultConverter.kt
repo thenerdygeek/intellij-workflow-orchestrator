@@ -40,13 +40,15 @@ object BambooTestResultConverter {
         messages.add("##teamcity[testCount count='${allTests.size}']")
 
         for ((className, tests) in grouped) {
-            messages.add("##teamcity[testSuiteStarted name='${escape(className)}']")
+            val suiteLocationHint = "java:suite://${className}"
+            messages.add("##teamcity[testSuiteStarted name='${escape(className)}' locationHint='${suiteLocationHint}']")
 
             for (test in tests) {
                 val testName = escape(test.methodName)
                 val durationMs = if (test.duration > 0) test.duration else test.durationInSeconds * 1000
+                val testLocationHint = "java:test://${test.className}/${test.methodName}"
 
-                messages.add("##teamcity[testStarted name='${testName}' captureStandardOutput='true']")
+                messages.add("##teamcity[testStarted name='${testName}' locationHint='${testLocationHint}' captureStandardOutput='true']")
 
                 when (test.status.lowercase()) {
                     "failed" -> {
