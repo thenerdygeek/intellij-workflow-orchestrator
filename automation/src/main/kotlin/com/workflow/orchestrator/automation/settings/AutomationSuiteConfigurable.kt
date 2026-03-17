@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.automation.settings
 
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -27,6 +28,7 @@ import javax.swing.*
  */
 class AutomationSuiteConfigurable : SearchableConfigurable {
 
+    private val log = Logger.getInstance(AutomationSuiteConfigurable::class.java)
     private var mainPanel: JPanel? = null
     private val suiteRows = mutableListOf<SuiteRow>()
     private var suitesContainer: JPanel? = null
@@ -156,33 +158,51 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     }
 
     private fun initBambooClient() {
+        log.info("[AutoSuite] initBambooClient() called")
         val connSettings = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
         val url = connSettings.state.bambooUrl.trimEnd('/')
+        log.info("[AutoSuite] Bamboo URL from ConnectionSettings: '${url}'")
         if (url.isBlank()) {
+            log.warn("[AutoSuite] Bamboo URL is blank — showing configure message")
             invokeLater {
                 projectCombo.removeAllItems()
                 projectCombo.addItem(ProjectItem("", "Configure Bamboo URL in Connections first"))
             }
             return
         }
+        val token = CredentialStore().getToken(ServiceType.BAMBOO)
+        log.info("[AutoSuite] Bamboo token present: ${token != null}, length: ${token?.length ?: 0}")
         bambooClient = BambooApiClient(
             baseUrl = url,
             tokenProvider = { CredentialStore().getToken(ServiceType.BAMBOO) }
         )
+        log.info("[AutoSuite] BambooApiClient created successfully")
     }
 
     private fun loadProjects() {
-        val client = bambooClient ?: return
+        val client = bambooClient
+        if (client == null) {
+            log.warn("[AutoSuite] loadProjects() called but bambooClient is null")
+            return
+        }
+        log.info("[AutoSuite] loadProjects() starting, scope active: ${scope.isActive}")
         invokeLater {
             projectCombo.removeAllItems()
             projectCombo.addItem(ProjectItem("", "Loading projects..."))
         }
         scope.launch {
+            log.info("[AutoSuite] Coroutine launched, calling getProjects()")
             try {
                 val result = kotlinx.coroutines.withTimeout(15_000) {
                     client.getProjects()
                 }
+                log.info("[AutoSuite] getProjects() returned: ${result::class.simpleName}")
+                when (result) {
+                    is ApiResult.Success -> log.info("[AutoSuite] Success: ${result.data.size} projects")
+                    is ApiResult.Error -> log.warn("[AutoSuite] Error: type=${result.type}, message=${result.message}")
+                }
                 invokeLater {
+                    log.info("[AutoSuite] invokeLater: updating projectCombo")
                     projectCombo.removeAllItems()
                     when (result) {
                         is ApiResult.Success -> {
@@ -193,6 +213,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                                 for (proj in result.data.sortedBy { it.name }) {
                                     projectCombo.addItem(ProjectItem(proj.key, proj.name))
                                 }
+                                log.info("[AutoSuite] Added ${result.data.size} projects to dropdown")
                             }
                         }
                         is ApiResult.Error -> {
@@ -201,6 +222,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
                     }
                 }
             } catch (e: Exception) {
+                log.warn("[AutoSuite] loadProjects() exception: ${e::class.simpleName}: ${e.message}", e)
                 invokeLater {
                     projectCombo.removeAllItems()
                     projectCombo.addItem(ProjectItem("", "Error: ${e.message ?: "Connection failed"}"))
