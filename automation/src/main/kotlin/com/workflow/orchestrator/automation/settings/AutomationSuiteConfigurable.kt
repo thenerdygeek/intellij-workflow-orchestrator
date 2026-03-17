@@ -12,7 +12,6 @@ import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.FlowLayout
@@ -155,28 +154,44 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     }
 
     private fun initBambooClient() {
-        try {
-            val projects = com.intellij.openapi.project.ProjectManager.getInstance().openProjects
-            val project = projects.firstOrNull() ?: return
-            val settings = PluginSettings.getInstance(project)
-            val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
-            if (url.isBlank()) return
-            bambooClient = BambooApiClient(
-                baseUrl = url,
-                tokenProvider = { CredentialStore().getToken(ServiceType.BAMBOO) }
-            )
-        } catch (_: Exception) {}
+        val connSettings = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+        val url = connSettings.state.bambooUrl.trimEnd('/')
+        if (url.isBlank()) {
+            invokeLater {
+                projectCombo.removeAllItems()
+                projectCombo.addItem(ProjectItem("", "Configure Bamboo URL in Connections first"))
+            }
+            return
+        }
+        bambooClient = BambooApiClient(
+            baseUrl = url,
+            tokenProvider = { CredentialStore().getToken(ServiceType.BAMBOO) }
+        )
     }
 
     private fun loadProjects() {
         val client = bambooClient ?: return
+        invokeLater {
+            projectCombo.removeAllItems()
+            projectCombo.addItem(ProjectItem("", "Loading projects..."))
+        }
         scope.launch {
             val result = client.getProjects()
-            if (result is ApiResult.Success) {
-                invokeLater {
-                    projectCombo.removeAllItems()
-                    for (proj in result.data.sortedBy { it.name }) {
-                        projectCombo.addItem(ProjectItem(proj.key, proj.name))
+            invokeLater {
+                projectCombo.removeAllItems()
+                when (result) {
+                    is ApiResult.Success -> {
+                        if (result.data.isEmpty()) {
+                            projectCombo.addItem(ProjectItem("", "No projects found"))
+                        } else {
+                            projectCombo.addItem(ProjectItem("", "Select a project..."))
+                            for (proj in result.data.sortedBy { it.name }) {
+                                projectCombo.addItem(ProjectItem(proj.key, proj.name))
+                            }
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        projectCombo.addItem(ProjectItem("", "Failed: ${result.message}"))
                     }
                 }
             }
@@ -184,14 +199,28 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
     }
 
     private fun loadPlansForProject(projectKey: String) {
+        if (projectKey.isBlank()) return
         val client = bambooClient ?: return
+        invokeLater {
+            planCombo.removeAllItems()
+            planCombo.addItem(PlanItem("", "Loading plans..."))
+        }
         scope.launch {
             val result = client.getProjectPlans(projectKey)
-            if (result is ApiResult.Success) {
-                invokeLater {
-                    planCombo.removeAllItems()
-                    for (plan in result.data.sortedBy { it.name }) {
-                        planCombo.addItem(PlanItem(plan.key, plan.name))
+            invokeLater {
+                planCombo.removeAllItems()
+                when (result) {
+                    is ApiResult.Success -> {
+                        if (result.data.isEmpty()) {
+                            planCombo.addItem(PlanItem("", "No plans in this project"))
+                        } else {
+                            for (plan in result.data.sortedBy { it.name }) {
+                                planCombo.addItem(PlanItem(plan.key, plan.name))
+                            }
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        planCombo.addItem(PlanItem("", "Failed: ${result.message}"))
                     }
                 }
             }
@@ -200,6 +229,7 @@ class AutomationSuiteConfigurable : SearchableConfigurable {
 
     private fun addSelectedPlan() {
         val plan = planCombo.selectedItem as? PlanItem ?: return
+        if (plan.key.isBlank()) return
         if (suiteRows.any { it.planKeyField.text == plan.key }) return
         addSuiteRow(plan.name, plan.key)
     }
