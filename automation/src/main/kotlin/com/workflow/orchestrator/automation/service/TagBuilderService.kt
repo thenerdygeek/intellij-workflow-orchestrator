@@ -144,6 +144,44 @@ class TagBuilderService {
         return result
     }
 
+    /**
+     * Extract the current repo's docker tag from its CI build log.
+     * Looks for "Unique Docker Tag : <tag>" in the log.
+     */
+    suspend fun extractDockerTagFromBuildLog(serviceCiPlanKey: String, branchName: String): String? {
+        log.info("[Automation:Tags] Extracting docker tag from build log: plan=$serviceCiPlanKey, branch=$branchName")
+
+        // Get latest build for this branch
+        val buildResult = bambooClient.getLatestResult(serviceCiPlanKey, branchName)
+        if (buildResult !is ApiResult.Success) {
+            log.warn("[Automation:Tags] No build found for $serviceCiPlanKey/$branchName")
+            return null
+        }
+
+        val resultKey = buildResult.data.key
+        log.info("[Automation:Tags] Found build $resultKey, fetching log...")
+
+        // Try to get the build log
+        val logResult = bambooClient.getBuildLog(resultKey)
+        if (logResult !is ApiResult.Success) {
+            log.warn("[Automation:Tags] Failed to fetch build log for $resultKey")
+            return null
+        }
+
+        // Extract docker tag from log
+        val dockerTagRegex = Regex("Unique Docker Tag\\s*:\\s*(.+)")
+        val match = dockerTagRegex.find(logResult.data)
+        val tag = match?.groupValues?.get(1)?.trim()
+            ?.replace(Regex("\\x1B\\[[0-9;]*m"), "") // Strip ANSI escape codes
+
+        if (tag != null) {
+            log.info("[Automation:Tags] Extracted docker tag: '$tag'")
+        } else {
+            log.warn("[Automation:Tags] 'Unique Docker Tag' not found in build log for $resultKey")
+        }
+        return tag
+    }
+
     private fun parseDockerTagsJson(jsonStr: String): Map<String, String> {
         return try {
             val obj = json.decodeFromString<JsonObject>(jsonStr)

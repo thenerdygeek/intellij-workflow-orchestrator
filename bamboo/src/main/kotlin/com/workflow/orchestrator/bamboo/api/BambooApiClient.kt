@@ -144,9 +144,21 @@ class BambooApiClient(
         ).map { it.results.result }
     }
 
+    /** Cancel a queued (not yet running) build. */
     suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
-        log.info("[Bamboo:API] Cancelling build resultKey=$resultKey")
+        log.info("[Bamboo:API] Cancelling queued build resultKey=$resultKey")
         return delete("/rest/api/latest/queue/$resultKey")
+    }
+
+    /** Stop a running build. */
+    suspend fun stopBuild(resultKey: String): ApiResult<Unit> {
+        log.info("[Bamboo:API] Stopping running build resultKey=$resultKey")
+        return put("/rest/api/latest/result/$resultKey/stop")
+    }
+
+    /** Cancel or stop a build based on its state. */
+    suspend fun cancelOrStopBuild(resultKey: String, isRunning: Boolean): ApiResult<Unit> {
+        return if (isRunning) stopBuild(resultKey) else cancelBuild(resultKey)
     }
 
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =
@@ -226,6 +238,28 @@ class BambooApiClient(
     suspend fun getBuildResult(resultKey: String): ApiResult<BambooResultDto> {
         return get("/rest/api/latest/result/$resultKey?expand=stages.stage")
     }
+
+    private suspend fun put(path: String): ApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$baseUrl$path")
+                    .put("".toRequestBody("application/json".toMediaType()))
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(Unit)
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
+            }
+        }
 
     private suspend fun delete(path: String): ApiResult<Unit> =
         withContext(Dispatchers.IO) {

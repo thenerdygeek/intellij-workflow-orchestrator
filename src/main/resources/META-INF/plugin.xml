@@ -77,6 +77,12 @@
             displayName="Advanced"
             nonDefaultProject="true"/>
 
+        <applicationConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.automation.settings.AutomationSuiteConfigurable"
+            id="workflow.orchestrator.automation.suites"
+            displayName="Automation Suites"/>
+
         <!-- Tool Window -->
         <toolWindow
             id="Workflow"

@@ -28,6 +28,12 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Bamboo plan key (auto-detected or user-configured)
         var bambooPlanKey by string("")
 
+        // Automation: this repo's docker tag key in dockerTagsAsJson
+        var dockerTagKey by string("")
+
+        // Automation: this repo's CI build plan key (for docker tag extraction)
+        var serviceCiPlanKey by string("")
+
         // SonarQube project key (auto-detected or user-configured)
         var sonarProjectKey by string("")
 

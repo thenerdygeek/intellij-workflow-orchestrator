@@ -144,7 +144,7 @@ class BambooApiClientTest {
         assertTrue(log.contains("UserService.java"))
 
         val recorded = server.takeRequest()
-        assertEquals("/rest/api/latest/result/PROJ-BUILD-42?expand=logEntries&max-results=2000", recorded.path)
+        assertEquals("/download/PROJ-BUILD-42/build_logs/PROJ-BUILD-42.log", recorded.path)
     }
 
     @Test

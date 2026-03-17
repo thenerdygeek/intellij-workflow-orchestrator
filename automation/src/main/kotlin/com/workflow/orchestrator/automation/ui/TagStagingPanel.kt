@@ -55,6 +55,12 @@ class TagStagingPanel(
 
     fun getEntries(): List<TagEntry> = tableModel.entries
 
+    /** Alias for setEntries — used by AutomationPanel. */
+    fun updateTags(tags: List<TagEntry>) = setEntries(tags)
+
+    /** Get current tag entries (may have user edits). */
+    fun getCurrentTags(): List<TagEntry> = getEntries()
+
     override fun dispose() {}
 
     private class TagTableModel : AbstractTableModel() {

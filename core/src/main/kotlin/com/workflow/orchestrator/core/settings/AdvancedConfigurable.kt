@@ -111,6 +111,22 @@ class AdvancedConfigurable(private val project: Project) :
             }
 
             group("Automation") {
+                row("Docker tag key for this repo:") {
+                    textField()
+                        .bindText(
+                            { settings.state.dockerTagKey ?: "" },
+                            { settings.state.dockerTagKey = it }
+                        )
+                        .comment("Key in dockerTagsAsJson that represents this repo (e.g., order-service)")
+                }
+                row("Service CI plan key:") {
+                    textField()
+                        .bindText(
+                            { settings.state.serviceCiPlanKey ?: "" },
+                            { settings.state.serviceCiPlanKey = it }
+                        )
+                        .comment("Bamboo plan key for this repo's CI build (for docker tag extraction)")
+                }
                 row("Tag history entries:") {
                     intTextField(range = 1..50)
                         .bindIntText(settings.state::tagHistoryMaxEntries)
@@ -121,7 +137,7 @@ class AdvancedConfigurable(private val project: Project) :
                             { settings.state.bambooBuildVariableName ?: "" },
                             { settings.state.bambooBuildVariableName = it }
                         )
-                        .comment("Bamboo build variable containing Docker tag JSON")
+                        .comment("Bamboo build variable containing Docker tag JSON (default: dockerTagsAsJson)")
                 }
             }
 
