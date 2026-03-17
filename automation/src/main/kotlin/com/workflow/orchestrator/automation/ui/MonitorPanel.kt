@@ -16,6 +16,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
+import kotlinx.coroutines.cancel
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.FlowLayout
@@ -26,7 +27,7 @@ import javax.swing.*
  * Unified monitor panel showing all automation suite runs.
  * Left: compact run list. Right: selected run detail.
  */
-class MonitorPanel(private val project: Project) : JPanel(BorderLayout()) {
+class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
     private val log = Logger.getInstance(MonitorPanel::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -307,6 +308,11 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()) {
         java.awt.Toolkit.getDefaultToolkit().systemClipboard
             .setContents(java.awt.datatransfer.StringSelection(text), null)
         log.info("[Automation:Monitor] Results copied to clipboard")
+    }
+
+    override fun dispose() {
+        pollingJob?.cancel()
+        scope.cancel()
     }
 
     private fun createApiClient(): BambooApiClient? {

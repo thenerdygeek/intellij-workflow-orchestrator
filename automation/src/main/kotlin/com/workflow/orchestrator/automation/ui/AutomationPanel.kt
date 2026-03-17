@@ -112,6 +112,7 @@ class AutomationPanel(
         Disposer.register(this, tagStagingPanel)
         Disposer.register(this, suiteConfigPanel)
         Disposer.register(this, queueStatusPanel)
+        Disposer.register(this, monitorPanel)
 
         // Auto-select first suite
         if (suiteCombo.itemCount > 0) {

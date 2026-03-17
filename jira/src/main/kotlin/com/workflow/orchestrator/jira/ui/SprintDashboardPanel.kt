@@ -67,7 +67,7 @@ class SprintDashboardPanel(
         isOpaque = false
     }
 
-    private val detailPanel = TicketDetailPanel()
+    private val detailPanel = TicketDetailPanel(project)
 
     // -- Search --
     private val searchField = SearchTextField(false).apply {

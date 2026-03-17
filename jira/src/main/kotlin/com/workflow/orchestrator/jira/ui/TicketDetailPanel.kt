@@ -8,6 +8,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
 import com.workflow.orchestrator.jira.service.IssueDetailCache
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.*
 import java.awt.geom.Ellipse2D
@@ -25,7 +26,7 @@ import javax.swing.SwingConstants
  * Displays ticket header, info cards (assignee, sprint, dates),
  * dependency list, and description.
  */
-class TicketDetailPanel : JPanel(BorderLayout()) {
+class TicketDetailPanel(private val project: com.intellij.openapi.project.Project? = null) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
     private val log = Logger.getInstance(TicketDetailPanel::class.java)
 
@@ -125,7 +126,7 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
             addActionListener {
                 com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
                     ?.showTransitionDialog(
-                        com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                        project
                             ?: return@addActionListener,
                         issue.key
                     ) {
@@ -137,7 +138,7 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
         buttonPanel.add(transitionBtn)
 
         val jiraUrl = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(
-            com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+            project
                 ?: return
         ).connections.jiraUrl.orEmpty().trimEnd('/')
         if (jiraUrl.isNotBlank()) {
@@ -291,7 +292,7 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
             kotlinx.coroutines.delay(200) // debounce
             if (currentIssueKey != issueKey) return@launch
 
-            val project = com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+            val project = project
                 ?: return@launch
             val cache = IssueDetailCache.getInstance(project)
             val cached = cache.get(issueKey)
@@ -396,6 +397,11 @@ class TicketDetailPanel : JPanel(BorderLayout()) {
         commentPanel.add(bodyLabel, BorderLayout.CENTER)
 
         addFullWidthComponent(commentPanel)
+    }
+
+    override fun dispose() {
+        lazyLoadJob?.cancel()
+        lazyScope.cancel()
     }
 
     private fun formatRelativeTime(isoDate: String): String {
