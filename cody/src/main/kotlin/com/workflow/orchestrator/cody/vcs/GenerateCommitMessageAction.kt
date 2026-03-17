@@ -73,19 +73,26 @@ class GenerateCommitMessageAction : AnAction(
                 diff.take(8000) + "\n... (diff truncated, ${diff.length - 8000} chars omitted)"
             } else diff
 
-            // Get changed files as context items for additional file-level understanding
+            // Get changed files as context items with only the changed line ranges.
+            // The diff is already in the prompt — context items give Cody the surrounding
+            // code structure for better understanding, so we only need the changed regions.
             val contextItems = try {
                 val changeListManager = ChangeListManager.getInstance(project)
                 changeListManager.allChanges.mapNotNull { change ->
                     val afterRevision = change.afterRevision ?: return@mapNotNull null
                     val filePath = afterRevision.file.path
-                    val content = try { afterRevision.content } catch (_: Exception) { null }
-                    if (content != null) {
-                        val lineCount = content.count { it == '\n' } + 1
-                        ContextFile.fromPath(filePath, Range(Position(0, 0), Position(lineCount - 1, 0)))
+                    val afterContent = try { afterRevision.content } catch (_: Exception) { null }
+                        ?: return@mapNotNull ContextFile.fromPath(filePath)
+                    val beforeContent = try { change.beforeRevision?.content } catch (_: Exception) { null }
+
+                    val range = if (beforeContent != null) {
+                        computeChangedRange(beforeContent, afterContent)
                     } else {
-                        ContextFile.fromPath(filePath)
+                        // New file — include first 100 lines max
+                        val lineCount = minOf(afterContent.count { it == '\n' } + 1, 100)
+                        Range(Position(0, 0), Position(lineCount - 1, 0))
                     }
+                    ContextFile.fromPath(filePath, range)
                 }.take(15)
             } catch (_: Exception) { emptyList() }
 
@@ -141,6 +148,38 @@ class GenerateCommitMessageAction : AnAction(
         }
 
         return null
+    }
+
+    /**
+     * Compute the line range covering all changes between before and after content.
+     * Adds 5-line padding for surrounding context.
+     */
+    private fun computeChangedRange(before: String, after: String): Range {
+        val beforeLines = before.lines()
+        val afterLines = after.lines()
+
+        var firstChanged = 0
+        val minLen = minOf(beforeLines.size, afterLines.size)
+        while (firstChanged < minLen && beforeLines[firstChanged] == afterLines[firstChanged]) {
+            firstChanged++
+        }
+
+        var lastChangedBefore = beforeLines.size - 1
+        var lastChangedAfter = afterLines.size - 1
+        while (lastChangedBefore > firstChanged && lastChangedAfter > firstChanged &&
+            beforeLines[lastChangedBefore] == afterLines[lastChangedAfter]) {
+            lastChangedBefore--
+            lastChangedAfter--
+        }
+
+        val contextPadding = 5
+        val startLine = maxOf(0, firstChanged - contextPadding)
+        val endLine = minOf(afterLines.size - 1, lastChangedAfter + contextPadding)
+
+        return Range(
+            start = Position(line = startLine, character = 0),
+            end = Position(line = endLine, character = 0)
+        )
     }
 
     override fun update(e: AnActionEvent) {
