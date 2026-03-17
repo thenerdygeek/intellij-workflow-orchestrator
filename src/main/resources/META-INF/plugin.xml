@@ -279,11 +279,11 @@
             implementation="com.workflow.orchestrator.jira.editor.TicketEditorTabTitleProvider"/>
 
         <!-- Commit Dialog: Jira Time Tracking -->
-        <vcsCheckinHandlerFactory
+        <checkinHandlerFactory
             implementation="com.workflow.orchestrator.jira.vcs.TimeTrackingCheckinHandlerFactory"/>
 
         <!-- Post-Commit Jira Transition -->
-        <vcsCheckinHandlerFactory
+        <checkinHandlerFactory
             implementation="com.workflow.orchestrator.jira.vcs.PostCommitTransitionHandlerFactory"/>
 
         <!-- Search Everywhere: Jira Tickets -->
