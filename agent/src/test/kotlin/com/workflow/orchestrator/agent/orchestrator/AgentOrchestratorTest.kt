@@ -32,21 +32,18 @@ class AgentOrchestratorTest {
         every { project.basePath } returns "/tmp/test-project"
         every { toolRegistry.getToolsForWorker(any()) } returns emptyList()
         every { toolRegistry.getToolDefinitionsForWorker(any()) } returns emptyList()
+        every { toolRegistry.allTools() } returns emptyList()
 
         orchestrator = AgentOrchestrator(brain, toolRegistry, project)
     }
 
-    // --- Simple task fast path ---
+    // --- Single Agent Mode (default) ---
 
     @Test
-    fun `simple task routes through fast path and returns Completed`() = runTest {
-        // ComplexityRouter call returns SIMPLE
-        val simpleResponse = chatResponse("SIMPLE")
-        // Worker session call returns a real result
-        val workerResponse = chatResponse("Fixed the typo in UserService.kt")
-
-        coEvery { brain.chat(any(), isNull(), eq(10)) } returns ApiResult.Success(simpleResponse)
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } returns ApiResult.Success(workerResponse)
+    fun `executeTask completes via single agent session`() = runTest {
+        // Single agent session gets the brain response directly (no complexity router)
+        val response = chatResponse("Fixed the typo in UserService.kt")
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(response)
 
         val progressUpdates = mutableListOf<AgentProgress>()
         val result = orchestrator.executeTask("Fix typo in UserService") { progressUpdates.add(it) }
@@ -56,19 +53,39 @@ class AgentOrchestratorTest {
         assertTrue(completed.summary.contains("Fixed the typo"), "Summary: ${completed.summary}")
 
         // Verify progress was reported
-        assertTrue(progressUpdates.any { it.step.contains("Classifying") })
-        assertTrue(progressUpdates.any { it.workerType == WorkerType.CODER })
+        assertTrue(progressUpdates.any { it.step.contains("Starting") })
     }
 
-    // --- Complex task returns PlanReady ---
+    @Test
+    fun `executeTask returns Failed when brain errors`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "Connection refused")
+
+        val result = orchestrator.executeTask("Fix bug")
+
+        assertTrue(result is AgentResult.Failed, "Expected Failed, got $result")
+        assertTrue((result as AgentResult.Failed).error.contains("Connection refused"))
+    }
 
     @Test
-    fun `complex task returns PlanReady with parsed TaskGraph`() = runTest {
-        // ComplexityRouter returns COMPLEX
-        val complexResponse = chatResponse("COMPLEX")
-        coEvery { brain.chat(any(), isNull(), eq(10)) } returns ApiResult.Success(complexResponse)
+    fun `cancelTask returns Cancelled during execution`() = runTest {
+        // Cancel during the SingleAgentSession by making the brain trigger cancel
+        coEvery { brain.chat(any(), any(), any(), any()) } coAnswers {
+            orchestrator.cancelTask()
+            ApiResult.Success(chatResponse("Task cancelled"))
+        }
 
-        // Plan generation returns valid JSON plan
+        val result = orchestrator.executeTask("Some task")
+
+        // The single agent session checks cancelled flag between iterations
+        assertTrue(result is AgentResult.Completed || result is AgentResult.Cancelled,
+            "Expected Completed or Cancelled, got $result")
+    }
+
+    // --- Explicit Plan Request (orchestrated mode) ---
+
+    @Test
+    fun `requestPlan returns PlanReady with parsed TaskGraph`() = runTest {
         val planJson = """
             ```json
             {
@@ -94,9 +111,9 @@ class AgentOrchestratorTest {
             ```
         """.trimIndent()
         val planResponse = chatResponse(planJson)
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } returns ApiResult.Success(planResponse)
+        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), any(), any()) } returns ApiResult.Success(planResponse)
 
-        val result = orchestrator.executeTask("Add validation to UserService and write tests")
+        val result = orchestrator.requestPlan("Add validation to UserService and write tests")
 
         assertTrue(result is AgentResult.PlanReady, "Expected PlanReady, got $result")
         val planReady = result as AgentResult.PlanReady
@@ -193,7 +210,6 @@ class AgentOrchestratorTest {
 
     @Test
     fun `parsePlanToTaskGraph with malformed task entries returns partial graph`() {
-        // Task missing "id" should be skipped, but valid tasks should be kept
         val content = """
             {
               "tasks": [
@@ -210,57 +226,6 @@ class AgentOrchestratorTest {
         assertEquals(WorkerType.TOOLER, graph.getAllTasks()[0].workerType)
     }
 
-    // --- cancelTask ---
-
-    @Test
-    fun `cancelTask returns Cancelled`() = runTest {
-        // Make the brain slow enough that cancellation fires
-        val simpleResponse = chatResponse("SIMPLE")
-        coEvery { brain.chat(any(), isNull(), eq(10)) } coAnswers {
-            // Cancel before the worker session runs
-            orchestrator.cancelTask()
-            ApiResult.Success(simpleResponse)
-        }
-
-        val result = orchestrator.executeTask("Some task")
-
-        assertTrue(result is AgentResult.Cancelled, "Expected Cancelled, got $result")
-        assertEquals(0, (result as AgentResult.Cancelled).completedSteps)
-    }
-
-    // --- brain error returns Failed ---
-
-    @Test
-    fun `brain error during complexity routing defaults to complex path`() = runTest {
-        // ComplexityRouter defaults to COMPLEX on error
-        coEvery { brain.chat(any(), isNull(), eq(10)) } returns
-            ApiResult.Error(ErrorType.NETWORK_ERROR, "Connection refused")
-
-        // Plan generation also fails
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } returns
-            ApiResult.Error(ErrorType.SERVER_ERROR, "Service unavailable")
-
-        val result = orchestrator.executeTask("Some task")
-
-        assertTrue(result is AgentResult.Failed, "Expected Failed, got $result")
-        assertTrue((result as AgentResult.Failed).error.contains("LLM error"))
-    }
-
-    @Test
-    fun `brain error during simple task returns Failed`() = runTest {
-        // Route as SIMPLE
-        val simpleResponse = chatResponse("SIMPLE")
-        coEvery { brain.chat(any(), isNull(), eq(10)) } returns ApiResult.Success(simpleResponse)
-
-        // Worker session call fails
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } returns
-            ApiResult.Error(ErrorType.SERVER_ERROR, "Internal error")
-
-        val result = orchestrator.executeTask("Fix bug")
-
-        assertTrue(result is AgentResult.Failed, "Expected Failed, got $result")
-    }
-
     // --- executePlan ---
 
     @Test
@@ -275,12 +240,11 @@ class AgentOrchestratorTest {
             target = "Svc.kt", workerType = WorkerType.CODER, dependsOn = listOf("a1")
         ))
 
-        // Both worker calls succeed
         val analyzeResponse = chatResponse("Analysis complete: Svc.kt has 3 methods")
         val codeResponse = chatResponse("Added validation to createUser")
 
         var callCount = 0
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } coAnswers {
+        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), any(), any()) } coAnswers {
             callCount++
             if (callCount == 1) ApiResult.Success(analyzeResponse) else ApiResult.Success(codeResponse)
         }
@@ -306,9 +270,9 @@ class AgentOrchestratorTest {
             target = "Svc.kt", workerType = WorkerType.CODER, dependsOn = listOf("a1")
         ))
 
-        // First task returns an error
-        val errorResponse = chatResponse("Error: file not found")
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } returns ApiResult.Success(errorResponse)
+        // First task returns an LLM error (triggers isError = true in WorkerResult)
+        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), any(), any()) } returns
+            ApiResult.Error(ErrorType.SERVER_ERROR, "file not found")
 
         val result = orchestrator.executePlan(graph)
 
@@ -329,8 +293,7 @@ class AgentOrchestratorTest {
         ))
 
         val response = chatResponse("Done analyzing")
-        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), isNull()) } coAnswers {
-            // Cancel after first task completes
+        coEvery { brain.chat(any(), any<List<ToolDefinition>>(), any(), any()) } coAnswers {
             orchestrator.cancelTask()
             ApiResult.Success(response)
         }

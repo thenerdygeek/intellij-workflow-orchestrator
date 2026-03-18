@@ -1,6 +1,15 @@
 package com.workflow.orchestrator.agent.context
 
+import com.workflow.orchestrator.agent.api.dto.ChatCompletionResponse
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
+import com.workflow.orchestrator.agent.api.dto.Choice
+import com.workflow.orchestrator.agent.api.dto.UsageInfo
+import com.workflow.orchestrator.agent.brain.LlmBrain
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -120,5 +129,84 @@ class ContextManagerTest {
         assertEquals(0, manager.currentTokens)
         assertEquals(0, manager.messageCount)
         assertTrue(manager.getMessages().isEmpty())
+    }
+
+    // --- LLM-powered summarization tests ---
+
+    @Test
+    fun `compression uses LLM summarization when brain is provided`() {
+        val brain = mockk<LlmBrain>()
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            ChatCompletionResponse(
+                id = "summary-1",
+                choices = listOf(
+                    Choice(
+                        index = 0,
+                        message = ChatMessage(role = "assistant", content = "LLM summary: analyzed files and found issues"),
+                        finishReason = "stop"
+                    )
+                ),
+                usage = UsageInfo(promptTokens = 50, completionTokens = 20, totalTokens = 70)
+            )
+        )
+
+        val brainManager = ContextManager(
+            maxInputTokens = 1000,
+            brain = brain,
+            tMaxRatio = 0.70,
+            tRetainedRatio = 0.40
+        )
+
+        // Fill enough to trigger compression
+        for (i in 1..40) {
+            brainManager.addMessage(ChatMessage(role = "user", content = "Message $i about code review. " + "x".repeat(80)))
+        }
+
+        val messages = brainManager.getMessages()
+        // Should have used LLM for summarization
+        val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        assertTrue(summaryContent.contains("LLM summary"), "Expected LLM summary in anchored summaries, got: $summaryContent")
+
+        // Verify brain.chat was called
+        coVerify(atLeast = 1) { brain.chat(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `compression falls back to truncation when LLM fails`() {
+        val brain = mockk<LlmBrain>()
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Error(
+            type = ErrorType.NETWORK_ERROR,
+            message = "Connection refused"
+        )
+
+        val brainManager = ContextManager(
+            maxInputTokens = 1000,
+            brain = brain,
+            tMaxRatio = 0.70,
+            tRetainedRatio = 0.40
+        )
+
+        // Fill enough to trigger compression
+        for (i in 1..40) {
+            brainManager.addMessage(ChatMessage(role = "user", content = "Message $i about analysis. " + "x".repeat(80)))
+        }
+
+        val messages = brainManager.getMessages()
+        // Should still have compressed (fell back to truncation)
+        assertTrue(brainManager.messageCount < 40)
+        val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        assertTrue(summaryContent.contains("Previous context"), "Expected fallback summary, got: $summaryContent")
+    }
+
+    @Test
+    fun `null brain uses default truncation summarizer`() {
+        // This is the default setUp() behavior — no brain provided
+        for (i in 1..40) {
+            manager.addMessage(ChatMessage(role = "user", content = "Message $i about testing. " + "x".repeat(80)))
+        }
+
+        val messages = manager.getMessages()
+        val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        assertTrue(summaryContent.contains("Previous context summary"), "Expected default summary, got: $summaryContent")
     }
 }

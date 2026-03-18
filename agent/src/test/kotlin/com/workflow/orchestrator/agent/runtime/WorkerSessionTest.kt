@@ -40,7 +40,7 @@ class WorkerSessionTest {
 
     @Test
     fun `execute returns final response when no tool calls`() = runTest {
-        coEvery { brain.chat(any(), any()) } returns ApiResult.Success(
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
             ChatCompletionResponse(
                 id = "resp-1",
                 choices = listOf(
@@ -68,6 +68,7 @@ class WorkerSessionTest {
         assertEquals("Analysis complete: no issues found.", result.content)
         assertEquals(120, result.tokensUsed)
         assertTrue(result.artifacts.isEmpty())
+        assertFalse(result.isError)
     }
 
     @Test
@@ -118,7 +119,7 @@ class WorkerSessionTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 15, totalTokens = 115)
         )
 
-        coEvery { brain.chat(any(), any()) } returnsMany listOf(
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
             ApiResult.Success(toolCallResponse),
             ApiResult.Success(finalResponse)
         )
@@ -145,6 +146,7 @@ class WorkerSessionTest {
         assertEquals("The file looks good.", result.content)
         assertEquals(195, result.tokensUsed) // 80 + 115
         assertEquals(listOf("Main.kt"), result.artifacts)
+        assertFalse(result.isError)
 
         // Verify tool was executed
         coVerify { mockTool.execute(any(), project) }
@@ -189,7 +191,7 @@ class WorkerSessionTest {
             )
         )
 
-        coEvery { brain.chat(any(), any()) } returnsMany listOf(
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
             ApiResult.Success(toolCallResponse),
             ApiResult.Success(finalResponse)
         )
@@ -206,11 +208,12 @@ class WorkerSessionTest {
         )
 
         assertEquals("OK, I'll work without that tool.", result.content)
-        // Verify error was reported to context
+        assertFalse(result.isError) // The session itself completed successfully
+        // Verify error was reported to context with available tools info
         verify {
             contextManager.addToolResult(
                 "call-1",
-                match { it.contains("not found") },
+                match { it.contains("not available") },
                 any()
             )
         }
@@ -218,7 +221,7 @@ class WorkerSessionTest {
 
     @Test
     fun `execute returns error result when brain fails`() = runTest {
-        coEvery { brain.chat(any(), any()) } returns ApiResult.Error(
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Error(
             type = ErrorType.NETWORK_ERROR,
             message = "Connection refused"
         )
@@ -235,6 +238,7 @@ class WorkerSessionTest {
         )
 
         assertTrue(result.content.contains("Connection refused"))
+        assertTrue(result.isError)
     }
 
     @Test
@@ -260,7 +264,7 @@ class WorkerSessionTest {
             )
         )
 
-        coEvery { brain.chat(any(), any()) } returns ApiResult.Success(infiniteToolCall)
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(infiniteToolCall)
 
         val result = session.execute(
             workerType = WorkerType.CODER,
@@ -274,6 +278,7 @@ class WorkerSessionTest {
         )
 
         assertTrue(result.content.contains("maximum iterations"))
+        assertTrue(result.isError)
     }
 
     @Test
@@ -315,7 +320,7 @@ class WorkerSessionTest {
             )
         )
 
-        coEvery { brain.chat(any(), any()) } returnsMany listOf(
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
             ApiResult.Success(toolCallResponse),
             ApiResult.Success(finalResponse)
         )
@@ -332,6 +337,7 @@ class WorkerSessionTest {
         )
 
         assertEquals("The write failed, but I handled it.", result.content)
+        assertFalse(result.isError) // Session completed successfully despite tool error
         // Verify error was reported to context
         verify {
             contextManager.addToolResult(

@@ -4,6 +4,7 @@ import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.core.model.ApiResult
+import kotlinx.serialization.json.JsonElement
 import okhttp3.OkHttpClient
 
 class OpenAiCompatBrain(
@@ -29,12 +30,28 @@ class OpenAiCompatBrain(
     override suspend fun chat(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
-        maxTokens: Int?
+        maxTokens: Int?,
+        toolChoice: JsonElement?
     ): ApiResult<ChatCompletionResponse> {
         return client.sendMessage(
             messages = messages,
             tools = tools,
-            maxTokens = maxTokens
+            maxTokens = maxTokens,
+            toolChoice = toolChoice
+        )
+    }
+
+    override suspend fun chatStream(
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
+        maxTokens: Int?,
+        onChunk: suspend (StreamChunk) -> Unit
+    ): ApiResult<ChatCompletionResponse> {
+        return client.sendMessageStream(
+            messages = messages,
+            tools = tools,
+            maxTokens = maxTokens,
+            onChunk = onChunk
         )
     }
 

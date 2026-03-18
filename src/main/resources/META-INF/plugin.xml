@@ -308,6 +308,8 @@
             id="workflow.orchestrator.agent"
             displayName="Agent"
             nonDefaultProject="true"/>
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.agent.listeners.AgentStartupActivity"/>
 
         <!-- Jira Ticket Reference TODO Pattern -->
         <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
