@@ -7,7 +7,9 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrReviewerRef
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
+import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
@@ -215,11 +217,19 @@ class PrActionService(private val project: Project) {
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Updating description for PR #$prId")
+        log.info("[PR:Action] Updating description for PR #$prId — fetching current PR to preserve title/reviewers")
+
+        // Fetch current PR to preserve title and reviewers (Bitbucket PUT replaces the entire PR)
+        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
+        val existingPr = (currentPr as? ApiResult.Success)?.data
+
         val updateRequest = BitbucketPrUpdateRequest(
-            title = "",  // will be preserved by Bitbucket when empty
+            title = existingPr?.title ?: "",
             description = description,
-            version = version
+            version = existingPr?.version ?: version,
+            reviewers = existingPr?.reviewers?.map {
+                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+            } ?: emptyList()
         )
         return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
             is ApiResult.Success -> {
