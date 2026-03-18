@@ -369,6 +369,177 @@ class SingleAgentSessionTest {
         }
     }
 
+    // --- Step 2: System prompt parameter ---
+
+    @Test
+    fun `uses provided system prompt instead of hardcoded one`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            chatResponse("Done")
+        )
+
+        val customPrompt = "You are a custom assistant with repo map context."
+        session.execute(
+            task = "Do something",
+            tools = emptyMap(),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project,
+            systemPrompt = customPrompt
+        )
+
+        // Verify the custom system prompt was added to context
+        verify {
+            contextManager.addMessage(match { it.role == "system" && it.content == customPrompt })
+        }
+    }
+
+    // --- Step 3: LoopGuard integration ---
+
+    @Test
+    fun `LoopGuard injects messages after tool execution`() = runTest {
+        val mockTool = mockk<AgentTool>()
+        coEvery { mockTool.execute(any(), any()) } returns ToolResult(
+            content = "result", summary = "read file", tokenEstimate = 5
+        )
+
+        // Same tool call 3 times (triggers loop detection) + final response
+        val toolCallResponse = ChatCompletionResponse(
+            id = "resp",
+            choices = listOf(Choice(
+                index = 0,
+                message = ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(ToolCall(
+                        id = "call-1",
+                        function = FunctionCall(name = "read_file", arguments = """{"path": "same.kt"}""")
+                    ))
+                ),
+                finishReason = "tool_calls"
+            )),
+            usage = UsageInfo(promptTokens = 50, completionTokens = 10, totalTokens = 60)
+        )
+
+        val finalResponse = chatResponse("OK, trying different approach.")
+
+        // 3 identical tool calls then final response
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Success(toolCallResponse),
+            ApiResult.Success(toolCallResponse),
+            ApiResult.Success(toolCallResponse),
+            ApiResult.Success(finalResponse)
+        )
+
+        session.execute(
+            task = "Fix file",
+            tools = mapOf("read_file" to mockTool),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        // LoopGuard should have injected a redirect message after 3 identical calls
+        verify(atLeast = 1) {
+            contextManager.addMessage(match {
+                it.role == "system" && it.content?.contains("same arguments") == true
+            })
+        }
+    }
+
+    // --- Step 7: Rate limit retry ---
+
+    @Test
+    fun `retries on rate limit then succeeds`() = runTest {
+        // First two calls: rate limited. Third: success.
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited"),
+            ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited"),
+            ApiResult.Success(chatResponse("Done after retry"))
+        )
+
+        val result = session.execute(
+            task = "Task",
+            tools = emptyMap(),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        assertTrue(result is SingleAgentResult.Completed, "Expected Completed after retry, got $result")
+    }
+
+    // --- Step 8: Event logging ---
+
+    @Test
+    fun `event log records session lifecycle`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            chatResponse("Done")
+        )
+
+        val eventLog = AgentEventLog("test-session", System.getProperty("java.io.tmpdir"))
+
+        session.execute(
+            task = "Test task",
+            tools = emptyMap(),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project,
+            eventLog = eventLog
+        )
+
+        val events = eventLog.getEvents()
+        assertTrue(events.any { it.type == AgentEventType.SESSION_STARTED }, "Should log SESSION_STARTED")
+        assertTrue(events.any { it.type == AgentEventType.SESSION_COMPLETED }, "Should log SESSION_COMPLETED")
+    }
+
+    @Test
+    fun `event log records tool calls`() = runTest {
+        val mockTool = mockk<AgentTool>()
+        coEvery { mockTool.execute(any(), any()) } returns ToolResult(
+            content = "file content", summary = "read file", tokenEstimate = 5
+        )
+
+        val toolCallResponse = ChatCompletionResponse(
+            id = "resp-1",
+            choices = listOf(Choice(
+                index = 0,
+                message = ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(ToolCall(
+                        id = "call-1",
+                        function = FunctionCall(name = "read_file", arguments = """{"path": "test.kt"}""")
+                    ))
+                ),
+                finishReason = "tool_calls"
+            )),
+            usage = UsageInfo(promptTokens = 50, completionTokens = 10, totalTokens = 60)
+        )
+
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Success(toolCallResponse),
+            ApiResult.Success(chatResponse("Done"))
+        )
+
+        val eventLog = AgentEventLog("test-session", System.getProperty("java.io.tmpdir"))
+
+        session.execute(
+            task = "Read a file",
+            tools = mapOf("read_file" to mockTool),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project,
+            eventLog = eventLog
+        )
+
+        val events = eventLog.getEvents()
+        assertTrue(events.any { it.type == AgentEventType.TOOL_CALLED }, "Should log TOOL_CALLED")
+        assertTrue(events.any { it.type == AgentEventType.TOOL_SUCCEEDED }, "Should log TOOL_SUCCEEDED")
+    }
+
     // --- Helper ---
 
     private fun chatResponse(content: String): ChatCompletionResponse {
