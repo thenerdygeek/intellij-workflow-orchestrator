@@ -24,153 +24,85 @@ class CodyChatService(private val project: Project) {
     }
 
     /**
-     * Three-step prompt chain for high-quality commit message generation.
-     *
-     * Step 1 (Understand): Deep semantic analysis of the diff — what changed,
-     *   why it matters, what the developer's intent was. No formatting yet.
-     *
-     * Step 2 (Draft): Generate a commit message from the analysis, guided by
-     *   the project's recent commit history for style consistency.
-     *
-     * Step 3 (Refine): Self-review the draft against quality criteria and
-     *   output the final polished message.
-     *
-     * All steps share the same chat session so context accumulates.
+     * Single-pass commit message generation leveraging Claude Opus/Sonnet
+     * via Cody CLI. Provides rich context (diff, recent commits, PSI code
+     * intelligence) in one prompt — no chaining needed with a capable model.
      */
     suspend fun generateCommitMessageChained(
         diff: String,
         contextItems: List<ContextFile> = emptyList(),
         ticketId: String = "",
         filesSummary: String = "",
-        recentCommits: List<String> = emptyList()
+        recentCommits: List<String> = emptyList(),
+        codeContext: String = ""
     ): String? {
         val session = startSession(contextItems)
 
-        // ── Step 1: Deep semantic analysis ──
-        val analysisPrompt = buildString {
-            appendLine("You are an expert software engineer analyzing a code change. Study this diff carefully and provide a deep semantic analysis.")
+        val prompt = buildString {
+            appendLine("Generate a git commit message for the following changes. Output ONLY the raw commit message — no commentary, no markdown code blocks.")
             appendLine()
-            appendLine("Respond in exactly this format:")
+
+            // ── Format specification ──
+            appendLine("FORMAT (follow exactly):")
+            appendLine("type(scope): imperative summary (max 72 chars, no trailing period)")
+            appendLine("")
+            appendLine("- Bullet point per logical change, imperative verb, explains what+why")
+            appendLine("- Group related edits into one bullet")
             appendLine()
-            appendLine("INTENT: <What was the developer trying to accomplish? One sentence.>")
-            appendLine("TYPE: <feat|fix|refactor|perf|test|docs|style|build|ci|chore>")
-            appendLine("SCOPE: <primary module/component changed, lowercase>")
-            appendLine("BREAKING: <yes|no>")
-            appendLine("SEMANTIC_CHANGES:")
-            appendLine("- <What logical change was made and why it was necessary>")
-            appendLine("SIDE_EFFECTS: <Any behavioral changes, API changes, or things downstream consumers should know. 'none' if none.>")
-            appendLine()
-            appendLine("Analysis rules:")
-            appendLine("- INTENT is the most important field — understand the developer's goal, not just the mechanics")
-            appendLine("- TYPE: 'fix' = something was broken, 'feat' = new capability, 'refactor' = same behavior better code")
-            appendLine("- SCOPE: derive from the domain (e.g., 'auth', 'billing', 'pr-list'), NOT from file paths")
-            appendLine("- SEMANTIC_CHANGES: describe behavioral/logical changes, not line-level edits")
-            appendLine("  BAD:  'modify line 42 in AuthService.kt'")
-            appendLine("  BAD:  'update the authenticate method'")
-            appendLine("  GOOD: 'validate session tokens expire within 120 minutes to prevent indefinite sessions'")
-            appendLine("- Group related edits into ONE bullet (e.g., adding a field + its getter + its test = one change)")
-            appendLine("- If the change is trivial (import, typo, version bump), say so plainly")
-            if (filesSummary.isNotBlank()) {
-                appendLine()
-                appendLine("Changed files: $filesSummary")
+
+            // ── Rules ──
+            appendLine("RULES:")
+            appendLine("- type: feat|fix|refactor|perf|test|docs|style|build|ci|chore")
+            appendLine("- scope: domain area (e.g., auth, billing, pr-list), NOT file paths")
+            appendLine("- Summary: imperative mood ('add' not 'added'), captures the essence")
+            appendLine("- Body: ALWAYS bullet points with '- ' prefix, even for single changes")
+            appendLine("- Bullets describe behavioral/semantic changes, not line-level edits")
+            appendLine("- If trivial (typo, import, version bump), body can be one short bullet")
+            if (ticketId.isNotBlank()) {
+                appendLine("- Prefix summary with ticket: $ticketId type(scope): description")
             }
+            appendLine()
+            appendLine("AVOID: repeating the type in summary, file paths in bullets, passive voice,")
+            appendLine("'This commit/change' phrasing, wrapping in code blocks")
+
+            // ── Recent commits for context + style ──
             if (recentCommits.isNotEmpty()) {
                 appendLine()
-                appendLine("Recent commits (for context — understand how this change relates to recent work):")
-                recentCommits.forEach { appendLine("  - $it") }
-                appendLine()
-                appendLine("Consider: Is this change continuing a recent effort? Fixing something from a recent commit? A separate concern?")
+                appendLine("RECENT COMMITS (understand how this change relates to recent work; match this project's style):")
+                recentCommits.forEach { appendLine("  $it") }
             }
+
+            // ── Code intelligence context ──
+            if (codeContext.isNotBlank()) {
+                appendLine()
+                appendLine("CODE CONTEXT (classes, annotations, and structure of changed files):")
+                appendLine(codeContext)
+            }
+
+            // ── Changed files ──
+            if (filesSummary.isNotBlank()) {
+                appendLine()
+                appendLine("CHANGED FILES: $filesSummary")
+            }
+
+            // ── The diff ──
             appendLine()
+            appendLine("DIFF:")
             appendLine("```diff")
             appendLine(diff)
             appendLine("```")
         }
 
-        log.info("[Cody:CommitChain] Step 1/3: Semantic analysis (${analysisPrompt.length} chars)")
-        val analysis = sendMessage(session, analysisPrompt, contextItems)
-        if (analysis == null) {
-            log.warn("[Cody:CommitChain] Step 1 failed")
+        log.info("[Cody:Commit] Single-pass generation (${prompt.length} chars, ${contextItems.size} context items)")
+        val result = sendMessage(session, prompt, contextItems)
+        if (result == null) {
+            log.warn("[Cody:Commit] Generation failed — no response")
             return null
         }
-        log.info("[Cody:CommitChain] Step 1 result:\n$analysis")
 
-        // ── Step 2: Draft the commit message ──
-        val draftPrompt = buildString {
-            appendLine("Now write a git commit message based on your analysis. Output ONLY the raw commit message.")
-            appendLine()
-            appendLine("Format (follow this EXACTLY):")
-            appendLine("```")
-            appendLine("type(scope): imperative summary line")
-            appendLine("")
-            appendLine("- First bullet explaining a specific change")
-            appendLine("- Second bullet explaining another change")
-            appendLine("- Each bullet starts with imperative verb and explains what+why")
-            appendLine("```")
-            appendLine()
-            appendLine("Rules:")
-            appendLine("- Line 1: type(scope): summary — imperative mood, max 72 chars, no trailing period")
-            appendLine("- Line 2: always blank")
-            appendLine("- Line 3+: bullet points using '- ' prefix, one per logical change")
-            appendLine("- ALWAYS use bullet points in the body, even for a single change")
-            appendLine("- Each bullet starts with an imperative verb (add, fix, remove, update, extract, replace, etc.)")
-            appendLine("- Bullets describe WHAT changed and WHY — not file paths or implementation details")
-            appendLine("- Keep bullets concise — one line each when possible")
-            if (ticketId.isNotBlank()) {
-                appendLine("- Prefix the summary: $ticketId type(scope): description")
-            }
-            appendLine()
-            appendLine("Anti-patterns to avoid:")
-            appendLine("- Summary that just repeats the type: BAD 'refactor: refactor auth code'")
-            appendLine("- Bullets that describe file edits: BAD '- update AuthService.kt'")
-            appendLine("- Passive voice: BAD '- timeout was added' → GOOD '- add session timeout'")
-            appendLine("- Starting with 'This commit' or 'This change'")
-            appendLine("- Wrapping in markdown code blocks")
-
-            if (recentCommits.isNotEmpty()) {
-                appendLine()
-                appendLine("Match the style of these recent commits from this project:")
-                recentCommits.take(8).forEach { appendLine("  $it") }
-            }
-        }
-
-        log.info("[Cody:CommitChain] Step 2/3: Drafting commit message")
-        val draft = sendMessage(session, draftPrompt)
-        if (draft == null) {
-            log.warn("[Cody:CommitChain] Step 2 failed")
-            return null
-        }
-        log.info("[Cody:CommitChain] Step 2 draft:\n$draft")
-
-        // ── Step 3: Self-review and refine ──
-        val refinePrompt = buildString {
-            appendLine("Review the commit message you just wrote. Check each criterion and fix any issues.")
-            appendLine("Output ONLY the final corrected commit message — no commentary, no explanations.")
-            appendLine()
-            appendLine("Checklist:")
-            appendLine("1. Summary line ≤72 chars? (count it)")
-            appendLine("2. Imperative mood in summary AND bullets? ('add', not 'adds' or 'added')")
-            appendLine("3. Summary captures the essence — would a reviewer understand the change from this line alone?")
-            appendLine("4. Body uses bullet points with '- ' prefix? (ALWAYS bullets, never prose paragraphs)")
-            appendLine("5. Each bullet starts with an imperative verb?")
-            appendLine("6. No redundancy between summary and body?")
-            appendLine("7. No file paths or line numbers in the message?")
-            appendLine("8. If multiple bullets, are they truly separate logical changes? (merge if not)")
-            appendLine("9. No markdown formatting wrapping the message?")
-            appendLine()
-            appendLine("If the draft is already good, output it unchanged. If it needs fixes, output the corrected version.")
-        }
-
-        log.info("[Cody:CommitChain] Step 3/3: Self-review and refinement")
-        val refined = sendMessage(session, refinePrompt)
-        if (refined == null) {
-            log.warn("[Cody:CommitChain] Step 3 failed, using draft")
-            return cleanMessage(draft)
-        }
-
-        val result = cleanMessage(refined)
-        log.info("[Cody:CommitChain] Final commit message:\n$result")
-        return result
+        val cleaned = cleanMessage(result)
+        log.info("[Cody:Commit] Generated commit message:\n$cleaned")
+        return cleaned
     }
 
     /**

@@ -18,6 +18,7 @@ import com.workflow.orchestrator.cody.protocol.ContextFile
 import com.workflow.orchestrator.cody.protocol.Range
 import com.workflow.orchestrator.cody.protocol.Position
 import com.workflow.orchestrator.cody.service.CodyChatService
+import com.workflow.orchestrator.cody.service.PsiContextEnricher
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
@@ -156,22 +157,62 @@ class GenerateCommitMessageAction : AnAction(
                 }.joinToString(", ")
             } catch (_: Exception) { "" }
 
-            // Fetch recent commit messages for style matching
+            // Fetch recent commits for context + style
             val recentCommits = getRecentCommits(project)
 
-            log.info("[Cody:CommitMsg] Starting chained generation: ${truncatedDiff.length} char diff, ${contextItems.size} context items, ${recentCommits.size} recent commits")
+            // Gather PSI code intelligence for changed files
+            val codeContext = buildCodeContext(project)
+
+            log.info("[Cody:CommitMsg] Generating: ${truncatedDiff.length} char diff, ${contextItems.size} context items, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
 
             CodyChatService(project).generateCommitMessageChained(
                 diff = truncatedDiff,
                 contextItems = contextItems,
                 ticketId = ticketId,
                 filesSummary = filesSummary,
-                recentCommits = recentCommits
+                recentCommits = recentCommits,
+                codeContext = codeContext
             )
         } catch (ex: Exception) {
             log.warn("[Cody:CommitMsg] Generation failed: ${ex.message}")
             null
         }
+    }
+
+    /**
+     * Build code intelligence context from IntelliJ's PSI model.
+     * Provides class names, annotations (@Service, @RestController, @Test),
+     * Maven module, and whether files are test or production code.
+     */
+    private suspend fun buildCodeContext(project: Project): String {
+        return try {
+            val enricher = PsiContextEnricher(project)
+            val changeListManager = ChangeListManager.getInstance(project)
+            val contexts = changeListManager.allChanges.take(10).mapNotNull { change ->
+                val path = change.afterRevision?.file?.path ?: return@mapNotNull null
+                try {
+                    val ctx = enricher.enrich(path)
+                    if (ctx.className == null && ctx.classAnnotations.isEmpty()) return@mapNotNull null
+                    buildString {
+                        val fileName = path.substringAfterLast('/')
+                        append(fileName)
+                        if (ctx.isTestFile) append(" [TEST]")
+                        if (ctx.mavenModule != null) append(" (module: ${ctx.mavenModule})")
+                        if (ctx.className != null) append(" — ${ctx.className}")
+                        if (ctx.classAnnotations.isNotEmpty()) {
+                            append(" @${ctx.classAnnotations.joinToString(", @")}")
+                        }
+                        val interestingMethods = ctx.methodAnnotations.entries
+                            .filter { (_, anns) -> anns.any { it in listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "RequestMapping", "Test", "BeforeEach", "Transactional") } }
+                            .take(5)
+                        if (interestingMethods.isNotEmpty()) {
+                            append("\n  methods: ${interestingMethods.map { (m, a) -> "$m(${a.joinToString(",")})" }.joinToString(", ")}")
+                        }
+                    }
+                } catch (_: Exception) { null }
+            }
+            contexts.joinToString("\n")
+        } catch (_: Exception) { "" }
     }
 
     /**
