@@ -131,6 +131,39 @@ class ContextManagerTest {
         assertTrue(manager.getMessages().isEmpty())
     }
 
+    // --- Reserved tokens tests (Step 1) ---
+
+    @Test
+    fun `reservedTokens reduces effective budget`() {
+        val managerWithReserved = ContextManager(
+            maxInputTokens = 1000,
+            reservedTokens = 200
+        )
+        // Effective budget = 1000 - 200 = 800
+        assertEquals(800, managerWithReserved.remainingBudget())
+    }
+
+    @Test
+    fun `compression thresholds use effective budget with reservedTokens`() {
+        // With reservedTokens=200, effectiveBudget=800
+        // tMax at 0.70 = 560 tokens (not 700)
+        val managerWithReserved = ContextManager(
+            maxInputTokens = 1000,
+            reservedTokens = 200,
+            tMaxRatio = 0.70,
+            tRetainedRatio = 0.40
+        )
+
+        // Add messages to trigger compression at 560 tokens (~1960 chars)
+        for (i in 1..25) {
+            managerWithReserved.addMessage(ChatMessage(role = "user", content = "Msg $i. " + "x".repeat(80)))
+        }
+
+        // Should have compressed with the lower threshold
+        assertTrue(managerWithReserved.messageCount < 25,
+            "Messages (${managerWithReserved.messageCount}) should be fewer than 25 after compression with reserved tokens")
+    }
+
     // --- LLM-powered summarization tests ---
 
     @Test

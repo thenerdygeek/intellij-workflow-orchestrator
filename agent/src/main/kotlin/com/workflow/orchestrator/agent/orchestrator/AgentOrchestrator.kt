@@ -5,6 +5,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.RepoMapGenerator
+import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.settings.AgentSettings
@@ -12,6 +14,7 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.serialization.json.*
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -22,10 +25,19 @@ sealed class AgentResult {
     data class PlanReady(val plan: TaskGraph, val description: String) : AgentResult()
 
     /** All tasks completed successfully. */
-    data class Completed(val summary: String, val artifacts: List<String>, val totalTokens: Int) : AgentResult()
+    data class Completed(
+        val summary: String,
+        val artifacts: List<String>,
+        val totalTokens: Int,
+        val snapshotRef: String? = null
+    ) : AgentResult()
 
     /** Execution failed with an error. */
-    data class Failed(val error: String, val partialResults: String? = null) : AgentResult()
+    data class Failed(
+        val error: String,
+        val partialResults: String? = null,
+        val snapshotRef: String? = null
+    ) : AgentResult()
 
     /** User cancelled the task. */
     data class Cancelled(val completedSteps: Int) : AgentResult()
@@ -60,6 +72,7 @@ class AgentOrchestrator(
 ) {
     companion object {
         private val LOG = Logger.getInstance(AgentOrchestrator::class.java)
+        private const val RESERVED_TOKEN_BUFFER = 200
     }
 
     private val cancelled = AtomicBoolean(false)
@@ -83,16 +96,55 @@ class AgentOrchestrator(
         cancelled.set(false)
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-        val maxTokens = settings?.state?.maxInputTokens ?: 150_000
+        val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
+        val maxOutputTokens = settings?.state?.maxOutputTokens ?: 64_000
 
         // Default: Single Agent Mode
         onProgress(AgentProgress("Starting task...", tokensUsed = 0))
 
         if (cancelled.get()) return AgentResult.Cancelled(0)
 
-        val contextManager = ContextManager(maxInputTokens = maxTokens)
+        // Calculate tool definitions and their token overhead
         val allTools = toolRegistry.allTools().associateBy { it.name }
         val allToolDefs = toolRegistry.allTools().map { it.toToolDefinition() }
+        val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)
+
+        // Generate repo map using PSI
+        val repoMap = try {
+            RepoMapGenerator.generate(project, maxTokens = 1500)
+        } catch (_: Exception) { "" }
+        val repoMapTokens = if (repoMap.isNotBlank()) TokenEstimator.estimate(repoMap) else 0
+
+        // Build system prompt via PromptAssembler
+        val promptAssembler = PromptAssembler(toolRegistry)
+        val systemPrompt = promptAssembler.buildSingleAgentPrompt(
+            projectName = project.name,
+            projectPath = project.basePath,
+            repoMapContext = repoMap.ifBlank { null }
+        )
+        val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
+
+        // Calculate reserved tokens (tool defs + system prompt + buffer)
+        val reservedTokens = toolDefTokens + RESERVED_TOKEN_BUFFER
+
+        // Create context manager with reserved tokens accounting
+        val contextManager = ContextManager(
+            maxInputTokens = maxInputTokens,
+            reservedTokens = reservedTokens
+        )
+
+        // Take snapshot before execution for rollback capability (Step 4)
+        val fileGuard = FileGuard()
+        val snapshotRef = try {
+            fileGuard.snapshotFiles(project, emptyList())
+        } catch (_: Exception) { null }
+
+        // Create event log for audit trail (Step 8)
+        val sessionId = UUID.randomUUID().toString().take(12)
+        val eventLog = project.basePath?.let { AgentEventLog(sessionId, it) }
+        eventLog?.let {
+            if (snapshotRef != null) it.log(AgentEventType.SNAPSHOT_CREATED, snapshotRef)
+        }
 
         val session = SingleAgentSession()
         val result = session.execute(
@@ -102,17 +154,26 @@ class AgentOrchestrator(
             brain = brain,
             contextManager = contextManager,
             project = project,
+            systemPrompt = systemPrompt,
+            maxOutputTokens = maxOutputTokens,
             approvalGate = approvalGate,
+            eventLog = eventLog,
             onProgress = onProgress,
             onStreamChunk = onStreamChunk
         )
 
         return when (result) {
             is SingleAgentResult.Completed -> {
-                AgentResult.Completed(result.summary, result.artifacts, result.tokensUsed)
+                AgentResult.Completed(
+                    result.summary, result.artifacts, result.tokensUsed,
+                    snapshotRef = snapshotRef
+                )
             }
             is SingleAgentResult.Failed -> {
-                AgentResult.Failed(result.error)
+                AgentResult.Failed(
+                    result.error,
+                    snapshotRef = snapshotRef
+                )
             }
             is SingleAgentResult.EscalateToOrchestrated -> {
                 // Auto-escalate: create a plan and switch to orchestrated mode

@@ -9,7 +9,8 @@ enum class ErrorType {
     NETWORK_ERROR,
     TIMEOUT,
     VALIDATION_ERROR,
-    PARSE_ERROR
+    PARSE_ERROR,
+    CONTEXT_LENGTH_EXCEEDED
 }
 
 sealed class ApiResult<out T> {
