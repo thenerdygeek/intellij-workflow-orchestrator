@@ -203,6 +203,7 @@ class ConnectionsConfigurable(
         var currentUrl = urlGetter()
         var currentToken = ""
         var tokenField: JPasswordField? = null
+        var usernameField: javax.swing.JTextField? = null
 
         collapsibleGroup(title) {
             row("Server URL:") {
@@ -225,9 +226,12 @@ class ConnectionsConfigurable(
             row("Username:") {
                 textField()
                     .columns(40)
-                    .applyToComponent { text = existingUsername }
+                    .applyToComponent {
+                        text = existingUsername
+                        usernameField = this
+                    }
                     .onChanged { field -> pendingBitbucketUsername = field.text }
-                    .comment("Your Bitbucket username (used for filtering PRs by author/reviewer)")
+                    .comment("Auto-detected on Test Connection, or enter manually")
             }
             row {
                 button("Test Connection") {
@@ -242,6 +246,30 @@ class ConnectionsConfigurable(
                         val result = runBlocking {
                             authTestService.testConnection(ServiceType.BITBUCKET, url, token)
                         }
+
+                        // On success, auto-detect username via whoami
+                        if (result is ApiResult.Success) {
+                            try {
+                                val whoamiRequest = okhttp3.Request.Builder()
+                                    .url("${url.trimEnd('/')}/plugins/servlet/applinks/whoami")
+                                    .header("Authorization", "Bearer $token")
+                                    .get()
+                                    .build()
+                                val whoamiResponse = okhttp3.OkHttpClient().newCall(whoamiRequest).execute()
+                                val detectedUsername = whoamiResponse.use { it.body?.string()?.trim() }
+                                if (!detectedUsername.isNullOrBlank()) {
+                                    SwingUtilities.invokeLater {
+                                        usernameField?.text = detectedUsername
+                                        pendingBitbucketUsername = detectedUsername
+                                        statusLabel.text = "\u2713 Connected as $detectedUsername"
+                                    }
+                                    return@runBackgroundableTask
+                                }
+                            } catch (_: Exception) {
+                                // whoami failed — fall through to normal success message
+                            }
+                        }
+
                         SwingUtilities.invokeLater {
                             statusLabel.text = when (result) {
                                 is ApiResult.Success -> "\u2713 Connected successfully"
