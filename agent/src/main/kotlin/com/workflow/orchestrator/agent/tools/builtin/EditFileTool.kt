@@ -78,8 +78,30 @@ class EditFileTool : AgentTool {
             // Settings not available (e.g., testing) — proceed without approval
         }
 
-        // Use WriteCommandAction to properly integrate with IntelliJ's VFS and undo system
+        // Apply the edit
         val newContent = content.replace(oldString, newString)
+
+        // Syntax validation gate: reject edits that introduce syntax errors
+        val extension = path.substringAfterLast('.', "").lowercase()
+        if (extension in setOf("kt", "java")) {
+            try {
+                val errors = SyntaxValidator.validate(project, path, newContent)
+                if (errors.isNotEmpty()) {
+                    // REVERT: do not write the file — return error with details
+                    val errorDetails = errors.joinToString("\n") { "  Line ${it.line}:${it.column}: ${it.message}" }
+                    return ToolResult(
+                        content = "Edit rejected: syntax errors introduced. File NOT modified.\n$errorDetails",
+                        summary = "Edit rejected: ${errors.size} syntax error(s) in $rawPath",
+                        tokenEstimate = TokenEstimator.estimate(errorDetails),
+                        artifacts = listOf(path),
+                        isError = true
+                    )
+                }
+            } catch (_: Exception) {
+                // Syntax validation unavailable (e.g., no PSI in test) — proceed without gate
+            }
+        }
+
         file.writeText(newContent, Charsets.UTF_8)
 
         val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath"

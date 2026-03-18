@@ -6,7 +6,7 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
  * Assembles dynamic system prompts from composable sections.
  *
  * Instead of using static per-worker prompts, this builds a single system prompt
- * that includes identity, tool summary, project context, environment info, and rules.
+ * that includes identity, tool summary, project context, environment info, repo map, and rules.
  * Sections are conditionally included based on what information is available.
  */
 class PromptAssembler(
@@ -15,13 +15,14 @@ class PromptAssembler(
 
     /**
      * Build a system prompt for the single-agent default mode.
-     * Combines identity, tool summary, project context, environment, and rules.
+     * Combines identity, tool summary, project context, repo map, environment, and rules.
      */
     fun buildSingleAgentPrompt(
         projectName: String? = null,
         projectPath: String? = null,
         frameworkInfo: String? = null,
-        previousStepResults: List<String>? = null
+        previousStepResults: List<String>? = null,
+        repoMapContext: String? = null
     ): String {
         val sections = mutableListOf<String>()
 
@@ -38,13 +39,18 @@ class PromptAssembler(
             sections.add("<project_context>\n$ctx\n</project_context>")
         }
 
-        // 4. Previous Step Results (orchestrated mode only)
+        // 4. Repo Map (PSI-generated, only if available)
+        if (!repoMapContext.isNullOrBlank()) {
+            sections.add("<repo_map>\n$repoMapContext\n</repo_map>")
+        }
+
+        // 5. Previous Step Results (orchestrated mode only)
         if (!previousStepResults.isNullOrEmpty()) {
             val prev = previousStepResults.joinToString("\n\n") { "- $it" }
             sections.add("<previous_results>\nContext from previous steps:\n$prev\n</previous_results>")
         }
 
-        // 5. Rules and Constraints
+        // 6. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -126,6 +132,8 @@ class PromptAssembler(
             - Be precise and minimal in edits. Don't rewrite entire files when a targeted change suffices.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - Report what you changed and verify it works before declaring the task complete.
+            - If you call the same tool 3 times with the same arguments, try a different approach.
+            - If a tool call returns an error, address the error before continuing with other actions.
             </rules>
         """.trimIndent()
     }

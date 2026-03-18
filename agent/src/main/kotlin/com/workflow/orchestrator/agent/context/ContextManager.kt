@@ -25,6 +25,7 @@ class ContextManager(
     private val tMaxRatio: Double = 0.70,
     private val tRetainedRatio: Double = 0.40,
     private val toolResultMaxTokens: Int = 500,
+    private val reservedTokens: Int = 0,
     private val summarizer: (List<ChatMessage>) -> String = { messages ->
         // Default summarizer: extract key points from messages
         val content = messages.mapNotNull { it.content }.joinToString("\n")
@@ -39,8 +40,11 @@ class ContextManager(
     private val anchoredSummaries = mutableListOf<String>()
     private var totalTokens = 0
 
-    private val tMax: Int get() = (maxInputTokens * tMaxRatio).toInt()
-    private val tRetained: Int get() = (maxInputTokens * tRetainedRatio).toInt()
+    /** Effective budget after subtracting reserved tokens (tool defs, system prompt overhead, buffer). */
+    private val effectiveBudget: Int get() = maxInputTokens - reservedTokens
+
+    private val tMax: Int get() = (effectiveBudget * tMaxRatio).toInt()
+    private val tRetained: Int get() = (effectiveBudget * tRetainedRatio).toInt()
 
     /** Current token usage across all messages. */
     val currentTokens: Int get() = totalTokens
@@ -180,9 +184,9 @@ class ContextManager(
         totalTokens = 0
     }
 
-    /** Get remaining token budget. */
-    fun remainingBudget(): Int = maxInputTokens - totalTokens
+    /** Get remaining token budget (accounting for reserved tokens). */
+    fun remainingBudget(): Int = effectiveBudget - totalTokens
 
     /** Check if budget is critically low (<10% remaining). */
-    fun isBudgetCritical(): Boolean = remainingBudget() < (maxInputTokens * 0.10)
+    fun isBudgetCritical(): Boolean = remainingBudget() < (effectiveBudget * 0.10)
 }

@@ -118,6 +118,7 @@ class PromptAssemblerTest {
         // Should NOT have optional sections
         assertFalse(prompt.contains("<project_context>"), "Should not have project context")
         assertFalse(prompt.contains("<previous_results>"), "Should not have previous results")
+        assertFalse(prompt.contains("<repo_map>"), "Should not have repo map")
     }
 
     @Test
@@ -161,6 +162,46 @@ class PromptAssemblerTest {
         // The tools section should be empty between tags
         val toolsSection = prompt.substringAfter("<available_tools>\n").substringBefore("\n</available_tools>")
         assertTrue(toolsSection.isBlank(), "Tools section should be empty")
+    }
+
+    // --- Step 2/5: Repo map injection ---
+
+    @Test
+    fun `repo map is included when provided`() {
+        val repoMap = """
+            com.example.service/
+              UserService @Service
+                + createUser(CreateUserRequest): User
+                + findById(Long): User?
+        """.trimIndent()
+
+        val prompt = assembler.buildSingleAgentPrompt(repoMapContext = repoMap)
+
+        assertTrue(prompt.contains("<repo_map>"), "Should contain repo_map section")
+        assertTrue(prompt.contains("UserService @Service"), "Should contain class info")
+        assertTrue(prompt.contains("createUser"), "Should contain method info")
+    }
+
+    @Test
+    fun `blank repo map is not included`() {
+        val prompt = assembler.buildSingleAgentPrompt(repoMapContext = "")
+        assertFalse(prompt.contains("<repo_map>"), "Should not have repo_map section for blank input")
+    }
+
+    @Test
+    fun `null repo map is not included`() {
+        val prompt = assembler.buildSingleAgentPrompt(repoMapContext = null)
+        assertFalse(prompt.contains("<repo_map>"), "Should not have repo_map section for null input")
+    }
+
+    // --- Anti-loop rules ---
+
+    @Test
+    fun `rules contain anti-loop guidance`() {
+        val prompt = assembler.buildSingleAgentPrompt()
+
+        assertTrue(prompt.contains("same tool 3 times"), "Should contain anti-loop rule")
+        assertTrue(prompt.contains("different approach"), "Should mention trying different approach")
     }
 }
 
