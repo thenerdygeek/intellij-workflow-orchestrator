@@ -75,8 +75,8 @@ class GenerateCommitMessageAction : AnAction(
 
                 activeJob = scope.launch {
                     try {
-                        indicator.text = "Step 1/2: Analyzing diff..."
-                        indicator.fraction = 0.3
+                        indicator.text = "Step 1/3: Understanding changes..."
+                        indicator.fraction = 0.2
                         val message = generateMessage(project)
                         indicator.fraction = 0.9
 
@@ -175,13 +175,17 @@ class GenerateCommitMessageAction : AnAction(
                 }.joinToString(", ")
             } catch (_: Exception) { "" }
 
-            log.info("[Cody:CommitMsg] Starting chained generation: ${truncatedDiff.length} char diff, ${contextItems.size} context items, files: $filesSummary")
+            // Fetch recent commit messages for style matching
+            val recentCommits = getRecentCommits(project)
+
+            log.info("[Cody:CommitMsg] Starting chained generation: ${truncatedDiff.length} char diff, ${contextItems.size} context items, ${recentCommits.size} recent commits")
 
             CodyChatService(project).generateCommitMessageChained(
                 diff = truncatedDiff,
                 contextItems = contextItems,
                 ticketId = ticketId,
-                filesSummary = filesSummary
+                filesSummary = filesSummary,
+                recentCommits = recentCommits
             )
         } catch (ex: Exception) {
             log.warn("[Cody:CommitMsg] Generation failed: ${ex.message}")
@@ -216,6 +220,23 @@ class GenerateCommitMessageAction : AnAction(
         }
 
         return null
+    }
+
+    /**
+     * Get recent commit messages from the project for style matching.
+     * Returns one-line summaries of the last 10 commits.
+     */
+    private fun getRecentCommits(project: Project): List<String> {
+        return try {
+            val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull() ?: return emptyList()
+            val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
+                addParameters("--oneline", "-10", "--no-merges")
+            }
+            val result = Git.getInstance().runCommand(handler)
+            if (result.success()) {
+                result.output.filter { it.isNotBlank() }
+            } else emptyList()
+        } catch (_: Exception) { emptyList() }
     }
 
     /**
