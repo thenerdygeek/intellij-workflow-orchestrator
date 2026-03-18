@@ -19,6 +19,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.Dispatcher
@@ -381,11 +382,8 @@ class SingleAgentFlowE2ETest {
         override val allowedWorkers = WorkerType.entries.toSet()
 
         override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-            val path = params["path"]?.let {
-                kotlinx.serialization.json.jsonPrimitive.let { p -> it.toString().trim('"') }
-            } ?: return ToolResult("Error: path required", "Error", 5, isError = true)
-
-            val pathStr = params["path"].toString().trim('"')
+            val pathStr = params["path"]?.jsonPrimitive?.content
+                ?: return ToolResult("Error: path required", "Error", 5, isError = true)
             val file = File(pathStr)
             if (!file.exists()) {
                 return ToolResult("Error: File not found: $pathStr", "Error: not found", 5, isError = true)
@@ -410,11 +408,12 @@ class SingleAgentFlowE2ETest {
         override val allowedWorkers = WorkerType.entries.toSet()
 
         override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-            val path = params["path"].toString().trim('"')
-            val oldStr = params["old_string"].toString().trim('"')
-                .replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
-            val newStr = params["new_string"].toString().trim('"')
-                .replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+            val path = params["path"]?.jsonPrimitive?.content
+                ?: return ToolResult("Error: path required", "Error", 5, isError = true)
+            val oldStr = params["old_string"]?.jsonPrimitive?.content
+                ?: return ToolResult("Error: old_string required", "Error", 5, isError = true)
+            val newStr = params["new_string"]?.jsonPrimitive?.content
+                ?: return ToolResult("Error: new_string required", "Error", 5, isError = true)
 
             val file = File(path)
             if (!file.exists()) {
@@ -448,7 +447,8 @@ class SingleAgentFlowE2ETest {
         override val allowedWorkers = WorkerType.entries.toSet()
 
         override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-            val query = params["query"].toString().trim('"')
+            val query = params["query"]?.jsonPrimitive?.content
+                ?: return ToolResult("Error: query required", "Error", 5, isError = true)
             val results = baseDir.walkTopDown()
                 .filter { it.isFile && it.extension == "kt" }
                 .flatMap { file ->
