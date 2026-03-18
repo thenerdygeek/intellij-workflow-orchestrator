@@ -233,6 +233,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             DefaultTab("Handover", 5, "No active task to hand over.\nStart work on a ticket first.")
         )
 
+        // Add default tabs (matched with providers by title)
         defaultTabs.forEach { tab ->
             val panel = try {
                 val provider = providers[tab.title]
@@ -246,6 +247,23 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             content.isCloseable = false
             contentManager.addContent(content)
         }
+
+        // Add any extension-provided tabs not in the default list (e.g., Agent tab)
+        val defaultTitles = defaultTabs.map { it.title }.toSet()
+        providers.filter { it.key !in defaultTitles }
+            .values
+            .sortedBy { it.order }
+            .forEach { provider ->
+                val panel = try {
+                    provider.createPanel(project)
+                } catch (e: Exception) {
+                    log.warn("[Workflow:UI] Failed to create ${provider.tabTitle} tab: ${e.message}", e)
+                    EmptyStatePanel(project, "Failed to load ${provider.tabTitle} tab.\n${e.message}")
+                }
+                val content = ContentFactory.getInstance().createContent(panel, provider.tabTitle, false)
+                content.isCloseable = false
+                contentManager.addContent(content)
+            }
     }
 
     private fun settingsSnapshot(project: Project): String {
@@ -262,6 +280,8 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             append("|quality=${s.qualityModuleEnabled}|auto=${s.automationModuleEnabled}|handover=${s.handoverModuleEnabled}")
             // Keys that affect tab content
             append("|planKey=${s.bambooPlanKey}|sonarKey=${s.sonarProjectKey}")
+            // Agent tab depends on extension providers being loaded
+            append("|extProviders=${WorkflowTabProvider.EP_NAME.extensionList.size}")
         }
     }
 
