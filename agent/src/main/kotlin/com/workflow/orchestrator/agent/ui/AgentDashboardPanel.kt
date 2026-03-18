@@ -2,173 +2,226 @@ package com.workflow.orchestrator.agent.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
-import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
-import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.runtime.AgentTask
-import java.awt.BorderLayout
-import java.awt.Component
-import java.awt.FlowLayout
+import java.awt.*
+import java.awt.event.KeyEvent
+import java.awt.event.KeyListener
 import javax.swing.*
 
+/**
+ * Chat-first agent dashboard — mirrors the UX of Claude Code, Cursor, and Cline.
+ *
+ * Layout:
+ * ┌──────────────────────────────────────────────┐
+ * │ [Stop] [New Chat]                 🪙 1.2K ▸ │  ← Compact toolbar
+ * ├──────────────────────────────────────────────┤
+ * │                                              │
+ * │  (Rich streaming output — tool cards,        │  ← Chat history
+ * │   diffs, code blocks, session summary)       │
+ * │                                              │
+ * ├──────────────────────────────────────────────┤
+ * │ Ask the agent to do something...     [Send]  │  ← Chat input
+ * └──────────────────────────────────────────────┘
+ *
+ * The chat input is always visible. Enter sends. Shift+Enter for newline.
+ * No modal dialogs for task input — just type and go.
+ */
 class AgentDashboardPanel : JPanel(BorderLayout()) {
 
-    private val stepListModel = DefaultListModel<String>()
-    private val stepList = JBList(stepListModel)
     private val richPanel = RichStreamingPanel()
     private val tokenWidget = TokenBudgetWidget()
-    private val completedSteps = mutableSetOf<String>()
-    private val currentStep = mutableSetOf<String>()
     private val planRenderer = PlanMarkdownRenderer()
-    private val splitter = JBSplitter(false, 0.3f)
-    private var showingPlan = false
 
-    // Keep legacy panel for backward compatibility (tests may reference it)
-    @Deprecated("Use getRichPanel() instead", replaceWith = ReplaceWith("getRichPanel()"))
+    // Keep legacy panel reference for backward compat
+    @Deprecated("Use getRichPanel() instead")
     private val outputPanel = StreamingOutputPanel()
 
-    val newTaskButton = JButton("New Task").apply {
-        icon = AllIcons.General.Add
+    // --- Chat input ---
+    private val chatInput = JBTextArea(2, 40).apply {
+        lineWrap = true
+        wrapStyleWord = true
+        border = JBUI.Borders.empty(8)
+        font = JBUI.Fonts.label(13f)
+        emptyText.setText("Ask the agent to do something...")
     }
-    val cancelButton = JButton("Cancel").apply {
-        icon = AllIcons.Actions.Cancel
+
+    val sendButton = JButton("Send").apply {
+        icon = AllIcons.Actions.Execute
+        font = JBUI.Fonts.label(12f)
+        putClientProperty("JButton.buttonType", "roundRect")
+    }
+
+    val cancelButton = JButton("Stop").apply {
+        icon = AllIcons.Actions.Suspend
         isEnabled = false
+        font = JBUI.Fonts.label(12f)
+        putClientProperty("JButton.buttonType", "roundRect")
     }
+
+    val newChatButton = JButton("New Chat").apply {
+        icon = AllIcons.General.Add
+        font = JBUI.Fonts.label(12f)
+        putClientProperty("JButton.buttonType", "roundRect")
+    }
+
     val settingsLink = JBLabel("<html><a href=''>Settings</a></html>").apply {
-        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        font = JBUI.Fonts.smallFont()
     }
+
+    /** Callback invoked when the user submits a message. Set by AgentController. */
+    var onSendMessage: ((String) -> Unit)? = null
 
     init {
-        border = JBUI.Borders.empty(8)
+        border = JBUI.Borders.empty()
 
-        // North: toolbar
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        toolbar.add(newTaskButton)
-        toolbar.add(cancelButton)
-        toolbar.add(settingsLink)
+        // ── North: compact toolbar ──
+        val toolbar = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.merge(
+                JBUI.Borders.empty(4, 8),
+                JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0),
+                true
+            )
+            val leftButtons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+            leftButtons.add(cancelButton)
+            leftButtons.add(newChatButton)
+            add(leftButtons, BorderLayout.WEST)
+
+            val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+            rightPanel.add(tokenWidget)
+            rightPanel.add(settingsLink)
+            add(rightPanel, BorderLayout.EAST)
+        }
         add(toolbar, BorderLayout.NORTH)
 
-        // Center: splitter with step list (left) and rich output (right)
-        stepList.cellRenderer = StepListCellRenderer()
-        splitter.firstComponent = JBScrollPane(stepList)
-        splitter.secondComponent = richPanel
-        add(splitter, BorderLayout.CENTER)
+        // ── Center: rich output (chat history) ──
+        add(richPanel, BorderLayout.CENTER)
 
-        // South: token budget widget
-        add(tokenWidget, BorderLayout.SOUTH)
+        // ── South: chat input bar ──
+        val inputBar = buildInputBar()
+        add(inputBar, BorderLayout.SOUTH)
+
+        // ── Wire Enter key ──
+        chatInput.addKeyListener(object : KeyListener {
+            override fun keyPressed(e: KeyEvent) {
+                if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
+                    e.consume()
+                    submitMessage()
+                }
+            }
+            override fun keyReleased(e: KeyEvent) {}
+            override fun keyTyped(e: KeyEvent) {
+                if (e.keyChar == '\n' && !e.isShiftDown) {
+                    e.consume()
+                }
+            }
+        })
+
+        sendButton.addActionListener { submitMessage() }
     }
 
-    fun showPlan(tasks: List<String>) = runOnEdt {
-        stepListModel.clear()
-        completedSteps.clear()
-        currentStep.clear()
-        for (task in tasks) {
-            stepListModel.addElement(task)
+    private fun buildInputBar(): JPanel {
+        val bar = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.merge(
+                JBUI.Borders.empty(6, 8),
+                JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0),
+                true
+            )
         }
-        richPanel.clear()
-        cancelButton.isEnabled = true
-    }
 
-    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
-        // Mark previous current steps as completed
-        completedSteps.addAll(currentStep)
-        currentStep.clear()
-        currentStep.add(step)
-
-        // Add step to model if not present
-        val found = (0 until stepListModel.size()).any { stepListModel.getElementAt(it) == step }
-        if (!found) {
-            stepListModel.addElement(step)
+        val inputScroll = JScrollPane(chatInput).apply {
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(JBColor.border(), 1, true),
+                JBUI.Borders.empty()
+            )
+            preferredSize = Dimension(0, JBUI.scale(60))
+            minimumSize = Dimension(0, JBUI.scale(40))
         }
 
-        stepList.repaint()
-        tokenWidget.update(tokensUsed, maxTokens)
+        val sendPanel = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.emptyLeft(6)
+            add(sendButton, BorderLayout.SOUTH)
+        }
+
+        bar.add(inputScroll, BorderLayout.CENTER)
+        bar.add(sendPanel, BorderLayout.EAST)
+        return bar
     }
 
-    fun showResult(text: String) = runOnEdt {
-        completedSteps.addAll(currentStep)
-        currentStep.clear()
-        stepList.repaint()
-        richPanel.setText(text)
-        cancelButton.isEnabled = false
+    private fun submitMessage() {
+        val text = chatInput.text?.trim() ?: return
+        if (text.isBlank()) return
+
+        chatInput.text = ""
+        chatInput.requestFocusInWindow()
+        onSendMessage?.invoke(text)
     }
+
+    // ═══════════════════════════════════════════════════
+    //  Public API — used by AgentController
+    // ═══════════════════════════════════════════════════
 
     /** Get the rich streaming panel for direct content rendering. */
     fun getRichPanel(): RichStreamingPanel = richPanel
 
-    /** Provides backward-compatible access to old panel (delegates to rich panel). */
+    /** Provides backward-compatible access to old panel. */
     fun getStreamingPanel(): StreamingOutputPanel = outputPanel
 
+    /** Get the plan renderer for orchestrated mode. */
+    fun getPlanRenderer(): PlanMarkdownRenderer = planRenderer
+
+    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
+        tokenWidget.update(tokensUsed, maxTokens)
+    }
+
+    fun showResult(text: String) = runOnEdt {
+        richPanel.setText(text)
+        cancelButton.isEnabled = false
+        sendButton.isEnabled = true
+        chatInput.isEnabled = true
+    }
+
     fun reset() = runOnEdt {
-        stepListModel.clear()
-        completedSteps.clear()
-        currentStep.clear()
         richPanel.clear()
         outputPanel.clear()
         tokenWidget.update(0, 0)
         cancelButton.isEnabled = false
+        sendButton.isEnabled = true
+        chatInput.isEnabled = true
+        chatInput.text = ""
     }
 
-    /**
-     * Switch the left panel to the rich plan renderer for orchestrated (multi-task) mode.
-     * Displays tasks with status icons, dependencies, and result summaries.
-     */
+    /** Show orchestration plan in a panel (replaces chat temporarily). */
     fun showOrchestrationPlan(tasks: List<AgentTask>) = runOnEdt {
         planRenderer.renderPlan(tasks)
-        if (!showingPlan) {
-            splitter.firstComponent = planRenderer
-            showingPlan = true
+        // For orchestrated mode, we could show a split view
+        // For now, show a status in the rich panel
+        richPanel.appendStatus(
+            "Plan with ${tasks.size} tasks created. Executing...",
+            RichStreamingPanel.StatusType.INFO
+        )
+    }
+
+    /** Set the input bar to busy state (disable input, enable stop). */
+    fun setBusy(busy: Boolean) = runOnEdt {
+        chatInput.isEnabled = !busy
+        sendButton.isEnabled = !busy
+        cancelButton.isEnabled = busy
+        if (!busy) {
+            chatInput.requestFocusInWindow()
         }
     }
 
-    /**
-     * Switch the left panel back to the simple step list for single-agent mode.
-     */
-    fun showStepList() = runOnEdt {
-        if (showingPlan) {
-            splitter.firstComponent = JBScrollPane(stepList)
-            showingPlan = false
-        }
+    /** Focus the chat input. */
+    fun focusInput() = runOnEdt {
+        chatInput.requestFocusInWindow()
     }
 
-    /** Get the plan renderer for direct status updates from the orchestrator. */
-    fun getPlanRenderer(): PlanMarkdownRenderer = planRenderer
-
-    /** Ensure UI mutations run on EDT regardless of calling thread. */
     private fun runOnEdt(action: () -> Unit) {
-        if (SwingUtilities.isEventDispatchThread()) {
-            action()
-        } else {
-            SwingUtilities.invokeLater(action)
-        }
-    }
-
-    private inner class StepListCellRenderer : DefaultListCellRenderer() {
-        override fun getListCellRendererComponent(
-            list: JList<*>,
-            value: Any?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean
-        ): Component {
-            val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-            val stepName = value as? String ?: return component
-            icon = when {
-                stepName in completedSteps -> AllIcons.RunConfigurations.TestPassed
-                stepName in currentStep -> AllIcons.Process.Step_1
-                else -> AllIcons.RunConfigurations.TestNotRan
-            }
-            if (!isSelected) {
-                foreground = when {
-                    stepName in completedSteps -> JBColor.foreground()
-                    stepName in currentStep -> JBColor.BLUE
-                    else -> JBColor.GRAY
-                }
-            }
-            border = JBUI.Borders.empty(2, 4)
-            return component
-        }
+        if (SwingUtilities.isEventDispatchThread()) action()
+        else SwingUtilities.invokeLater(action)
     }
 }
