@@ -261,6 +261,48 @@ data class BitbucketRef(
     val id: String
 )
 
+// --- Merge Precondition & Strategy DTOs ---
+
+@Serializable
+data class BitbucketMergeStatus(
+    val canMerge: Boolean = false,
+    val conflicted: Boolean = false,
+    val outcome: String = "",
+    val vetoes: List<BitbucketMergeVeto> = emptyList()
+)
+
+@Serializable
+data class BitbucketMergeVeto(
+    val summaryMessage: String = "",
+    val detailedMessage: String = ""
+)
+
+@Serializable
+data class BitbucketMergeRequest(
+    val message: String? = null,
+    val strategyId: String? = null,
+    val deleteSourceRef: Boolean = false
+)
+
+@Serializable
+data class BitbucketMergeConfig(
+    val defaultStrategy: BitbucketMergeStrategy? = null,
+    val strategies: List<BitbucketMergeStrategy> = emptyList()
+)
+
+@Serializable
+data class BitbucketMergeStrategy(
+    val id: String,
+    val name: String = "",
+    val description: String = "",
+    val enabled: Boolean = true
+)
+
+@Serializable
+private data class BitbucketRepoSettingsResponse(
+    val mergeConfig: BitbucketMergeConfig = BitbucketMergeConfig()
+)
+
 /**
  * Lightweight Bitbucket Server REST client for branch operations only.
  * Lives in :core so both :jira (Start Work) and :handover (PR creation)
@@ -952,19 +994,29 @@ class BitbucketBranchClient(
      * Merges a pull request.
      * POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/merge?version={version}
      * Requires version for optimistic locking.
+     * Optionally accepts merge strategy, delete-source-branch flag, and commit message.
      */
     suspend fun mergePullRequest(
         projectKey: String,
         repoSlug: String,
         prId: Int,
-        version: Int
+        version: Int,
+        strategyId: String? = null,
+        deleteSourceBranch: Boolean = false,
+        commitMessage: String? = null
     ): ApiResult<BitbucketPrDetail> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Merging PR #$prId in $projectKey/$repoSlug (version=$version)")
+            log.info("[Core:Bitbucket] Merging PR #$prId in $projectKey/$repoSlug (version=$version, strategy=$strategyId, deleteBranch=$deleteSourceBranch)")
             try {
+                val mergeRequest = BitbucketMergeRequest(
+                    message = commitMessage,
+                    strategyId = strategyId,
+                    deleteSourceRef = deleteSourceBranch
+                )
+                val jsonBody = json.encodeToString(mergeRequest)
                 val request = Request.Builder()
                     .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/merge?version=$version")
-                    .post("".toRequestBody("application/json".toMediaType()))
+                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
                     .header("Accept", "application/json")
                     .build()
                 val response = httpClient.newCall(request).execute()
@@ -987,6 +1039,87 @@ class BitbucketBranchClient(
                 }
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error merging PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Checks merge preconditions for a pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/merge
+     * Returns merge status including whether the PR can be merged and any vetoes.
+     */
+    suspend fun getMergeStatus(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<BitbucketMergeStatus> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Checking merge status for PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/merge")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val status = json.decodeFromString<BitbucketMergeStatus>(body)
+                            log.info("[Core:Bitbucket] Merge status for PR #$prId: canMerge=${status.canMerge}, conflicted=${status.conflicted}, vetoes=${status.vetoes.size}")
+                            ApiResult.Success(status)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error checking merge status for PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets available merge strategies for a repository.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/settings/pull-requests/git
+     * Returns the merge configuration including default strategy and available strategies.
+     */
+    suspend fun getMergeStrategies(
+        projectKey: String,
+        repoSlug: String
+    ): ApiResult<BitbucketMergeConfig> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching merge strategies for $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/settings/pull-requests/git")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val settings = json.decodeFromString<BitbucketRepoSettingsResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${settings.mergeConfig.strategies.size} merge strategies for $projectKey/$repoSlug")
+                            ApiResult.Success(settings.mergeConfig)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching merge strategies", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }

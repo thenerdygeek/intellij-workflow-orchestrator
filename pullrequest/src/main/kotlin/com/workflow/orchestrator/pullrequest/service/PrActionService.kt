@@ -5,6 +5,8 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
+import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -103,16 +105,70 @@ class PrActionService(private val project: Project) {
     }
 
     /**
-     * Merge a pull request.
+     * Check merge preconditions for a pull request.
+     * Returns null if the check fails (e.g., network error).
      */
-    suspend fun merge(prId: Int, version: Int): ApiResult<Unit> {
+    suspend fun checkMergeStatus(prId: Int): BitbucketMergeStatus? {
+        val client = createClient() ?: return null
+        if (!isConfigured()) return null
+
+        log.info("[PR:Action] Checking merge status for PR #$prId")
+        return when (val result = client.getMergeStatus(projectKey(), repoSlug(), prId)) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] Merge status for PR #$prId: canMerge=${result.data.canMerge}, vetoes=${result.data.vetoes.size}")
+                result.data
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to check merge status for PR #$prId: ${result.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * Get available merge strategies for the configured repository.
+     * Returns only enabled strategies.
+     */
+    suspend fun getMergeStrategies(): List<BitbucketMergeStrategy> {
+        val client = createClient() ?: return emptyList()
+        if (!isConfigured()) return emptyList()
+
+        log.info("[PR:Action] Fetching merge strategies")
+        return when (val result = client.getMergeStrategies(projectKey(), repoSlug())) {
+            is ApiResult.Success -> {
+                val enabled = result.data.strategies.filter { it.enabled }
+                log.info("[PR:Action] Found ${enabled.size} enabled merge strategies")
+                enabled
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to fetch merge strategies: ${result.message}")
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * Merge a pull request with optional strategy and delete-source-branch.
+     */
+    suspend fun merge(
+        prId: Int,
+        version: Int,
+        strategyId: String? = null,
+        deleteSourceBranch: Boolean = false,
+        commitMessage: String? = null
+    ): ApiResult<Unit> {
         val client = createClient()
             ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Merging PR #$prId (version=$version)")
-        return when (val result = client.mergePullRequest(projectKey(), repoSlug(), prId, version)) {
+        log.info("[PR:Action] Merging PR #$prId (version=$version, strategy=$strategyId, deleteBranch=$deleteSourceBranch)")
+        return when (val result = client.mergePullRequest(
+            projectKey(), repoSlug(), prId, version,
+            strategyId = strategyId,
+            deleteSourceBranch = deleteSourceBranch,
+            commitMessage = commitMessage
+        )) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] PR #$prId merged successfully")
                 val eventBus = project.getService(EventBus::class.java)

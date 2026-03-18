@@ -5,6 +5,8 @@ import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -12,6 +14,8 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
+import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -40,6 +44,7 @@ class PrDetailPanel(
 
     private var currentPrId: Int? = null
     private var currentPr: BitbucketPrDetail? = null
+    private var currentMergeStatus: BitbucketMergeStatus? = null
     private var loadJob: Job? = null
 
     // Card names
@@ -205,6 +210,14 @@ class PrDetailPanel(
                 if (currentPrId != prId) return@invokeLater
                 filesSubPanel.showChanges(changes)
             }
+
+            // Check merge preconditions in background
+            val mergeStatus = PrActionService.getInstance(project).checkMergeStatus(prId)
+            SwingUtilities.invokeLater {
+                if (currentPrId != prId) return@invokeLater
+                currentMergeStatus = mergeStatus
+                updateMergeButtonState(mergeStatus)
+            }
         }
     }
 
@@ -238,6 +251,14 @@ class PrDetailPanel(
             SwingUtilities.invokeLater {
                 if (currentPrId != pr.id) return@invokeLater
                 filesSubPanel.showChanges(changes)
+            }
+
+            // Check merge preconditions in background
+            val mergeStatus = PrActionService.getInstance(project).checkMergeStatus(pr.id)
+            SwingUtilities.invokeLater {
+                if (currentPrId != pr.id) return@invokeLater
+                currentMergeStatus = mergeStatus
+                updateMergeButtonState(mergeStatus)
             }
         }
     }
@@ -356,20 +377,34 @@ class PrDetailPanel(
         mergeButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
             val version = currentPr?.version ?: 0
-            val confirm = JOptionPane.showConfirmDialog(
-                this,
-                "Merge PR #$prId? This action cannot be undone.",
-                "Confirm Merge",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.WARNING_MESSAGE
-            )
-            if (confirm != JOptionPane.YES_OPTION) return@addActionListener
+            val mergeStatus = currentMergeStatus
+
+            // Show merge options dialog
             scope.launch {
-                PrActionService.getInstance(project).merge(prId, version)
+                val strategies = PrActionService.getInstance(project).getMergeStrategies()
                 SwingUtilities.invokeLater {
-                    mergeButton.isEnabled = false
-                    approveButton.isEnabled = false
-                    declineButton.isEnabled = false
+                    val dialog = MergeOptionsDialog(
+                        project = project,
+                        prId = prId,
+                        strategies = strategies,
+                        mergeStatus = mergeStatus
+                    )
+                    if (!dialog.showAndGet()) return@invokeLater
+
+                    scope.launch {
+                        PrActionService.getInstance(project).merge(
+                            prId = prId,
+                            version = version,
+                            strategyId = dialog.selectedStrategyId,
+                            deleteSourceBranch = dialog.deleteSourceBranch,
+                            commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
+                        )
+                        SwingUtilities.invokeLater {
+                            mergeButton.isEnabled = false
+                            approveButton.isEnabled = false
+                            declineButton.isEnabled = false
+                        }
+                    }
                 }
             }
         }
@@ -418,6 +453,41 @@ class PrDetailPanel(
             else -> "description"
         }
         (contentCards.layout as CardLayout).show(contentCards, cardName)
+    }
+
+    // ---------------------------------------------------------------
+    // Merge status helpers
+    // ---------------------------------------------------------------
+
+    private fun updateMergeButtonState(mergeStatus: BitbucketMergeStatus?) {
+        if (mergeStatus == null) {
+            // Could not fetch status — leave button in its current state
+            mergeButton.toolTipText = "Merge status unknown"
+            return
+        }
+
+        if (mergeStatus.conflicted) {
+            mergeButton.icon = AllIcons.General.Warning
+        } else {
+            mergeButton.icon = AllIcons.Vcs.Merge
+        }
+
+        if (mergeStatus.canMerge) {
+            // mergeButton.isEnabled is already set by renderPrHeader based on PR state
+            mergeButton.toolTipText = if (mergeStatus.conflicted) {
+                "Merge (conflicts detected — may require resolution)"
+            } else {
+                "Merge this pull request"
+            }
+        } else {
+            mergeButton.isEnabled = false
+            val vetoReasons = mergeStatus.vetoes.joinToString("\n") { it.summaryMessage }
+            mergeButton.toolTipText = if (vetoReasons.isNotBlank()) {
+                "Cannot merge:\n$vetoReasons"
+            } else {
+                "Cannot merge — preconditions not met"
+            }
+        }
     }
 
     // ---------------------------------------------------------------
@@ -1086,5 +1156,125 @@ class PrDetailPanel(
                 }
             }
         }
+    }
+}
+
+/**
+ * Dialog for merge options: strategy selection, delete source branch, and commit message.
+ */
+private class MergeOptionsDialog(
+    project: Project,
+    private val prId: Int,
+    private val strategies: List<BitbucketMergeStrategy>,
+    private val mergeStatus: BitbucketMergeStatus?
+) : DialogWrapper(project, false) {
+
+    private val strategyCombo = ComboBox<BitbucketMergeStrategy>()
+    private val deleteSourceCheckbox = JCheckBox("Delete source branch after merge")
+    private val commitMessageArea = JBTextArea(4, 50).apply {
+        lineWrap = true
+        wrapStyleWord = true
+        border = JBUI.Borders.empty(4)
+    }
+
+    val selectedStrategyId: String?
+        get() = (strategyCombo.selectedItem as? BitbucketMergeStrategy)?.id
+
+    val deleteSourceBranch: Boolean
+        get() = deleteSourceCheckbox.isSelected
+
+    val commitMessage: String
+        get() = commitMessageArea.text.trim()
+
+    init {
+        title = "Merge PR #$prId"
+        setOKButtonText("Merge")
+        init()
+    }
+
+    override fun createCenterPanel(): JComponent {
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(8, 12)
+        }
+
+        // Veto warnings (if any)
+        if (mergeStatus != null && mergeStatus.vetoes.isNotEmpty()) {
+            val warningPanel = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyBottom(8)
+                alignmentX = Component.LEFT_ALIGNMENT
+                maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(60))
+            }
+            val warningIcon = JBLabel(AllIcons.General.Warning)
+            val vetoText = mergeStatus.vetoes.joinToString("\n") { it.summaryMessage }
+            val warningLabel = JBLabel("<html><b>Warnings:</b><br>${vetoText.replace("\n", "<br>")}</html>").apply {
+                foreground = JBColor(0xB35900, 0xE8912D)
+            }
+            warningPanel.add(warningIcon, BorderLayout.WEST)
+            warningPanel.add(warningLabel, BorderLayout.CENTER)
+            panel.add(warningPanel)
+        }
+
+        // Conflict warning
+        if (mergeStatus?.conflicted == true) {
+            val conflictLabel = JBLabel("<html><b>Conflicts detected</b> — this merge may require conflict resolution.</html>").apply {
+                icon = AllIcons.General.Warning
+                foreground = JBColor(0xCF222E, 0xF85149)
+                border = JBUI.Borders.emptyBottom(8)
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+            panel.add(conflictLabel)
+        }
+
+        // Merge strategy
+        if (strategies.isNotEmpty()) {
+            val strategyLabel = JBLabel("Merge strategy:").apply {
+                border = JBUI.Borders.emptyBottom(4)
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+            panel.add(strategyLabel)
+
+            for (strategy in strategies) {
+                strategyCombo.addItem(strategy)
+            }
+            strategyCombo.renderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                ): Component {
+                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                    if (value is BitbucketMergeStrategy) {
+                        text = value.name.ifBlank { value.id }
+                        toolTipText = value.description.ifBlank { null }
+                    }
+                    return this
+                }
+            }
+            strategyCombo.alignmentX = Component.LEFT_ALIGNMENT
+            strategyCombo.maximumSize = Dimension(Int.MAX_VALUE, strategyCombo.preferredSize.height)
+            panel.add(strategyCombo)
+            panel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        }
+
+        // Delete source branch checkbox
+        deleteSourceCheckbox.alignmentX = Component.LEFT_ALIGNMENT
+        panel.add(deleteSourceCheckbox)
+        panel.add(Box.createVerticalStrut(JBUI.scale(8)))
+
+        // Commit message
+        val commitLabel = JBLabel("Merge commit message (optional):").apply {
+            border = JBUI.Borders.emptyBottom(4)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        panel.add(commitLabel)
+
+        val scrollPane = JBScrollPane(commitMessageArea).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            preferredSize = Dimension(JBUI.scale(400), JBUI.scale(80))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(120))
+        }
+        panel.add(scrollPane)
+
+        return panel
     }
 }
