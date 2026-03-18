@@ -34,6 +34,9 @@ class AgentOrchestratorTest {
         every { toolRegistry.getToolDefinitionsForWorker(any()) } returns emptyList()
         every { toolRegistry.allTools() } returns emptyList()
 
+        // chatStream falls back to chat() — throw NotImplementedError so SingleAgentSession uses chat()
+        coEvery { brain.chatStream(any(), any(), any(), any()) } throws NotImplementedError("test fallback")
+
         orchestrator = AgentOrchestrator(brain, toolRegistry, project)
     }
 
@@ -46,7 +49,7 @@ class AgentOrchestratorTest {
         coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(response)
 
         val progressUpdates = mutableListOf<AgentProgress>()
-        val result = orchestrator.executeTask("Fix typo in UserService") { progressUpdates.add(it) }
+        val result = orchestrator.executeTask("Fix typo in UserService", onProgress = { progressUpdates.add(it) })
 
         assertTrue(result is AgentResult.Completed, "Expected Completed, got $result")
         val completed = result as AgentResult.Completed
