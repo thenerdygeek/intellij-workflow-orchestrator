@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.ApiResult
@@ -97,6 +98,13 @@ class WorkerSession(
                     if (toolCalls.isNullOrEmpty()) {
                         // No tool calls — final response
                         val content = message.content ?: ""
+
+                        // Validate output for sensitive data before returning
+                        val securityIssues = OutputValidator.validate(content)
+                        if (securityIssues.isNotEmpty()) {
+                            LOG.warn("WorkerSession: output validation flagged: ${securityIssues.joinToString()}")
+                        }
+
                         val summary = if (content.length > 200) content.take(200) + "..." else content
                         LOG.info("WorkerSession: completed after $iteration iterations")
                         return WorkerResult(
