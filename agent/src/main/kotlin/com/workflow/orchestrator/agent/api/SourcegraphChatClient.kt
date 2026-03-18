@@ -63,26 +63,27 @@ class SourcegraphChatClient(
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
                 .build()
 
-            val response = httpClient.newCall(httpRequest).execute()
-            val body = response.body?.string() ?: ""
+            httpClient.newCall(httpRequest).execute().use { response ->
+                val body = response.body?.string() ?: ""
 
-            when {
-                response.isSuccessful -> {
-                    val parsed = json.decodeFromString<ChatCompletionResponse>(body)
-                    log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
-                    ApiResult.Success(parsed)
-                }
-                response.code == 401 || response.code == 403 -> {
-                    ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed (${response.code})")
-                }
-                response.code == 429 -> {
-                    ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited. Retry after delay.")
-                }
-                response.code in 500..599 -> {
-                    ApiResult.Error(ErrorType.SERVER_ERROR, "Server error (${response.code}): $body")
-                }
-                else -> {
-                    ApiResult.Error(ErrorType.VALIDATION_ERROR, "Unexpected response (${response.code}): $body")
+                when {
+                    response.isSuccessful -> {
+                        val parsed = json.decodeFromString<ChatCompletionResponse>(body)
+                        log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
+                        ApiResult.Success(parsed)
+                    }
+                    response.code == 401 || response.code == 403 -> {
+                        ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed (${response.code})")
+                    }
+                    response.code == 429 -> {
+                        ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited. Retry after delay.")
+                    }
+                    response.code in 500..599 -> {
+                        ApiResult.Error(ErrorType.SERVER_ERROR, "Server error (${response.code}): $body")
+                    }
+                    else -> {
+                        ApiResult.Error(ErrorType.VALIDATION_ERROR, "Unexpected response (${response.code}): $body")
+                    }
                 }
             }
         } catch (e: IOException) {

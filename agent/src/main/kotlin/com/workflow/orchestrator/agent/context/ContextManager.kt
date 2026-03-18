@@ -58,7 +58,9 @@ class ContextManager(
 
     /** Add a message to the conversation history. Triggers compression if budget exceeded. */
     fun addMessage(message: ChatMessage) {
-        val tokenCount = TokenEstimator.estimate(message.content ?: "")
+        // Use the list-based estimator which correctly counts tool call tokens,
+        // not just content (assistant messages with tool_calls have null content)
+        val tokenCount = TokenEstimator.estimate(listOf(message))
         messages.add(message)
         totalTokens += tokenCount
 
