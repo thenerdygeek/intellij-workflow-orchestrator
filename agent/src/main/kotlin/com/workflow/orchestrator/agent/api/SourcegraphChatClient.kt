@@ -12,13 +12,30 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+/**
+ * HTTP client for Sourcegraph's LLM chat completions API.
+ *
+ * Implements the Sourcegraph OpenAPI spec (/.api/llm/chat/completions):
+ * - Auth: `Authorization: token TOKEN_VALUE` (Sourcegraph token scheme)
+ * - Endpoint: `{baseUrl}/.api/llm/chat/completions`
+ * - Model format: `provider::apiVersion::modelId` (e.g., `anthropic::2023-06-01::claude-3.5-sonnet`)
+ * - max_tokens capped at 4000 by the API
+ * - tools supported (AssistantToolsFunction[])
+ * - tool_choice NOT supported by the API (omitted from requests)
+ * - stream: true uses SSE on the same endpoint
+ *
+ * Key differences from standard OpenAI API:
+ * - No `tool_choice` parameter
+ * - `max_tokens` maximum is 4000 (not 4096 or higher)
+ * - Response `object` field is `"object"` not `"chat.completion"`
+ * - Auth uses `token` prefix, not `Bearer`
+ */
 class SourcegraphChatClient(
     private val baseUrl: String,
     private val tokenProvider: () -> String?,
@@ -30,8 +47,17 @@ class SourcegraphChatClient(
     private val log = Logger.getInstance(SourcegraphChatClient::class.java)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
+    companion object {
+        /** Sourcegraph API path for chat completions (from OpenAPI spec). */
+        const val CHAT_COMPLETIONS_PATH = "/.api/llm/chat/completions"
+
+        /** Maximum output tokens allowed by the Sourcegraph API. */
+        const val MAX_OUTPUT_TOKENS = 4000
+    }
+
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.
     // RetryInterceptor handles 429/5xx with exponential backoff (1s, 2s, 4s).
+    // Auth uses TOKEN scheme: "Authorization: token TOKEN_VALUE" per Sourcegraph spec.
     private val httpClient: OkHttpClient by lazy {
         httpClientOverride ?: OkHttpClient.Builder()
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
@@ -42,9 +68,30 @@ class SourcegraphChatClient(
     }
 
     /**
+     * Build the full chat completions URL from the base URL.
+     * Base URL should be the Sourcegraph instance root (e.g., "https://sourcegraph.company.com").
+     */
+    private fun chatCompletionsUrl(): String {
+        return "${baseUrl.trimEnd('/')}$CHAT_COMPLETIONS_PATH"
+    }
+
+    /**
+     * Clamp max_tokens to the API maximum (4000).
+     * Values above 4000 are silently capped to prevent API rejections.
+     */
+    private fun clampMaxTokens(maxTokens: Int?): Int? {
+        if (maxTokens == null) return null
+        return maxTokens.coerceAtMost(MAX_OUTPUT_TOKENS)
+    }
+
+    /**
      * Send a streaming chat completion request. Each SSE chunk is emitted via [onChunk]
      * for real-time UI updates. The accumulated response is returned as a single
      * [ChatCompletionResponse] when the stream completes.
+     *
+     * Note: Sourcegraph's spec labels `stream` as "Unsupported" but documents the
+     * streaming response format. Streaming may work but fall back to non-streaming
+     * if the proxy doesn't support it.
      */
     suspend fun sendMessageStream(
         messages: List<ChatMessage>,
@@ -54,21 +101,22 @@ class SourcegraphChatClient(
         onChunk: suspend (StreamChunk) -> Unit
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
+            // Note: tool_choice is intentionally omitted — not in Sourcegraph API spec
             val request = ChatCompletionRequest(
                 model = model,
                 messages = messages,
                 tools = tools?.takeIf { it.isNotEmpty() },
-                toolChoice = if (tools?.isNotEmpty() == true) JsonPrimitive("auto") else null,
+                toolChoice = null, // Not supported by Sourcegraph API
                 temperature = temperature,
-                maxTokens = maxTokens,
+                maxTokens = clampMaxTokens(maxTokens),
                 stream = true
             )
 
             val jsonBody = json.encodeToString(request)
-            log.debug("[Agent:API] POST /chat/completions (stream, ${jsonBody.length} chars)")
+            log.debug("[Agent:API] POST $CHAT_COMPLETIONS_PATH (stream, ${jsonBody.length} chars)")
 
             val httpRequest = Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/chat/completions")
+                .url(chatCompletionsUrl())
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -137,31 +185,36 @@ class SourcegraphChatClient(
         }
     }
 
+    /**
+     * Send a non-streaming chat completion request.
+     *
+     * Note: [toolChoice] parameter is accepted for interface compatibility but
+     * is NOT sent to the Sourcegraph API (not in their OpenAPI spec). The model
+     * will always use "auto" behavior when tools are provided.
+     */
     suspend fun sendMessage(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
         maxTokens: Int? = null,
         temperature: Double = 0.0,
-        toolChoice: JsonElement? = null
+        toolChoice: JsonElement? = null // Accepted but not sent — not in Sourcegraph API spec
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
-            val resolvedToolChoice = toolChoice
-                ?: if (tools?.isNotEmpty() == true) JsonPrimitive("auto") else null
-
+            // Note: tool_choice is intentionally omitted — not in Sourcegraph API spec
             val request = ChatCompletionRequest(
                 model = model,
                 messages = messages,
                 tools = tools?.takeIf { it.isNotEmpty() },
-                toolChoice = resolvedToolChoice,
+                toolChoice = null, // Not supported by Sourcegraph API
                 temperature = temperature,
-                maxTokens = maxTokens
+                maxTokens = clampMaxTokens(maxTokens)
             )
 
             val jsonBody = json.encodeToString(request)
-            log.debug("[Agent:API] POST /chat/completions (${jsonBody.length} chars)")
+            log.debug("[Agent:API] POST $CHAT_COMPLETIONS_PATH (${jsonBody.length} chars)")
 
             val httpRequest = Request.Builder()
-                .url("${baseUrl.trimEnd('/')}/chat/completions")
+                .url(chatCompletionsUrl())
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
                 .build()
 
