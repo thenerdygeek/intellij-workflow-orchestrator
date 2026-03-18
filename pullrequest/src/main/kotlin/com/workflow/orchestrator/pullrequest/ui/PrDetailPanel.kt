@@ -170,15 +170,16 @@ class PrDetailPanel(
     fun showPr(prId: Int) {
         if (prId == currentPrId) return
         currentPrId = prId
+        currentPr = null
         loadJob?.cancel()
 
         (layout as CardLayout).show(this, CARD_LOADING)
 
         loadJob = scope.launch {
             val detailService = PrDetailService.getInstance(project)
-            val prResponse = detailService.getDetail(prId)
+            val prDetail = detailService.getDetail(prId)
 
-            if (prResponse == null) {
+            if (prDetail == null) {
                 SwingUtilities.invokeLater {
                     if (currentPrId != prId) return@invokeLater
                     showEmpty()
@@ -186,13 +187,12 @@ class PrDetailPanel(
                 return@launch
             }
 
-            // Convert BitbucketPrResponse to BitbucketPrDetail-like display
-            // For now, use the response data we have
             SwingUtilities.invokeLater {
                 if (currentPrId != prId) return@invokeLater
-                renderPrHeader(prId, prResponse.title, prResponse.state,
-                    prResponse.fromRef, prResponse.toRef)
-                descriptionSubPanel.showDescription(null) // PrResponse doesn't have description
+                currentPr = prDetail
+                renderPrHeader(prId, prDetail.title, prDetail.state,
+                    prDetail.fromRef, prDetail.toRef)
+                descriptionSubPanel.showDescription(prDetail.description)
                 selectToggle(descriptionToggle)
                 (layout as CardLayout).show(this@PrDetailPanel, CARD_DETAIL)
             }
