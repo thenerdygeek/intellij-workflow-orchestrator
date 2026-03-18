@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.orchestrator
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
@@ -97,7 +98,7 @@ class AgentOrchestrator(
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
         val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
-        val maxOutputTokens = settings?.state?.maxOutputTokens ?: 64_000
+        val maxOutputTokens = settings?.state?.maxOutputTokens ?: SourcegraphChatClient.MAX_OUTPUT_TOKENS
 
         // Default: Single Agent Mode
         onProgress(AgentProgress("Starting task...", tokensUsed = 0))
@@ -124,8 +125,11 @@ class AgentOrchestrator(
         )
         val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
 
-        // Calculate reserved tokens (tool defs + system prompt + buffer)
-        val reservedTokens = toolDefTokens + RESERVED_TOKEN_BUFFER
+        // Calculate reserved tokens: tool defs + system prompt + repo map + safety buffer.
+        // System prompt and repo map are added as messages (counted in totalTokens) but are
+        // never compressed (system messages are skipped in compress()). Including them in
+        // reservedTokens ensures compression thresholds account for this permanent overhead.
+        val reservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
 
         // Create context manager with reserved tokens accounting
         val contextManager = ContextManager(
