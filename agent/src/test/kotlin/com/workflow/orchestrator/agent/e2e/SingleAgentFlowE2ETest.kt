@@ -3,7 +3,9 @@ package com.workflow.orchestrator.agent.e2e
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
+import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
+import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.orchestrator.AgentOrchestrator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
@@ -46,7 +48,7 @@ import java.io.File
 class SingleAgentFlowE2ETest {
 
     private lateinit var server: MockWebServer
-    private lateinit var brain: OpenAiCompatBrain
+    private lateinit var brain: LlmBrain
     private lateinit var toolRegistry: ToolRegistry
     private lateinit var project: Project
     private lateinit var orchestrator: AgentOrchestrator
@@ -63,13 +65,16 @@ class SingleAgentFlowE2ETest {
         project = mockk(relaxed = true)
         every { project.basePath } returns tempDir.absolutePath
 
-        // Create a real brain pointing at MockWebServer
-        brain = OpenAiCompatBrain(
+        // Create a real brain pointing at MockWebServer.
+        // Wrap it to disable streaming — MockWebServer returns normal JSON, not SSE,
+        // so chatStream() would hang waiting for SSE "data:" lines that never come.
+        val baseBrain = OpenAiCompatBrain(
             sourcegraphUrl = server.url("/").toString().trimEnd('/'),
             tokenProvider = { "sgp_test-token" },
             model = "anthropic/claude-sonnet-4",
             httpClientOverride = OkHttpClient()
         )
+        brain = NonStreamingBrainWrapper(baseBrain)
 
         // Register real tools (not mocks) — specifically read_file and edit_file
         // which operate on the temp directory
@@ -464,5 +469,32 @@ class SingleAgentFlowE2ETest {
 
             return ToolResult(content, "${results.size} results for '$query'", content.length / 4)
         }
+    }
+
+    /**
+     * Wraps a real LlmBrain but throws NotImplementedError on chatStream().
+     * This forces SingleAgentSession to fall back to chat() which works
+     * with MockWebServer's normal JSON responses (not SSE).
+     */
+    class NonStreamingBrainWrapper(private val delegate: LlmBrain) : LlmBrain {
+        override val modelId: String get() = delegate.modelId
+
+        override suspend fun chat(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            toolChoice: kotlinx.serialization.json.JsonElement?
+        ): ApiResult<ChatCompletionResponse> = delegate.chat(messages, tools, maxTokens, toolChoice)
+
+        override suspend fun chatStream(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            onChunk: suspend (StreamChunk) -> Unit
+        ): ApiResult<ChatCompletionResponse> {
+            throw NotImplementedError("Streaming disabled for e2e tests — MockWebServer returns JSON, not SSE")
+        }
+
+        override fun estimateTokens(text: String): Int = delegate.estimateTokens(text)
     }
 }
