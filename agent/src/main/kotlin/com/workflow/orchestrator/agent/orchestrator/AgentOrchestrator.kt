@@ -143,9 +143,10 @@ class AgentOrchestrator(
             fileGuard.snapshotFiles(project, emptyList())
         } catch (_: Exception) { null }
 
-        // Create event log for audit trail (Step 8)
+        // Create event log and session trace for observability
         val sessionId = UUID.randomUUID().toString().take(12)
         val eventLog = project.basePath?.let { AgentEventLog(sessionId, it) }
+        val sessionTrace = project.basePath?.let { SessionTrace(sessionId, it) }
         eventLog?.let {
             if (snapshotRef != null) it.log(AgentEventType.SNAPSHOT_CREATED, snapshotRef)
         }
@@ -162,6 +163,7 @@ class AgentOrchestrator(
             maxOutputTokens = maxOutputTokens,
             approvalGate = approvalGate,
             eventLog = eventLog,
+            sessionTrace = sessionTrace,
             onProgress = onProgress,
             onStreamChunk = onStreamChunk
         )
