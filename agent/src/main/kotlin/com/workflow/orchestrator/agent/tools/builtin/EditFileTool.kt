@@ -25,18 +25,18 @@ class EditFileTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", 5, isError = true)
+            ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val oldString = params["old_string"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'old_string' parameter required", "Error: missing old_string", 5, isError = true)
+            ?: return ToolResult("Error: 'old_string' parameter required", "Error: missing old_string", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val newString = params["new_string"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'new_string' parameter required", "Error: missing new_string", 5, isError = true)
+            ?: return ToolResult("Error: 'new_string' parameter required", "Error: missing new_string", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val path = if (rawPath.startsWith("/")) rawPath
             else "${project.basePath}/$rawPath"
 
         val file = java.io.File(path)
         if (!file.exists() || !file.isFile) {
-            return ToolResult("Error: File not found: $path", "Error: file not found", 5, isError = true)
+            return ToolResult("Error: File not found: $path", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val content = file.readText(Charsets.UTF_8)

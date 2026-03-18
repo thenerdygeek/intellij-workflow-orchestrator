@@ -26,17 +26,17 @@ class ReadFileTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", 5, isError = true)
+            ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val path = if (rawPath.startsWith("/")) rawPath
             else "${project.basePath}/$rawPath"
 
         val file = java.io.File(path)
         if (!file.exists() || !file.isFile) {
-            return ToolResult("Error: File not found: $path", "Error: file not found", 5, isError = true)
+            return ToolResult("Error: File not found: $path", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        val lines = file.readText(Charsets.UTF_8).lines()
+        val lines = file.bufferedReader(Charsets.UTF_8).useLines { it.toList() }.ifEmpty { listOf("") }
         val offset = (params["offset"]?.jsonPrimitive?.int ?: 1).coerceAtLeast(1) - 1
         val limit = params["limit"]?.jsonPrimitive?.int ?: 200
 

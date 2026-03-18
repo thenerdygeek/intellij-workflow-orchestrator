@@ -32,7 +32,7 @@ class FindReferencesTool : AgentTool {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
         val symbol = params["symbol"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'symbol' parameter required", "Error: missing symbol", 5, isError = true)
+            ?: return ToolResult("Error: 'symbol' parameter required", "Error: missing symbol", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val filePath = params["file"]?.jsonPrimitive?.content
 
         val content = ReadAction.nonBlocking<String> {

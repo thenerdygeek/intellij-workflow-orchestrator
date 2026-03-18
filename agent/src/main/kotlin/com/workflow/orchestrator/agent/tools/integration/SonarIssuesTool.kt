@@ -9,9 +9,6 @@ import com.workflow.orchestrator.agent.security.InputSanitizer
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
-import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import kotlinx.coroutines.Dispatchers
@@ -19,9 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 class SonarIssuesTool(
     private val urlProvider: () -> String = { ConnectionSettings.getInstance().state.sonarUrl },
@@ -41,22 +36,18 @@ class SonarIssuesTool(
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val projectKey = params["project_key"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'project_key' parameter required", "Error: missing project_key", 5, isError = true)
+            ?: return ToolResult("Error: 'project_key' parameter required", "Error: missing project_key", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val file = params["file"]?.jsonPrimitive?.content
 
-        val baseUrl = urlProvider().trimEnd('/')
-        if (baseUrl.isBlank()) {
-            return ToolResult("Error: SonarQube URL not configured", "Error: SonarQube URL not configured", 5, isError = true)
-        }
-
-        val token = tokenProvider()
-        if (token.isNullOrBlank()) {
-            return ToolResult("Error: SonarQube token not configured", "Error: SonarQube token not configured", 5, isError = true)
-        }
+        val (baseUrl, token, client) = IntegrationToolSupport.resolveCredentials(urlProvider, tokenProvider, "SonarQube")
+            ?: return if (urlProvider()?.trimEnd('/')?.isBlank() != false) {
+                IntegrationToolSupport.credentialError("SonarQube", "URL")
+            } else {
+                IntegrationToolSupport.credentialError("SonarQube", "token")
+            }
 
         return withContext(Dispatchers.IO) {
             try {
-                val client = buildClient(token)
                 val urlBuilder = "$baseUrl/api/issues/search".toHttpUrl().newBuilder()
                     .addQueryParameter("componentKeys", projectKey)
                     .addQueryParameter("resolved", "false")
@@ -97,12 +88,4 @@ class SonarIssuesTool(
         }
     }
 
-    private fun buildClient(token: String): OkHttpClient {
-        return OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor({ token }, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor(maxRetries = 2))
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
-    }
 }
