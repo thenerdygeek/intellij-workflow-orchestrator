@@ -149,6 +149,57 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                 }
             }
 
+            // === 4. SonarQube ===
+            collapsibleGroup("SonarQube") {
+                row("Project Key:") {
+                    val projectKeyField = textField()
+                        .bindText(
+                            { settings.state.sonarProjectKey ?: "" },
+                            { settings.state.sonarProjectKey = it }
+                        )
+                        .columns(30)
+                    button("Browse...") {
+                        // Open SonarProjectPickerDialog via reflection to avoid :sonar dependency
+                        try {
+                            val dialogClass = Class.forName("com.workflow.orchestrator.sonar.ui.SonarProjectPickerDialog")
+                            val constructor = dialogClass.getConstructor(com.intellij.openapi.project.Project::class.java)
+                            val dialog = constructor.newInstance(project) as com.intellij.openapi.ui.DialogWrapper
+                            if (dialog.showAndGet()) {
+                                val getKey = dialogClass.getMethod("getSelectedProjectKey")
+                                val key = getKey.invoke(dialog) as? String
+                                if (!key.isNullOrBlank()) {
+                                    projectKeyField.component.text = key
+                                }
+                            }
+                        } catch (e: Exception) {
+                            log.warn("[CI/CD] SonarProjectPickerDialog not available: ${e.message}")
+                        }
+                    }
+                    button("Auto-detect") {
+                        // Detect sonar.projectKey from pom.xml via Maven API
+                        val detected = try {
+                            val mavenManager = org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
+                            if (mavenManager.isMavenizedProject) {
+                                val rootProject = mavenManager.rootProjects.firstOrNull()
+                                rootProject?.properties?.getProperty("sonar.projectKey")
+                                    ?: rootProject?.let { "${it.mavenId.groupId}:${it.mavenId.artifactId}" }
+                            } else null
+                        } catch (_: Exception) { null }
+
+                        if (detected != null) {
+                            projectKeyField.component.text = detected
+                        } else {
+                            javax.swing.JOptionPane.showMessageDialog(
+                                mainPanel,
+                                "Could not detect sonar.projectKey from pom.xml.\nEnsure Maven is configured with a sonar.projectKey property.",
+                                "Auto-detect Failed",
+                                javax.swing.JOptionPane.WARNING_MESSAGE
+                            )
+                        }
+                    }
+                }.comment("SonarQube project key for quality analysis. Use Browse to search or Auto-detect from pom.xml.")
+            }
+
             // === 5. Health Checks ===
             collapsibleGroup("Health Checks") {
                 row {

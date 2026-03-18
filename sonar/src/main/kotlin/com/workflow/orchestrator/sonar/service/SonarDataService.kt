@@ -64,9 +64,10 @@ class SonarDataService(private val project: Project) : Disposable {
 
     /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */
     internal suspend fun refreshWith(client: SonarApiClient, projectKey: String, branch: String) {
-        // Fetch overall + new code issues in parallel
+        // Fetch overall + new code issues + branches in parallel
         val overallIssuesDeferred = scope.async { client.getIssues(projectKey, branch) }
         val newCodeIssuesDeferred = scope.async { client.getIssues(projectKey, branch, inNewCodePeriod = true) }
+        val branchesDeferred = scope.async { client.getBranches(projectKey) }
 
         val gateResult = client.getQualityGateStatus(projectKey, branch)
         val metricKeys = settings.state.sonarMetricKeys.orEmpty()
@@ -74,6 +75,7 @@ class SonarDataService(private val project: Project) : Disposable {
 
         val overallIssuesResult = overallIssuesDeferred.await()
         val newCodeIssuesResult = newCodeIssuesDeferred.await()
+        val branchesResult = branchesDeferred.await()
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> mapQualityGate(gateResult.data)
@@ -106,6 +108,35 @@ class SonarDataService(private val project: Project) : Disposable {
         val overallCounts = countIssues(issues)
         val newCodeCounts = countIssues(newCodeIssues)
 
+        // Map branches
+        val mappedBranches = when (branchesResult) {
+            is ApiResult.Success -> branchesResult.data.map { dto ->
+                SonarBranch(
+                    name = dto.name,
+                    isMain = dto.isMain,
+                    type = dto.type,
+                    qualityGateStatus = dto.status?.qualityGateStatus,
+                    bugs = dto.status?.bugs,
+                    vulnerabilities = dto.status?.vulnerabilities,
+                    codeSmells = dto.status?.codeSmells,
+                    analysisDate = dto.analysisDate
+                )
+            }.also { branches ->
+                log.info("[Sonar:Branches] ${branches.size} branches analyzed:")
+                branches.forEach { b ->
+                    log.info("[Sonar:Branches]   ${b.name} (main=${b.isMain}) — gate=${b.qualityGateStatus ?: "N/A"}, analyzed=${b.analysisDate ?: "never"}")
+                }
+            }
+            is ApiResult.Error -> {
+                log.warn("[Sonar:Branches] Failed to fetch branches: ${branchesResult.message}")
+                emptyList()
+            }
+        }
+
+        val currentBranchInfo = mappedBranches.find { it.name == branch }
+        val currentBranchAnalyzed = currentBranchInfo != null && currentBranchInfo.analysisDate != null
+        val currentBranchAnalysisDate = currentBranchInfo?.analysisDate
+
         val newState = SonarState(
             projectKey = projectKey,
             branch = branch,
@@ -119,7 +150,10 @@ class SonarDataService(private val project: Project) : Disposable {
             newCodeFileCoverage = newCodeFileCoverage,
             newCodeOverallCoverage = newCodeOverallCoverage,
             newCodeIssueCounts = newCodeCounts,
-            overallIssueCounts = overallCounts
+            overallIssueCounts = overallCounts,
+            branches = mappedBranches,
+            currentBranchAnalyzed = currentBranchAnalyzed,
+            currentBranchAnalysisDate = currentBranchAnalysisDate
         )
 
         _stateFlow.value = newState

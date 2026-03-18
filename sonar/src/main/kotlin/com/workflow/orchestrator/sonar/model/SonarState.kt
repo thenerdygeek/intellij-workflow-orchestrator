@@ -17,7 +17,10 @@ data class SonarState(
     val newCodeFileCoverage: Map<String, FileCoverageData> = emptyMap(),
     val newCodeOverallCoverage: CoverageMetrics = CoverageMetrics(0.0, 0.0),
     val newCodeIssueCounts: IssueCounts = IssueCounts(),
-    val overallIssueCounts: IssueCounts = IssueCounts()
+    val overallIssueCounts: IssueCounts = IssueCounts(),
+    val branches: List<SonarBranch> = emptyList(),
+    val currentBranchAnalyzed: Boolean = false,
+    val currentBranchAnalysisDate: String? = null
 ) {
     /** Returns the active issues based on the current mode. */
     val activeIssues: List<MappedIssue>

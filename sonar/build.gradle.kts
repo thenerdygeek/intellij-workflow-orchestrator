@@ -26,6 +26,7 @@ dependencies {
         bundledPlugin("Git4Idea")
         bundledPlugin("com.intellij.java")
         bundledPlugin("Coverage")
+        bundledPlugin("org.jetbrains.idea.maven")
         testFramework(TestFrameworkType.Platform)
     }
 

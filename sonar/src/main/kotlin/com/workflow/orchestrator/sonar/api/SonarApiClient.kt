@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.sonar.api
 
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
@@ -11,7 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.intellij.openapi.diagnostic.Logger
+import org.jetbrains.idea.maven.project.MavenProjectsManager
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -29,6 +31,40 @@ class SonarApiClient(
             "new_coverage,new_branch_coverage,new_uncovered_lines,new_uncovered_conditions,new_lines_to_cover," +
             "bugs,vulnerabilities,code_smells," +
             "new_bugs,new_vulnerabilities,new_code_smells"
+
+        private val companionLog = Logger.getInstance(SonarApiClient::class.java)
+
+        /**
+         * Auto-detect sonar.projectKey from the Maven project's pom.xml properties.
+         * Returns null if Maven is not available or the property is not set.
+         */
+        fun autoDetectProjectKey(project: Project): String? {
+            return try {
+                val mavenManager = MavenProjectsManager.getInstance(project)
+                val mavenProjects = mavenManager.projects
+                if (mavenProjects.isEmpty()) {
+                    companionLog.info("[Sonar:AutoDetect] No Maven projects found")
+                    return null
+                }
+                // Check root project first, then sub-projects
+                for (mavenProject in mavenProjects) {
+                    val props = mavenProject.properties
+                    val sonarKey = props.getProperty("sonar.projectKey")
+                    if (!sonarKey.isNullOrBlank()) {
+                        companionLog.info("[Sonar:AutoDetect] Found sonar.projectKey='$sonarKey' in ${mavenProject.displayName}")
+                        return sonarKey
+                    }
+                }
+                // Fallback: use groupId:artifactId of the root project
+                val root = mavenProjects.first()
+                val fallback = "${root.mavenId.groupId}:${root.mavenId.artifactId}"
+                companionLog.info("[Sonar:AutoDetect] No sonar.projectKey property found, using fallback '$fallback'")
+                fallback
+            } catch (e: Exception) {
+                companionLog.warn("[Sonar:AutoDetect] Failed to detect project key: ${e.message}", e)
+                null
+            }
+        }
     }
     private val log = Logger.getInstance(SonarApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -48,10 +84,17 @@ class SonarApiClient(
     }
 
     suspend fun searchProjects(query: String): ApiResult<List<SonarProjectDto>> {
-        log.info("[Sonar:API] GET /api/projects/search for query '$query'")
+        log.info("[Sonar:API] GET /api/components/search for query '$query'")
         val encoded = URLEncoder.encode(query, "UTF-8")
-        return get<SonarProjectSearchResult>("/api/projects/search?q=$encoded&ps=100")
+        return get<SonarComponentSearchResult>("/api/components/search?qualifiers=TRK&q=$encoded&ps=25")
             .map { it.components }
+    }
+
+    suspend fun getBranches(projectKey: String): ApiResult<List<SonarBranchDto>> {
+        log.info("[Sonar:API] GET /api/project_branches/list for project '$projectKey'")
+        val encoded = URLEncoder.encode(projectKey, "UTF-8")
+        return get<SonarBranchListResponse>("/api/project_branches/list?project=$encoded")
+            .map { it.branches }
     }
 
     suspend fun getQualityGateStatus(projectKey: String, branch: String? = null): ApiResult<SonarQualityGateDto> {

@@ -17,6 +17,7 @@ import java.awt.Color
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
+import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
 
@@ -31,6 +32,16 @@ class QualityDashboardPanel(
     private val headerLabel = JBLabel("").apply {
         font = font.deriveFont(Font.PLAIN, 11f)
         border = JBUI.Borders.empty(4, 8)
+    }
+    private val branchInfoLabel = JBLabel("").apply {
+        font = font.deriveFont(Font.PLAIN, 11f)
+        border = JBUI.Borders.empty(2, 8)
+    }
+    private val branchWarningLabel = JBLabel("").apply {
+        font = font.deriveFont(Font.ITALIC, 10f)
+        foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+        border = JBUI.Borders.empty(0, 8, 4, 8)
+        isVisible = false
     }
     private val overviewPanel = OverviewPanel(project)
     private val issueListPanel = IssueListPanel(project)
@@ -63,12 +74,25 @@ class QualityDashboardPanel(
             add(rightPanel, BorderLayout.EAST)
         }
 
-        // Toolbar (Refresh)
-        val toolbarPanel = JPanel(BorderLayout()).apply {
-            add(headerPanel, BorderLayout.CENTER)
-            add(createToolbar(), BorderLayout.EAST)
+        // Branch info bar
+        val branchInfoPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(branchInfoLabel)
+            add(branchWarningLabel)
         }
-        add(toolbarPanel, BorderLayout.NORTH)
+
+        // Top section: toolbar + branch info
+        val topSection = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            val toolbarRow = JPanel(BorderLayout()).apply {
+                add(headerPanel, BorderLayout.CENTER)
+                add(createToolbar(), BorderLayout.EAST)
+            }
+            add(toolbarRow)
+            add(branchInfoPanel)
+        }
+        add(topSection, BorderLayout.NORTH)
 
         // Sub-tabbed pane
         val tabbedPane = JBTabbedPane().apply {
@@ -162,6 +186,29 @@ class QualityDashboardPanel(
 
         updateToggleAppearance(state.newCodeMode)
 
+        // Update branch info bar
+        if (state.currentBranchAnalyzed) {
+            val analysisDate = state.currentBranchAnalysisDate?.let { formatAnalysisDate(it) } ?: "unknown"
+            branchInfoLabel.text = "Branch: ${state.branch} \u2014 Last analyzed: $analysisDate"
+            branchInfoLabel.foreground = JBColor.foreground()
+            branchWarningLabel.isVisible = false
+        } else {
+            branchInfoLabel.text = "Branch: ${state.branch} \u2014 Not analyzed"
+            branchInfoLabel.foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+            branchWarningLabel.text = "\u26A0 This branch has not been analyzed by SonarQube. Data shown is from the last available analysis."
+            branchWarningLabel.isVisible = true
+        }
+
+        // Show analyzed branches summary
+        if (state.branches.isNotEmpty()) {
+            val analyzed = state.branches.filter { it.analysisDate != null }
+            val tooltip = analyzed.joinToString("\n") { b ->
+                val gate = b.qualityGateStatus ?: "N/A"
+                "${b.name} (${b.type}) \u2014 Gate: $gate"
+            }
+            branchInfoLabel.toolTipText = "<html><pre>Analyzed branches:\n$tooltip</pre></html>"
+        }
+
         overviewPanel.update(state)
         issueListPanel.update(state.activeIssues)
         coverageTablePanel.update(
@@ -171,6 +218,17 @@ class QualityDashboardPanel(
 
         val elapsed = java.time.Duration.between(state.lastUpdated, java.time.Instant.now())
         statusLabel.text = "Updated ${elapsed.seconds}s ago"
+    }
+
+    private fun formatAnalysisDate(isoDate: String): String {
+        return try {
+            val instant = java.time.Instant.parse(isoDate)
+            val zoned = instant.atZone(java.time.ZoneId.systemDefault())
+            val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+            zoned.format(formatter)
+        } catch (_: Exception) {
+            isoDate
+        }
     }
 
     override fun dispose() {

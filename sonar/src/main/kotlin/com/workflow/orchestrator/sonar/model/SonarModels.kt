@@ -59,3 +59,14 @@ data class IssueCounts(
     val codeSmells: Int = 0,
     val securityHotspots: Int = 0
 )
+
+data class SonarBranch(
+    val name: String,
+    val isMain: Boolean,
+    val type: String,
+    val qualityGateStatus: String?,
+    val bugs: Int?,
+    val vulnerabilities: Int?,
+    val codeSmells: Int?,
+    val analysisDate: String?
+)

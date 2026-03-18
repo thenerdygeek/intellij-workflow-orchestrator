@@ -114,6 +114,38 @@ data class SonarMeasureDto(
     val value: String = ""
 )
 
+// --- Branch List ---
+
+@Serializable
+data class SonarBranchListResponse(
+    val branches: List<SonarBranchDto> = emptyList()
+)
+
+@Serializable
+data class SonarBranchDto(
+    val name: String,
+    val isMain: Boolean = false,
+    val type: String = "BRANCH",
+    val status: SonarBranchStatusDto? = null,
+    val analysisDate: String? = null
+)
+
+@Serializable
+data class SonarBranchStatusDto(
+    val qualityGateStatus: String = "",
+    val bugs: Int? = null,
+    val vulnerabilities: Int? = null,
+    val codeSmells: Int? = null
+)
+
+// --- Components Search (qualifiers=TRK for projects) ---
+
+@Serializable
+data class SonarComponentSearchResult(
+    val paging: SonarPagingDto = SonarPagingDto(),
+    val components: List<SonarProjectDto> = emptyList()
+)
+
 // --- Source Lines (per-line coverage) ---
 
 @Serializable
