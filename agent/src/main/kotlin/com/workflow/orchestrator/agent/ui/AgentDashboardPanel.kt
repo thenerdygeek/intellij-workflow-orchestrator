@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.agent.runtime.AgentTask
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
@@ -16,16 +17,13 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
 
     private val stepListModel = DefaultListModel<String>()
     private val stepList = JBList(stepListModel)
-    private val outputArea = JTextArea().apply {
-        isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
-        font = JBUI.Fonts.create("Monospaced", 12)
-        border = JBUI.Borders.empty(4)
-    }
+    private val outputPanel = StreamingOutputPanel()
     private val tokenWidget = TokenBudgetWidget()
     private val completedSteps = mutableSetOf<String>()
     private val currentStep = mutableSetOf<String>()
+    private val planRenderer = PlanMarkdownRenderer()
+    private val splitter = JBSplitter(false, 0.4f)
+    private var showingPlan = false
 
     val newTaskButton = JButton("New Task").apply {
         icon = AllIcons.General.Add
@@ -50,9 +48,8 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
 
         // Center: splitter with step list (left) and output (right)
         stepList.cellRenderer = StepListCellRenderer()
-        val splitter = JBSplitter(false, 0.4f)
         splitter.firstComponent = JBScrollPane(stepList)
-        splitter.secondComponent = JBScrollPane(outputArea)
+        splitter.secondComponent = outputPanel
         add(splitter, BorderLayout.CENTER)
 
         // South: token budget widget
@@ -66,7 +63,7 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         for (task in tasks) {
             stepListModel.addElement(task)
         }
-        outputArea.text = ""
+        outputPanel.clear()
         cancelButton.isEnabled = true
     }
 
@@ -90,18 +87,46 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         completedSteps.addAll(currentStep)
         currentStep.clear()
         stepList.repaint()
-        outputArea.text = text
+        outputPanel.setText(text)
         cancelButton.isEnabled = false
     }
+
+    /** Provides external access to the streaming panel for direct token-by-token output. */
+    fun getStreamingPanel(): StreamingOutputPanel = outputPanel
 
     fun reset() = runOnEdt {
         stepListModel.clear()
         completedSteps.clear()
         currentStep.clear()
-        outputArea.text = ""
+        outputPanel.clear()
         tokenWidget.update(0, 0)
         cancelButton.isEnabled = false
     }
+
+    /**
+     * Switch the left panel to the rich plan renderer for orchestrated (multi-task) mode.
+     * Displays tasks with status icons, dependencies, and result summaries.
+     */
+    fun showOrchestrationPlan(tasks: List<AgentTask>) = runOnEdt {
+        planRenderer.renderPlan(tasks)
+        if (!showingPlan) {
+            splitter.firstComponent = planRenderer
+            showingPlan = true
+        }
+    }
+
+    /**
+     * Switch the left panel back to the simple step list for single-agent mode.
+     */
+    fun showStepList() = runOnEdt {
+        if (showingPlan) {
+            splitter.firstComponent = JBScrollPane(stepList)
+            showingPlan = false
+        }
+    }
+
+    /** Get the plan renderer for direct status updates from the orchestrator. */
+    fun getPlanRenderer(): PlanMarkdownRenderer = planRenderer
 
     /** Ensure UI mutations run on EDT regardless of calling thread. */
     private fun runOnEdt(action: () -> Unit) {
