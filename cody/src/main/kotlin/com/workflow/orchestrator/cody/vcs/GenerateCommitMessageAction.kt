@@ -98,19 +98,20 @@ class GenerateCommitMessageAction : AnAction(
 
             // Build prompt with diff inline
             val prompt = buildString {
-                appendLine("Generate a concise git commit message for the following changes.")
-                appendLine("Use conventional commits format (feat/fix/refactor/etc).")
-                appendLine("One line summary, optional body if needed. No quotes or backticks around the message.")
+                appendLine("Generate a git commit message for the following changes.")
+                appendLine("Format:")
+                appendLine("- First line: conventional commit summary (feat/fix/refactor/etc), max 72 chars")
+                appendLine("- Blank line")
+                appendLine("- Body: bullet points (- prefix) summarizing each logical change")
+                appendLine("No quotes or backticks around the message. Output only the commit message.")
                 if (ticketId.isNotBlank()) {
-                    appendLine("Prefix with ticket ID: $ticketId")
+                    appendLine("Prefix the summary line with ticket ID: $ticketId")
                 }
                 appendLine()
                 appendLine("Git diff:")
                 appendLine("```")
                 appendLine(truncatedDiff)
                 appendLine("```")
-                appendLine()
-                appendLine("Focus on WHAT changed and WHY, not implementation details. Be concise.")
             }
 
             log.info("[Cody:CommitMsg] Sending prompt with ${truncatedDiff.length} char diff, ${contextItems.size} context items")
