@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.api
 
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.api.dto.*
+import com.workflow.orchestrator.agent.api.dto.ListModelsResponse
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
@@ -51,6 +52,9 @@ class SourcegraphChatClient(
         /** Sourcegraph API path for chat completions (from OpenAPI spec). */
         const val CHAT_COMPLETIONS_PATH = "/.api/llm/chat/completions"
 
+        /** Sourcegraph API path for listing available models. */
+        const val MODELS_PATH = "/.api/llm/models"
+
         /** Maximum output tokens allowed by the Sourcegraph API. */
         const val MAX_OUTPUT_TOKENS = 4000
     }
@@ -65,6 +69,42 @@ class SourcegraphChatClient(
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))
             .addInterceptor(RetryInterceptor())
             .build()
+    }
+
+    /**
+     * Fetch available models from the Sourcegraph instance.
+     * Uses GET /.api/llm/models endpoint.
+     *
+     * @return List of available models, or empty list on error
+     */
+    suspend fun listModels(): ApiResult<ListModelsResponse> = withContext(Dispatchers.IO) {
+        try {
+            val url = "${baseUrl.trimEnd('/')}$MODELS_PATH"
+            log.debug("[Agent:API] GET $MODELS_PATH")
+
+            val httpRequest = Request.Builder()
+                .url(url)
+                .get()
+                .build()
+
+            httpClient.newCall(httpRequest).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                when {
+                    response.isSuccessful -> {
+                        val parsed = json.decodeFromString<ListModelsResponse>(body)
+                        log.debug("[Agent:API] Models: ${parsed.data.size} available")
+                        ApiResult.Success(parsed)
+                    }
+                    else -> mapErrorResponse(response.code, body)
+                }
+            }
+        } catch (e: IOException) {
+            log.warn("[Agent:API] Models fetch network error: ${e.message}", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "Failed to fetch models: ${e.message}", e)
+        } catch (e: Exception) {
+            log.warn("[Agent:API] Models fetch error: ${e.message}", e)
+            ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse models: ${e.message}", e)
+        }
     }
 
     /**
