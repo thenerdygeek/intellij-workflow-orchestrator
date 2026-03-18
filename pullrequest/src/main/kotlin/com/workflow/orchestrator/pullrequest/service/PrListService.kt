@@ -66,6 +66,10 @@ class PrListService(private val project: Project) : Disposable {
         pollingJob = null
     }
 
+    /** Cached Bitbucket username — auto-detected on first refresh. */
+    @Volatile
+    private var cachedUsername: String? = null
+
     suspend fun refresh() {
         val connSettings = ConnectionSettings.getInstance().state
         val bitbucketUrl = connSettings.bitbucketUrl.trimEnd('/')
@@ -88,10 +92,27 @@ class PrListService(private val project: Project) : Disposable {
             tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
         )
 
-        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug")
+        // Auto-detect username on first call (or use saved setting)
+        val username = cachedUsername
+            ?: connSettings.bitbucketUsername.takeIf { it.isNotBlank() }
+            ?: run {
+                val result = client.getCurrentUsername()
+                if (result is ApiResult.Success && result.data.isNotBlank()) {
+                    cachedUsername = result.data
+                    // Save for future sessions
+                    connSettings.bitbucketUsername = result.data
+                    log.info("[PR:List] Auto-detected Bitbucket username: ${result.data}")
+                    result.data
+                } else {
+                    log.warn("[PR:List] Could not detect username — PR list may not filter correctly")
+                    null
+                }
+            }
+
+        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username)")
 
         // Fetch PRs authored by the current user
-        when (val result = client.getMyPullRequests(projectKey, repoSlug)) {
+        when (val result = client.getMyPullRequests(projectKey, repoSlug, username = username)) {
             is ApiResult.Success -> {
                 _myPrs.value = result.data
                 log.info("[PR:List] Found ${result.data.size} authored PRs")
@@ -102,7 +123,7 @@ class PrListService(private val project: Project) : Disposable {
         }
 
         // Fetch PRs where the current user is a reviewer
-        when (val result = client.getReviewingPullRequests(projectKey, repoSlug)) {
+        when (val result = client.getReviewingPullRequests(projectKey, repoSlug, username = username)) {
             is ApiResult.Success -> {
                 _reviewingPrs.value = result.data
                 log.info("[PR:List] Found ${result.data.size} reviewing PRs")

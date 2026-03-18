@@ -597,6 +597,34 @@ class BitbucketBranchClient(
             }
         }
 
+    /**
+     * Get the current authenticated user's username.
+     * Uses /plugins/servlet/applinks/whoami which returns the plain username string.
+     */
+    suspend fun getCurrentUsername(): ApiResult<String> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching current username")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/plugins/servlet/applinks/whoami")
+                    .get()
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val username = it.body?.string()?.trim() ?: ""
+                            log.info("[Core:Bitbucket] Current user: $username")
+                            ApiResult.Success(username)
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Failed to get username: HTTP ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
     // --- Full PR Management Methods ---
 
     /**
@@ -606,13 +634,15 @@ class BitbucketBranchClient(
     suspend fun getMyPullRequests(
         projectKey: String,
         repoSlug: String,
-        state: String = "OPEN"
+        state: String = "OPEN",
+        username: String? = null
     ): ApiResult<List<BitbucketPrDetail>> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching my PRs (state=$state) in $projectKey/$repoSlug")
+            log.info("[Core:Bitbucket] Fetching my PRs (state=$state, username=$username) in $projectKey/$repoSlug")
             try {
+                val usernameParam = if (!username.isNullOrBlank()) "&username.1=$username" else ""
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&role.1=AUTHOR&start=0&limit=25")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&role.1=AUTHOR$usernameParam&start=0&limit=25")
                     .get()
                     .header("Accept", "application/json")
                     .build()
@@ -643,13 +673,15 @@ class BitbucketBranchClient(
     suspend fun getReviewingPullRequests(
         projectKey: String,
         repoSlug: String,
-        state: String = "OPEN"
+        state: String = "OPEN",
+        username: String? = null
     ): ApiResult<List<BitbucketPrDetail>> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching reviewing PRs (state=$state) in $projectKey/$repoSlug")
+            log.info("[Core:Bitbucket] Fetching reviewing PRs (state=$state, username=$username) in $projectKey/$repoSlug")
             try {
+                val usernameParam = if (!username.isNullOrBlank()) "&username.1=$username" else ""
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&role.1=REVIEWER&start=0&limit=25")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&role.1=REVIEWER$usernameParam&start=0&limit=25")
                     .get()
                     .header("Accept", "application/json")
                     .build()

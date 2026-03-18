@@ -24,6 +24,7 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         var jiraUrl: String = "",
         var bambooUrl: String = "",
         var bitbucketUrl: String = "",
+        var bitbucketUsername: String = "",
         var sonarUrl: String = "",
         var sourcegraphUrl: String = "",
         var nexusUrl: String = "",
