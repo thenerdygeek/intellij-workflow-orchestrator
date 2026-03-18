@@ -55,7 +55,7 @@ class RunCommandTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val command = params["command"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", 5, isError = true)
+            ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         if (isBlocked(command)) {
             return ToolResult(

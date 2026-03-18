@@ -33,7 +33,7 @@ class CallHierarchyTool : AgentTool {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
         val methodName = params["method"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'method' parameter required", "Error: missing method", 5, isError = true)
+            ?: return ToolResult("Error: 'method' parameter required", "Error: missing method", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val className = params["class_name"]?.jsonPrimitive?.content
 
         val content = ReadAction.nonBlocking<String> {

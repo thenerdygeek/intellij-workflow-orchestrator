@@ -29,7 +29,7 @@ class TypeHierarchyTool : AgentTool {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
         val className = params["class_name"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'class_name' parameter required", "Error: missing class_name", 5, isError = true)
+            ?: return ToolResult("Error: 'class_name' parameter required", "Error: missing class_name", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val content = ReadAction.nonBlocking<String> {
             val psiClass = PsiToolUtils.findClass(project, className)

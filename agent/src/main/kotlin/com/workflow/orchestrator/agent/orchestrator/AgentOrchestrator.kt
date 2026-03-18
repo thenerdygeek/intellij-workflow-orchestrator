@@ -6,7 +6,6 @@ import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.runtime.*
-import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.core.events.EventBus
@@ -94,6 +93,21 @@ class AgentOrchestrator(
     }
 
     /**
+     * Run a single worker session with the given worker type and task description.
+     * Centralizes the repeated pattern of setting up context, tools, and session.
+     */
+    private suspend fun runWorker(workerType: WorkerType, task: String): WorkerResult {
+        val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
+        val contextManager = ContextManager(maxInputTokens = maxTokens)
+        val toolsList = toolRegistry.getToolsForWorker(workerType)
+        val toolsMap = toolsList.associateBy { it.name }
+        val toolDefs = toolRegistry.getToolDefinitionsForWorker(workerType)
+        val systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
+        val session = WorkerSession()
+        return session.execute(workerType, systemPrompt, task, toolsMap, toolDefs, brain, contextManager, project)
+    }
+
+    /**
      * Fast path: execute a simple task directly with a single CODER worker.
      */
     private suspend fun executeSimpleTask(
@@ -101,24 +115,7 @@ class AgentOrchestrator(
         onProgress: (AgentProgress) -> Unit
     ): AgentResult {
         val workerType = WorkerType.CODER
-        val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
-        val contextManager = ContextManager(maxInputTokens = maxTokens)
-        val toolsList = toolRegistry.getToolsForWorker(workerType)
-        val toolsMap = toolsList.associateBy { it.name }
-        val toolDefs = toolRegistry.getToolDefinitionsForWorker(workerType)
-        val systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
-
-        val session = WorkerSession()
-        val result = session.execute(
-            workerType = workerType,
-            systemPrompt = systemPrompt,
-            task = taskDescription,
-            tools = toolsMap,
-            toolDefinitions = toolDefs,
-            brain = brain,
-            contextManager = contextManager,
-            project = project
-        )
+        val result = runWorker(workerType, taskDescription)
 
         return if (result.content.isNotBlank() && !result.content.startsWith("Error:")) {
             onProgress(AgentProgress("Task completed", workerType, result.tokensUsed, 1, 1))
@@ -224,24 +221,7 @@ class AgentOrchestrator(
                     completedTasks = completedCount
                 ))
 
-                val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
-                val contextManager = ContextManager(maxInputTokens = maxTokens)
-                val toolsList = toolRegistry.getToolsForWorker(workerType)
-                val toolsMap = toolsList.associateBy { it.name }
-                val toolDefs = toolRegistry.getToolDefinitionsForWorker(workerType)
-                val systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
-
-                val session = WorkerSession()
-                val workerResult = session.execute(
-                    workerType = workerType,
-                    systemPrompt = systemPrompt,
-                    task = task.description,
-                    tools = toolsMap,
-                    toolDefinitions = toolDefs,
-                    brain = brain,
-                    contextManager = contextManager,
-                    project = project
-                )
+                val workerResult = runWorker(workerType, task.description)
 
                 totalTokens += workerResult.tokensUsed
                 artifacts.addAll(workerResult.artifacts)

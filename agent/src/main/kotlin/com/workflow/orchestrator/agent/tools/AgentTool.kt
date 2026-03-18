@@ -30,4 +30,8 @@ data class ToolResult(
     val tokenEstimate: Int,
     val artifacts: List<String> = emptyList(),
     val isError: Boolean = false
-)
+) {
+    companion object {
+        const val ERROR_TOKEN_ESTIMATE = 5
+    }
+}

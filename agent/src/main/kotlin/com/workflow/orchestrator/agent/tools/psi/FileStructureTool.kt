@@ -29,11 +29,11 @@ class FileStructureTool : AgentTool {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
         val rawPath = params["path"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'path' required", "Error: missing path", 5, isError = true)
+            ?: return ToolResult("Error: 'path' required", "Error: missing path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val path = if (rawPath.startsWith("/")) rawPath else "${project.basePath}/$rawPath"
         val vFile = LocalFileSystem.getInstance().findFileByPath(path)
-            ?: return ToolResult("Error: File not found: $path", "Error: file not found", 5, isError = true)
+            ?: return ToolResult("Error: File not found: $path", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         // Use nonBlocking read action — avoids blocking EDT and write actions
         val content = ReadAction.nonBlocking<String> {
