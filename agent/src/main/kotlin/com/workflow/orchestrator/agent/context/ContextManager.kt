@@ -103,7 +103,7 @@ class ContextManager(
             // Never compress system messages
             if (msg.role == "system") continue
 
-            val msgTokens = TokenEstimator.estimate(msg.content ?: "")
+            val msgTokens = TokenEstimator.estimate(listOf(msg))
             messagesToSummarize.add(msg)
             indicesToRemove.add(i)
             tokensToRemove -= msgTokens
