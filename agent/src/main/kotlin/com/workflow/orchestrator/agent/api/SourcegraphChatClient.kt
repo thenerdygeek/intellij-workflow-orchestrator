@@ -125,6 +125,30 @@ class SourcegraphChatClient(
     }
 
     /**
+     * Convert messages to Sourcegraph-compatible format.
+     *
+     * Sourcegraph API restrictions (from OpenAPI spec + runtime validation):
+     * - "system" role is NOT supported → convert to "user" with [System Instructions] prefix
+     * - "tool" role may not be supported → convert to "user" with tool result formatting
+     * - Only "user" and "assistant" roles are guaranteed to work
+     */
+    private fun sanitizeMessages(messages: List<ChatMessage>): List<ChatMessage> {
+        return messages.map { msg ->
+            when (msg.role) {
+                "system" -> ChatMessage(
+                    role = "user",
+                    content = "[System Instructions]\n${msg.content ?: ""}"
+                )
+                "tool" -> ChatMessage(
+                    role = "user",
+                    content = "[Tool Result${msg.toolCallId?.let { " for $it" } ?: ""}]\n${msg.content ?: ""}"
+                )
+                else -> msg
+            }
+        }
+    }
+
+    /**
      * Send a streaming chat completion request. Each SSE chunk is emitted via [onChunk]
      * for real-time UI updates. The accumulated response is returned as a single
      * [ChatCompletionResponse] when the stream completes.
@@ -141,12 +165,12 @@ class SourcegraphChatClient(
         onChunk: suspend (StreamChunk) -> Unit
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
-            // Note: tool_choice is intentionally omitted — not in Sourcegraph API spec
+            val sanitized = sanitizeMessages(messages)
             val request = ChatCompletionRequest(
                 model = model,
-                messages = messages,
+                messages = sanitized,
                 tools = tools?.takeIf { it.isNotEmpty() },
-                toolChoice = null, // Not supported by Sourcegraph API
+                toolChoice = null,
                 temperature = temperature,
                 maxTokens = clampMaxTokens(maxTokens),
                 stream = true
@@ -240,12 +264,12 @@ class SourcegraphChatClient(
         toolChoice: JsonElement? = null // Accepted but not sent — not in Sourcegraph API spec
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
-            // Note: tool_choice is intentionally omitted — not in Sourcegraph API spec
+            val sanitized = sanitizeMessages(messages)
             val request = ChatCompletionRequest(
                 model = model,
-                messages = messages,
+                messages = sanitized,
                 tools = tools?.takeIf { it.isNotEmpty() },
-                toolChoice = null, // Not supported by Sourcegraph API
+                toolChoice = null,
                 temperature = temperature,
                 maxTokens = clampMaxTokens(maxTokens)
             )
