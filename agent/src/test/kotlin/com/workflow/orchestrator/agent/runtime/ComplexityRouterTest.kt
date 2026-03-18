@@ -15,18 +15,9 @@ class ComplexityRouterTest {
     private val brain = mockk<LlmBrain>()
 
     @Test
-    fun `route returns SIMPLE when brain says SIMPLE`() = runTest {
-        coEvery { brain.chat(any(), any(), any()) } returns ApiResult.Success(
-            ChatCompletionResponse(
-                id = "test-1",
-                choices = listOf(
-                    Choice(
-                        index = 0,
-                        message = ChatMessage(role = "assistant", content = "SIMPLE"),
-                        finishReason = "stop"
-                    )
-                )
-            )
+    fun `route returns SIMPLE when tool call returns SIMPLE`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            toolCallResponse("SIMPLE")
         )
 
         val result = ComplexityRouter.route("Fix a typo in README", brain)
@@ -34,18 +25,9 @@ class ComplexityRouterTest {
     }
 
     @Test
-    fun `route returns COMPLEX when brain says COMPLEX`() = runTest {
-        coEvery { brain.chat(any(), any(), any()) } returns ApiResult.Success(
-            ChatCompletionResponse(
-                id = "test-2",
-                choices = listOf(
-                    Choice(
-                        index = 0,
-                        message = ChatMessage(role = "assistant", content = "COMPLEX"),
-                        finishReason = "stop"
-                    )
-                )
-            )
+    fun `route returns COMPLEX when tool call returns COMPLEX`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            toolCallResponse("COMPLEX")
         )
 
         val result = ComplexityRouter.route("Refactor authentication across 5 modules", brain)
@@ -54,7 +36,7 @@ class ComplexityRouterTest {
 
     @Test
     fun `route returns COMPLEX when brain returns error`() = runTest {
-        coEvery { brain.chat(any(), any(), any()) } returns ApiResult.Error(
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Error(
             type = ErrorType.NETWORK_ERROR,
             message = "Connection refused"
         )
@@ -64,8 +46,8 @@ class ComplexityRouterTest {
     }
 
     @Test
-    fun `route returns COMPLEX for ambiguous response`() = runTest {
-        coEvery { brain.chat(any(), any(), any()) } returns ApiResult.Success(
+    fun `route returns COMPLEX when no tool calls in response`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
             ChatCompletionResponse(
                 id = "test-3",
                 choices = listOf(
@@ -83,27 +65,8 @@ class ComplexityRouterTest {
     }
 
     @Test
-    fun `route returns SIMPLE for lowercase simple response`() = runTest {
-        coEvery { brain.chat(any(), any(), any()) } returns ApiResult.Success(
-            ChatCompletionResponse(
-                id = "test-4",
-                choices = listOf(
-                    Choice(
-                        index = 0,
-                        message = ChatMessage(role = "assistant", content = "simple"),
-                        finishReason = "stop"
-                    )
-                )
-            )
-        )
-
-        val result = ComplexityRouter.route("Rename a variable", brain)
-        assertEquals(TaskComplexity.SIMPLE, result)
-    }
-
-    @Test
     fun `route returns COMPLEX for empty choices`() = runTest {
-        coEvery { brain.chat(any(), any(), any()) } returns ApiResult.Success(
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
             ChatCompletionResponse(
                 id = "test-5",
                 choices = emptyList()
@@ -112,5 +75,63 @@ class ComplexityRouterTest {
 
         val result = ComplexityRouter.route("Fix something", brain)
         assertEquals(TaskComplexity.COMPLEX, result)
+    }
+
+    @Test
+    fun `route returns COMPLEX for malformed tool call arguments`() = runTest {
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            ChatCompletionResponse(
+                id = "test-6",
+                choices = listOf(
+                    Choice(
+                        index = 0,
+                        message = ChatMessage(
+                            role = "assistant",
+                            content = null,
+                            toolCalls = listOf(
+                                ToolCall(
+                                    id = "call-1",
+                                    function = FunctionCall(
+                                        name = "classify_task",
+                                        arguments = "not valid json"
+                                    )
+                                )
+                            )
+                        ),
+                        finishReason = "tool_calls"
+                    )
+                )
+            )
+        )
+
+        val result = ComplexityRouter.route("Do something", brain)
+        assertEquals(TaskComplexity.COMPLEX, result)
+    }
+
+    // --- Helper ---
+
+    private fun toolCallResponse(complexity: String): ChatCompletionResponse {
+        return ChatCompletionResponse(
+            id = "test-${System.nanoTime()}",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(
+                        role = "assistant",
+                        content = null,
+                        toolCalls = listOf(
+                            ToolCall(
+                                id = "call-classify",
+                                function = FunctionCall(
+                                    name = "classify_task",
+                                    arguments = """{"complexity":"$complexity"}"""
+                                )
+                            )
+                        )
+                    ),
+                    finishReason = "tool_calls"
+                )
+            )
+        )
     }
 }

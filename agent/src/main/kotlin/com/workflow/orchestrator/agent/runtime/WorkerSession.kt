@@ -20,7 +20,8 @@ data class WorkerResult(
     val content: String,
     val summary: String,
     val tokensUsed: Int,
-    val artifacts: List<String> = emptyList()
+    val artifacts: List<String> = emptyList(),
+    val isError: Boolean = false
 )
 
 /**
@@ -111,7 +112,8 @@ class WorkerSession(
                             content = content,
                             summary = summary,
                             tokensUsed = totalTokensUsed,
-                            artifacts = allArtifacts
+                            artifacts = allArtifacts,
+                            isError = false
                         )
                     }
 
@@ -121,9 +123,10 @@ class WorkerSession(
                         val tool = tools[toolName]
 
                         if (tool == null) {
+                            val availableTools = tools.keys.joinToString(", ")
                             contextManager.addToolResult(
                                 toolCallId = toolCall.id,
-                                content = "Error: Tool '$toolName' not found",
+                                content = "Error: Tool '$toolName' is not available. Available tools: $availableTools. Please use one of these.",
                                 summary = "Tool not found: $toolName"
                             )
                             continue
@@ -157,7 +160,8 @@ class WorkerSession(
                         content = "Error: LLM call failed: ${result.message}",
                         summary = "Failed: ${result.message}",
                         tokensUsed = totalTokensUsed,
-                        artifacts = allArtifacts
+                        artifacts = allArtifacts,
+                        isError = true
                     )
                 }
             }
@@ -168,7 +172,8 @@ class WorkerSession(
             content = "Reached maximum iterations ($maxIterations) without completing",
             summary = "Incomplete: max iterations reached",
             tokensUsed = totalTokensUsed,
-            artifacts = allArtifacts
+            artifacts = allArtifacts,
+            isError = true
         )
     }
 }
