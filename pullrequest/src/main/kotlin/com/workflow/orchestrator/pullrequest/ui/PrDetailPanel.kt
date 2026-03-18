@@ -526,8 +526,8 @@ class PrDetailPanel(
         private val cancelEditButton = JButton("Cancel")
         private val enhanceWithCodyButton = JButton("Enhance with Cody").apply {
             icon = AllIcons.Actions.Lightning
-            toolTipText = "Use AI to enhance PR description (coming soon)"
-            isEnabled = false // Placeholder — will be wired to Cody later
+            toolTipText = "Use AI to generate or enhance the PR description"
+            addActionListener { enhanceWithCody() }
         }
 
         private val emptyDescLabel = JBLabel("No description provided.").apply {
@@ -616,6 +616,71 @@ class PrDetailPanel(
                     updateButton.isEnabled = true
                     currentDescription = newDescription
                     showDescription(newDescription)
+                }
+            }
+        }
+
+        private fun enhanceWithCody() {
+            val prId = currentPrId ?: return
+            val pr = currentPr ?: return
+            enhanceWithCodyButton.isEnabled = false
+            enhanceWithCodyButton.text = "Generating..."
+
+            scope.launch {
+                try {
+                    val textGen = com.workflow.orchestrator.core.ai.TextGenerationService.getInstance()
+                    if (textGen == null) {
+                        SwingUtilities.invokeLater {
+                            enhanceWithCodyButton.isEnabled = true
+                            enhanceWithCodyButton.text = "Enhance with Cody"
+                            log.warn("[PR:Detail] TextGenerationService not available")
+                        }
+                        return@launch
+                    }
+
+                    // Get PR diff
+                    val diff = PrDetailService.getInstance(project).getDiff(prId)
+                    if (diff.isNullOrBlank()) {
+                        SwingUtilities.invokeLater {
+                            enhanceWithCodyButton.isEnabled = true
+                            enhanceWithCodyButton.text = "Enhance with Cody"
+                        }
+                        return@launch
+                    }
+
+                    val truncatedDiff = if (diff.length > 10000) {
+                        diff.take(10000) + "\n... (truncated)"
+                    } else diff
+
+                    val ticketId = com.workflow.orchestrator.core.settings.PluginSettings
+                        .getInstance(project).state.activeTicketId.orEmpty()
+
+                    val enhanced = textGen.generatePrDescription(
+                        project = project,
+                        diff = truncatedDiff,
+                        commitMessages = emptyList(),
+                        ticketId = ticketId,
+                        ticketSummary = pr.title,
+                        sourceBranch = pr.fromRef?.displayId ?: "",
+                        targetBranch = pr.toRef?.displayId ?: ""
+                    )
+
+                    SwingUtilities.invokeLater {
+                        enhanceWithCodyButton.isEnabled = true
+                        enhanceWithCodyButton.text = "Enhance with Cody"
+                        if (!enhanced.isNullOrBlank()) {
+                            // Enter edit mode with the enhanced description so user can review
+                            enterEditMode()
+                            editArea.text = enhanced
+                            editArea.caretPosition = 0
+                        }
+                    }
+                } catch (e: Exception) {
+                    log.warn("[PR:Detail] Enhance with Cody failed: ${e.message}")
+                    SwingUtilities.invokeLater {
+                        enhanceWithCodyButton.isEnabled = true
+                        enhanceWithCodyButton.text = "Enhance with Cody"
+                    }
                 }
             }
         }
