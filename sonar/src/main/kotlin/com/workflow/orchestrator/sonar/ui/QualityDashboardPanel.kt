@@ -182,7 +182,7 @@ class QualityDashboardPanel(
         val modeLabel = if (state.newCodeMode) "New Code" else "Overall"
         val coverage = state.activeOverallCoverage
         val issueCount = state.activeIssues.size
-        headerLabel.text = "${state.projectKey} [$gateIcon] $modeLabel — Coverage: ${"%.1f".format(coverage.lineCoverage)}% Issues: $issueCount"
+        headerLabel.text = "${state.projectKey}  $gateIcon $modeLabel  \u2022  Coverage: ${"%.1f".format(coverage.lineCoverage)}%  \u2022  Issues: $issueCount"
 
         updateToggleAppearance(state.newCodeMode)
 
@@ -211,9 +211,10 @@ class QualityDashboardPanel(
 
         overviewPanel.update(state)
         issueListPanel.update(state.activeIssues)
+        val coverageData = state.activeFileCoverage.ifEmpty { state.fileCoverage }
         coverageTablePanel.update(
-            if (state.newCodeMode) state.activeFileCoverage else state.fileCoverage,
-            state.newCodeMode
+            coverageData,
+            state.newCodeMode && state.activeFileCoverage.isNotEmpty()
         )
 
         val elapsed = java.time.Duration.between(state.lastUpdated, java.time.Instant.now())

@@ -7,7 +7,10 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ai.TextGenerationService
+import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.sonar.model.*
+import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -25,6 +28,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val countLabel = JBLabel("0 issues")
 
     private var allIssues: List<MappedIssue> = emptyList()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         border = JBUI.Borders.empty(8)
@@ -50,6 +54,32 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
                     val issue = issueList.selectedValue ?: return
                     navigateToIssue(issue)
                 }
+            }
+        })
+
+        // Right-click context menu
+        issueList.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) = showContextMenu(e)
+            override fun mouseReleased(e: MouseEvent) = showContextMenu(e)
+
+            private fun showContextMenu(e: MouseEvent) {
+                if (!e.isPopupTrigger) return
+                val index = issueList.locationToIndex(e.point) ?: return
+                issueList.selectedIndex = index
+                val issue = issueList.selectedValue ?: return
+
+                val codyService = TextGenerationService.getInstance()
+
+                val menu = JPopupMenu()
+                menu.add(JMenuItem("Navigate to Issue").apply {
+                    addActionListener { navigateToIssue(issue) }
+                })
+                menu.add(JMenuItem("Fix with Cody").apply {
+                    isEnabled = codyService != null
+                    toolTipText = if (codyService == null) "Cody agent is not running" else null
+                    addActionListener { fixWithCody(issue, codyService!!) }
+                })
+                menu.show(issueList, e.x, e.y)
             }
         })
     }
@@ -86,6 +116,40 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         val basePath = project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, issue.filePath).path) ?: return
         OpenFileDescriptor(project, vf, issue.startLine - 1, issue.startOffset).navigate(true)
+    }
+
+    private fun fixWithCody(issue: MappedIssue, codyService: TextGenerationService) {
+        val basePath = project.basePath ?: return
+        val absolutePath = java.io.File(basePath, issue.filePath).absolutePath
+
+        // Navigate to the issue location first
+        navigateToIssue(issue)
+
+        val prompt = "Fix this SonarQube issue: [${issue.rule}] ${issue.message} at line ${issue.startLine} in ${issue.filePath}"
+
+        scope.launch {
+            val result = codyService.generateText(
+                project = project,
+                prompt = prompt,
+                contextFilePaths = listOf(absolutePath)
+            )
+            withContext(Dispatchers.Main) {
+                val notificationService = WorkflowNotificationService.getInstance(project)
+                if (result != null) {
+                    notificationService.notifyInfo(
+                        WorkflowNotificationService.GROUP_QUALITY,
+                        "Cody Fix Suggestion",
+                        result
+                    )
+                } else {
+                    notificationService.notifyError(
+                        WorkflowNotificationService.GROUP_QUALITY,
+                        "Fix with Cody Failed",
+                        "Cody could not generate a fix suggestion for ${issue.rule}"
+                    )
+                }
+            }
+        }
     }
 }
 

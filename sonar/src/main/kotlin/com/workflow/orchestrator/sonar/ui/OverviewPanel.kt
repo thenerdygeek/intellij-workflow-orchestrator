@@ -82,37 +82,41 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         gateConditionsPanel.removeAll()
         state.qualityGate.conditions.forEach { cond ->
             val icon = if (cond.passed) "\u2713" else "\u2717"
-            val label = JBLabel("$icon ${cond.metric}: ${cond.actualValue} (threshold: ${cond.threshold})")
+            val metricName = cond.metric.replace("_", " ")
+                .split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+            val isCoverageMetric = cond.metric.contains("coverage", ignoreCase = true)
+            val suffix = if (isCoverageMetric) "%" else ""
+            val label = JBLabel("$icon $metricName: ${cond.actualValue}$suffix (threshold: ${cond.threshold}$suffix)")
             label.font = label.font.deriveFont(10f)
             label.foreground = if (cond.passed) JBColor.GRAY else CoverageThresholds.RED
             gateConditionsPanel.add(label)
         }
 
         // Coverage
-        val lineCov = state.overallCoverage.lineCoverage
+        val lineCov = state.activeOverallCoverage.lineCoverage
         coverageLabel.text = "%.1f%%".format(lineCov)
         coverageLabel.font = coverageLabel.font.deriveFont(Font.BOLD, 18f)
         coverageLabel.foreground = CoverageThresholds.colorForCoverage(lineCov, highThreshold, mediumThreshold)
         coverageBar.setThresholds(highThreshold, mediumThreshold)
         coverageBar.value = lineCov
-        branchCoverageLabel.text = "Branch: %.1f%%".format(state.overallCoverage.branchCoverage)
+        branchCoverageLabel.text = "Branch: %.1f%%".format(state.activeOverallCoverage.branchCoverage)
         branchCoverageLabel.foreground = JBColor.GRAY
         branchCoverageLabel.font = branchCoverageLabel.font.deriveFont(10f)
 
         // Issues
-        val total = state.issues.size
+        val total = state.activeIssues.size
         issueCountLabel.text = "$total"
         issueCountLabel.font = issueCountLabel.font.deriveFont(Font.BOLD, 18f)
-        val bugs = state.issues.count { it.type == IssueType.BUG }
-        val vulns = state.issues.count { it.type == IssueType.VULNERABILITY }
-        val smells = state.issues.count { it.type == IssueType.CODE_SMELL }
-        val hotspots = state.issues.count { it.type == IssueType.SECURITY_HOTSPOT }
+        val bugs = state.activeIssues.count { it.type == IssueType.BUG }
+        val vulns = state.activeIssues.count { it.type == IssueType.VULNERABILITY }
+        val smells = state.activeIssues.count { it.type == IssueType.CODE_SMELL }
+        val hotspots = state.activeIssues.count { it.type == IssueType.SECURITY_HOTSPOT }
         issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H</html>"
         issueBreakdownLabel.font = issueBreakdownLabel.font.deriveFont(10f)
 
         // Recent issues (top 5 by severity)
         recentIssuesPanel.removeAll()
-        state.issues
+        state.activeIssues
             .sortedBy { it.severity.ordinal }
             .take(5)
             .forEach { issue ->
