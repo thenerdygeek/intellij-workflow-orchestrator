@@ -76,6 +76,20 @@ class SingleAgentSession(
      * @param onProgress Callback for progress updates
      * @return [SingleAgentResult] — completed, failed, or escalation signal
      */
+    /**
+     * Execute the single-agent ReAct loop.
+     *
+     * @param task The full task description from the user
+     * @param tools Map of tool name to AgentTool (all registered tools)
+     * @param toolDefinitions Tool definitions for the LLM
+     * @param brain The LLM brain
+     * @param contextManager Manages conversation history with compression
+     * @param project The IntelliJ project
+     * @param approvalGate Optional gate for risk-based approval of tool actions
+     * @param onProgress Callback for progress updates
+     * @param onStreamChunk Callback for streaming LLM output tokens (for real-time UI)
+     * @return [SingleAgentResult] — completed, failed, or escalation signal
+     */
     suspend fun execute(
         task: String,
         tools: Map<String, AgentTool>,
@@ -83,7 +97,9 @@ class SingleAgentSession(
         brain: LlmBrain,
         contextManager: ContextManager,
         project: Project,
-        onProgress: (AgentProgress) -> Unit = {}
+        approvalGate: ApprovalGate? = null,
+        onProgress: (AgentProgress) -> Unit = {},
+        onStreamChunk: (String) -> Unit = {}
     ): SingleAgentResult {
         LOG.info("SingleAgentSession: starting with ${tools.size} tools for task: ${task.take(100)}")
 
@@ -130,7 +146,18 @@ class SingleAgentSession(
             val messages = contextManager.getMessages()
             val activeToolDefs = if (tools.isNotEmpty()) toolDefinitions else null
 
-            val result = brain.chat(messages, activeToolDefs)
+            // Use streaming when onStreamChunk callback is provided, otherwise batch
+            val result = try {
+                brain.chatStream(messages, activeToolDefs) { chunk ->
+                    // Pipe streaming content deltas to the UI for real-time display
+                    chunk.choices.firstOrNull()?.delta?.content?.let { delta ->
+                        onStreamChunk(delta)
+                    }
+                }
+            } catch (_: NotImplementedError) {
+                // Fall back to non-streaming if chatStream isn't implemented
+                brain.chat(messages, activeToolDefs)
+            }
 
             when (result) {
                 is ApiResult.Success -> {
@@ -173,7 +200,7 @@ class SingleAgentSession(
                         )
                     }
 
-                    // Execute tool calls
+                    // Execute tool calls with approval gate
                     for (toolCall in toolCalls) {
                         val toolName = toolCall.function.name
                         val tool = tools[toolName]
@@ -185,6 +212,35 @@ class SingleAgentSession(
                                 summary = "Tool not found: $toolName"
                             )
                             continue
+                        }
+
+                        // Check approval gate before executing risky tools
+                        if (approvalGate != null) {
+                            val riskLevel = ApprovalGate.riskLevelFor(toolName)
+                            val approval = approvalGate.check(
+                                toolName = toolName,
+                                description = "$toolName(${toolCall.function.arguments.take(100)})",
+                                riskLevel = riskLevel
+                            )
+                            when (approval) {
+                                is ApprovalResult.Rejected -> {
+                                    contextManager.addToolResult(
+                                        toolCallId = toolCall.id,
+                                        content = "Tool call rejected by user. The user chose not to allow this action.",
+                                        summary = "Rejected: $toolName"
+                                    )
+                                    continue
+                                }
+                                is ApprovalResult.Pending -> {
+                                    contextManager.addToolResult(
+                                        toolCallId = toolCall.id,
+                                        content = "Tool call pending user approval. Waiting for user decision.",
+                                        summary = "Pending approval: $toolName"
+                                    )
+                                    continue
+                                }
+                                is ApprovalResult.Approved -> { /* proceed */ }
+                            }
                         }
 
                         try {
