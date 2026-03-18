@@ -9,9 +9,6 @@ import com.workflow.orchestrator.agent.security.InputSanitizer
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
-import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import kotlinx.coroutines.Dispatchers
@@ -19,11 +16,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
-
 class JiraTransitionTool(
     private val urlProvider: () -> String = { ConnectionSettings.getInstance().state.jiraUrl },
     private val tokenProvider: () -> String? = { CredentialStore().getToken(ServiceType.JIRA) }
@@ -42,23 +36,19 @@ class JiraTransitionTool(
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val key = params["key"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'key' parameter required", "Error: missing key", 5, isError = true)
+            ?: return ToolResult("Error: 'key' parameter required", "Error: missing key", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val transitionId = params["transition_id"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'transition_id' parameter required", "Error: missing transition_id", 5, isError = true)
+            ?: return ToolResult("Error: 'transition_id' parameter required", "Error: missing transition_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val baseUrl = urlProvider().trimEnd('/')
-        if (baseUrl.isBlank()) {
-            return ToolResult("Error: Jira URL not configured", "Error: Jira URL not configured", 5, isError = true)
-        }
-
-        val token = tokenProvider()
-        if (token.isNullOrBlank()) {
-            return ToolResult("Error: Jira token not configured", "Error: Jira token not configured", 5, isError = true)
-        }
+        val (baseUrl, token, client) = IntegrationToolSupport.resolveCredentials(urlProvider, tokenProvider, "Jira")
+            ?: return if (urlProvider()?.trimEnd('/')?.isBlank() != false) {
+                IntegrationToolSupport.credentialError("Jira", "URL")
+            } else {
+                IntegrationToolSupport.credentialError("Jira", "token")
+            }
 
         return withContext(Dispatchers.IO) {
             try {
-                val client = buildClient(token)
                 val url = "$baseUrl/rest/api/2/issue/$key/transitions"
                 val jsonBody = """{"transition":{"id":"$transitionId"}}"""
                 val request = Request.Builder()
@@ -95,12 +85,4 @@ class JiraTransitionTool(
         }
     }
 
-    private fun buildClient(token: String): OkHttpClient {
-        return OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor({ token }, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor(maxRetries = 2))
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
-    }
 }
