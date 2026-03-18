@@ -17,13 +17,17 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
 
     private val stepListModel = DefaultListModel<String>()
     private val stepList = JBList(stepListModel)
-    private val outputPanel = StreamingOutputPanel()
+    private val richPanel = RichStreamingPanel()
     private val tokenWidget = TokenBudgetWidget()
     private val completedSteps = mutableSetOf<String>()
     private val currentStep = mutableSetOf<String>()
     private val planRenderer = PlanMarkdownRenderer()
-    private val splitter = JBSplitter(false, 0.4f)
+    private val splitter = JBSplitter(false, 0.3f)
     private var showingPlan = false
+
+    // Keep legacy panel for backward compatibility (tests may reference it)
+    @Deprecated("Use getRichPanel() instead", replaceWith = ReplaceWith("getRichPanel()"))
+    private val outputPanel = StreamingOutputPanel()
 
     val newTaskButton = JButton("New Task").apply {
         icon = AllIcons.General.Add
@@ -46,10 +50,10 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         toolbar.add(settingsLink)
         add(toolbar, BorderLayout.NORTH)
 
-        // Center: splitter with step list (left) and output (right)
+        // Center: splitter with step list (left) and rich output (right)
         stepList.cellRenderer = StepListCellRenderer()
         splitter.firstComponent = JBScrollPane(stepList)
-        splitter.secondComponent = outputPanel
+        splitter.secondComponent = richPanel
         add(splitter, BorderLayout.CENTER)
 
         // South: token budget widget
@@ -63,7 +67,7 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         for (task in tasks) {
             stepListModel.addElement(task)
         }
-        outputPanel.clear()
+        richPanel.clear()
         cancelButton.isEnabled = true
     }
 
@@ -87,17 +91,21 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         completedSteps.addAll(currentStep)
         currentStep.clear()
         stepList.repaint()
-        outputPanel.setText(text)
+        richPanel.setText(text)
         cancelButton.isEnabled = false
     }
 
-    /** Provides external access to the streaming panel for direct token-by-token output. */
+    /** Get the rich streaming panel for direct content rendering. */
+    fun getRichPanel(): RichStreamingPanel = richPanel
+
+    /** Provides backward-compatible access to old panel (delegates to rich panel). */
     fun getStreamingPanel(): StreamingOutputPanel = outputPanel
 
     fun reset() = runOnEdt {
         stepListModel.clear()
         completedSteps.clear()
         currentStep.clear()
+        richPanel.clear()
         outputPanel.clear()
         tokenWidget.update(0, 0)
         cancelButton.isEnabled = false
