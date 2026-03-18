@@ -103,6 +103,7 @@ class SingleAgentSession(
         maxOutputTokens: Int? = null,
         approvalGate: ApprovalGate? = null,
         eventLog: AgentEventLog? = null,
+        sessionTrace: SessionTrace? = null,
         onProgress: (AgentProgress) -> Unit = {},
         onStreamChunk: (String) -> Unit = {}
     ): SingleAgentResult {
@@ -111,6 +112,8 @@ class SingleAgentSession(
 
         val effectiveBudget = contextManager.remainingBudget() + contextManager.currentTokens
         val budgetEnforcer = BudgetEnforcer(contextManager, effectiveBudget)
+
+        sessionTrace?.sessionStarted(task, tools.size, effectiveBudget - contextManager.remainingBudget(), effectiveBudget)
 
         // Use provided system prompt (from PromptAssembler) or fall back to basic prompt
         val resolvedSystemPrompt = systemPrompt ?: buildFallbackSystemPrompt()
@@ -133,6 +136,7 @@ class SingleAgentSession(
 
         for (iteration in 1..maxIterations) {
             LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
+            sessionTrace?.iterationStarted(iteration, contextManager.currentTokens, budgetEnforcer.utilizationPercent())
             onProgress(AgentProgress(
                 step = "Thinking... (iteration $iteration)",
                 tokensUsed = totalTokensUsed
@@ -143,6 +147,8 @@ class SingleAgentSession(
                 BudgetEnforcer.BudgetStatus.ESCALATE -> {
                     LOG.warn("SingleAgentSession: budget critical at iteration $iteration, escalating")
                     eventLog?.log(AgentEventType.ESCALATION_TRIGGERED, "Budget ${budgetEnforcer.utilizationPercent()}% at iteration $iteration")
+                    sessionTrace?.dumpConversationState(contextManager.getMessages(), "budget_escalation_at_${budgetEnforcer.utilizationPercent()}%")
+                    sessionTrace?.sessionFailed("Budget escalation at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
                     val contextSummary = buildContextSummary(contextManager)
                     return SingleAgentResult.EscalateToOrchestrated(
                         reason = "Token budget exceeded (${budgetEnforcer.utilizationPercent()}% utilization) at iteration $iteration",
@@ -153,7 +159,15 @@ class SingleAgentSession(
                 BudgetEnforcer.BudgetStatus.COMPRESS -> {
                     LOG.info("SingleAgentSession: triggering compression at iteration $iteration")
                     eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration, ${budgetEnforcer.utilizationPercent()}% used")
+                    val tokensBefore = contextManager.currentTokens
+                    val messagesBefore = contextManager.messageCount
                     contextManager.compress()
+                    sessionTrace?.compressionTriggered(
+                        "budget_enforcer",
+                        tokensBefore,
+                        contextManager.currentTokens,
+                        messagesBefore - contextManager.messageCount
+                    )
                 }
                 BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
             }
@@ -194,7 +208,7 @@ class SingleAgentSession(
                     retryResult as LlmCallResult.Success, iteration, totalTokensUsed, allArtifacts,
                     editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
                     budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
-                    onStreamChunk, eventLog, maxIterations
+                    onStreamChunk, eventLog, sessionTrace, maxIterations
                 ) ?: continue
             }
 
@@ -204,13 +218,15 @@ class SingleAgentSession(
                         result, iteration, totalTokensUsed, allArtifacts,
                         editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
                         budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
-                        onStreamChunk, eventLog, maxIterations
+                        onStreamChunk, eventLog, sessionTrace, maxIterations
                     )
                     if (sessionResult != null) return sessionResult
                     totalTokensUsed = result.totalTokensSoFar
                 }
                 is LlmCallResult.Failed -> {
                     eventLog?.log(AgentEventType.SESSION_FAILED, result.error)
+                    sessionTrace?.dumpConversationState(contextManager.getMessages(), "llm_call_failed: ${result.error}")
+                    sessionTrace?.sessionFailed(result.error, totalTokensUsed, iteration)
                     return SingleAgentResult.Failed(
                         error = "LLM call failed: ${result.error}",
                         tokensUsed = totalTokensUsed
@@ -224,6 +240,8 @@ class SingleAgentSession(
 
         LOG.warn("SingleAgentSession: reached max iterations ($maxIterations)")
         eventLog?.log(AgentEventType.SESSION_FAILED, "Max iterations ($maxIterations) reached")
+        sessionTrace?.dumpConversationState(contextManager.getMessages(), "max_iterations_reached")
+        sessionTrace?.sessionFailed("Max iterations ($maxIterations) reached", totalTokensUsed, maxIterations)
         return SingleAgentResult.Failed(
             error = "Reached maximum iterations ($maxIterations) without completing",
             tokensUsed = totalTokensUsed
@@ -252,6 +270,7 @@ class SingleAgentSession(
         onProgress: (AgentProgress) -> Unit,
         onStreamChunk: (String) -> Unit,
         eventLog: AgentEventLog?,
+        sessionTrace: SessionTrace?,
         maxIterations: Int
     ): SingleAgentResult? {
         val response = result.response
@@ -312,6 +331,8 @@ class SingleAgentSession(
             ))
 
             eventLog?.log(AgentEventType.SESSION_COMPLETED, "Completed after $iteration iterations, $totalTokensUsed tokens")
+            sessionTrace?.iterationCompleted(iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, emptyList(), choice.finishReason)
+            sessionTrace?.sessionCompleted(totalTokensUsed, iteration, allArtifacts)
 
             return SingleAgentResult.Completed(
                 content = content,
@@ -374,10 +395,12 @@ class SingleAgentSession(
                 }
             }
 
+            val toolStartMs = System.currentTimeMillis()
             try {
                 eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${toolCall.function.arguments.take(100)})")
                 val params = json.decodeFromString<JsonObject>(toolCall.function.arguments)
                 val toolResult = tool.execute(params, project)
+                val toolDurationMs = System.currentTimeMillis() - toolStartMs
 
                 contextManager.addToolResult(
                     toolCallId = toolCall.id,
@@ -400,8 +423,10 @@ class SingleAgentSession(
 
                 if (toolResult.isError) {
                     eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: ${toolResult.summary}")
+                    sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, true, toolResult.summary)
                 } else {
                     eventLog?.log(AgentEventType.TOOL_SUCCEEDED, toolName)
+                    sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, false)
                 }
 
                 onProgress(AgentProgress(
@@ -409,8 +434,10 @@ class SingleAgentSession(
                     tokensUsed = totalTokensUsed
                 ))
             } catch (e: Exception) {
+                val toolDurationMs = System.currentTimeMillis() - toolStartMs
                 LOG.warn("SingleAgentSession: tool '$toolName' failed", e)
                 eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: ${e.message}")
+                sessionTrace?.toolExecuted(toolName, toolDurationMs, 0, true, e.message)
                 contextManager.addToolResult(
                     toolCallId = toolCall.id,
                     content = "Error executing tool '$toolName': ${e.message}",
@@ -419,6 +446,10 @@ class SingleAgentSession(
                 toolResults.add(toolCall.id to true)
             }
         }
+
+        // Trace: record iteration completion with tool list
+        val toolNames = toolCalls.map { it.function.name }
+        sessionTrace?.iterationCompleted(iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, toolNames, choice.finishReason)
 
         // LoopGuard: check for loops, error nudges, instruction-fade reminders
         val loopGuardMessages = loopGuard.afterIteration(toolCalls, toolResults, editedFiles.toList())
