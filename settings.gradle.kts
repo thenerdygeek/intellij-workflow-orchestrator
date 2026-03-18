@@ -16,5 +16,6 @@ include(
     ":pullrequest",
     ":automation",
     ":handover",
+    ":agent",
     ":mock-server",
 )
