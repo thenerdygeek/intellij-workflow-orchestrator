@@ -9,6 +9,8 @@ import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.serialization.json.*
 import java.util.concurrent.atomic.AtomicBoolean
@@ -80,8 +82,9 @@ class AgentOrchestrator(
 
         if (cancelled.get()) return AgentResult.Cancelled(0)
 
-        // Step 2: Route based on complexity
-        return if (complexity == TaskComplexity.SIMPLE) {
+        // Step 2: Route based on complexity (respect enableFastPath setting)
+        val fastPathEnabled = try { AgentSettings.getInstance(project).state.enableFastPath } catch (_: Exception) { true }
+        return if (complexity == TaskComplexity.SIMPLE && fastPathEnabled) {
             onProgress(AgentProgress("Executing simple task (fast path)...", WorkerType.CODER))
             executeSimpleTask(taskDescription, onProgress)
         } else {
@@ -183,6 +186,13 @@ class AgentOrchestrator(
             null
         }
 
+        // Create FileGuard for edit conflict prevention and rollback
+        val fileGuard = FileGuard()
+        // Snapshot working tree before execution for rollback capability
+        if (projectBasePath != null) {
+            try { fileGuard.snapshotFiles(project, emptyList()) } catch (_: Exception) { /* best effort */ }
+        }
+
         while (!taskGraph.isComplete()) {
             if (cancelled.get()) return AgentResult.Cancelled(completedCount)
 
@@ -204,6 +214,7 @@ class AgentOrchestrator(
                 if (cancelled.get()) return AgentResult.Cancelled(completedCount)
 
                 taskGraph.markRunning(task.id)
+                try { project.getService(EventBus::class.java).emit(WorkflowEvent.AgentTaskStarted(task.id, task.description)) } catch (_: Exception) {}
                 val workerType = task.workerType
                 onProgress(AgentProgress(
                     step = "Executing: ${task.description}",
@@ -237,9 +248,11 @@ class AgentOrchestrator(
 
                 if (workerResult.content.startsWith("Error:")) {
                     taskGraph.markFailed(task.id, workerResult.content)
+                    try { project.getService(EventBus::class.java).emit(WorkflowEvent.AgentTaskFailed(task.id, workerResult.content)) } catch (_: Exception) {}
                 } else {
                     taskGraph.markComplete(task.id, workerResult.summary)
                     completedCount++
+                    try { project.getService(EventBus::class.java).emit(WorkflowEvent.AgentTaskCompleted(task.id, workerResult.summary)) } catch (_: Exception) {}
                 }
 
                 // Checkpoint after each task (best-effort — never abort plan for I/O errors)
