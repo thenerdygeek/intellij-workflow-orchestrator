@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
+import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.core.model.ApiResult
@@ -429,9 +430,33 @@ class SingleAgentSession(
                     sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, false)
                 }
 
+                // Build rich tool call info for the UI
+                val editInfo = if (toolName == "edit_file" && !toolResult.isError) {
+                    val argsObj = params
+                    ToolCallInfo(
+                        toolName = toolName,
+                        args = toolCall.function.arguments.take(200),
+                        result = toolResult.summary,
+                        durationMs = toolDurationMs,
+                        isError = toolResult.isError,
+                        editFilePath = argsObj["path"]?.toString()?.removeSurrounding("\""),
+                        editOldText = argsObj["old_string"]?.toString()?.removeSurrounding("\"")?.take(500),
+                        editNewText = argsObj["new_string"]?.toString()?.removeSurrounding("\"")?.take(500)
+                    )
+                } else {
+                    ToolCallInfo(
+                        toolName = toolName,
+                        args = toolCall.function.arguments.take(200),
+                        result = toolResult.summary,
+                        durationMs = toolDurationMs,
+                        isError = toolResult.isError
+                    )
+                }
+
                 onProgress(AgentProgress(
                     step = "Used tool: $toolName",
-                    tokensUsed = totalTokensUsed
+                    tokensUsed = totalTokensUsed,
+                    toolCallInfo = editInfo
                 ))
             } catch (e: Exception) {
                 val toolDurationMs = System.currentTimeMillis() - toolStartMs

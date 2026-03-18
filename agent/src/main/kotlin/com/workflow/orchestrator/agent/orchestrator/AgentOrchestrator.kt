@@ -52,7 +52,24 @@ data class AgentProgress(
     val workerType: WorkerType? = null,
     val tokensUsed: Int = 0,
     val totalTasks: Int = 0,
-    val completedTasks: Int = 0
+    val completedTasks: Int = 0,
+    /** Tool call details for rich UI rendering. */
+    val toolCallInfo: ToolCallInfo? = null
+)
+
+/**
+ * Rich tool call information for UI rendering.
+ */
+data class ToolCallInfo(
+    val toolName: String,
+    val args: String = "",
+    val result: String = "",
+    val durationMs: Long = 0,
+    val isError: Boolean = false,
+    /** Edit diff data for file modifications. */
+    val editFilePath: String? = null,
+    val editOldText: String? = null,
+    val editNewText: String? = null
 )
 
 /**
