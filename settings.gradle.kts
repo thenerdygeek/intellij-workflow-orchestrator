@@ -13,6 +13,7 @@ include(
     ":bamboo",
     ":sonar",
     ":cody",
+    ":pullrequest",
     ":automation",
     ":handover",
     ":mock-server",

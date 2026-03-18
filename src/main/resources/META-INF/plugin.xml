@@ -268,6 +268,17 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.CompletionMacroService"/>
 
+        <!-- Pull Request Services -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrListService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrDetailService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrActionService"/>
+
+        <!-- Pull Request Notification Group -->
+        <notificationGroup id="workflow.pr" displayType="BALLOON"/>
+
         <!-- Handover Notification Group -->
         <notificationGroup id="workflow.handover" displayType="BALLOON"/>
 
@@ -326,6 +337,7 @@
         <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.pullrequest.ui.PrTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
     </extensions>

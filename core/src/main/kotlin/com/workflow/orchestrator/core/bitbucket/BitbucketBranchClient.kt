@@ -126,7 +126,107 @@ data class BitbucketLink(
 @Serializable
 private data class BitbucketPrListResponse(
     val size: Int,
-    val values: List<BitbucketPrResponse>
+    val values: List<BitbucketPrResponse>,
+    val isLastPage: Boolean = true
+)
+
+// --- Full PR Management DTOs ---
+
+@Serializable
+data class BitbucketPrDetail(
+    val id: Int,
+    val title: String,
+    val description: String? = null,
+    val state: String,
+    val version: Int = 0,
+    val author: BitbucketPrParticipant? = null,
+    val reviewers: List<BitbucketPrReviewer> = emptyList(),
+    val createdDate: Long = 0,
+    val updatedDate: Long = 0,
+    val fromRef: BitbucketPrRef? = null,
+    val toRef: BitbucketPrRef? = null,
+    val links: BitbucketLinks? = null
+)
+
+@Serializable
+data class BitbucketPrParticipant(
+    val user: BitbucketUser
+)
+
+@Serializable
+data class BitbucketPrReviewer(
+    val user: BitbucketUser,
+    val role: String = "REVIEWER",
+    val approved: Boolean = false,
+    val status: String = "UNAPPROVED"
+)
+
+@Serializable
+data class BitbucketPrActivity(
+    val id: Long,
+    val action: String,
+    val comment: BitbucketPrComment? = null,
+    val user: BitbucketUser,
+    val createdDate: Long = 0
+)
+
+@Serializable
+data class BitbucketPrComment(
+    val id: Long,
+    val text: String,
+    val author: BitbucketUser,
+    val createdDate: Long = 0,
+    val updatedDate: Long = 0
+)
+
+@Serializable
+data class BitbucketPrChange(
+    val path: BitbucketPath,
+    val type: String,
+    val nodeType: String = "FILE"
+)
+
+@Serializable
+data class BitbucketPath(
+    val toString: String,
+    val name: String = ""
+)
+
+@Serializable
+data class BitbucketPrUpdateRequest(
+    val title: String,
+    val description: String,
+    val version: Int,
+    val reviewers: List<BitbucketPrReviewerRef> = emptyList()
+)
+
+@Serializable
+data class BitbucketPrReviewerRef(
+    val user: BitbucketReviewerUser
+)
+
+@Serializable
+private data class BitbucketPrDetailListResponse(
+    val values: List<BitbucketPrDetail> = emptyList(),
+    val size: Int = 0,
+    val isLastPage: Boolean = true
+)
+
+@Serializable
+private data class BitbucketPrActivityResponse(
+    val values: List<BitbucketPrActivity> = emptyList(),
+    val isLastPage: Boolean = true
+)
+
+@Serializable
+private data class BitbucketPrChangesResponse(
+    val values: List<BitbucketPrChange> = emptyList(),
+    val isLastPage: Boolean = true
+)
+
+@Serializable
+private data class AddCommentRequest(
+    val text: String
 )
 
 @Serializable
@@ -481,6 +581,485 @@ class BitbucketBranchClient(
                 }
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error fetching build statuses", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    // --- Full PR Management Methods ---
+
+    /**
+     * Gets pull requests authored by the current user.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests?state={state}&role.1=AUTHOR
+     */
+    suspend fun getMyPullRequests(
+        projectKey: String,
+        repoSlug: String,
+        state: String = "OPEN"
+    ): ApiResult<List<BitbucketPrDetail>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching my PRs (state=$state) in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&role.1=AUTHOR&start=0&limit=25")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrDetailListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} authored PRs")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching my PRs", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets pull requests where the current user is a reviewer.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests?state={state}&role.1=REVIEWER
+     */
+    suspend fun getReviewingPullRequests(
+        projectKey: String,
+        repoSlug: String,
+        state: String = "OPEN"
+    ): ApiResult<List<BitbucketPrDetail>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching reviewing PRs (state=$state) in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&role.1=REVIEWER&start=0&limit=25")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrDetailListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} reviewing PRs")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching reviewing PRs", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets full details of a specific pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}
+     */
+    suspend fun getPullRequestDetail(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<BitbucketPrDetail> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching PR #$prId detail in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val pr = json.decodeFromString<BitbucketPrDetail>(body)
+                            log.info("[Core:Bitbucket] PR #$prId: state=${pr.state}, version=${pr.version}")
+                            ApiResult.Success(pr)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Updates a pull request (title, description, reviewers).
+     * PUT /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}
+     * Requires version for optimistic locking.
+     */
+    suspend fun updatePullRequest(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        updateRequest: BitbucketPrUpdateRequest
+    ): ApiResult<BitbucketPrDetail> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Updating PR #$prId in $projectKey/$repoSlug (version=${updateRequest.version})")
+            try {
+                val payload = json.encodeToString(updateRequest)
+                    .toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId")
+                    .put(payload)
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val pr = json.decodeFromString<BitbucketPrDetail>(body)
+                            log.info("[Core:Bitbucket] PR #$prId updated successfully (new version=${pr.version})")
+                            ApiResult.Success(pr)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR #$prId version conflict — refresh and retry")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error updating PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets activity (comments, approvals, merges) for a pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/activities?limit=50
+     */
+    suspend fun getPullRequestActivities(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<List<BitbucketPrActivity>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching activities for PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/activities?limit=50")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrActivityResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} activities for PR #$prId")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId activities", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Adds a comment to a pull request.
+     * POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments
+     */
+    suspend fun addPullRequestComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        text: String
+    ): ApiResult<BitbucketPrComment> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Adding comment to PR #$prId in $projectKey/$repoSlug")
+            try {
+                val payload = json.encodeToString(AddCommentRequest(text))
+                    .toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments")
+                    .post(payload)
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val comment = json.decodeFromString<BitbucketPrComment>(body)
+                            log.info("[Core:Bitbucket] Comment added to PR #$prId (id=${comment.id})")
+                            ApiResult.Success(comment)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error adding comment to PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Approves a pull request.
+     * POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/approve
+     */
+    suspend fun approvePullRequest(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<BitbucketPrReviewer> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Approving PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/approve")
+                    .post("".toRequestBody("application/json".toMediaType()))
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val reviewer = json.decodeFromString<BitbucketPrReviewer>(body)
+                            log.info("[Core:Bitbucket] PR #$prId approved")
+                            ApiResult.Success(reviewer)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "Cannot approve PR #$prId — already approved or not a reviewer")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error approving PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Removes approval from a pull request.
+     * DELETE /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/approve
+     */
+    suspend fun unapprovePullRequest(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<BitbucketPrReviewer> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Removing approval from PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/approve")
+                    .delete()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val reviewer = json.decodeFromString<BitbucketPrReviewer>(body)
+                            log.info("[Core:Bitbucket] PR #$prId approval removed")
+                            ApiResult.Success(reviewer)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error unapproving PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Merges a pull request.
+     * POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/merge?version={version}
+     * Requires version for optimistic locking.
+     */
+    suspend fun mergePullRequest(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        version: Int
+    ): ApiResult<BitbucketPrDetail> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Merging PR #$prId in $projectKey/$repoSlug (version=$version)")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/merge?version=$version")
+                    .post("".toRequestBody("application/json".toMediaType()))
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val pr = json.decodeFromString<BitbucketPrDetail>(body)
+                            log.info("[Core:Bitbucket] PR #$prId merged successfully")
+                            ApiResult.Success(pr)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR #$prId version conflict or merge preconditions not met — refresh and retry")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error merging PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Declines a pull request.
+     * POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/decline?version={version}
+     * Requires version for optimistic locking.
+     */
+    suspend fun declinePullRequest(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        version: Int
+    ): ApiResult<BitbucketPrDetail> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Declining PR #$prId in $projectKey/$repoSlug (version=$version)")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/decline?version=$version")
+                    .post("".toRequestBody("application/json".toMediaType()))
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val pr = json.decodeFromString<BitbucketPrDetail>(body)
+                            log.info("[Core:Bitbucket] PR #$prId declined")
+                            ApiResult.Success(pr)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR #$prId version conflict — refresh and retry")
+                        else -> {
+                            val errorBody = it.body?.string() ?: ""
+                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error declining PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets the raw diff for a pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/diff
+     * Returns the diff as plain text.
+     */
+    suspend fun getPullRequestDiff(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<String> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching diff for PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/diff")
+                    .get()
+                    .header("Accept", "text/plain")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            log.info("[Core:Bitbucket] PR #$prId diff fetched (${body.length} chars)")
+                            ApiResult.Success(body)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId diff", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets the list of changed files for a pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/changes?limit=100
+     */
+    suspend fun getPullRequestChanges(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int
+    ): ApiResult<List<BitbucketPrChange>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching changes for PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/changes?limit=100")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrChangesResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} changed files in PR #$prId")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId changes", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }

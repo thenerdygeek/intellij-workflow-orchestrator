@@ -99,5 +99,27 @@ sealed class WorkflowEvent {
         val ticketSummary: String
     ) : WorkflowEvent()
 
+    /** Emitted when a pull request is updated (title, description, reviewers). */
+    data class PullRequestUpdated(
+        val prId: Int,
+        val field: String
+    ) : WorkflowEvent()
+
+    /** Emitted when a pull request is merged. */
+    data class PullRequestMerged(
+        val prId: Int
+    ) : WorkflowEvent()
+
+    /** Emitted when a pull request is declined. */
+    data class PullRequestDeclined(
+        val prId: Int
+    ) : WorkflowEvent()
+
+    /** Emitted when a pull request is approved by a user. */
+    data class PullRequestApproved(
+        val prId: Int,
+        val byUser: String
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

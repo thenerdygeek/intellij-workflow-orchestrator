@@ -227,9 +227,10 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         val defaultTabs = listOf(
             DefaultTab("Sprint", 0, "No tickets assigned.\nConnect to Jira in Settings to get started."),
             DefaultTab("Build", 1, "No builds found.\nPush your changes to trigger a CI build."),
-            DefaultTab("Quality", 2, "No quality data available.\nConnect to SonarQube in Settings."),
-            DefaultTab("Automation", 3, "Automation suite not configured.\nSet up Bamboo in Settings."),
-            DefaultTab("Handover", 4, "No active task to hand over.\nStart work on a ticket first.")
+            DefaultTab("PR", 2, "No pull requests found.\nConnect to Bitbucket in Settings."),
+            DefaultTab("Quality", 3, "No quality data available.\nConnect to SonarQube in Settings."),
+            DefaultTab("Automation", 4, "Automation suite not configured.\nSet up Bamboo in Settings."),
+            DefaultTab("Handover", 5, "No active task to hand over.\nStart work on a ticket first.")
         )
 
         defaultTabs.forEach { tab ->

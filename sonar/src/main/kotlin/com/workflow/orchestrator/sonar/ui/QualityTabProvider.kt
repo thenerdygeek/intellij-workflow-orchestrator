@@ -10,7 +10,7 @@ class QualityTabProvider : WorkflowTabProvider {
 
     override val tabId: String = "quality"
     override val tabTitle: String = "Quality"
-    override val order: Int = 2
+    override val order: Int = 3
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)

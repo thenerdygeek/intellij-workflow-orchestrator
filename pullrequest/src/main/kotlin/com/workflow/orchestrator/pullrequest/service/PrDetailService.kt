@@ -1,0 +1,121 @@
+package com.workflow.orchestrator.pullrequest.service
+
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.settings.ConnectionSettings
+import com.workflow.orchestrator.core.settings.PluginSettings
+
+/**
+ * Project-level service for fetching detailed PR information:
+ * activities (comments, approvals), file changes, and diffs.
+ *
+ * Delegates all HTTP calls to BitbucketBranchClient from :core.
+ */
+@Service(Service.Level.PROJECT)
+class PrDetailService(private val project: Project) {
+
+    private val log = Logger.getInstance(PrDetailService::class.java)
+
+    companion object {
+        fun getInstance(project: Project): PrDetailService {
+            return project.getService(PrDetailService::class.java)
+        }
+    }
+
+    private fun createClient(): BitbucketBranchClient? {
+        val connSettings = ConnectionSettings.getInstance().state
+        val bitbucketUrl = connSettings.bitbucketUrl.trimEnd('/')
+        if (bitbucketUrl.isBlank()) return null
+
+        val credentialStore = CredentialStore()
+        return BitbucketBranchClient(
+            baseUrl = bitbucketUrl,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+    }
+
+    private fun projectKey(): String =
+        PluginSettings.getInstance(project).state.bitbucketProjectKey.orEmpty()
+
+    private fun repoSlug(): String =
+        PluginSettings.getInstance(project).state.bitbucketRepoSlug.orEmpty()
+
+    private fun isConfigured(): Boolean =
+        projectKey().isNotBlank() && repoSlug().isNotBlank()
+
+    /**
+     * Fetches a single PR by ID.
+     */
+    suspend fun getDetail(prId: Int): BitbucketPrDetail? {
+        val client = createClient() ?: return null
+        if (!isConfigured()) return null
+
+        log.info("[PR:Detail] Fetching PR #$prId")
+        return when (val result = client.getPullRequestDetail(projectKey(), repoSlug(), prId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                log.warn("[PR:Detail] Failed to fetch PR #$prId: ${result.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * Fetches activities (comments, approvals, status changes) for a PR.
+     */
+    suspend fun getActivities(prId: Int): List<BitbucketPrActivity> {
+        val client = createClient() ?: return emptyList()
+        if (!isConfigured()) return emptyList()
+
+        log.info("[PR:Detail] Fetching activities for PR #$prId")
+        return when (val result = client.getPullRequestActivities(projectKey(), repoSlug(), prId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                log.warn("[PR:Detail] Failed to fetch activities for PR #$prId: ${result.message}")
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * Fetches file changes for a PR.
+     */
+    suspend fun getChanges(prId: Int): List<BitbucketPrChange> {
+        val client = createClient() ?: return emptyList()
+        if (!isConfigured()) return emptyList()
+
+        log.info("[PR:Detail] Fetching changes for PR #$prId")
+        return when (val result = client.getPullRequestChanges(projectKey(), repoSlug(), prId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                log.warn("[PR:Detail] Failed to fetch changes for PR #$prId: ${result.message}")
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * Fetches the raw diff for a PR.
+     */
+    suspend fun getDiff(prId: Int): String? {
+        val client = createClient() ?: return null
+        if (!isConfigured()) return null
+
+        log.info("[PR:Detail] Fetching diff for PR #$prId")
+        return when (val result = client.getPullRequestDiff(projectKey(), repoSlug(), prId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                log.warn("[PR:Detail] Failed to fetch diff for PR #$prId: ${result.message}")
+                null
+            }
+        }
+    }
+}

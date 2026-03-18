@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.handover.ui
+package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -6,23 +6,22 @@ import com.workflow.orchestrator.core.toolwindow.EmptyStatePanel
 import com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider
 import javax.swing.JComponent
 
-class HandoverTabProvider : WorkflowTabProvider {
+class PrTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = "handover"
-    override val tabTitle: String = "Handover"
-    override val order: Int = 5
+    override val tabId: String = "pr"
+    override val tabTitle: String = "PR"
+    override val order: Int = 2
 
     override fun createPanel(project: Project): JComponent {
         val settings = PluginSettings.getInstance(project)
-        val hasJira = !settings.connections.jiraUrl.isNullOrBlank()
         val hasBitbucket = !settings.connections.bitbucketUrl.isNullOrBlank()
 
-        return if (hasJira || hasBitbucket) {
-            HandoverPanel(project)
+        return if (hasBitbucket) {
+            PrDashboardPanel(project)
         } else {
             EmptyStatePanel(
                 project,
-                "No handover services configured.\nConnect Jira and Bitbucket in Settings to get started."
+                "No pull request services configured.\nConnect Bitbucket in Settings to get started."
             )
         }
     }

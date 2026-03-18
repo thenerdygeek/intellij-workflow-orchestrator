@@ -60,6 +60,7 @@ dependencies {
     implementation(project(":bamboo"))
     implementation(project(":sonar"))
     implementation(project(":cody"))
+    implementation(project(":pullrequest"))
     implementation(project(":automation"))
     implementation(project(":handover"))
 
