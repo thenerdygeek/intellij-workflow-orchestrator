@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
+import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.serialization.json.*
 import java.util.concurrent.atomic.AtomicBoolean
@@ -97,7 +98,8 @@ class AgentOrchestrator(
         onProgress: (AgentProgress) -> Unit
     ): AgentResult {
         val workerType = WorkerType.CODER
-        val contextManager = ContextManager(maxInputTokens = 150_000)
+        val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
+        val contextManager = ContextManager(maxInputTokens = maxTokens)
         val toolsList = toolRegistry.getToolsForWorker(workerType)
         val toolsMap = toolsList.associateBy { it.name }
         val toolDefs = toolRegistry.getToolDefinitionsForWorker(workerType)
@@ -211,7 +213,8 @@ class AgentOrchestrator(
                     completedTasks = completedCount
                 ))
 
-                val contextManager = ContextManager()
+                val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
+                val contextManager = ContextManager(maxInputTokens = maxTokens)
                 val toolsList = toolRegistry.getToolsForWorker(workerType)
                 val toolsMap = toolsList.associateBy { it.name }
                 val toolDefs = toolRegistry.getToolDefinitionsForWorker(workerType)
@@ -239,15 +242,15 @@ class AgentOrchestrator(
                     completedCount++
                 }
 
-                // Checkpoint after each task
-                checkpointStore?.save("current", AgentCheckpoint(
+                // Checkpoint after each task (best-effort — never abort plan for I/O errors)
+                try { checkpointStore?.save("current", AgentCheckpoint(
                     taskId = "current",
                     taskGraphState = taskGraph.toSerializableState(),
                     completedSummaries = taskGraph.getAllTasks()
                         .filter { it.status == TaskStatus.COMPLETED }
                         .associate { it.id to (it.resultSummary ?: "") },
                     timestamp = System.currentTimeMillis()
-                ))
+                )) } catch (e: Exception) { LOG.warn("Checkpoint save failed (non-fatal)", e) }
             }
         }
 

@@ -59,7 +59,7 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         add(tokenWidget, BorderLayout.SOUTH)
     }
 
-    fun showPlan(tasks: List<String>) {
+    fun showPlan(tasks: List<String>) = runOnEdt {
         stepListModel.clear()
         completedSteps.clear()
         currentStep.clear()
@@ -70,7 +70,7 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         cancelButton.isEnabled = true
     }
 
-    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) {
+    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
         // Mark previous current steps as completed
         completedSteps.addAll(currentStep)
         currentStep.clear()
@@ -86,7 +86,7 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         tokenWidget.update(tokensUsed, maxTokens)
     }
 
-    fun showResult(text: String) {
+    fun showResult(text: String) = runOnEdt {
         completedSteps.addAll(currentStep)
         currentStep.clear()
         stepList.repaint()
@@ -94,13 +94,22 @@ class AgentDashboardPanel : JPanel(BorderLayout()) {
         cancelButton.isEnabled = false
     }
 
-    fun reset() {
+    fun reset() = runOnEdt {
         stepListModel.clear()
         completedSteps.clear()
         currentStep.clear()
         outputArea.text = ""
         tokenWidget.update(0, 0)
         cancelButton.isEnabled = false
+    }
+
+    /** Ensure UI mutations run on EDT regardless of calling thread. */
+    private fun runOnEdt(action: () -> Unit) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            action()
+        } else {
+            SwingUtilities.invokeLater(action)
+        }
     }
 
     private inner class StepListCellRenderer : DefaultListCellRenderer() {

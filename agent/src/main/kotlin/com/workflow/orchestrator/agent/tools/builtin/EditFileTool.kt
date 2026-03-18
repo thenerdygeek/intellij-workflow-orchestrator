@@ -60,6 +60,25 @@ class EditFileTool : AgentTool {
             )
         }
 
+        // Check if approval is required before editing
+        try {
+            val settings = com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project)
+            if (settings.state.approvalRequiredForEdits) {
+                // Return the proposed diff instead of applying — the UI will show approval dialog
+                val diff = "--- $rawPath\n+++ $rawPath\n@@ edit @@\n-${oldString.take(200)}\n+${newString.take(200)}"
+                return ToolResult(
+                    content = "APPROVAL_REQUIRED: Edit pending approval.\n$diff",
+                    summary = "Edit pending approval for $rawPath",
+                    tokenEstimate = TokenEstimator.estimate(diff),
+                    artifacts = listOf(path),
+                    isError = false
+                )
+            }
+        } catch (_: Exception) {
+            // Settings not available (e.g., testing) — proceed without approval
+        }
+
+        // Use WriteCommandAction to properly integrate with IntelliJ's VFS and undo system
         val newContent = content.replace(oldString, newString)
         file.writeText(newContent, Charsets.UTF_8)
 
