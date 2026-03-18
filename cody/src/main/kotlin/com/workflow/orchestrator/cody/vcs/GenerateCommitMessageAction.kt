@@ -61,21 +61,19 @@ class GenerateCommitMessageAction : AnAction(
             val settings = PluginSettings.getInstance(project)
             val ticketId = settings.state.activeTicketId.orEmpty()
 
-            // Get the actual git diff — this is what Cody needs to understand the changes
+            // Get the actual git diff
             val diff = getGitDiff(project)
             if (diff.isNullOrBlank()) {
                 log.warn("[Cody:CommitMsg] No diff found")
                 return null
             }
 
-            // Truncate diff if too large (keep it under ~8K chars for prompt)
+            // Truncate diff if too large (keep under ~8K chars for the analysis prompt)
             val truncatedDiff = if (diff.length > 8000) {
                 diff.take(8000) + "\n... (diff truncated, ${diff.length - 8000} chars omitted)"
             } else diff
 
-            // Get changed files as context items with only the changed line ranges.
-            // The diff is already in the prompt — context items give Cody the surrounding
-            // code structure for better understanding, so we only need the changed regions.
+            // Build context items with changed line ranges for file-level understanding
             val contextItems = try {
                 val changeListManager = ChangeListManager.getInstance(project)
                 changeListManager.allChanges.mapNotNull { change ->
@@ -88,7 +86,6 @@ class GenerateCommitMessageAction : AnAction(
                     val range = if (beforeContent != null) {
                         computeChangedRange(beforeContent, afterContent)
                     } else {
-                        // New file — include first 100 lines max
                         val lineCount = minOf(afterContent.count { it == '\n' } + 1, 100)
                         Range(Position(0, 0), Position(lineCount - 1, 0))
                     }
@@ -96,26 +93,29 @@ class GenerateCommitMessageAction : AnAction(
                 }.take(15)
             } catch (_: Exception) { emptyList() }
 
-            // Build prompt with diff inline
-            val prompt = buildString {
-                appendLine("Generate a git commit message for the following changes.")
-                appendLine("Format:")
-                appendLine("- First line: conventional commit summary (feat/fix/refactor/etc), max 72 chars")
-                appendLine("- Blank line")
-                appendLine("- Body: bullet points (- prefix) summarizing each logical change")
-                appendLine("No quotes or backticks around the message. Output only the commit message.")
-                if (ticketId.isNotBlank()) {
-                    appendLine("Prefix the summary line with ticket ID: $ticketId")
-                }
-                appendLine()
-                appendLine("Git diff:")
-                appendLine("```")
-                appendLine(truncatedDiff)
-                appendLine("```")
-            }
+            // Build a short summary of changed files for the analysis step
+            val filesSummary = try {
+                val changeListManager = ChangeListManager.getInstance(project)
+                changeListManager.allChanges.mapNotNull { change ->
+                    val path = (change.afterRevision ?: change.beforeRevision)?.file?.path ?: return@mapNotNull null
+                    val fileName = path.substringAfterLast('/')
+                    val changeType = when {
+                        change.beforeRevision == null -> "new"
+                        change.afterRevision == null -> "deleted"
+                        else -> "modified"
+                    }
+                    "$fileName ($changeType)"
+                }.joinToString(", ")
+            } catch (_: Exception) { "" }
 
-            log.info("[Cody:CommitMsg] Sending prompt with ${truncatedDiff.length} char diff, ${contextItems.size} context items")
-            CodyChatService(project).generateCommitMessage(prompt, contextItems)
+            log.info("[Cody:CommitMsg] Starting chained generation: ${truncatedDiff.length} char diff, ${contextItems.size} context items, files: $filesSummary")
+
+            CodyChatService(project).generateCommitMessageChained(
+                diff = truncatedDiff,
+                contextItems = contextItems,
+                ticketId = ticketId,
+                filesSummary = filesSummary
+            )
         } catch (ex: Exception) {
             log.warn("[Cody:CommitMsg] Generation failed: ${ex.message}")
             null
