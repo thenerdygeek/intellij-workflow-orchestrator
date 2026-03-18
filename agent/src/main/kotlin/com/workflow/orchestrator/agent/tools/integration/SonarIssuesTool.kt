@@ -1,0 +1,108 @@
+package com.workflow.orchestrator.agent.tools.integration
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.security.InputSanitizer
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.http.AuthInterceptor
+import com.workflow.orchestrator.core.http.AuthScheme
+import com.workflow.orchestrator.core.http.RetryInterceptor
+import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.settings.ConnectionSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
+
+class SonarIssuesTool(
+    private val urlProvider: () -> String = { ConnectionSettings.getInstance().state.sonarUrl },
+    private val tokenProvider: () -> String? = { CredentialStore().getToken(ServiceType.SONARQUBE) }
+) : AgentTool {
+
+    override val name = "sonar_issues"
+    override val description = "Get open SonarQube issues for a project, optionally filtered by file."
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key"),
+            "file" to ParameterProperty(type = "string", description = "Optional file path to filter issues")
+        ),
+        required = listOf("project_key")
+    )
+    override val allowedWorkers = setOf(WorkerType.TOOLER)
+
+    override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        val projectKey = params["project_key"]?.jsonPrimitive?.content
+            ?: return ToolResult("Error: 'project_key' parameter required", "Error: missing project_key", 5, isError = true)
+        val file = params["file"]?.jsonPrimitive?.content
+
+        val baseUrl = urlProvider().trimEnd('/')
+        if (baseUrl.isBlank()) {
+            return ToolResult("Error: SonarQube URL not configured", "Error: SonarQube URL not configured", 5, isError = true)
+        }
+
+        val token = tokenProvider()
+        if (token.isNullOrBlank()) {
+            return ToolResult("Error: SonarQube token not configured", "Error: SonarQube token not configured", 5, isError = true)
+        }
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val client = buildClient(token)
+                val urlBuilder = "$baseUrl/api/issues/search".toHttpUrl().newBuilder()
+                    .addQueryParameter("componentKeys", projectKey)
+                    .addQueryParameter("resolved", "false")
+                if (file != null) {
+                    urlBuilder.addQueryParameter("files", file)
+                }
+                val request = Request.Builder()
+                    .url(urlBuilder.build())
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        return@withContext ToolResult(
+                            content = "Error: SonarQube returned HTTP ${response.code} for project $projectKey",
+                            summary = "Error: HTTP ${response.code}",
+                            tokenEstimate = 10,
+                            isError = true
+                        )
+                    }
+                    val body = response.body?.string() ?: ""
+                    val sanitized = InputSanitizer.sanitizeExternalData(body, "sonar", projectKey)
+                    ToolResult(
+                        content = sanitized,
+                        summary = "Retrieved SonarQube issues for $projectKey${if (file != null) " (file: $file)" else ""}",
+                        tokenEstimate = TokenEstimator.estimate(sanitized)
+                    )
+                }
+            } catch (e: Exception) {
+                ToolResult(
+                    content = "Error: Failed to fetch SonarQube issues for $projectKey: ${e.message}",
+                    summary = "Error: ${e.message}",
+                    tokenEstimate = 10,
+                    isError = true
+                )
+            }
+        }
+    }
+
+    private fun buildClient(token: String): OkHttpClient {
+        return OkHttpClient.Builder()
+            .addInterceptor(AuthInterceptor({ token }, AuthScheme.BEARER))
+            .addInterceptor(RetryInterceptor(maxRetries = 2))
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+}

@@ -144,5 +144,30 @@ sealed class WorkflowEvent {
         val toBranch: String
     ) : WorkflowEvent()
 
+    /** Emitted by :agent when a task starts execution. */
+    data class AgentTaskStarted(
+        val taskId: String,
+        val description: String
+    ) : WorkflowEvent()
+
+    /** Emitted by :agent when a task completes successfully. */
+    data class AgentTaskCompleted(
+        val taskId: String,
+        val summary: String
+    ) : WorkflowEvent()
+
+    /** Emitted by :agent when a task fails. */
+    data class AgentTaskFailed(
+        val taskId: String,
+        val error: String
+    ) : WorkflowEvent()
+
+    /** Emitted by :agent when a worker progresses (step completion, token usage). */
+    data class AgentWorkerProgress(
+        val taskId: String,
+        val step: String,
+        val tokensUsed: Int
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
