@@ -691,32 +691,43 @@ class PrDetailPanel(
         }
 
         private fun enhanceWithCody() {
-            val prId = currentPrId ?: return
-            val pr = currentPr ?: return
+            log.info("[PR:Cody] enhanceWithCody() called, prId=${currentPrId}, pr=${currentPr != null}")
+            val prId = currentPrId
+            if (prId == null) {
+                log.warn("[PR:Cody] currentPrId is null — aborting")
+                return
+            }
+            val pr = currentPr
+            if (pr == null) {
+                log.warn("[PR:Cody] currentPr is null — aborting")
+                return
+            }
             enhanceWithCodyButton.isEnabled = false
             enhanceWithCodyButton.text = "Generating..."
+            log.info("[PR:Cody] Button disabled, starting coroutine")
 
             scope.launch {
                 try {
+                    log.info("[PR:Cody] Coroutine started, checking TextGenerationService")
                     val textGen = com.workflow.orchestrator.core.ai.TextGenerationService.getInstance()
+                    log.info("[PR:Cody] TextGenerationService: ${textGen?.javaClass?.simpleName ?: "NULL"}")
                     if (textGen == null) {
                         SwingUtilities.invokeLater {
                             enhanceWithCodyButton.isEnabled = true
                             enhanceWithCodyButton.text = "Enhance with Cody"
                             enhanceWithCodyButton.toolTipText = "Cody is not running — start the Cody agent first"
-                            log.warn("[PR:Detail] TextGenerationService not available")
                         }
                         return@launch
                     }
 
-                    // Get PR diff
+                    log.info("[PR:Cody] Fetching diff for PR #$prId")
                     val diff = PrDetailService.getInstance(project).getDiff(prId)
+                    log.info("[PR:Cody] Diff result: ${if (diff == null) "NULL" else "${diff.length} chars"}")
                     if (diff.isNullOrBlank()) {
                         SwingUtilities.invokeLater {
                             enhanceWithCodyButton.isEnabled = true
                             enhanceWithCodyButton.text = "Enhance with Cody"
                             enhanceWithCodyButton.toolTipText = "Could not fetch PR diff from Bitbucket"
-                            log.warn("[PR:Detail] PR diff is empty for PR #$prId")
                         }
                         return@launch
                     }
@@ -728,6 +739,7 @@ class PrDetailPanel(
                     val ticketId = com.workflow.orchestrator.core.settings.PluginSettings
                         .getInstance(project).state.activeTicketId.orEmpty()
 
+                    log.info("[PR:Cody] Calling generatePrDescription: diff=${truncatedDiff.length} chars, ticketId=$ticketId, title=${pr.title}, from=${pr.fromRef?.displayId}, to=${pr.toRef?.displayId}")
                     val enhanced = textGen.generatePrDescription(
                         project = project,
                         diff = truncatedDiff,
@@ -738,7 +750,7 @@ class PrDetailPanel(
                         targetBranch = pr.toRef?.displayId ?: ""
                     )
 
-                    log.info("[PR:Detail] Cody PR description result: ${enhanced?.length ?: 0} chars")
+                    log.info("[PR:Cody] generatePrDescription result: ${if (enhanced == null) "NULL" else "${enhanced.length} chars"}")
                     SwingUtilities.invokeLater {
                         enhanceWithCodyButton.isEnabled = true
                         enhanceWithCodyButton.text = "Enhance with Cody"
@@ -747,13 +759,14 @@ class PrDetailPanel(
                             enterEditMode()
                             editArea.text = enhanced
                             editArea.caretPosition = 0
+                            log.info("[PR:Cody] Description set in edit mode")
                         } else {
                             enhanceWithCodyButton.toolTipText = "Cody returned empty — check IDE log for [Cody:PrChain] errors"
-                            log.warn("[PR:Detail] Cody returned null/empty for PR #$prId description")
+                            log.warn("[PR:Cody] Cody returned null/empty for PR #$prId")
                         }
                     }
                 } catch (e: Exception) {
-                    log.warn("[PR:Detail] Enhance with Cody failed: ${e.message}", e)
+                    log.warn("[PR:Cody] Exception: ${e::class.simpleName}: ${e.message}", e)
                     SwingUtilities.invokeLater {
                         enhanceWithCodyButton.isEnabled = true
                         enhanceWithCodyButton.text = "Enhance with Cody"
