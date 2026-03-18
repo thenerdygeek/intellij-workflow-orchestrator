@@ -24,17 +24,6 @@ class CodyChatService(private val project: Project) {
     }
 
     /**
-     * Multi-turn prompt chain for structured commit message generation.
-     *
-     * Step 1 (Analyze): Send the diff with analysis instructions.
-     *   The LLM categorizes changes, identifies scope, and lists modifications.
-     *
-     * Step 2 (Generate): Using the analysis context from Step 1,
-     *   generate a properly formatted conventional commit message.
-     *
-     * Both steps share the same chatId so the agent retains context.
-     */
-    /**
      * Three-step prompt chain for high-quality commit message generation.
      *
      * Step 1 (Understand): Deep semantic analysis of the diff — what changed,
@@ -164,16 +153,159 @@ class CodyChatService(private val project: Project) {
             return cleanMessage(draft)
         }
 
-        val final = cleanMessage(refined)
-        log.info("[Cody:CommitChain] Final commit message:\n$final")
-        return final
+        val result = cleanMessage(refined)
+        log.info("[Cody:CommitChain] Final commit message:\n$result")
+        return result
+    }
+
+    /**
+     * Three-step prompt chain for high-quality PR description generation.
+     *
+     * Step 1 (Understand): Analyze the diff + commits to understand the full scope
+     *   of the PR — what changed, why, and what reviewers need to know.
+     *
+     * Step 2 (Draft): Generate a structured markdown PR description with
+     *   Summary, Changes, Testing, and optional Breaking Changes sections.
+     *
+     * Step 3 (Refine): Self-review against PR description quality criteria.
+     */
+    suspend fun generatePrDescriptionChained(
+        diff: String,
+        commitMessages: List<String> = emptyList(),
+        contextItems: List<ContextFile> = emptyList(),
+        ticketId: String = "",
+        ticketSummary: String = "",
+        ticketDescription: String = "",
+        sourceBranch: String = "",
+        targetBranch: String = ""
+    ): String? {
+        val session = startSession(contextItems)
+
+        // ── Step 1: Understand the PR scope ──
+        val analysisPrompt = buildString {
+            appendLine("You are reviewing a pull request. Analyze ALL the changes to understand the full scope.")
+            appendLine()
+            appendLine("Respond in exactly this format:")
+            appendLine()
+            appendLine("PURPOSE: <What is this PR trying to accomplish? One clear sentence.>")
+            appendLine("TYPE: <feature|bugfix|refactor|performance|infrastructure|documentation>")
+            appendLine("RISK_LEVEL: <low|medium|high> — how risky is this change for reviewers?")
+            appendLine("SEMANTIC_CHANGES:")
+            appendLine("- <What logical change was made and its impact>")
+            appendLine("TESTING_NOTES: <What should be tested? What edge cases exist?>")
+            appendLine("BREAKING_CHANGES: <Any API/behavior changes that affect consumers? 'none' if none>")
+            appendLine("REVIEWER_ATTENTION: <What specific areas should reviewers focus on?>")
+            appendLine()
+            appendLine("Analysis rules:")
+            appendLine("- PURPOSE should be understandable by someone who hasn't seen the code")
+            appendLine("- SEMANTIC_CHANGES: describe behavioral changes, not file-level edits")
+            appendLine("- Group related edits into single bullets")
+            appendLine("- TESTING_NOTES: be specific about scenarios, not generic 'test the feature'")
+            if (ticketId.isNotBlank()) {
+                appendLine()
+                appendLine("Jira ticket: $ticketId — $ticketSummary")
+                if (ticketDescription.isNotBlank()) {
+                    appendLine("Ticket description: ${ticketDescription.take(500)}")
+                }
+            }
+            appendLine()
+            appendLine("Branch: $sourceBranch → $targetBranch")
+            if (commitMessages.isNotEmpty()) {
+                appendLine()
+                appendLine("Commits in this PR:")
+                commitMessages.take(20).forEach { appendLine("  - $it") }
+            }
+            appendLine()
+            appendLine("Diff (may be truncated):")
+            appendLine("```diff")
+            appendLine(diff)
+            appendLine("```")
+        }
+
+        log.info("[Cody:PrChain] Step 1/3: Understanding PR scope (${analysisPrompt.length} chars)")
+        val analysis = sendMessage(session, analysisPrompt, contextItems)
+        if (analysis == null) {
+            log.warn("[Cody:PrChain] Step 1 failed")
+            return null
+        }
+        log.info("[Cody:PrChain] Step 1 result:\n$analysis")
+
+        // ── Step 2: Draft the PR description ──
+        val draftPrompt = buildString {
+            appendLine("Now write a pull request description in markdown based on your analysis.")
+            appendLine("Output ONLY the markdown — no preamble, no wrapping code blocks.")
+            appendLine()
+            appendLine("Use this structure:")
+            appendLine()
+            appendLine("## Summary")
+            appendLine("2-3 sentences explaining what this PR does and why. Written for someone")
+            appendLine("who will read this in a PR review email — clear, concise, no jargon.")
+            appendLine()
+            appendLine("## Changes")
+            appendLine("Bullet list of specific changes. Each bullet describes a behavioral change,")
+            appendLine("not a file edit. Use imperative mood ('Add', not 'Added').")
+            appendLine()
+            appendLine("## Testing")
+            appendLine("How this was tested and what reviewers should verify.")
+            appendLine("Use checkboxes: - [ ] for TODO items, - [x] for completed items.")
+            appendLine()
+            if (ticketId.isNotBlank()) {
+                appendLine("## Jira")
+                appendLine("Link to $ticketId with the ticket summary.")
+                appendLine()
+            }
+            appendLine("If there are breaking changes, add a ## Breaking Changes section.")
+            appendLine()
+            appendLine("Quality rules:")
+            appendLine("- Summary should be understandable without reading the code")
+            appendLine("- Changes bullets focus on WHAT and WHY, not HOW")
+            appendLine("- Use `backticks` for class names, method names, config keys")
+            appendLine("- Be concise — reviewers scan, they don't read novels")
+            appendLine("- NO file paths in the Changes section")
+        }
+
+        log.info("[Cody:PrChain] Step 2/3: Drafting PR description")
+        val draft = sendMessage(session, draftPrompt)
+        if (draft == null) {
+            log.warn("[Cody:PrChain] Step 2 failed")
+            return null
+        }
+        log.info("[Cody:PrChain] Step 2 draft:\n${draft.take(300)}")
+
+        // ── Step 3: Self-review and refine ──
+        val refinePrompt = buildString {
+            appendLine("Review the PR description you just wrote. Check each criterion and fix issues.")
+            appendLine("Output ONLY the final corrected markdown — no commentary.")
+            appendLine()
+            appendLine("Checklist:")
+            appendLine("1. Would a reviewer understand the PR from the Summary alone?")
+            appendLine("2. Are Changes bullets behavioral/logical, not file-level edits?")
+            appendLine("3. Is Testing specific enough to actually follow?")
+            appendLine("4. No redundancy between Summary and Changes?")
+            appendLine("5. No unnecessary sections (remove empty sections)?")
+            appendLine("6. Professional tone — no 'I', no casual language?")
+            appendLine("7. Markdown formatting correct (headers, bullets, checkboxes)?")
+            appendLine()
+            appendLine("If the draft is already good, output it unchanged.")
+        }
+
+        log.info("[Cody:PrChain] Step 3/3: Self-review and refinement")
+        val refined = sendMessage(session, refinePrompt)
+        if (refined == null) {
+            log.warn("[Cody:PrChain] Step 3 failed, using draft")
+            return cleanMessage(draft)
+        }
+
+        val result = cleanMessage(refined)
+        log.info("[Cody:PrChain] Final PR description (${result.length} chars)")
+        return result
     }
 
     /** Strip markdown wrappers the LLM might add despite instructions. */
     private fun cleanMessage(raw: String): String {
         return raw
-            .removePrefix("```\n").removePrefix("```")
-            .removeSuffix("\n```").removeSuffix("```")
+            .replace(Regex("^```[a-z]*\\n?"), "")
+            .replace(Regex("\\n?```$"), "")
             .trim()
     }
 

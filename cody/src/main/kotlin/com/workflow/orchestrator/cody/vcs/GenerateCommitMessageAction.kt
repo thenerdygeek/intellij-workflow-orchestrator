@@ -23,11 +23,8 @@ import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
 import git4idea.repo.GitRepositoryManager
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Action that appears in the commit dialog's message toolbar (Vcs.MessageActionGroup).
@@ -40,69 +37,52 @@ class GenerateCommitMessageAction : AnAction(
 ) {
 
     private val log = Logger.getInstance(GenerateCommitMessageAction::class.java)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-    @Volatile
-    private var generating = false
-    private var activeJob: Job? = null
+    private val generating = AtomicBoolean(false)
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val commitMessage = e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) as? CommitMessage ?: return
+        val modalityState = ModalityState.stateForComponent(commitMessage.editorField)
 
-        // If already generating, cancel
-        if (generating) {
-            log.info("[Cody:CommitMsg] Cancelling generation")
-            activeJob?.cancel()
-            generating = false
+        if (!generating.compareAndSet(false, true)) {
+            log.info("[Cody:CommitMsg] Already generating — ignoring")
             return
         }
 
         log.info("[Cody:CommitMsg] Generate commit message triggered")
-        generating = true
 
         // Run as a backgroundable task with progress in the status bar.
-        // The commit message field is NOT touched until we have a result.
+        // Uses runBlocking inside the background thread (NOT EDT — safe per project rules).
         ProgressManager.getInstance().run(object : Task.Backgroundable(
             project,
             "Generating commit message with Cody...",
             true // cancellable
         ) {
             override fun run(indicator: ProgressIndicator) {
-                indicator.isIndeterminate = false
+                indicator.isIndeterminate = true
                 indicator.text = "Analyzing changes..."
-                indicator.fraction = 0.1
 
-                activeJob = scope.launch {
-                    try {
-                        indicator.text = "Step 1/3: Understanding changes..."
-                        indicator.fraction = 0.2
-                        val message = generateMessage(project)
-                        indicator.fraction = 0.9
+                try {
+                    // runBlocking is safe here — we're on a background thread, not EDT
+                    val message = runBlocking { generateMessage(project) }
 
-                        ApplicationManager.getApplication().invokeLater({
-                            if (message != null) {
-                                commitMessage.setCommitMessage(message)
-                                log.info("[Cody:CommitMsg] Commit message generated (${message.length} chars)")
-                            } else {
-                                log.warn("[Cody:CommitMsg] Failed to generate commit message")
-                            }
-                            generating = false
-                        }, ModalityState.any())
-                    } catch (e: Exception) {
-                        log.warn("[Cody:CommitMsg] Generation failed: ${e.message}")
-                        generating = false
+                    if (indicator.isCanceled) {
+                        log.info("[Cody:CommitMsg] Generation cancelled by user")
+                        return
                     }
-                }
 
-                // Wait for the coroutine to complete (or cancellation)
-                while (activeJob?.isActive == true && !indicator.isCanceled) {
-                    Thread.sleep(100)
-                }
-                if (indicator.isCanceled) {
-                    activeJob?.cancel()
-                    generating = false
-                    log.info("[Cody:CommitMsg] Generation cancelled by user")
+                    ApplicationManager.getApplication().invokeLater({
+                        if (message != null) {
+                            commitMessage.setCommitMessage(message)
+                            log.info("[Cody:CommitMsg] Commit message generated (${message.length} chars)")
+                        } else {
+                            log.warn("[Cody:CommitMsg] Failed to generate commit message")
+                        }
+                    }, modalityState)
+                } catch (e: Exception) {
+                    log.warn("[Cody:CommitMsg] Generation failed: ${e.message}")
+                } finally {
+                    generating.set(false)
                 }
             }
         })
@@ -112,9 +92,10 @@ class GenerateCommitMessageAction : AnAction(
         val hasCommitControl = e.project != null &&
             e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) != null
         e.presentation.isEnabledAndVisible = hasCommitControl
-        if (generating) {
-            e.presentation.text = "Cancel Generation"
-            e.presentation.icon = AllIcons.Actions.Suspend
+        e.presentation.isEnabled = hasCommitControl && !generating.get()
+        if (generating.get()) {
+            e.presentation.text = "Generating..."
+            e.presentation.icon = AllIcons.Process.Step_1
         } else {
             e.presentation.text = "Generate with Workflow"
             e.presentation.icon = AllIcons.Actions.Lightning
@@ -230,7 +211,7 @@ class GenerateCommitMessageAction : AnAction(
         return try {
             val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull() ?: return emptyList()
             val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
-                addParameters("--oneline", "-10", "--no-merges")
+                addParameters("--format=%s", "-10", "--no-merges")
             }
             val result = Git.getInstance().runCommand(handler)
             if (result.success()) {

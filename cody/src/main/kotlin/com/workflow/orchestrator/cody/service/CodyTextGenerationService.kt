@@ -44,4 +44,33 @@ class CodyTextGenerationService : TextGenerationService {
             null
         }
     }
+
+    override suspend fun generatePrDescription(
+        project: Project,
+        diff: String,
+        commitMessages: List<String>,
+        contextFilePaths: List<String>,
+        ticketId: String,
+        ticketSummary: String,
+        ticketDescription: String,
+        sourceBranch: String,
+        targetBranch: String
+    ): String? {
+        return try {
+            val contextItems = contextFilePaths.map { ContextFile.fromPath(it) }
+            CodyChatService(project).generatePrDescriptionChained(
+                diff = diff,
+                commitMessages = commitMessages,
+                contextItems = contextItems,
+                ticketId = ticketId,
+                ticketSummary = ticketSummary,
+                ticketDescription = ticketDescription,
+                sourceBranch = sourceBranch,
+                targetBranch = targetBranch
+            )
+        } catch (e: Exception) {
+            log.warn("[Cody:TextGen] PR description chain failed: ${e.message}")
+            null
+        }
+    }
 }
