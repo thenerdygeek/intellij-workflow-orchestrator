@@ -166,6 +166,7 @@ data class BitbucketPrActivity(
     val id: Long,
     val action: String,
     val comment: BitbucketPrComment? = null,
+    val commentAnchor: BitbucketCommentAnchor? = null,
     val user: BitbucketUser,
     val createdDate: Long = 0
 )
@@ -176,7 +177,18 @@ data class BitbucketPrComment(
     val text: String,
     val author: BitbucketUser,
     val createdDate: Long = 0,
-    val updatedDate: Long = 0
+    val updatedDate: Long = 0,
+    val anchor: BitbucketCommentAnchor? = null
+)
+
+/** Anchor data for inline code comments — identifies the file and line. */
+@Serializable
+data class BitbucketCommentAnchor(
+    val path: String = "",
+    val line: Int = 0,
+    val lineType: String = "",    // ADDED, REMOVED, CONTEXT
+    val fileType: String = "",    // FROM, TO
+    val srcPath: String? = null
 )
 
 @Serializable

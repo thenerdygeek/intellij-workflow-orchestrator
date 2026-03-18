@@ -629,7 +629,7 @@ class PrDetailPanel(
         private val activityListModel = DefaultListModel<ActivityDisplayItem>()
         private val activityList = JBList(activityListModel).apply {
             cellRenderer = ActivityCellRenderer()
-            fixedCellHeight = JBUI.scale(52)
+            fixedCellHeight = -1 // Variable height — inline comments need more space
             border = JBUI.Borders.empty()
             isOpaque = false
         }
@@ -642,6 +642,42 @@ class PrDetailPanel(
         init {
             isOpaque = false
             add(emptyLabel, BorderLayout.CENTER)
+
+            // Double-click on inline comment → navigate to file:line
+            activityList.addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    if (e.clickCount == 2) {
+                        val index = activityList.locationToIndex(e.point)
+                        if (index < 0) return
+                        val item = activityListModel.getElementAt(index)
+                        val path = item.anchorPath ?: return
+                        navigateToFile(path, item.anchorLine)
+                    }
+                }
+            })
+        }
+
+        private fun navigateToFile(relativePath: String, line: Int) {
+            val basePath = project.basePath ?: return
+            val fullPath = "$basePath/$relativePath"
+            val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                .findFileByPath(fullPath) ?: run {
+                log.warn("[PR:Activity] File not found locally: $fullPath")
+                return
+            }
+            com.intellij.openapi.application.invokeLater {
+                val editor = com.intellij.openapi.fileEditor.FileEditorManager
+                    .getInstance(project).openFile(vf, true).firstOrNull()
+                if (line > 0 && editor is com.intellij.openapi.fileEditor.TextEditor) {
+                    val offset = editor.editor.document.getLineStartOffset(
+                        (line - 1).coerceAtMost(editor.editor.document.lineCount - 1)
+                    )
+                    editor.editor.caretModel.moveToOffset(offset)
+                    editor.editor.scrollingModel.scrollToCaret(
+                        com.intellij.openapi.editor.ScrollType.CENTER
+                    )
+                }
+            }
         }
 
         fun showActivities(activities: List<com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity>) {
@@ -652,16 +688,25 @@ class PrDetailPanel(
                 add(emptyLabel, BorderLayout.CENTER)
             } else {
                 for (activity in activities) {
-                    val authorName = activity.comment?.author?.displayName ?: "Unknown"
+                    val authorName = activity.comment?.author?.displayName
+                        ?: activity.user.displayName
                     val commentText = activity.comment?.text ?: ""
                     val timestamp = if (activity.createdDate > 0) {
                         DATE_FORMAT.format(Date(activity.createdDate))
                     } else ""
+
+                    // Extract inline comment anchor (file + line)
+                    val anchor = activity.commentAnchor ?: activity.comment?.anchor
+                    val anchorPath = anchor?.path?.takeIf { it.isNotBlank() }
+                    val anchorLine = anchor?.line ?: 0
+
                     activityListModel.addElement(ActivityDisplayItem(
                         userName = authorName,
                         action = activity.action,
                         timestamp = timestamp,
-                        commentText = commentText
+                        commentText = commentText,
+                        anchorPath = anchorPath,
+                        anchorLine = anchorLine
                     ))
                 }
                 add(JBScrollPane(activityList).apply {
@@ -679,7 +724,11 @@ class PrDetailPanel(
         val userName: String,
         val action: String,
         val timestamp: String,
-        val commentText: String
+        val commentText: String,
+        /** File path for inline code comments (null for general activity). */
+        val anchorPath: String? = null,
+        /** Line number for inline code comments (0 = no line). */
+        val anchorLine: Int = 0
     )
 
     private class ActivityCellRenderer : ListCellRenderer<ActivityDisplayItem> {
@@ -691,7 +740,10 @@ class PrDetailPanel(
             cellHasFocus: Boolean
         ): Component {
             return JPanel(BorderLayout()).apply {
-                isOpaque = false
+                isOpaque = isSelected
+                if (isSelected) {
+                    background = list.selectionBackground
+                }
                 border = JBUI.Borders.empty(6, 8)
 
                 val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
@@ -699,24 +751,46 @@ class PrDetailPanel(
                 }
                 topRow.add(JBLabel(value.userName).apply {
                     font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                    if (isSelected) foreground = list.selectionForeground
                 })
                 topRow.add(JBLabel(formatAction(value.action)).apply {
                     font = font.deriveFont(JBUI.scale(11).toFloat())
-                    foreground = SECONDARY_TEXT
+                    foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
                 })
                 topRow.add(JBLabel(value.timestamp).apply {
                     font = font.deriveFont(JBUI.scale(10).toFloat())
-                    foreground = SECONDARY_TEXT
+                    foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
                 })
                 add(topRow, BorderLayout.NORTH)
 
+                val contentPanel = JPanel().apply {
+                    layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+                    isOpaque = false
+                    border = JBUI.Borders.emptyLeft(JBUI.scale(8))
+                }
+
+                // Show file:line anchor for inline code comments
+                if (value.anchorPath != null) {
+                    val fileName = value.anchorPath.substringAfterLast('/')
+                    val lineText = if (value.anchorLine > 0) ":${value.anchorLine}" else ""
+                    contentPanel.add(JBLabel("$fileName$lineText").apply {
+                        font = font.deriveFont(JBUI.scale(10).toFloat())
+                        foreground = JBColor(0x1A73E8, 0x8AB4F8) // Link blue
+                        icon = AllIcons.FileTypes.Java
+                        iconTextGap = JBUI.scale(4)
+                        toolTipText = "Double-click to navigate to ${value.anchorPath}$lineText"
+                    })
+                }
+
                 if (value.commentText.isNotBlank()) {
-                    val commentLabel = JBLabel(PrListPanel.truncate(value.commentText, 120)).apply {
+                    contentPanel.add(JBLabel(PrListPanel.truncate(value.commentText, 150)).apply {
                         font = font.deriveFont(JBUI.scale(11).toFloat())
-                        foreground = SECONDARY_TEXT
-                        border = JBUI.Borders.emptyLeft(JBUI.scale(8))
-                    }
-                    add(commentLabel, BorderLayout.CENTER)
+                        foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
+                    })
+                }
+
+                if (contentPanel.componentCount > 0) {
+                    add(contentPanel, BorderLayout.CENTER)
                 }
             }
         }
