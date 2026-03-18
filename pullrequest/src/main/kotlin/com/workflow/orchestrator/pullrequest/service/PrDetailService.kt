@@ -30,16 +30,21 @@ class PrDetailService(private val project: Project) {
         }
     }
 
-    private fun createClient(): BitbucketBranchClient? {
-        val connSettings = ConnectionSettings.getInstance().state
-        val bitbucketUrl = connSettings.bitbucketUrl.trimEnd('/')
-        if (bitbucketUrl.isBlank()) return null
+    private val credentialStore = CredentialStore()
+    @Volatile private var cachedClient: BitbucketBranchClient? = null
+    @Volatile private var cachedBaseUrl: String? = null
 
-        val credentialStore = CredentialStore()
-        return BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
+    private fun getClient(): BitbucketBranchClient? {
+        val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
+        if (url.isBlank()) return null
+        if (url != cachedBaseUrl || cachedClient == null) {
+            cachedBaseUrl = url
+            cachedClient = BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
+        }
+        return cachedClient
     }
 
     private fun projectKey(): String =
@@ -55,7 +60,7 @@ class PrDetailService(private val project: Project) {
      * Fetches a single PR by ID.
      */
     suspend fun getDetail(prId: Int): BitbucketPrDetail? {
-        val client = createClient() ?: return null
+        val client = getClient() ?: return null
         if (!isConfigured()) return null
 
         log.info("[PR:Detail] Fetching PR #$prId")
@@ -72,7 +77,7 @@ class PrDetailService(private val project: Project) {
      * Fetches activities (comments, approvals, status changes) for a PR.
      */
     suspend fun getActivities(prId: Int): List<BitbucketPrActivity> {
-        val client = createClient() ?: return emptyList()
+        val client = getClient() ?: return emptyList()
         if (!isConfigured()) return emptyList()
 
         log.info("[PR:Detail] Fetching activities for PR #$prId")
@@ -89,7 +94,7 @@ class PrDetailService(private val project: Project) {
      * Fetches file changes for a PR.
      */
     suspend fun getChanges(prId: Int): List<BitbucketPrChange> {
-        val client = createClient() ?: return emptyList()
+        val client = getClient() ?: return emptyList()
         if (!isConfigured()) return emptyList()
 
         log.info("[PR:Detail] Fetching changes for PR #$prId")
@@ -106,7 +111,7 @@ class PrDetailService(private val project: Project) {
      * Fetches the raw diff for a PR.
      */
     suspend fun getDiff(prId: Int): String? {
-        val client = createClient() ?: return null
+        val client = getClient() ?: return null
         if (!isConfigured()) return null
 
         log.info("[PR:Detail] Fetching diff for PR #$prId")

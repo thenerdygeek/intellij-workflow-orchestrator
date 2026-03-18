@@ -30,16 +30,23 @@ class SonarDataService(private val project: Project) : Disposable {
 
     private val settings get() = PluginSettings.getInstance(project)
 
+    private val credentialStore = CredentialStore()
+    @Volatile private var cachedApiClient: SonarApiClient? = null
+    @Volatile private var cachedSonarUrl: String? = null
+
     private val apiClient: SonarApiClient? get() {
         val url = settings.connections.sonarUrl.orEmpty().trimEnd('/')
         if (url.isBlank()) return null
-        val credentialStore = CredentialStore()
-        return SonarApiClient(
-            baseUrl = url,
-            tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        )
+        if (url != cachedSonarUrl || cachedApiClient == null) {
+            cachedSonarUrl = url
+            cachedApiClient = SonarApiClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) },
+                connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+                readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+            )
+        }
+        return cachedApiClient
     }
 
     private val currentBranch: String get() {

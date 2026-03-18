@@ -13,6 +13,7 @@ import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.BranchChangeListener
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -214,6 +215,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private val headerLabel = JBLabel("Build: loading...")
     private val statusLabel = JBLabel("")
+    private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
     init {
         border = JBUI.Borders.empty()
@@ -241,9 +243,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         add(contentPanel, BorderLayout.CENTER)
 
         // Status bar
-        val statusPanel = JPanel(BorderLayout()).apply {
+        val statusPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             border = JBUI.Borders.empty(2, 8)
-            add(statusLabel, BorderLayout.WEST)
+            add(loadingIcon)
+            add(statusLabel)
         }
         add(statusPanel, BorderLayout.SOUTH)
 
@@ -291,6 +294,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             monitorService.stateFlow.collect { state ->
                 invokeLater {
                     if (state != null) {
+                        loadingIcon.isVisible = false
                         headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
                         statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
 
@@ -354,6 +358,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
         val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
         headerLabel.text = "Plan: $planKey / $branch"
+        loadingIcon.isVisible = true
         monitorService.startPolling(planKey, branch, interval)
     }
 
@@ -448,6 +453,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun runLocalMavenBuild(goals: String) {
         localBuildRunning = true
+        loadingIcon.isVisible = true
         statusLabel.text = "Running local: mvn $goals..."
 
         scope.launch {
@@ -468,6 +474,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
                 invokeLater {
                     localBuildRunning = false
+                    loadingIcon.isVisible = false
                     val statusText = buildString {
                         append(if (result.success) "Local build PASSED" else "Local build FAILED (exit ${result.exitCode})")
                         if (testResults != null) {
@@ -510,6 +517,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             } catch (e: Exception) {
                 invokeLater {
                     localBuildRunning = false
+                    loadingIcon.isVisible = false
                     statusLabel.text = "Local build error: ${e.message}"
                     log.warn("[Build:Local] mvn $goals failed with exception", e)
                 }

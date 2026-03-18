@@ -6,6 +6,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.*
 import java.awt.*
 import javax.swing.*
@@ -54,7 +55,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             isOpaque = false
             val header = JBLabel("RECENT ISSUES").apply {
                 foreground = JBColor.GRAY
-                font = font.deriveFont(Font.PLAIN, 10f)
+                font = font.deriveFont(Font.PLAIN, JBUI.scale(10).toFloat())
             }
             add(header, BorderLayout.NORTH)
             add(JBScrollPane(recentIssuesPanel).apply {
@@ -71,13 +72,13 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
 
         // Quality gate
         val (gateText, gateColor) = when (state.qualityGate.status) {
-            QualityGateStatus.PASSED -> "\u2713 PASSED" to CoverageThresholds.GREEN
-            QualityGateStatus.FAILED -> "\u2717 FAILED" to CoverageThresholds.RED
+            QualityGateStatus.PASSED -> "\u2713 PASSED" to StatusColors.SUCCESS
+            QualityGateStatus.FAILED -> "\u2717 FAILED" to StatusColors.ERROR
             QualityGateStatus.NONE -> "—" to JBColor.GRAY
         }
         gateStatusLabel.text = gateText
         gateStatusLabel.foreground = gateColor
-        gateStatusLabel.font = gateStatusLabel.font.deriveFont(Font.BOLD, 18f)
+        gateStatusLabel.font = gateStatusLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
 
         gateConditionsPanel.removeAll()
         state.qualityGate.conditions.forEach { cond ->
@@ -87,32 +88,32 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             val isCoverageMetric = cond.metric.contains("coverage", ignoreCase = true)
             val suffix = if (isCoverageMetric) "%" else ""
             val label = JBLabel("$icon $metricName: ${cond.actualValue}$suffix (threshold: ${cond.threshold}$suffix)")
-            label.font = label.font.deriveFont(10f)
-            label.foreground = if (cond.passed) JBColor.GRAY else CoverageThresholds.RED
+            label.font = label.font.deriveFont(JBUI.scale(10).toFloat())
+            label.foreground = if (cond.passed) JBColor.GRAY else StatusColors.ERROR
             gateConditionsPanel.add(label)
         }
 
         // Coverage
         val lineCov = state.activeOverallCoverage.lineCoverage
         coverageLabel.text = "%.1f%%".format(lineCov)
-        coverageLabel.font = coverageLabel.font.deriveFont(Font.BOLD, 18f)
+        coverageLabel.font = coverageLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
         coverageLabel.foreground = CoverageThresholds.colorForCoverage(lineCov, highThreshold, mediumThreshold)
         coverageBar.setThresholds(highThreshold, mediumThreshold)
         coverageBar.value = lineCov
         branchCoverageLabel.text = "Branch: %.1f%%".format(state.activeOverallCoverage.branchCoverage)
         branchCoverageLabel.foreground = JBColor.GRAY
-        branchCoverageLabel.font = branchCoverageLabel.font.deriveFont(10f)
+        branchCoverageLabel.font = branchCoverageLabel.font.deriveFont(JBUI.scale(10).toFloat())
 
         // Issues
         val total = state.activeIssues.size
         issueCountLabel.text = "$total"
-        issueCountLabel.font = issueCountLabel.font.deriveFont(Font.BOLD, 18f)
+        issueCountLabel.font = issueCountLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
         val bugs = state.activeIssues.count { it.type == IssueType.BUG }
         val vulns = state.activeIssues.count { it.type == IssueType.VULNERABILITY }
         val smells = state.activeIssues.count { it.type == IssueType.CODE_SMELL }
         val hotspots = state.activeIssues.count { it.type == IssueType.SECURITY_HOTSPOT }
         issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H</html>"
-        issueBreakdownLabel.font = issueBreakdownLabel.font.deriveFont(10f)
+        issueBreakdownLabel.font = issueBreakdownLabel.font.deriveFont(JBUI.scale(10).toFloat())
 
         // Recent issues (top 5 by severity)
         recentIssuesPanel.removeAll()
@@ -124,7 +125,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
                 val label = JBLabel("<html><font color='${htmlColor(color)}'>\u25CF</font> " +
                     "${issue.type} <font color='${htmlColor(color)}'>${issue.severity}</font> " +
                     "${issue.message} — ${java.io.File(issue.filePath).name}:${issue.startLine}</html>")
-                label.font = label.font.deriveFont(11f)
+                label.font = label.font.deriveFont(JBUI.scale(11).toFloat())
                 label.border = JBUI.Borders.emptyBottom(2)
                 recentIssuesPanel.add(label)
             }
@@ -141,7 +142,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             )
             val titleLabel = JBLabel(title).apply {
                 foreground = JBColor.GRAY
-                font = font.deriveFont(Font.PLAIN, 9f)
+                font = font.deriveFont(Font.PLAIN, JBUI.scale(9).toFloat())
             }
             add(titleLabel, BorderLayout.NORTH)
             add(mainContent, BorderLayout.CENTER)
@@ -150,10 +151,10 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun severityColor(severity: IssueSeverity): Color = when (severity) {
-        IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> Color(255, 68, 68)
-        IssueSeverity.MAJOR -> Color(230, 138, 0)
-        IssueSeverity.MINOR -> Color(255, 170, 0)
-        IssueSeverity.INFO -> Color(136, 136, 136)
+        IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> StatusColors.ERROR
+        IssueSeverity.MAJOR -> StatusColors.WARNING
+        IssueSeverity.MINOR -> StatusColors.WARNING
+        IssueSeverity.INFO -> StatusColors.INFO
     }
 
     private fun htmlColor(c: Color) = "#%02x%02x%02x".format(c.red, c.green, c.blue)

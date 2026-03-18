@@ -10,6 +10,7 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -53,14 +54,14 @@ class PrDetailPanel(
         const val CARD_LOADING = "loading"
         const val CARD_DETAIL = "detail"
 
-        private val SECONDARY_TEXT = JBColor(0x656D76, 0x8B949E)
+        private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
         private val CARD_BG = JBColor(0xF7F8FA, 0x2B2D30)
         private val BORDER_COLOR = JBColor(0xD1D9E0, 0x444D56)
-        private val LINK_COLOR = JBColor(0x0969DA, 0x58A6FF)
-        private val STATUS_OPEN = JBColor(0x1B7F37, 0x3FB950)
-        private val STATUS_MERGED = JBColor(0x8250DF, 0xBC8CFF)
-        private val STATUS_DECLINED = JBColor(0xCF222E, 0xF85149)
-        private val APPROVED_COLOR = JBColor(0x1B7F37, 0x3FB950)
+        private val LINK_COLOR = StatusColors.LINK
+        private val STATUS_OPEN = StatusColors.OPEN
+        private val STATUS_MERGED = StatusColors.MERGED
+        private val STATUS_DECLINED = StatusColors.DECLINED
+        private val APPROVED_COLOR = StatusColors.SUCCESS
 
         private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm")
     }
@@ -931,7 +932,7 @@ class PrDetailPanel(
                     val lineText = if (value.anchorLine > 0) ":${value.anchorLine}" else ""
                     contentPanel.add(JBLabel("$fileName$lineText").apply {
                         font = font.deriveFont(JBUI.scale(10).toFloat())
-                        foreground = JBColor(0x1A73E8, 0x8AB4F8) // Link blue
+                        foreground = StatusColors.LINK
                         icon = AllIcons.FileTypes.Java
                         iconTextGap = JBUI.scale(4)
                         toolTipText = "Double-click to navigate to ${value.anchorPath}$lineText"
@@ -1082,10 +1083,10 @@ class PrDetailPanel(
                 else -> "?"
             }
             val color = when (type.uppercase()) {
-                "ADD" -> JBColor(0x1B7F37, 0x3FB950)
-                "MODIFY" -> JBColor(0x0969DA, 0x58A6FF)
-                "DELETE" -> JBColor(0xCF222E, 0xF85149)
-                "RENAME" -> JBColor(0xBF5700, 0xDB6D28)
+                "ADD" -> StatusColors.SUCCESS
+                "MODIFY" -> StatusColors.LINK
+                "DELETE" -> StatusColors.ERROR
+                "RENAME" -> StatusColors.WARNING
                 else -> SECONDARY_TEXT
             }
             return JBLabel(letter).apply {
@@ -1230,7 +1231,7 @@ private class MergeOptionsDialog(
             val warningIcon = JBLabel(AllIcons.General.Warning)
             val vetoText = mergeStatus.vetoes.joinToString("\n") { it.summaryMessage }
             val warningLabel = JBLabel("<html><b>Warnings:</b><br>${vetoText.replace("\n", "<br>")}</html>").apply {
-                foreground = JBColor(0xB35900, 0xE8912D)
+                foreground = StatusColors.WARNING
             }
             warningPanel.add(warningIcon, BorderLayout.WEST)
             warningPanel.add(warningLabel, BorderLayout.CENTER)
@@ -1241,7 +1242,7 @@ private class MergeOptionsDialog(
         if (mergeStatus?.conflicted == true) {
             val conflictLabel = JBLabel("<html><b>Conflicts detected</b> — this merge may require conflict resolution.</html>").apply {
                 icon = AllIcons.General.Warning
-                foreground = JBColor(0xCF222E, 0xF85149)
+                foreground = StatusColors.ERROR
                 border = JBUI.Borders.emptyBottom(8)
                 alignmentX = Component.LEFT_ALIGNMENT
             }

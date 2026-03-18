@@ -4,6 +4,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
@@ -47,6 +48,7 @@ class QualityDashboardPanel(
     private val issueListPanel = IssueListPanel(project)
     private val coverageTablePanel = CoverageTablePanel(project)
     private val statusLabel = JBLabel("Loading...")
+    private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
     // Toggle buttons
     private val newCodeButton = JButton("New Code").apply {
@@ -103,9 +105,10 @@ class QualityDashboardPanel(
         add(tabbedPane, BorderLayout.CENTER)
 
         // Status bar
-        val statusPanel = JPanel(BorderLayout()).apply {
+        val statusPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             border = JBUI.Borders.empty(2, 8)
-            add(statusLabel, BorderLayout.WEST)
+            add(loadingIcon)
+            add(statusLabel)
         }
         add(statusPanel, BorderLayout.SOUTH)
 
@@ -167,6 +170,7 @@ class QualityDashboardPanel(
 
     fun refreshData() {
         statusLabel.text = "Refreshing..."
+        loadingIcon.isVisible = true
         dataService.refresh()
     }
 
@@ -217,6 +221,7 @@ class QualityDashboardPanel(
             state.newCodeMode && state.activeFileCoverage.isNotEmpty()
         )
 
+        loadingIcon.isVisible = false
         val elapsed = java.time.Duration.between(state.lastUpdated, java.time.Instant.now())
         statusLabel.text = "Updated ${elapsed.seconds}s ago"
     }

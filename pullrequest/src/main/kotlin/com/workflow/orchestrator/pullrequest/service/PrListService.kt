@@ -70,6 +70,22 @@ class PrListService(private val project: Project) : Disposable {
     @Volatile
     private var cachedUsername: String? = null
 
+    private val credentialStore = CredentialStore()
+    @Volatile private var cachedClient: BitbucketBranchClient? = null
+    @Volatile private var cachedBaseUrl: String? = null
+    private val pluginSettings by lazy { PluginSettings.getInstance(project) }
+
+    private fun getClient(url: String): BitbucketBranchClient {
+        if (url != cachedBaseUrl || cachedClient == null) {
+            cachedBaseUrl = url
+            cachedClient = BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
+        }
+        return cachedClient!!
+    }
+
     suspend fun refresh() {
         val connSettings = ConnectionSettings.getInstance().state
         val bitbucketUrl = connSettings.bitbucketUrl.trimEnd('/')
@@ -78,7 +94,7 @@ class PrListService(private val project: Project) : Disposable {
             return
         }
 
-        val settings = PluginSettings.getInstance(project).state
+        val settings = pluginSettings.state
         val projectKey = settings.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.bitbucketRepoSlug.orEmpty()
         if (projectKey.isBlank() || repoSlug.isBlank()) {
@@ -86,11 +102,7 @@ class PrListService(private val project: Project) : Disposable {
             return
         }
 
-        val credentialStore = CredentialStore()
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
+        val client = getClient(bitbucketUrl)
 
         // Auto-detect username on first call (or use saved setting)
         val username = cachedUsername

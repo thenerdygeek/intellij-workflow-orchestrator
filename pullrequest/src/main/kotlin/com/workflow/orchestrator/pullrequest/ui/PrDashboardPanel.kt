@@ -69,6 +69,7 @@ class PrDashboardPanel(
         setupLayout()
         setupListeners()
         startDataCollection()
+        setupVisibilityListener()
     }
 
     // ---------------------------------------------------------------
@@ -132,7 +133,14 @@ class PrDashboardPanel(
 
     private fun setupListeners() {
         listPanel.onPrSelected = { prId ->
-            detailPanel.showPr(prId)
+            // Look up full PR detail from cached data to avoid re-fetching
+            val prDetail = currentMyPrs.find { it.id == prId }
+                ?: currentReviewingPrs.find { it.id == prId }
+            if (prDetail != null) {
+                detailPanel.showPrDetail(prDetail)
+            } else {
+                detailPanel.showPr(prId)
+            }
         }
 
         myPrsToggle.addActionListener {
@@ -147,6 +155,26 @@ class PrDashboardPanel(
             activeFilter = PrFilter.ALL
             refreshListView()
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Visibility-based polling control
+    // ---------------------------------------------------------------
+
+    private fun setupVisibilityListener() {
+        addAncestorListener(object : javax.swing.event.AncestorListener {
+            override fun ancestorAdded(e: javax.swing.event.AncestorEvent) {
+                // Panel became visible — resume polling
+                startDataCollection()
+            }
+
+            override fun ancestorRemoved(e: javax.swing.event.AncestorEvent) {
+                // Panel hidden (tab switched) — stop polling to save resources
+                PrListService.getInstance(project).stopPolling()
+            }
+
+            override fun ancestorMoved(e: javax.swing.event.AncestorEvent) {}
+        })
     }
 
     // ---------------------------------------------------------------

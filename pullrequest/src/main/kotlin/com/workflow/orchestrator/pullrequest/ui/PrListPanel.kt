@@ -5,6 +5,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.*
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
@@ -272,13 +273,13 @@ class PrListPanel : JPanel(BorderLayout()) {
     }
 
     companion object {
-        private val SECONDARY_TEXT = JBColor(0x656D76, 0x8B949E)
-        private val LINK_COLOR = JBColor(0x0969DA, 0x58A6FF)
+        private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
+        private val LINK_COLOR = StatusColors.LINK
         private val BRANCH_TEXT = JBColor(0x656D76, 0x768390)
         private val SELECTION_BG = JBColor(0xDEE9FC, 0x2D3548)
-        private val STATUS_OPEN = JBColor(0x1B7F37, 0x3FB950)
-        private val STATUS_MERGED = JBColor(0x8250DF, 0xBC8CFF)
-        private val STATUS_DECLINED = JBColor(0xCF222E, 0xF85149)
+        private val STATUS_OPEN = StatusColors.OPEN
+        private val STATUS_MERGED = StatusColors.MERGED
+        private val STATUS_DECLINED = StatusColors.DECLINED
 
         fun truncate(text: String, maxLength: Int): String {
             return if (text.length <= maxLength) text
