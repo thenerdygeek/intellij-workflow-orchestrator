@@ -204,19 +204,55 @@ class GenerateCommitMessageAction : AnAction(
     }
 
     /**
-     * Get recent commit messages from the project for style matching.
-     * Returns one-line summaries of the last 10 commits.
+     * Get recent commits with message + changed file names.
+     * Format: "commit message | file1.kt, file2.kt, file3.java"
+     * This gives Cody content awareness (what was recently changed)
+     * plus style reference (how commit messages are formatted).
      */
     private fun getRecentCommits(project: Project): List<String> {
         return try {
             val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull() ?: return emptyList()
+            // Get message + file names in one call: --name-only shows files after each commit
             val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
-                addParameters("--format=%s", "-10", "--no-merges")
+                addParameters("--format=COMMIT_START%n%s", "--name-only", "-5", "--no-merges")
             }
             val result = Git.getInstance().runCommand(handler)
-            if (result.success()) {
-                result.output.filter { it.isNotBlank() }
-            } else emptyList()
+            if (!result.success()) return emptyList()
+
+            val commits = mutableListOf<String>()
+            var currentMessage: String? = null
+            val currentFiles = mutableListOf<String>()
+
+            for (line in result.output) {
+                when {
+                    line == "COMMIT_START" -> {
+                        // Flush previous commit
+                        if (currentMessage != null) {
+                            val filesSuffix = if (currentFiles.isNotEmpty()) {
+                                " | ${currentFiles.take(5).joinToString(", ") { it.substringAfterLast('/') }}"
+                            } else ""
+                            commits.add("$currentMessage$filesSuffix")
+                        }
+                        currentMessage = null
+                        currentFiles.clear()
+                    }
+                    currentMessage == null && line.isNotBlank() -> {
+                        currentMessage = line
+                    }
+                    line.isNotBlank() && currentMessage != null -> {
+                        currentFiles.add(line)
+                    }
+                }
+            }
+            // Flush last commit
+            if (currentMessage != null) {
+                val filesSuffix = if (currentFiles.isNotEmpty()) {
+                    " | ${currentFiles.take(5).joinToString(", ") { it.substringAfterLast('/') }}"
+                } else ""
+                commits.add("$currentMessage$filesSuffix")
+            }
+
+            commits
         } catch (_: Exception) { emptyList() }
     }
 

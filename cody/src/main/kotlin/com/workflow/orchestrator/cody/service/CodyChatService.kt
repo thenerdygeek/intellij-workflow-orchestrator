@@ -74,6 +74,13 @@ class CodyChatService(private val project: Project) {
                 appendLine()
                 appendLine("Changed files: $filesSummary")
             }
+            if (recentCommits.isNotEmpty()) {
+                appendLine()
+                appendLine("Recent commits (for context — understand how this change relates to recent work):")
+                recentCommits.forEach { appendLine("  - $it") }
+                appendLine()
+                appendLine("Consider: Is this change continuing a recent effort? Fixing something from a recent commit? A separate concern?")
+            }
             appendLine()
             appendLine("```diff")
             appendLine(diff)
