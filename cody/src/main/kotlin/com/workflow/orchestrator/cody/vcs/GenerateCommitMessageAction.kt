@@ -1,9 +1,15 @@
 package com.workflow.orchestrator.cody.vcs
 
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.VcsDataKeys
 import com.intellij.openapi.vcs.changes.ChangeListManager
@@ -19,6 +25,7 @@ import git4idea.commands.GitLineHandler
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
@@ -29,32 +36,92 @@ import kotlinx.coroutines.launch
 class GenerateCommitMessageAction : AnAction(
     "Generate with Workflow",
     "Generate commit message using Cody AI",
-    null
+    AllIcons.Actions.Lightning
 ) {
 
     private val log = Logger.getInstance(GenerateCommitMessageAction::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    @Volatile
+    private var generating = false
+    private var activeJob: Job? = null
+
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val commitMessage = e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) as? CommitMessage ?: return
 
-        log.info("[Cody:CommitMsg] Generate commit message triggered")
-        commitMessage.setCommitMessage("Generating commit message with Cody...")
+        // If already generating, cancel
+        if (generating) {
+            log.info("[Cody:CommitMsg] Cancelling generation")
+            activeJob?.cancel()
+            generating = false
+            return
+        }
 
-        scope.launch {
-            val message = generateMessage(project)
-            invokeLater {
-                if (message != null) {
-                    commitMessage.setCommitMessage(message)
-                    log.info("[Cody:CommitMsg] Commit message generated (${message.length} chars)")
-                } else {
-                    commitMessage.setCommitMessage("")
-                    log.warn("[Cody:CommitMsg] Failed to generate commit message")
+        log.info("[Cody:CommitMsg] Generate commit message triggered")
+        generating = true
+
+        // Run as a backgroundable task with progress in the status bar.
+        // The commit message field is NOT touched until we have a result.
+        ProgressManager.getInstance().run(object : Task.Backgroundable(
+            project,
+            "Generating commit message with Cody...",
+            true // cancellable
+        ) {
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = false
+                indicator.text = "Analyzing changes..."
+                indicator.fraction = 0.1
+
+                activeJob = scope.launch {
+                    try {
+                        indicator.text = "Step 1/2: Analyzing diff..."
+                        indicator.fraction = 0.3
+                        val message = generateMessage(project)
+                        indicator.fraction = 0.9
+
+                        ApplicationManager.getApplication().invokeLater({
+                            if (message != null) {
+                                commitMessage.setCommitMessage(message)
+                                log.info("[Cody:CommitMsg] Commit message generated (${message.length} chars)")
+                            } else {
+                                log.warn("[Cody:CommitMsg] Failed to generate commit message")
+                            }
+                            generating = false
+                        }, ModalityState.any())
+                    } catch (e: Exception) {
+                        log.warn("[Cody:CommitMsg] Generation failed: ${e.message}")
+                        generating = false
+                    }
+                }
+
+                // Wait for the coroutine to complete (or cancellation)
+                while (activeJob?.isActive == true && !indicator.isCanceled) {
+                    Thread.sleep(100)
+                }
+                if (indicator.isCanceled) {
+                    activeJob?.cancel()
+                    generating = false
+                    log.info("[Cody:CommitMsg] Generation cancelled by user")
                 }
             }
+        })
+    }
+
+    override fun update(e: AnActionEvent) {
+        val hasCommitControl = e.project != null &&
+            e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) != null
+        e.presentation.isEnabledAndVisible = hasCommitControl
+        if (generating) {
+            e.presentation.text = "Cancel Generation"
+            e.presentation.icon = AllIcons.Actions.Suspend
+        } else {
+            e.presentation.text = "Generate with Workflow"
+            e.presentation.icon = AllIcons.Actions.Lightning
         }
     }
+
+    override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     private suspend fun generateMessage(project: Project): String? {
         return try {
@@ -183,8 +250,4 @@ class GenerateCommitMessageAction : AnAction(
         )
     }
 
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabledAndVisible = e.project != null &&
-            e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) != null
-    }
 }
