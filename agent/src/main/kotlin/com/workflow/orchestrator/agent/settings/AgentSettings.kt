@@ -12,9 +12,11 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
 
     class State : BaseState() {
         var agentEnabled by property(false)
-        var sourcegraphChatModel by string("anthropic/claude-sonnet-4")
+        /** Model name in Sourcegraph format: provider::apiVersion::modelId */
+        var sourcegraphChatModel by string("anthropic::2024-10-22::claude-sonnet-4-20250514")
         var maxInputTokens by property(150000)
-        var maxOutputTokens by property(64000)
+        /** Max output tokens per LLM response. Sourcegraph API caps at 4000. */
+        var maxOutputTokens by property(4000)
         var enableFastPath by property(true)
         var approvalRequiredForEdits by property(true)
         var tokenBudgetWarningPercent by property(80)

@@ -68,10 +68,11 @@ class SingleAgentFlowE2ETest {
         // Create a real brain pointing at MockWebServer.
         // Wrap it to disable streaming — MockWebServer returns normal JSON, not SSE,
         // so chatStream() would hang waiting for SSE "data:" lines that never come.
+        // Note: MockWebServer URL is the base — SourcegraphChatClient appends /.api/llm/chat/completions
         val baseBrain = OpenAiCompatBrain(
             sourcegraphUrl = server.url("/").toString().trimEnd('/'),
             tokenProvider = { "sgp_test-token" },
-            model = "anthropic/claude-sonnet-4",
+            model = "anthropic::2024-10-22::claude-sonnet-4-20250514",
             httpClientOverride = OkHttpClient()
         )
         brain = NonStreamingBrainWrapper(baseBrain)
