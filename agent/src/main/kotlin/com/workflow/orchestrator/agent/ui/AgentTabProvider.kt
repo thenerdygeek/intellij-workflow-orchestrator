@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.toolwindow.EmptyStatePanel
@@ -31,6 +33,15 @@ class AgentTabProvider : WorkflowTabProvider {
             )
         }
 
-        return AgentDashboardPanel()
+        // Create the dashboard and wire the controller
+        val dashboard = AgentDashboardPanel()
+        val controller = AgentController(project, dashboard)
+
+        // Register controller for disposal when the tool window is closed
+        if (project is Disposable) {
+            Disposer.register(project, Disposable { controller.dispose() })
+        }
+
+        return dashboard
     }
 }
