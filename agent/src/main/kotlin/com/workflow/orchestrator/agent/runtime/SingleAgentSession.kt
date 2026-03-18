@@ -152,7 +152,8 @@ class SingleAgentSession(
                 }
                 BudgetEnforcer.BudgetStatus.COMPRESS -> {
                     LOG.info("SingleAgentSession: triggering compression at iteration $iteration")
-                    eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration")
+                    eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration, ${budgetEnforcer.utilizationPercent()}% used")
+                    contextManager.compress()
                 }
                 BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
             }
@@ -171,9 +172,13 @@ class SingleAgentSession(
                 activeToolDefs = result.reducedToolDefs
                 activeTools = result.reducedTools
                 eventLog?.log(AgentEventType.CONTEXT_EXCEEDED_RETRY, "Reduced to ${activeTools.size} core tools")
-                // Retry with the same iteration
+                // Also compress conversation history for maximum token savings
+                contextManager.compress()
+                // Re-fetch messages after compression
+                val compressedMessages = contextManager.getMessages()
+                // Retry with reduced tools and compressed context
                 val retryResult = callLlmWithRetry(
-                    brain, messages, activeToolDefs, maxOutputTokens,
+                    brain, compressedMessages, activeToolDefs, maxOutputTokens,
                     onStreamChunk, activeToolDefs, activeTools, eventLog
                 )
                 if (retryResult !is LlmCallResult.Success) {
@@ -266,6 +271,20 @@ class SingleAgentSession(
 
         // Add assistant message to context
         contextManager.addAssistantMessage(message)
+
+        // Handle truncated responses (output token limit hit).
+        // With Sourcegraph's 4K output cap, truncation is common for longer answers.
+        // Instead of returning an incomplete answer, ask the LLM to continue.
+        if (choice.finishReason == "length" && toolCalls.isNullOrEmpty()) {
+            LOG.info("SingleAgentSession: response truncated (finishReason=length), requesting continuation")
+            contextManager.addMessage(ChatMessage(
+                role = "user",
+                content = "Your response was truncated due to the output token limit. " +
+                    "If you were about to use a tool, please do so now. " +
+                    "If you were providing a final answer, please provide a concise summary instead."
+            ))
+            return null // continue loop to get complete response
+        }
 
         if (toolCalls.isNullOrEmpty()) {
             // No tool calls — about to return final response

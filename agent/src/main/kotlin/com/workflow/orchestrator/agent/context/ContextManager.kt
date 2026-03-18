@@ -100,8 +100,11 @@ class ContextManager(
      * Compress the conversation to fit within T_retained.
      * Strategy: Summarize the oldest non-system messages and replace them
      * with a single summary message. Keep the most recent messages intact.
+     *
+     * Called automatically when addMessage() pushes totalTokens over tMax,
+     * or explicitly by the session when BudgetEnforcer signals COMPRESS.
      */
-    private fun compress() {
+    fun compress() {
         if (messages.size <= 2) return // Nothing to compress
 
         // Find how many messages to drop to get below T_retained
