@@ -42,6 +42,7 @@ class PrDashboardPanel(
     // -- Filter toggle --
     private val myPrsToggle = JToggleButton("My PRs").apply { isSelected = true }
     private val reviewingToggle = JToggleButton("Reviewing")
+    private val allToggle = JToggleButton("All")
     private val filterGroup = ButtonGroup()
 
     // -- Status bar --
@@ -58,7 +59,8 @@ class PrDashboardPanel(
     // -- State --
     private var currentMyPrs: List<BitbucketPrDetail> = emptyList()
     private var currentReviewingPrs: List<BitbucketPrDetail> = emptyList()
-    private var showReviewing = false
+    private enum class PrFilter { MY, REVIEWING, ALL }
+    private var activeFilter = PrFilter.MY
 
     init {
         background = JBColor.PanelBackground
@@ -97,8 +99,10 @@ class PrDashboardPanel(
         }
         filterGroup.add(myPrsToggle)
         filterGroup.add(reviewingToggle)
+        filterGroup.add(allToggle)
         filterPanel.add(myPrsToggle)
         filterPanel.add(reviewingToggle)
+        filterPanel.add(allToggle)
         topPanel.add(filterPanel, BorderLayout.CENTER)
 
         add(topPanel, BorderLayout.NORTH)
@@ -132,11 +136,15 @@ class PrDashboardPanel(
         }
 
         myPrsToggle.addActionListener {
-            showReviewing = false
+            activeFilter = PrFilter.MY
             refreshListView()
         }
         reviewingToggle.addActionListener {
-            showReviewing = true
+            activeFilter = PrFilter.REVIEWING
+            refreshListView()
+        }
+        allToggle.addActionListener {
+            activeFilter = PrFilter.ALL
             refreshListView()
         }
     }
@@ -179,10 +187,10 @@ class PrDashboardPanel(
         val myItems = currentMyPrs.map { it.toPrListItem() }
         val reviewingItems = currentReviewingPrs.map { it.toPrListItem() }
 
-        if (showReviewing) {
-            listPanel.updatePrs(emptyList(), reviewingItems)
-        } else {
-            listPanel.updatePrs(myItems, reviewingItems)
+        when (activeFilter) {
+            PrFilter.MY -> listPanel.updatePrs(myItems, emptyList())
+            PrFilter.REVIEWING -> listPanel.updatePrs(emptyList(), reviewingItems)
+            PrFilter.ALL -> listPanel.updatePrs(myItems, reviewingItems)
         }
     }
 
