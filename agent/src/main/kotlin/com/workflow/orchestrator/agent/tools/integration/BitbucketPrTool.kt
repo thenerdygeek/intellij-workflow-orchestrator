@@ -9,9 +9,6 @@ import com.workflow.orchestrator.agent.security.InputSanitizer
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
-import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -20,11 +17,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
-
 class BitbucketPrTool(
     private val urlProvider: () -> String = { ConnectionSettings.getInstance().state.bitbucketUrl },
     private val tokenProvider: () -> String? = { CredentialStore().getToken(ServiceType.BITBUCKET) },
@@ -47,22 +41,19 @@ class BitbucketPrTool(
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val title = params["title"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'title' parameter required", "Error: missing title", 5, isError = true)
+            ?: return ToolResult("Error: 'title' parameter required", "Error: missing title", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val description = params["description"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'description' parameter required", "Error: missing description", 5, isError = true)
+            ?: return ToolResult("Error: 'description' parameter required", "Error: missing description", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val fromBranch = params["from_branch"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'from_branch' parameter required", "Error: missing from_branch", 5, isError = true)
+            ?: return ToolResult("Error: 'from_branch' parameter required", "Error: missing from_branch", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val toBranch = params["to_branch"]?.jsonPrimitive?.content ?: "master"
 
-        val baseUrl = urlProvider().trimEnd('/')
-        if (baseUrl.isBlank()) {
-            return ToolResult("Error: Bitbucket URL not configured", "Error: Bitbucket URL not configured", 5, isError = true)
-        }
-
-        val token = tokenProvider()
-        if (token.isNullOrBlank()) {
-            return ToolResult("Error: Bitbucket token not configured", "Error: Bitbucket token not configured", 5, isError = true)
-        }
+        val (baseUrl, token, client) = IntegrationToolSupport.resolveCredentials(urlProvider, tokenProvider, "Bitbucket")
+            ?: return if (urlProvider()?.trimEnd('/')?.isBlank() != false) {
+                IntegrationToolSupport.credentialError("Bitbucket", "URL")
+            } else {
+                IntegrationToolSupport.credentialError("Bitbucket", "token")
+            }
 
         val projectKey = projectKeyProvider().ifBlank {
             try { PluginSettings.getInstance(project).state.bitbucketProjectKey ?: "" } catch (_: Exception) { "" }
@@ -80,7 +71,6 @@ class BitbucketPrTool(
 
         return withContext(Dispatchers.IO) {
             try {
-                val client = buildClient(token)
                 val url = "$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests"
                 val escapedTitle = title.replace("\\", "\\\\").replace("\"", "\\\"")
                 val escapedDesc = description.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
@@ -126,12 +116,4 @@ class BitbucketPrTool(
         }
     }
 
-    private fun buildClient(token: String): OkHttpClient {
-        return OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor({ token }, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor(maxRetries = 2))
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
-    }
 }

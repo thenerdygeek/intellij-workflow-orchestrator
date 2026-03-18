@@ -39,12 +39,12 @@ class SearchCodeTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val query = params["query"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'query' parameter required", "Error: missing query", 5, isError = true)
+            ?: return ToolResult("Error: 'query' parameter required", "Error: missing query", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val scope = params["scope"]?.jsonPrimitive?.content
         val maxResults = params["max_results"]?.jsonPrimitive?.int ?: DEFAULT_MAX_RESULTS
 
         val basePath = project.basePath
-            ?: return ToolResult("Error: Project base path not available", "Error: no project path", 5, isError = true)
+            ?: return ToolResult("Error: Project base path not available", "Error: no project path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val searchRoot = if (scope != null) {
             val scopePath = if (scope.startsWith("/")) scope else "$basePath/$scope"
@@ -54,7 +54,7 @@ class SearchCodeTool : AgentTool {
         }
 
         if (!searchRoot.exists() || !searchRoot.isDirectory) {
-            return ToolResult("Error: Search scope not found: $searchRoot", "Error: scope not found", 5, isError = true)
+            return ToolResult("Error: Search scope not found: $searchRoot", "Error: scope not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val regex = try {
@@ -71,7 +71,7 @@ class SearchCodeTool : AgentTool {
             return ToolResult(
                 "No matches found for: $query",
                 "No matches for '$query'",
-                5
+                ToolResult.ERROR_TOKEN_ESTIMATE
             )
         }
 
