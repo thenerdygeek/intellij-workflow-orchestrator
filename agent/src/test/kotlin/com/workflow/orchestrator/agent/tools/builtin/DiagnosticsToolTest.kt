@@ -1,0 +1,66 @@
+package com.workflow.orchestrator.agent.tools.builtin
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.runtime.WorkerType
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
+
+class DiagnosticsToolTest {
+
+    private val project = mockk<Project> { every { basePath } returns "/tmp" }
+
+    @Test
+    fun `tool name is diagnostics`() {
+        val tool = DiagnosticsTool()
+        assertEquals("diagnostics", tool.name)
+    }
+
+    @Test
+    fun `allowedWorkers includes CODER and REVIEWER`() {
+        val tool = DiagnosticsTool()
+        assertTrue(tool.allowedWorkers.contains(WorkerType.CODER))
+        assertTrue(tool.allowedWorkers.contains(WorkerType.REVIEWER))
+    }
+
+    @Test
+    fun `execute returns placeholder message`() = runTest {
+        val tool = DiagnosticsTool()
+        val params = buildJsonObject { put("path", "src/Main.kt") }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("placeholder") || result.content.contains("Diagnostics require IDE context"))
+    }
+
+    @Test
+    fun `tool definition schema is valid`() {
+        val tool = DiagnosticsTool()
+        val def = tool.toToolDefinition()
+
+        assertEquals("function", def.type)
+        assertEquals("diagnostics", def.function.name)
+        assertTrue(def.function.description.isNotBlank())
+        assertTrue(def.function.parameters.properties.containsKey("path"))
+        assertTrue(def.function.parameters.required.contains("path"))
+    }
+
+    @Test
+    fun `parameters require path`() {
+        val tool = DiagnosticsTool()
+        assertEquals(listOf("path"), tool.parameters.required)
+        assertTrue(tool.parameters.properties.containsKey("path"))
+        assertEquals("string", tool.parameters.properties["path"]?.type)
+    }
+
+    @Test
+    fun `description is non-blank`() {
+        val tool = DiagnosticsTool()
+        assertTrue(tool.description.isNotBlank())
+    }
+}
