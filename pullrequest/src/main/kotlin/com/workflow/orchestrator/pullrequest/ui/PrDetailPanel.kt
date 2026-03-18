@@ -703,6 +703,7 @@ class PrDetailPanel(
                         SwingUtilities.invokeLater {
                             enhanceWithCodyButton.isEnabled = true
                             enhanceWithCodyButton.text = "Enhance with Cody"
+                            enhanceWithCodyButton.toolTipText = "Cody is not running — start the Cody agent first"
                             log.warn("[PR:Detail] TextGenerationService not available")
                         }
                         return@launch
@@ -714,6 +715,8 @@ class PrDetailPanel(
                         SwingUtilities.invokeLater {
                             enhanceWithCodyButton.isEnabled = true
                             enhanceWithCodyButton.text = "Enhance with Cody"
+                            enhanceWithCodyButton.toolTipText = "Could not fetch PR diff from Bitbucket"
+                            log.warn("[PR:Detail] PR diff is empty for PR #$prId")
                         }
                         return@launch
                     }
@@ -735,21 +738,26 @@ class PrDetailPanel(
                         targetBranch = pr.toRef?.displayId ?: ""
                     )
 
+                    log.info("[PR:Detail] Cody PR description result: ${enhanced?.length ?: 0} chars")
                     SwingUtilities.invokeLater {
                         enhanceWithCodyButton.isEnabled = true
                         enhanceWithCodyButton.text = "Enhance with Cody"
                         if (!enhanced.isNullOrBlank()) {
-                            // Enter edit mode with the enhanced description so user can review
+                            enhanceWithCodyButton.toolTipText = "Use AI to generate or enhance the PR description"
                             enterEditMode()
                             editArea.text = enhanced
                             editArea.caretPosition = 0
+                        } else {
+                            enhanceWithCodyButton.toolTipText = "Cody returned empty — check IDE log for [Cody:PrChain] errors"
+                            log.warn("[PR:Detail] Cody returned null/empty for PR #$prId description")
                         }
                     }
                 } catch (e: Exception) {
-                    log.warn("[PR:Detail] Enhance with Cody failed: ${e.message}")
+                    log.warn("[PR:Detail] Enhance with Cody failed: ${e.message}", e)
                     SwingUtilities.invokeLater {
                         enhanceWithCodyButton.isEnabled = true
                         enhanceWithCodyButton.text = "Enhance with Cody"
+                        enhanceWithCodyButton.toolTipText = "Failed: ${e.message}"
                     }
                 }
             }
