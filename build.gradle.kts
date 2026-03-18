@@ -63,6 +63,7 @@ dependencies {
     implementation(project(":pullrequest"))
     implementation(project(":automation"))
     implementation(project(":handover"))
+    implementation(project(":agent"))
 
     // -- External libraries --
     compileOnly(libs.kotlinx.coroutines.core)
