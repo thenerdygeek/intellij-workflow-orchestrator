@@ -189,6 +189,10 @@ class SourcegraphChatClient(
     private fun <T> mapErrorResponse(code: Int, body: String): ApiResult<T> = when {
         code == 401 || code == 403 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed ($code)")
         code == 429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited. Retry after delay.")
+        body.contains("context_length", ignoreCase = true) -> ApiResult.Error(
+            ErrorType.CONTEXT_LENGTH_EXCEEDED,
+            "Context length exceeded ($code): $body"
+        )
         code in 500..599 -> ApiResult.Error(ErrorType.SERVER_ERROR, "Server error ($code): $body")
         else -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "Unexpected response ($code): $body")
     }

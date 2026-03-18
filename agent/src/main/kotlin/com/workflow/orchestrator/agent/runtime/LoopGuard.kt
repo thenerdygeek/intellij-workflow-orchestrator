@@ -18,6 +18,7 @@ class LoopGuard(
     private var iterationCount = 0
     private var lastToolWasError = false
     private val modifiedFiles = mutableSetOf<String>()
+    private var verificationRequested = false
 
     /**
      * Called after each iteration. Returns a list of system messages to inject
@@ -76,7 +77,8 @@ class LoopGuard(
      * Returns a verification prompt if files were modified, or null if no verification needed.
      */
     fun beforeCompletion(): ChatMessage? {
-        if (modifiedFiles.isEmpty()) return null
+        if (modifiedFiles.isEmpty() || verificationRequested) return null
+        verificationRequested = true
         return ChatMessage(
             role = "system",
             content = "Before completing, verify your changes: run diagnostics on these modified files to check for errors: ${modifiedFiles.joinToString(", ")}. If there are errors, fix them."
@@ -89,6 +91,7 @@ class LoopGuard(
         iterationCount = 0
         lastToolWasError = false
         modifiedFiles.clear()
+        verificationRequested = false
     }
 
     companion object {
