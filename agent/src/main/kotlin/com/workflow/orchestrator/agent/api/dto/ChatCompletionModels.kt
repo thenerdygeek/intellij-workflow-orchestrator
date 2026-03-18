@@ -2,13 +2,14 @@ package com.workflow.orchestrator.agent.api.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessage>,
     val tools: List<ToolDefinition>? = null,
-    @SerialName("tool_choice") val toolChoice: String? = null, // "auto", "none", or specific
+    @SerialName("tool_choice") val toolChoice: JsonElement? = null, // JsonPrimitive("auto") or {"type":"function","function":{"name":"..."}}
     val temperature: Double = 0.0,
     @SerialName("max_tokens") val maxTokens: Int? = null,
     val stream: Boolean = false

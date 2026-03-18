@@ -43,13 +43,15 @@ data class AgentProgress(
 )
 
 /**
- * Top-level orchestrator that routes tasks through complexity classification,
- * plans complex tasks via LLM, and executes plans using WorkerSession.
+ * Top-level orchestrator that manages task execution in two modes:
  *
- * Flow:
- * 1. Classify task complexity via ComplexityRouter
- * 2. SIMPLE -> fast path (single WorkerSession with CODER)
- * 3. COMPLEX -> LLM generates a plan (TaskGraph) -> user approves -> executePlan()
+ * 1. SINGLE_AGENT (default): One ReAct loop with ALL tools. The LLM decides
+ *    whether to analyze, code, review, or call enterprise tools. If the token
+ *    budget is exceeded, auto-escalates to orchestrated mode.
+ *
+ * 2. ORCHESTRATED: LLM generates a plan (TaskGraph) -> user approves -> executePlan()
+ *    with individual WorkerSessions per step. Triggered by auto-escalation or
+ *    explicit user request via [requestPlan].
  */
 class AgentOrchestrator(
     private val brain: LlmBrain,
@@ -64,9 +66,13 @@ class AgentOrchestrator(
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * Execute a task end-to-end. Routes through complexity classification first.
-     * SIMPLE tasks are executed immediately; COMPLEX tasks return a PlanReady result
-     * for the user to approve before calling [executePlan].
+     * Execute a task end-to-end using single-agent mode (default).
+     *
+     * The single agent has ALL tools and handles the full task in one ReAct loop.
+     * If the task exceeds the token budget, it auto-escalates to orchestrated mode
+     * (plan + step-by-step execution).
+     *
+     * For explicit plan-based execution, use [requestPlan] instead.
      */
     suspend fun executeTask(
         taskDescription: String,
@@ -74,27 +80,61 @@ class AgentOrchestrator(
     ): AgentResult {
         cancelled.set(false)
 
-        // Step 1: Classify complexity
-        onProgress(AgentProgress("Classifying task complexity...", tokensUsed = 0))
-        val complexity = ComplexityRouter.route(taskDescription, brain)
-        LOG.info("AgentOrchestrator: task classified as $complexity")
+        val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+        val maxTokens = settings?.state?.maxInputTokens ?: 150_000
+
+        // Default: Single Agent Mode
+        onProgress(AgentProgress("Starting task...", tokensUsed = 0))
 
         if (cancelled.get()) return AgentResult.Cancelled(0)
 
-        // Step 2: Route based on complexity (respect enableFastPath setting)
-        val fastPathEnabled = try { AgentSettings.getInstance(project).state.enableFastPath } catch (_: Exception) { true }
-        return if (complexity == TaskComplexity.SIMPLE && fastPathEnabled) {
-            onProgress(AgentProgress("Executing simple task (fast path)...", WorkerType.CODER))
-            executeSimpleTask(taskDescription, onProgress)
-        } else {
-            onProgress(AgentProgress("Planning complex task...", WorkerType.ORCHESTRATOR))
-            createPlan(taskDescription, onProgress)
+        val contextManager = ContextManager(maxInputTokens = maxTokens)
+        val allTools = toolRegistry.allTools().associateBy { it.name }
+        val allToolDefs = toolRegistry.allTools().map { it.toToolDefinition() }
+
+        val session = SingleAgentSession()
+        val result = session.execute(
+            task = taskDescription,
+            tools = allTools,
+            toolDefinitions = allToolDefs,
+            brain = brain,
+            contextManager = contextManager,
+            project = project,
+            onProgress = onProgress
+        )
+
+        return when (result) {
+            is SingleAgentResult.Completed -> {
+                AgentResult.Completed(result.summary, result.artifacts, result.tokensUsed)
+            }
+            is SingleAgentResult.Failed -> {
+                AgentResult.Failed(result.error)
+            }
+            is SingleAgentResult.EscalateToOrchestrated -> {
+                // Auto-escalate: create a plan and switch to orchestrated mode
+                LOG.info("AgentOrchestrator: auto-escalating to orchestrated mode: ${result.reason}")
+                onProgress(AgentProgress("Task too complex for single pass. Creating plan...", WorkerType.ORCHESTRATOR))
+                createPlan(taskDescription, onProgress)
+            }
         }
     }
 
     /**
+     * Explicitly request a plan for a task (orchestrated mode).
+     * Returns [AgentResult.PlanReady] for user approval before calling [executePlan].
+     */
+    suspend fun requestPlan(
+        taskDescription: String,
+        onProgress: (AgentProgress) -> Unit = {}
+    ): AgentResult {
+        cancelled.set(false)
+        onProgress(AgentProgress("Creating plan...", WorkerType.ORCHESTRATOR))
+        return createPlan(taskDescription, onProgress)
+    }
+
+    /**
      * Run a single worker session with the given worker type and task description.
-     * Centralizes the repeated pattern of setting up context, tools, and session.
+     * Used in orchestrated mode for individual plan steps.
      */
     private suspend fun runWorker(workerType: WorkerType, task: String): WorkerResult {
         val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
@@ -105,30 +145,6 @@ class AgentOrchestrator(
         val systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
         val session = WorkerSession()
         return session.execute(workerType, systemPrompt, task, toolsMap, toolDefs, brain, contextManager, project)
-    }
-
-    /**
-     * Fast path: execute a simple task directly with a single CODER worker.
-     */
-    private suspend fun executeSimpleTask(
-        taskDescription: String,
-        onProgress: (AgentProgress) -> Unit
-    ): AgentResult {
-        val workerType = WorkerType.CODER
-        val result = runWorker(workerType, taskDescription)
-
-        return if (result.content.isNotBlank() && !result.content.startsWith("Error:")) {
-            onProgress(AgentProgress("Task completed", workerType, result.tokensUsed, 1, 1))
-            AgentResult.Completed(
-                summary = result.summary,
-                artifacts = result.artifacts,
-                totalTokens = result.tokensUsed
-            )
-        } else {
-            AgentResult.Failed(
-                error = if (result.content.isBlank()) "Worker produced empty result" else result.content
-            )
-        }
     }
 
     /**
@@ -226,7 +242,7 @@ class AgentOrchestrator(
                 totalTokens += workerResult.tokensUsed
                 artifacts.addAll(workerResult.artifacts)
 
-                if (workerResult.content.startsWith("Error:")) {
+                if (workerResult.isError) {
                     taskGraph.markFailed(task.id, workerResult.content)
                     try { project.getService(EventBus::class.java).emit(WorkflowEvent.AgentTaskFailed(task.id, workerResult.content)) } catch (_: Exception) {}
                 } else {

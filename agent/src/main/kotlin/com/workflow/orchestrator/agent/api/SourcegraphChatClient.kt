@@ -11,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -39,18 +41,118 @@ class SourcegraphChatClient(
             .build()
     }
 
-    suspend fun sendMessage(
+    /**
+     * Send a streaming chat completion request. Each SSE chunk is emitted via [onChunk]
+     * for real-time UI updates. The accumulated response is returned as a single
+     * [ChatCompletionResponse] when the stream completes.
+     */
+    suspend fun sendMessageStream(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
         maxTokens: Int? = null,
-        temperature: Double = 0.0
+        temperature: Double = 0.0,
+        onChunk: suspend (StreamChunk) -> Unit
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
             val request = ChatCompletionRequest(
                 model = model,
                 messages = messages,
                 tools = tools?.takeIf { it.isNotEmpty() },
-                toolChoice = if (tools?.isNotEmpty() == true) "auto" else null,
+                toolChoice = if (tools?.isNotEmpty() == true) JsonPrimitive("auto") else null,
+                temperature = temperature,
+                maxTokens = maxTokens,
+                stream = true
+            )
+
+            val jsonBody = json.encodeToString(request)
+            log.debug("[Agent:API] POST /chat/completions (stream, ${jsonBody.length} chars)")
+
+            val httpRequest = Request.Builder()
+                .url("${baseUrl.trimEnd('/')}/chat/completions")
+                .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(httpRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    return@withContext mapErrorResponse(response.code, body)
+                }
+
+                val reader = response.body?.byteStream()?.bufferedReader()
+                    ?: return@withContext ApiResult.Error(
+                        ErrorType.PARSE_ERROR, "Empty response body for stream"
+                    )
+
+                val contentBuilder = StringBuilder()
+                val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
+                var role = "assistant"
+
+                reader.forEachLine { line ->
+                    if (line.startsWith("data: ") && line != "data: [DONE]") {
+                        val chunkJson = line.removePrefix("data: ")
+                        try {
+                            val chunk = json.decodeFromString<StreamChunk>(chunkJson)
+                            // Use runBlocking here because forEachLine is not a suspend context.
+                            // This is safe because we are already on Dispatchers.IO.
+                            kotlinx.coroutines.runBlocking { onChunk(chunk) }
+
+                            chunk.choices.firstOrNull()?.delta?.let { delta ->
+                                delta.role?.let { role = it }
+                                delta.content?.let { contentBuilder.append(it) }
+                                delta.toolCalls?.forEach { tc ->
+                                    val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
+                                    tc.id?.let { builder.id = it }
+                                    tc.function?.name?.let { builder.name = it }
+                                    tc.function?.arguments?.let { builder.arguments.append(it) }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            log.debug("[Agent:API] Skipping malformed SSE chunk: ${e.message}")
+                        }
+                    }
+                }
+
+                val toolCalls = if (toolCallBuilders.isNotEmpty()) {
+                    toolCallBuilders.entries.sortedBy { it.key }.map { it.value.toToolCall() }
+                } else null
+
+                val finalMessage = ChatMessage(
+                    role = role,
+                    content = contentBuilder.toString().ifBlank { null },
+                    toolCalls = toolCalls
+                )
+
+                ApiResult.Success(ChatCompletionResponse(
+                    id = "stream-${System.nanoTime()}",
+                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = "stop")),
+                    usage = null
+                ))
+            }
+        } catch (e: IOException) {
+            log.warn("[Agent:API] Stream network error: ${e.message}", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "Stream error: ${e.message}", e)
+        } catch (e: Exception) {
+            log.error("[Agent:API] Stream unexpected error: ${e.message}", e)
+            ApiResult.Error(ErrorType.PARSE_ERROR, "Stream error: ${e.message}", e)
+        }
+    }
+
+    suspend fun sendMessage(
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
+        maxTokens: Int? = null,
+        temperature: Double = 0.0,
+        toolChoice: JsonElement? = null
+    ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
+        try {
+            val resolvedToolChoice = toolChoice
+                ?: if (tools?.isNotEmpty() == true) JsonPrimitive("auto") else null
+
+            val request = ChatCompletionRequest(
+                model = model,
+                messages = messages,
+                tools = tools?.takeIf { it.isNotEmpty() },
+                toolChoice = resolvedToolChoice,
                 temperature = temperature,
                 maxTokens = maxTokens
             )
@@ -72,18 +174,7 @@ class SourcegraphChatClient(
                         log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
                         ApiResult.Success(parsed)
                     }
-                    response.code == 401 || response.code == 403 -> {
-                        ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed (${response.code})")
-                    }
-                    response.code == 429 -> {
-                        ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited. Retry after delay.")
-                    }
-                    response.code in 500..599 -> {
-                        ApiResult.Error(ErrorType.SERVER_ERROR, "Server error (${response.code}): $body")
-                    }
-                    else -> {
-                        ApiResult.Error(ErrorType.VALIDATION_ERROR, "Unexpected response (${response.code}): $body")
-                    }
+                    else -> mapErrorResponse(response.code, body)
                 }
             }
         } catch (e: IOException) {
@@ -93,5 +184,20 @@ class SourcegraphChatClient(
             log.error("[Agent:API] Unexpected error: ${e.message}", e)
             ApiResult.Error(ErrorType.PARSE_ERROR, "Unexpected error: ${e.message}", e)
         }
+    }
+
+    private fun <T> mapErrorResponse(code: Int, body: String): ApiResult<T> = when {
+        code == 401 || code == 403 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed ($code)")
+        code == 429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited. Retry after delay.")
+        code in 500..599 -> ApiResult.Error(ErrorType.SERVER_ERROR, "Server error ($code): $body")
+        else -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "Unexpected response ($code): $body")
+    }
+
+    private class ToolCallBuilder {
+        var id: String = ""
+        var name: String = ""
+        val arguments = StringBuilder()
+
+        fun toToolCall() = ToolCall(id = id, function = FunctionCall(name = name, arguments = arguments.toString()))
     }
 }
