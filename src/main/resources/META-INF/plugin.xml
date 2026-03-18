@@ -290,6 +290,19 @@
         <!-- Handover Notification Group -->
         <notificationGroup id="workflow.handover" displayType="BALLOON"/>
 
+        <!-- Agent Module -->
+        <notificationGroup id="workflow.agent" displayType="BALLOON"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.settings.AgentSettings"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.AgentService"/>
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.agent.settings.AgentSettingsConfigurable"
+            id="workflow.orchestrator.agent"
+            displayName="Agent"
+            nonDefaultProject="true"/>
+
         <!-- Jira Ticket Reference TODO Pattern -->
         <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
 
@@ -348,6 +361,7 @@
         <tabProvider implementation="com.workflow.orchestrator.pullrequest.ui.PrTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
     </extensions>
 
     <projectListeners>
