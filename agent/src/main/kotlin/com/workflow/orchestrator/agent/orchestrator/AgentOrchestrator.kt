@@ -76,7 +76,9 @@ class AgentOrchestrator(
      */
     suspend fun executeTask(
         taskDescription: String,
-        onProgress: (AgentProgress) -> Unit = {}
+        onProgress: (AgentProgress) -> Unit = {},
+        onStreamChunk: (String) -> Unit = {},
+        approvalGate: ApprovalGate? = null
     ): AgentResult {
         cancelled.set(false)
 
@@ -100,7 +102,9 @@ class AgentOrchestrator(
             brain = brain,
             contextManager = contextManager,
             project = project,
-            onProgress = onProgress
+            approvalGate = approvalGate,
+            onProgress = onProgress,
+            onStreamChunk = onStreamChunk
         )
 
         return when (result) {

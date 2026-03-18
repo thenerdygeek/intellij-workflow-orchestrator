@@ -37,6 +37,9 @@ class SingleAgentSessionTest {
         )
         every { contextManager.currentTokens } returns 1000
         every { contextManager.remainingBudget() } returns 149_000
+
+        // chatStream falls back to chat() via NotImplementedError catch
+        coEvery { brain.chatStream(any(), any(), any(), any()) } throws NotImplementedError("test fallback")
     }
 
     @Test
