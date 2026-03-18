@@ -7,6 +7,20 @@ import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.serialization.json.JsonElement
 import okhttp3.OkHttpClient
 
+/**
+ * LLM brain implementation that talks to Sourcegraph's OpenAI-compatible chat completions API.
+ *
+ * Sourcegraph API differences from standard OpenAI:
+ * - Endpoint: `/.api/llm/chat/completions` (not `/v1/chat/completions`)
+ * - Auth: `token TOKEN_VALUE` (not `Bearer`)
+ * - Model format: `provider::apiVersion::modelId` (e.g., `anthropic::2024-10-22::claude-sonnet-4-20250514`)
+ * - max_tokens capped at 4000
+ * - tool_choice not supported (tools use auto behavior)
+ *
+ * @param sourcegraphUrl The Sourcegraph instance root URL (e.g., "https://sourcegraph.company.com")
+ * @param tokenProvider Provides the Sourcegraph access token
+ * @param model The model identifier in Sourcegraph format
+ */
 class OpenAiCompatBrain(
     sourcegraphUrl: String,
     tokenProvider: () -> String?,
@@ -31,13 +45,13 @@ class OpenAiCompatBrain(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
         maxTokens: Int?,
-        toolChoice: JsonElement?
+        toolChoice: JsonElement? // Accepted for interface compat; not sent to Sourcegraph
     ): ApiResult<ChatCompletionResponse> {
         return client.sendMessage(
             messages = messages,
             tools = tools,
             maxTokens = maxTokens,
-            toolChoice = toolChoice
+            toolChoice = toolChoice // SourcegraphChatClient will ignore this
         )
     }
 

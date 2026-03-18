@@ -59,8 +59,49 @@ class SourcegraphChatClientTest {
 
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertTrue(request.path!!.contains("/chat/completions"))
+        assertTrue(request.path!!.contains("/.api/llm/chat/completions"), "Path should use Sourcegraph API path, got: ${request.path}")
         assertEquals("token sgp_test-token", request.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `sendMessage does not include tool_choice in request body`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}
+        """.trimIndent()))
+
+        val tools = listOf(ToolDefinition(function = FunctionDefinition(
+            name = "read_file",
+            description = "Read a file",
+            parameters = FunctionParameters(properties = emptyMap())
+        )))
+
+        client.sendMessage(
+            messages = listOf(ChatMessage(role = "user", content = "Hi")),
+            tools = tools
+        )
+
+        val request = server.takeRequest()
+        val body = request.body.readUtf8()
+        assertFalse(body.contains("tool_choice"), "Sourcegraph API does not support tool_choice. Body: $body")
+        assertTrue(body.contains("\"tools\""), "Should include tools in request body")
+    }
+
+    @Test
+    fun `sendMessage clamps maxTokens to 4000`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}
+        """.trimIndent()))
+
+        client.sendMessage(
+            messages = listOf(ChatMessage(role = "user", content = "Hi")),
+            tools = null,
+            maxTokens = 64000 // Above Sourcegraph's 4000 limit
+        )
+
+        val request = server.takeRequest()
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("\"max_tokens\":4000"), "max_tokens should be clamped to 4000. Body: $body")
+        assertFalse(body.contains("64000"), "Should not contain original unclamped value")
     }
 
     @Test
