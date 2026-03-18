@@ -118,9 +118,9 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
     private fun setupGearActions(project: Project, toolWindow: ToolWindow) {
         val gearGroup = DefaultActionGroup().apply {
             // Settings shortcut
-            add(object : DumbAwareAction("Connections Settings", "Configure service URLs and tokens", AllIcons.General.Settings) {
+            add(object : DumbAwareAction("Settings", "Configure Workflow Orchestrator", AllIcons.General.Settings) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    ShowSettingsUtil.getInstance().showSettingsDialog(project, "Connections")
+                    ShowSettingsUtil.getInstance().showSettingsDialog(project, "General")
                 }
             })
 

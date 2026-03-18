@@ -1,65 +1,113 @@
 package com.workflow.orchestrator.core.settings
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketProject
+import com.workflow.orchestrator.core.bitbucket.BitbucketRepo
+import com.workflow.orchestrator.core.bitbucket.GitRemoteParser
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.runBlocking
+import javax.swing.DefaultComboBoxModel
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
 import javax.swing.SwingUtilities
 
-class ConnectionsConfigurable(
+/**
+ * Merged "General" settings page combining:
+ * - Connections (all 6 service connections with Test Connection buttons)
+ * - Repository (Bitbucket project/repo selection)
+ * - Module Visibility (5 module enable/disable checkboxes)
+ */
+class GeneralConfigurable(
     private val project: Project
 ) : SearchableConfigurable {
 
+    private val log = Logger.getInstance(GeneralConfigurable::class.java)
     private val connSettings = ConnectionSettings.getInstance()
+    private val pluginSettings = PluginSettings.getInstance(project)
     private val credentialStore = CredentialStore()
     private val authTestService = AuthTestService()
 
     private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
 
-    // Deferred credential saves — only written on apply(), not on keystroke
+    // --- Deferred credential saves (from ConnectionsConfigurable) ---
     private val pendingTokens = mutableMapOf<ServiceType, String>()
     private var pendingNexusPassword: String? = null
     private var pendingNexusUsername: String? = null
+    private var pendingBitbucketUsername: String? = null
 
-    override fun getId(): String = "workflow.orchestrator.connections"
-    override fun getDisplayName(): String = "Connections"
+    // --- Repository state (from RepositoryConfigurable) ---
+    private val projectKeyModel = DefaultComboBoxModel<String>()
+    private val repoSlugModel = DefaultComboBoxModel<String>()
+    private var projectKeyCombo: JComboBox<String>? = null
+    private var repoSlugCombo: JComboBox<String>? = null
+    private val repoStatusLabel = JBLabel("")
+    private var fetchedProjects: List<BitbucketProject> = emptyList()
+    private var fetchedRepos: List<BitbucketRepo> = emptyList()
+
+    override fun getId(): String = "workflow.orchestrator.general"
+    override fun getDisplayName(): String = "General"
 
     override fun createComponent(): JComponent {
+        val currentProjectKey = pluginSettings.state.bitbucketProjectKey.orEmpty()
+        val currentRepoSlug = pluginSettings.state.bitbucketRepoSlug.orEmpty()
+
+        // Pre-populate repo combo models with current values
+        if (currentProjectKey.isNotBlank()) {
+            projectKeyModel.addElement(currentProjectKey)
+            projectKeyModel.selectedItem = currentProjectKey
+        }
+        if (currentRepoSlug.isNotBlank()) {
+            repoSlugModel.addElement(currentRepoSlug)
+            repoSlugModel.selectedItem = currentRepoSlug
+        }
+
         val innerPanel = panel {
-            serviceGroup("Jira Connection", ServiceType.JIRA,
-                { connSettings.state.jiraUrl }, { connSettings.state.jiraUrl = it })
-            serviceGroup("Bamboo Connection", ServiceType.BAMBOO,
-                { connSettings.state.bambooUrl }, { connSettings.state.bambooUrl = it })
-            serviceGroup("Bitbucket Connection", ServiceType.BITBUCKET,
-                { connSettings.state.bitbucketUrl }, { connSettings.state.bitbucketUrl = it })
-            serviceGroup("SonarQube Connection", ServiceType.SONARQUBE,
-                { connSettings.state.sonarUrl }, { connSettings.state.sonarUrl = it })
-            serviceGroup("Cody Enterprise", ServiceType.SOURCEGRAPH,
-                { connSettings.state.sourcegraphUrl }, { connSettings.state.sourcegraphUrl = it })
-            serviceGroup("Nexus Docker Registry", ServiceType.NEXUS,
-                { connSettings.state.nexusUrl }, { connSettings.state.nexusUrl = it })
+            // ========== Section 1: Connections ==========
+            connectionsSection()
+
+            // ========== Section 2: Repository ==========
+            repositorySection(currentProjectKey, currentRepoSlug)
+
+            // ========== Section 3: Module Visibility ==========
+            moduleVisibilitySection()
         }
         dialogPanel = innerPanel
 
-        // Wrap in scroll pane so all 6 collapsible groups are accessible
-        // even when multiple are expanded simultaneously
+        // Auto-detect repo on first open if not configured
+        if (currentProjectKey.isBlank() && currentRepoSlug.isBlank()) {
+            autoDetectRepo()
+        }
+
         return JBScrollPane(innerPanel).apply {
             border = null
         }
     }
 
     override fun isModified(): Boolean {
-        if (pendingTokens.isNotEmpty() || pendingNexusPassword != null || pendingNexusUsername != null) return true
+        // Credential changes
+        if (pendingTokens.isNotEmpty() || pendingNexusPassword != null || pendingNexusUsername != null || pendingBitbucketUsername != null) return true
+
+        // Repository changes
+        val currentProjectKey = pluginSettings.state.bitbucketProjectKey.orEmpty()
+        val currentRepoSlug = pluginSettings.state.bitbucketRepoSlug.orEmpty()
+        val selectedProject = projectKeyCombo?.selectedItem as? String ?: ""
+        val selectedRepo = repoSlugCombo?.selectedItem as? String ?: ""
+        if (selectedProject != currentProjectKey || selectedRepo != currentRepoSlug) return true
+
+        // Dialog panel bindings (module toggles, etc.)
         return dialogPanel?.isModified() ?: false
     }
 
@@ -90,17 +138,41 @@ class ConnectionsConfigurable(
             connSettings.state.bitbucketUsername = username
         }
         pendingBitbucketUsername = null
+
+        // Save repository settings
+        pluginSettings.state.bitbucketProjectKey = (projectKeyCombo?.selectedItem as? String).orEmpty()
+        pluginSettings.state.bitbucketRepoSlug = (repoSlugCombo?.selectedItem as? String).orEmpty()
+        log.info("[Settings:General] Saved project='${pluginSettings.state.bitbucketProjectKey}', repo='${pluginSettings.state.bitbucketRepoSlug}'")
     }
 
     override fun reset() {
         dialogPanel?.reset()
+        projectKeyCombo?.selectedItem = pluginSettings.state.bitbucketProjectKey.orEmpty()
+        repoSlugCombo?.selectedItem = pluginSettings.state.bitbucketRepoSlug.orEmpty()
     }
 
     override fun disposeUIResources() {
         dialogPanel = null
+        projectKeyCombo = null
+        repoSlugCombo = null
     }
 
-    private var pendingBitbucketUsername: String? = null
+    // ========== Connections Section ==========
+
+    private fun Panel.connectionsSection() {
+        serviceGroup("Jira Connection", ServiceType.JIRA,
+            { connSettings.state.jiraUrl }, { connSettings.state.jiraUrl = it })
+        serviceGroup("Bamboo Connection", ServiceType.BAMBOO,
+            { connSettings.state.bambooUrl }, { connSettings.state.bambooUrl = it })
+        serviceGroup("Bitbucket Connection", ServiceType.BITBUCKET,
+            { connSettings.state.bitbucketUrl }, { connSettings.state.bitbucketUrl = it })
+        serviceGroup("SonarQube Connection", ServiceType.SONARQUBE,
+            { connSettings.state.sonarUrl }, { connSettings.state.sonarUrl = it })
+        serviceGroup("Cody Enterprise", ServiceType.SOURCEGRAPH,
+            { connSettings.state.sourcegraphUrl }, { connSettings.state.sourcegraphUrl = it })
+        serviceGroup("Nexus Docker Registry", ServiceType.NEXUS,
+            { connSettings.state.nexusUrl }, { connSettings.state.nexusUrl = it })
+    }
 
     private fun Panel.serviceGroup(
         title: String,
@@ -119,7 +191,7 @@ class ConnectionsConfigurable(
 
     /**
      * Standard service group with a single Access Token field.
-     * Used by Jira, Bamboo, Bitbucket, SonarQube, Sourcegraph.
+     * Used by Jira, Bamboo, SonarQube, Sourcegraph.
      */
     private fun Panel.tokenServiceGroup(
         title: String,
@@ -372,6 +444,193 @@ class ConnectionsConfigurable(
                 SwingUtilities.invokeLater {
                     passwordField?.text = existingPassword
                 }
+            }
+        }
+    }
+
+    // ========== Repository Section ==========
+
+    private fun Panel.repositorySection(currentProjectKey: String, currentRepoSlug: String) {
+        collapsibleGroup("Repository") {
+            row {
+                comment("Configure which Bitbucket project and repository this IDE project maps to.")
+            }
+
+            row("Project Key:") {
+                projectKeyCombo = comboBox(projectKeyModel)
+                    .applyToComponent {
+                        isEditable = true
+                        addActionListener {
+                            val selected = selectedItem as? String ?: ""
+                            if (selected.isNotBlank() && fetchedProjects.isNotEmpty()) {
+                                loadRepos(selected)
+                            }
+                        }
+                    }
+                    .comment("Bitbucket project key (e.g., MYPROJ)")
+                    .component
+            }
+
+            row("Repository:") {
+                repoSlugCombo = comboBox(repoSlugModel)
+                    .applyToComponent {
+                        isEditable = true
+                    }
+                    .comment("Repository slug (e.g., my-service)")
+                    .component
+            }
+
+            row {
+                button("Auto-detect from Git Remote") {
+                    autoDetectRepo()
+                }
+                button("Fetch from Bitbucket") {
+                    loadProjects()
+                }
+                cell(repoStatusLabel)
+            }
+        }
+    }
+
+    private fun autoDetectRepo() {
+        repoStatusLabel.text = "Detecting from git remote..."
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = GitRemoteParser.detectFromProject(project)
+            SwingUtilities.invokeLater {
+                if (result != null) {
+                    val (projKey, repoSlug) = result
+                    if (projectKeyModel.getIndexOf(projKey) < 0) {
+                        projectKeyModel.addElement(projKey)
+                    }
+                    projectKeyCombo?.selectedItem = projKey
+
+                    if (repoSlugModel.getIndexOf(repoSlug) < 0) {
+                        repoSlugModel.addElement(repoSlug)
+                    }
+                    repoSlugCombo?.selectedItem = repoSlug
+
+                    repoStatusLabel.text = "Detected: $projKey / $repoSlug"
+                } else {
+                    repoStatusLabel.text = "Could not detect from git remote"
+                }
+            }
+        }
+    }
+
+    private fun loadProjects() {
+        val bitbucketUrl = connSettings.state.bitbucketUrl.trimEnd('/')
+        if (bitbucketUrl.isBlank()) {
+            repoStatusLabel.text = "Configure Bitbucket URL in Connections first"
+            return
+        }
+
+        repoStatusLabel.text = "Fetching projects..."
+        val client = BitbucketBranchClient(
+            baseUrl = bitbucketUrl,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+
+        runBackgroundableTask("Fetching Bitbucket projects", project, false) {
+            val result = runBlocking { client.getProjects() }
+            SwingUtilities.invokeLater {
+                when (result) {
+                    is ApiResult.Success -> {
+                        fetchedProjects = result.data
+                        val currentSelection = projectKeyCombo?.selectedItem as? String
+                        projectKeyModel.removeAllElements()
+                        for (proj in result.data) {
+                            projectKeyModel.addElement(proj.key)
+                        }
+                        if (currentSelection != null && projectKeyModel.getIndexOf(currentSelection) >= 0) {
+                            projectKeyCombo?.selectedItem = currentSelection
+                        }
+                        repoStatusLabel.text = "Found ${result.data.size} projects"
+
+                        // If a project is selected, also load its repos
+                        val selected = projectKeyCombo?.selectedItem as? String
+                        if (!selected.isNullOrBlank()) {
+                            loadRepos(selected)
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        repoStatusLabel.text = "Failed: ${result.message}"
+                    }
+                }
+            }
+        }
+    }
+
+    private fun loadRepos(projectKey: String) {
+        val bitbucketUrl = connSettings.state.bitbucketUrl.trimEnd('/')
+        if (bitbucketUrl.isBlank()) return
+
+        val client = BitbucketBranchClient(
+            baseUrl = bitbucketUrl,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+
+        runBackgroundableTask("Fetching Bitbucket repos", project, false) {
+            val result = runBlocking { client.getRepos(projectKey) }
+            SwingUtilities.invokeLater {
+                when (result) {
+                    is ApiResult.Success -> {
+                        fetchedRepos = result.data
+                        val currentSelection = repoSlugCombo?.selectedItem as? String
+                        repoSlugModel.removeAllElements()
+                        for (repo in result.data) {
+                            repoSlugModel.addElement(repo.slug)
+                        }
+                        if (currentSelection != null && repoSlugModel.getIndexOf(currentSelection) >= 0) {
+                            repoSlugCombo?.selectedItem = currentSelection
+                        }
+                        repoStatusLabel.text = "Found ${result.data.size} repos in $projectKey"
+                    }
+                    is ApiResult.Error -> {
+                        repoStatusLabel.text = "Failed to load repos: ${result.message}"
+                    }
+                }
+            }
+        }
+    }
+
+    // ========== Module Visibility Section ==========
+
+    private fun Panel.moduleVisibilitySection() {
+        collapsibleGroup("Module Visibility") {
+            row {
+                checkBox("Sprint (Jira)")
+                    .bindSelected(
+                        { pluginSettings.state.sprintModuleEnabled },
+                        { pluginSettings.state.sprintModuleEnabled = it }
+                    )
+            }
+            row {
+                checkBox("Build (Bamboo)")
+                    .bindSelected(
+                        { pluginSettings.state.buildModuleEnabled },
+                        { pluginSettings.state.buildModuleEnabled = it }
+                    )
+            }
+            row {
+                checkBox("Quality (SonarQube)")
+                    .bindSelected(
+                        { pluginSettings.state.qualityModuleEnabled },
+                        { pluginSettings.state.qualityModuleEnabled = it }
+                    )
+            }
+            row {
+                checkBox("Automation (Docker/Bamboo)")
+                    .bindSelected(
+                        { pluginSettings.state.automationModuleEnabled },
+                        { pluginSettings.state.automationModuleEnabled = it }
+                    )
+            }
+            row {
+                checkBox("Handover (Bitbucket PR)")
+                    .bindSelected(
+                        { pluginSettings.state.handoverModuleEnabled },
+                        { pluginSettings.state.handoverModuleEnabled = it }
+                    )
             }
         }
     }

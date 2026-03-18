@@ -51,37 +51,31 @@
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.ConnectionsConfigurable"
-            id="workflow.orchestrator.connections"
-            displayName="Connections"
+            instance="com.workflow.orchestrator.core.settings.GeneralConfigurable"
+            id="workflow.orchestrator.general"
+            displayName="General"
             nonDefaultProject="true"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.jira.settings.WorkflowMappingConfigurable"
-            id="workflow.orchestrator.workflow"
-            displayName="Workflow Mapping"
+            instance="com.workflow.orchestrator.jira.settings.WorkflowConfigurable"
+            id="workflow.orchestrator.workflow_config"
+            displayName="Workflow"
             nonDefaultProject="true"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.RepositoryConfigurable"
-            id="workflow.orchestrator.repository"
-            displayName="Repository"
+            instance="com.workflow.orchestrator.automation.settings.CiCdConfigurable"
+            id="workflow.orchestrator.cicd"
+            displayName="CI/CD"
             nonDefaultProject="true"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.AdvancedConfigurable"
-            id="workflow.orchestrator.advanced"
-            displayName="Advanced"
+            instance="com.workflow.orchestrator.core.settings.AiAdvancedConfigurable"
+            id="workflow.orchestrator.ai_advanced"
+            displayName="AI &amp; Advanced"
             nonDefaultProject="true"/>
-
-        <applicationConfigurable
-            parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.automation.settings.AutomationSuiteConfigurable"
-            id="workflow.orchestrator.automation.suites"
-            displayName="Automation Suites"/>
 
         <!-- Tool Window -->
         <toolWindow

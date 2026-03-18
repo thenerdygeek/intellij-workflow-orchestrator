@@ -1,114 +1,40 @@
 package com.workflow.orchestrator.core.settings
 
-import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
 import javax.swing.JComponent
 
+/**
+ * Parent settings page: Tools > Workflow Orchestrator.
+ * Shows a read-only connection status overview.
+ * All editable fields live in child pages: General, Workflow, CI/CD, AI & Advanced.
+ */
 class WorkflowSettingsConfigurable(
     private val project: Project
-) : SearchableConfigurable, Configurable.Composite {
-
-    private val settings = PluginSettings.getInstance(project)
-    private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
+) : SearchableConfigurable {
 
     override fun getId(): String = "workflow.orchestrator"
     override fun getDisplayName(): String = "Workflow Orchestrator"
 
-    override fun getConfigurables(): Array<Configurable> {
-        return arrayOf(
-            ConnectionsConfigurable(project),
-            HealthCheckConfigurable(project)
-        )
-    }
-
     override fun createComponent(): JComponent {
-        val panel = panel {
+        return panel {
             group("Connection Status") {
                 row {
                     comment(buildConnectionSummary())
                 }
             }
-
-            group("General") {
-                row("Branch pattern:") {
-                    textField()
-                        .columns(40)
-                        .bindText(
-                            { settings.state.branchPattern ?: "feature/{ticketId}-{summary}" },
-                            { settings.state.branchPattern = it }
-                        )
-                        .comment("Placeholders: {ticketId}, {summary}, {type}, {cody-summary}")
-                }
-                row {
-                    checkBox("Use conventional commits (feat:, fix:, etc.)")
-                        .bindSelected(
-                            { settings.state.useConventionalCommits },
-                            { settings.state.useConventionalCommits = it }
-                        )
-                }
-            }
-
-            group("Enabled Modules") {
-                row {
-                    checkBox("Sprint (Jira)")
-                        .bindSelected(
-                            { settings.state.sprintModuleEnabled },
-                            { settings.state.sprintModuleEnabled = it }
-                        )
-                }
-                row {
-                    checkBox("Build (Bamboo)")
-                        .bindSelected(
-                            { settings.state.buildModuleEnabled },
-                            { settings.state.buildModuleEnabled = it }
-                        )
-                }
-                row {
-                    checkBox("Quality (SonarQube)")
-                        .bindSelected(
-                            { settings.state.qualityModuleEnabled },
-                            { settings.state.qualityModuleEnabled = it }
-                        )
-                }
-                row {
-                    checkBox("Automation (Docker/Bamboo)")
-                        .bindSelected(
-                            { settings.state.automationModuleEnabled },
-                            { settings.state.automationModuleEnabled = it }
-                        )
-                }
-                row {
-                    checkBox("Handover (Bitbucket PR)")
-                        .bindSelected(
-                            { settings.state.handoverModuleEnabled },
-                            { settings.state.handoverModuleEnabled = it }
-                        )
-                }
+            row {
+                comment("Configure connections, workflow, CI/CD, and AI settings in the sub-pages below.")
             }
         }
-        dialogPanel = panel
-        return panel
     }
 
-    override fun isModified(): Boolean = dialogPanel?.isModified() ?: false
-
-    override fun apply() {
-        dialogPanel?.apply()
-    }
-
-    override fun reset() {
-        dialogPanel?.reset()
-    }
-
-    override fun disposeUIResources() {
-        dialogPanel = null
-    }
+    override fun isModified(): Boolean = false
+    override fun apply() {}
+    override fun reset() {}
 
     private fun buildConnectionSummary(): String {
-        // Only check URL presence on EDT — credential reads are deferred
-        // to avoid blocking EDT with PasswordSafe/Keychain calls
         val cs = ConnectionSettings.getInstance().state
         val services = listOf(
             "Jira" to cs.jiraUrl,
@@ -121,11 +47,7 @@ class WorkflowSettingsConfigurable(
 
         return services.joinToString("<br>") { (name, url) ->
             val hasUrl = !url.isNullOrBlank()
-            val status = when {
-                hasUrl -> "\u2705 $name — URL configured"
-                else -> "\u274C $name — not configured"
-            }
-            status
+            if (hasUrl) "\u2705 $name — configured" else "\u274C $name — not configured"
         }
     }
 }
