@@ -82,6 +82,9 @@ class ConversationStore(
         File(parent, sessionId)
     }
 
+    /** Expose the session directory for checkpoint storage. */
+    val sessionDirectory: File get() = sessionDir
+
     private val messagesFile: File get() = File(sessionDir, "messages.jsonl")
     private val metadataFile: File get() = File(sessionDir, "metadata.json")
 
