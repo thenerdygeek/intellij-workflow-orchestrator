@@ -67,11 +67,11 @@ class EditFileTool : AgentTool {
                 // Return the proposed diff instead of applying — the UI will show approval dialog
                 val diff = "--- $rawPath\n+++ $rawPath\n@@ edit @@\n-${oldString.take(200)}\n+${newString.take(200)}"
                 return ToolResult(
-                    content = "APPROVAL_REQUIRED: Edit pending approval.\n$diff",
+                    content = "APPROVAL_REQUIRED: Edit NOT applied — pending user approval.\n$diff",
                     summary = "Edit pending approval for $rawPath",
                     tokenEstimate = TokenEstimator.estimate(diff),
                     artifacts = listOf(path),
-                    isError = false
+                    isError = true // Signal to LLM that the edit was NOT applied
                 )
             }
         } catch (_: Exception) {

@@ -521,14 +521,24 @@ class SingleAgentSession(
                 delay(backoffMs)
             }
 
-            val result = try {
-                brain.chatStream(messages, toolDefs, maxOutputTokens) { chunk ->
-                    chunk.choices.firstOrNull()?.delta?.content?.let { delta ->
-                        onStreamChunk(delta)
-                    }
-                }
-            } catch (_: NotImplementedError) {
+            // Use non-streaming when tools are present — Sourcegraph's SSE may not
+            // properly relay tool_calls in streaming mode (produces empty tool names).
+            // Use streaming only for text responses (no tools or after tool reduction).
+            val hasTools = !toolDefs.isNullOrEmpty()
+            val result = if (hasTools) {
+                // Non-streaming: reliable tool call parsing
                 brain.chat(messages, toolDefs, maxOutputTokens)
+            } else {
+                // Streaming: better UX for text-only responses
+                try {
+                    brain.chatStream(messages, toolDefs, maxOutputTokens) { chunk ->
+                        chunk.choices.firstOrNull()?.delta?.content?.let { delta ->
+                            onStreamChunk(delta)
+                        }
+                    }
+                } catch (_: NotImplementedError) {
+                    brain.chat(messages, toolDefs, maxOutputTokens)
+                }
             }
 
             when (result) {

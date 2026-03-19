@@ -17,8 +17,8 @@ class RunCommandTool : AgentTool {
     override val description = "Execute a shell command in the project directory. Has a 60-second timeout and 4000-character output limit. Dangerous commands are blocked."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "command" to ParameterProperty(type = "string", description = "The shell command to execute"),
-            "working_dir" to ParameterProperty(type = "string", description = "Working directory. Optional, defaults to project root.")
+            "command" to ParameterProperty(type = "string", description = "The shell command to execute. Examples: 'ls -la src/', 'grep -r TODO .', 'mvn test -pl core'"),
+            "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'")
         ),
         required = listOf("command")
     )

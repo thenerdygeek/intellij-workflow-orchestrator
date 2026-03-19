@@ -24,11 +24,11 @@ class JiraTransitionTool(
 ) : AgentTool {
 
     override val name = "jira_transition"
-    override val description = "Transition a Jira ticket to a new status using the transition ID."
+    override val description = "Transition a Jira ticket to a new status. Use jira_get_ticket first to see available transitions and their IDs."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "key" to ParameterProperty(type = "string", description = "Jira ticket key, e.g. PROJ-123"),
-            "transition_id" to ParameterProperty(type = "string", description = "Transition ID to execute")
+            "key" to ParameterProperty(type = "string", description = "Jira ticket key (e.g., PROJ-123)"),
+            "transition_id" to ParameterProperty(type = "string", description = "Numeric transition ID. Get available IDs by reading the ticket first (e.g., '21' for 'In Progress', '31' for 'Done')")
         ),
         required = listOf("key", "transition_id")
     )
