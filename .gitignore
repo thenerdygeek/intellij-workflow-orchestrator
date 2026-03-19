@@ -27,3 +27,4 @@ Thumbs.db
 /run/
 .superpowers/
 .worktrees/
+hs_err_pid*.log
