@@ -347,6 +347,33 @@ code {
 .footer-btn:hover { background: rgba(255,255,255,0.05); }
 .footer-btn.undo { color: var(--error); border-color: #5c2020; }
 .footer-btn.undo:hover { background: var(--diff-rem-bg); }
+
+/* Plan Card */
+.plan-card { background: var(--tool-bg); border: 1px solid var(--border); border-radius: 10px; margin: 12px 0; overflow: hidden; animation: fadeIn 0.3s ease-out; }
+.plan-header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; }
+.plan-header .plan-icon { font-size: 18px; }
+.plan-section { padding: 10px 16px; }
+.plan-section-title { font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.plan-section-content { font-size: 13px; line-height: 1.5; }
+.plan-steps { padding: 4px 16px 10px; }
+.plan-step { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.plan-step:last-child { border-bottom: none; }
+.plan-step-status { font-size: 16px; flex-shrink: 0; width: 24px; text-align: center; line-height: 1.4; }
+.plan-step-content { flex: 1; min-width: 0; }
+.plan-step-title { font-size: 13px; font-weight: 500; }
+.plan-step-desc { font-size: 12px; color: var(--fg-secondary); margin-top: 2px; }
+.plan-step-files { font-size: 11px; color: var(--fg-muted); font-family: var(--font-mono); margin-top: 2px; }
+.plan-step-comment-btn { font-size: 12px; cursor: pointer; color: var(--fg-muted); padding: 2px 6px; flex-shrink: 0; border-radius: 4px; }
+.plan-step-comment-btn:hover { color: var(--link); background: rgba(59,130,246,0.1); }
+.plan-comment-input { width: 100%; padding: 6px 10px; margin-top: 6px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; font-family: inherit; outline: none; display: none; }
+.plan-comment-input.visible { display: block; }
+.plan-comment-input:focus { border-color: var(--link); }
+.plan-actions { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+.plan-btn { padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.15s; }
+.plan-btn.approve { background: var(--success); color: white; }
+.plan-btn.approve:hover { opacity: 0.85; }
+.plan-btn.revise { background: transparent; border: 1px solid var(--border); color: var(--fg-secondary); }
+.plan-btn.revise:hover { border-color: var(--link); color: var(--fg); }
 </style>
 </head>
 <body>
@@ -666,6 +693,99 @@ document.addEventListener('click', function(e) {
     }
   }
 });
+
+/* ── Plan Card ── */
+
+function renderPlan(planJson) {
+  endStream(); hideEmpty();
+  var plan;
+  try { plan = typeof planJson === 'string' ? JSON.parse(planJson) : planJson; } catch(e) { return; }
+
+  var stepsHtml = '';
+  plan.steps.forEach(function(step) {
+    var statusIcon = step.status === 'done' ? '✓' : step.status === 'running' ? '◉' : step.status === 'failed' ? '✗' : '○';
+    var statusColor = step.status === 'done' ? 'var(--success)' : step.status === 'running' ? 'var(--link)' : step.status === 'failed' ? 'var(--error)' : 'var(--fg-muted)';
+    var filesHtml = step.files && step.files.length > 0 ? '<div class="plan-step-files">' + step.files.map(function(f) { return esc(f); }).join(', ') + '</div>' : '';
+    var descHtml = step.description ? '<div class="plan-step-desc">' + esc(step.description) + '</div>' : '';
+
+    stepsHtml += '<div class="plan-step" data-step-id="' + esc(step.id) + '">'
+      + '<div class="plan-step-status" style="color:' + statusColor + '">' + statusIcon + '</div>'
+      + '<div class="plan-step-content">'
+      + '<div class="plan-step-title">' + esc(step.id) + '. ' + esc(step.title) + '</div>'
+      + descHtml + filesHtml
+      + '<input class="plan-comment-input" data-step-id="' + esc(step.id) + '" placeholder="Add feedback for this step...">'
+      + '</div>'
+      + '<div class="plan-step-comment-btn" onclick="togglePlanComment(this)">💬</div>'
+      + '</div>';
+  });
+
+  var approachHtml = plan.approach ? '<div class="plan-section"><div class="plan-section-title">Approach</div><div class="plan-section-content">' + esc(plan.approach) + '</div></div>' : '';
+  var testingHtml = plan.testing ? '<div class="plan-section"><div class="plan-section-title">Testing</div><div class="plan-section-content">' + esc(plan.testing) + '</div></div>' : '';
+
+  var card = document.createElement('div');
+  card.className = 'message';
+  card.innerHTML = '<div class="plan-card" id="active-plan">'
+    + '<div class="plan-header"><span class="plan-icon">📋</span> Implementation Plan</div>'
+    + '<div class="plan-section"><div class="plan-section-title">Goal</div><div class="plan-section-content">' + esc(plan.goal) + '</div></div>'
+    + approachHtml
+    + '<div class="plan-steps"><div class="plan-section-title">Steps (' + plan.steps.length + ')</div>' + stepsHtml + '</div>'
+    + testingHtml
+    + '<div class="plan-actions">'
+    + '<button class="plan-btn approve" onclick="approvePlanAction()">✓ Approve &amp; Execute</button>'
+    + '<button class="plan-btn revise" onclick="revisePlanAction()">✏ Revise with Comments</button>'
+    + '</div>'
+    + '</div>';
+  container.appendChild(card);
+  scrollToBottom();
+}
+
+function updatePlanStep(stepId, status) {
+  var steps = document.querySelectorAll('.plan-step[data-step-id="' + stepId + '"]');
+  steps.forEach(function(step) {
+    var icon = step.querySelector('.plan-step-status');
+    if (icon) {
+      if (status === 'done') { icon.textContent = '✓'; icon.style.color = 'var(--success)'; }
+      else if (status === 'running') { icon.textContent = '◉'; icon.style.color = 'var(--link)'; }
+      else if (status === 'failed') { icon.textContent = '✗'; icon.style.color = 'var(--error)'; }
+    }
+  });
+}
+
+function togglePlanComment(btn) {
+  var step = btn.closest('.plan-step');
+  if (step) {
+    var input = step.querySelector('.plan-comment-input');
+    if (input) {
+      input.classList.toggle('visible');
+      if (input.classList.contains('visible')) input.focus();
+    }
+  }
+}
+
+function approvePlanAction() {
+  // Disable buttons
+  var actions = document.querySelector('.plan-actions');
+  if (actions) actions.innerHTML = '<div style="color:var(--success);font-size:13px;padding:4px;">✓ Plan approved — executing...</div>';
+  // Call Kotlin
+  if (window._approvePlan) window._approvePlan();
+}
+
+function revisePlanAction() {
+  var comments = {};
+  document.querySelectorAll('.plan-comment-input').forEach(function(input) {
+    var val = input.value.trim();
+    if (val) comments[input.dataset.stepId] = val;
+  });
+  if (Object.keys(comments).length === 0) {
+    alert('Add at least one comment to a step before requesting revision.');
+    return;
+  }
+  // Remove the plan card (agent will regenerate)
+  var planCard = document.getElementById('active-plan');
+  if (planCard) planCard.parentElement.remove();
+  // Call Kotlin with comments JSON
+  if (window._revisePlan) window._revisePlan(JSON.stringify(comments));
+}
 
 // Collapsible tool details handler
 document.addEventListener('click', function(e) {
