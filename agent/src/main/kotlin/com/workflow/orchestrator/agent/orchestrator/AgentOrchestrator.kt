@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.agent.tools.DynamicToolSelector
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.core.events.EventBus
@@ -130,8 +131,10 @@ class AgentOrchestrator(
 
         if (session != null) {
             // Multi-turn: reuse session's context (the core fix)
-            allTools = session.tools
-            allToolDefs = session.toolDefinitions
+            // Dynamic tool injection: filter tools based on conversation context
+            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, taskDescription)
+            allTools = selectedTools.associateBy { it.name }
+            allToolDefs = selectedTools.map { it.toToolDefinition() }
             contextManager = session.contextManager
 
             // Initialize session (adds system prompt) on first use, then null to avoid re-adding
@@ -141,8 +144,11 @@ class AgentOrchestrator(
             // Backward compat: create everything from scratch (tests, orchestrated mode)
             val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
 
-            allTools = toolRegistry.allTools().associateBy { it.name }
-            allToolDefs = toolRegistry.allTools().map { it.toToolDefinition() }
+            // Dynamic tool injection: filter tools based on task description
+            val registeredTools = toolRegistry.allTools()
+            val selectedTools = DynamicToolSelector.selectTools(registeredTools, taskDescription)
+            allTools = selectedTools.associateBy { it.name }
+            allToolDefs = selectedTools.map { it.toToolDefinition() }
             val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)
 
             val repoMap = try {
