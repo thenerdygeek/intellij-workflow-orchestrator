@@ -5,28 +5,18 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
-import com.workflow.orchestrator.agent.security.InputSanitizer
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.ConnectionSettings
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.workflow.orchestrator.core.services.JiraService
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Request
 
-class JiraGetTicketTool(
-    private val urlProvider: () -> String = { ConnectionSettings.getInstance().state.jiraUrl },
-    private val tokenProvider: () -> String? = { CredentialStore().getToken(ServiceType.JIRA) }
-) : AgentTool {
-
+class JiraGetTicketTool : AgentTool {
     override val name = "jira_get_ticket"
-    override val description = "Get Jira ticket details including summary, status, assignee, and description."
+    override val description = "Get Jira ticket details: summary, status, assignee, type, priority, description, and available transitions."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "key" to ParameterProperty(type = "string", description = "Jira ticket key, e.g. PROJ-123")
+            "key" to ParameterProperty(type = "string", description = "Jira ticket key (e.g., PROJ-123)")
         ),
         required = listOf("key")
     )
@@ -36,48 +26,10 @@ class JiraGetTicketTool(
         val key = params["key"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'key' parameter required", "Error: missing key", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val (baseUrl, token, client) = IntegrationToolSupport.resolveCredentials(urlProvider, tokenProvider, "Jira")
-            ?: return if (urlProvider()?.trimEnd('/')?.isBlank() != false) {
-                IntegrationToolSupport.credentialError("Jira", "URL")
-            } else {
-                IntegrationToolSupport.credentialError("Jira", "token")
-            }
+        val service = ServiceLookup.jira(project)
+            ?: return ServiceLookup.notConfigured("Jira")
 
-        return withContext(Dispatchers.IO) {
-            try {
-                val url = "$baseUrl/rest/api/2/issue/$key?expand=renderedFields"
-                val request = Request.Builder()
-                    .url(url)
-                    .get()
-                    .header("Accept", "application/json")
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        return@withContext ToolResult(
-                            content = "Error: Jira returned HTTP ${response.code} for $key",
-                            summary = "Error: HTTP ${response.code}",
-                            tokenEstimate = 10,
-                            isError = true
-                        )
-                    }
-                    val body = response.body?.string() ?: ""
-                    val sanitized = InputSanitizer.sanitizeExternalData(body, "jira", key)
-                    ToolResult(
-                        content = sanitized,
-                        summary = "Retrieved Jira ticket $key",
-                        tokenEstimate = TokenEstimator.estimate(sanitized)
-                    )
-                }
-            } catch (e: Exception) {
-                ToolResult(
-                    content = "Error: Failed to fetch Jira ticket $key: ${e.message}",
-                    summary = "Error: ${e.message}",
-                    tokenEstimate = 10,
-                    isError = true
-                )
-            }
-        }
+        val result = service.getTicket(key)
+        return result.toAgentToolResult()
     }
-
 }
