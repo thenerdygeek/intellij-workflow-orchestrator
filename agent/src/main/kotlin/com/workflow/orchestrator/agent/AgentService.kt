@@ -26,6 +26,9 @@ class AgentService(
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /** Reference to the active AgentController, used for session resume from History tab. */
+    var activeController: com.workflow.orchestrator.agent.ui.AgentController? = null
+
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry().apply {
             // Builtin tools

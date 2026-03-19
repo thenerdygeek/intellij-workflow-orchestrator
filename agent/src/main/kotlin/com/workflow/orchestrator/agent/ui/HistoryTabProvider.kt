@@ -17,6 +17,22 @@ class HistoryTabProvider : WorkflowTabProvider {
     override val order: Int = 6
 
     override fun createPanel(project: Project): JComponent {
-        return HistoryPanel()
+        val panel = HistoryPanel()
+        panel.onResumeSession = { sessionId ->
+            try {
+                val controller = com.workflow.orchestrator.agent.AgentService.getInstance(project).activeController
+                controller?.resumeSession(sessionId)
+                // Switch to Agent tab
+                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                    .getToolWindow("Workflow")?.let { tw ->
+                        tw.contentManager.contents
+                            .firstOrNull { it.displayName == "Agent" }
+                            ?.let { tw.contentManager.setSelectedContent(it) }
+                    }
+            } catch (_: Exception) {
+                // Controller not available
+            }
+        }
+        return panel
     }
 }

@@ -172,7 +172,11 @@ class AgentOrchestrator(
         }
 
         // Create LocalHistory checkpoint before execution for rollback capability
-        val rollbackManager = AgentRollbackManager(project)
+        // Reuse rollback manager from session if available (persists labels across turns)
+        val rollbackManager = session?.rollbackManager ?: AgentRollbackManager(project)
+        if (session != null && session.rollbackManager == null) {
+            session.rollbackManager = rollbackManager
+        }
         val checkpointId = rollbackManager.createCheckpoint(taskDescription.take(100))
 
         // Create event log and session trace for observability (per-task, not per-session)

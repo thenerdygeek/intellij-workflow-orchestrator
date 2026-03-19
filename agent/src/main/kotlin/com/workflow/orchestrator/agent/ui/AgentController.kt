@@ -37,6 +37,7 @@ class AgentController(
     private var sessionStartMs = 0L
     private var session: ConversationSession? = null
     private val pendingUserMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private var sessionAutoApprove = false
 
     init {
         dashboard.onSendMessage = { message -> executeTask(message) }
@@ -49,6 +50,14 @@ class AgentController(
                     .showSettingsDialog(project, "workflow.orchestrator.agent")
             }
         })
+
+        // Wire JCEF JS→Kotlin action callbacks (undo, view-trace, example prompts)
+        dashboard.setCefCallbacks(
+            onUndo = { handleUndoRequest() },
+            onViewTrace = { openLatestTrace() },
+            onPromptSubmitted = { text -> executeTask(text) }
+        )
+
         dashboard.focusInput()
     }
 
@@ -140,6 +149,7 @@ class AgentController(
     fun newChat() {
         currentOrchestrator?.cancelTask()
         currentOrchestrator = null
+        sessionAutoApprove = false
         session?.let { s ->
             s.markCompleted(true)
             try {
@@ -153,6 +163,67 @@ class AgentController(
         }
         session = null
         dashboard.reset()
+        dashboard.focusInput()
+    }
+
+    /**
+     * Handle undo request from JCEF footer button.
+     * Uses the rollback manager stored on the ConversationSession to revert all agent changes.
+     */
+    private fun handleUndoRequest() {
+        val manager = session?.rollbackManager
+        val checkpointId = manager?.latestCheckpointId()
+        if (manager == null || checkpointId == null) {
+            dashboard.appendStatus("No changes to undo.", RichStreamingPanel.StatusType.WARNING)
+            return
+        }
+        SwingUtilities.invokeLater {
+            val answer = Messages.showYesNoDialog(
+                project,
+                "Undo all file changes made by the agent?",
+                "Undo Agent Changes",
+                "Undo", "Cancel",
+                Messages.getWarningIcon()
+            )
+            if (answer == Messages.YES) {
+                if (manager.rollbackToCheckpoint(checkpointId)) {
+                    dashboard.appendStatus("All agent changes have been undone.", RichStreamingPanel.StatusType.SUCCESS)
+                } else {
+                    dashboard.appendError("Rollback failed. Try Edit > Undo or LocalHistory.")
+                }
+            }
+        }
+    }
+
+    /**
+     * Resume a previous session from History tab.
+     * Loads persisted messages and restores conversation context.
+     */
+    fun resumeSession(sessionId: String) {
+        val agentService = try { AgentService.getInstance(project) } catch (_: Exception) {
+            dashboard.appendError("Agent service not available.")
+            return
+        }
+        val loaded = ConversationSession.load(sessionId, project, agentService)
+        if (loaded == null) {
+            dashboard.appendError("Failed to load session $sessionId")
+            return
+        }
+
+        // Close current session
+        session?.markCompleted(true)
+        session = loaded
+        sessionAutoApprove = false
+
+        // Render loaded conversation to UI
+        dashboard.reset()
+        dashboard.startSession(loaded.title)
+
+        // Show a summary instead of replaying all messages
+        dashboard.appendStatus(
+            "Session restored: \"${loaded.title}\" (${loaded.messageCount} messages). Continue the conversation below.",
+            RichStreamingPanel.StatusType.SUCCESS
+        )
         dashboard.focusInput()
     }
 
@@ -228,6 +299,12 @@ class AgentController(
     }
 
     private fun showApprovalDialog(description: String, riskLevel: RiskLevel): ApprovalResult {
+        // Session-level auto-approve: skip dialog for MEDIUM or lower risk after user opted in
+        if (sessionAutoApprove && riskLevel <= RiskLevel.MEDIUM) {
+            dashboard.appendStatus("Auto-approved: $description", RichStreamingPanel.StatusType.SUCCESS)
+            return ApprovalResult.Approved
+        }
+
         var result: ApprovalResult = ApprovalResult.Rejected
         ApplicationManager.getApplication().invokeAndWait {
             if (riskLevel == RiskLevel.HIGH && description.contains("run_command")) {
@@ -235,6 +312,22 @@ class AgentController(
                 val dialog = CommandApprovalDialog(project, cmdMatch?.groupValues?.get(1) ?: description, project.basePath ?: ".", riskLevel.name)
                 dialog.show()
                 result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
+            } else if (riskLevel >= RiskLevel.MEDIUM && !description.contains("run_command")) {
+                // File edit approval — enhanced with "Allow All (This Session)" option
+                val answer = Messages.showYesNoCancelDialog(
+                    project,
+                    "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                    "Agent File Edit",
+                    "Allow",
+                    "Block",
+                    "Allow All (This Session)",
+                    Messages.getQuestionIcon()
+                )
+                result = when (answer) {
+                    Messages.YES -> ApprovalResult.Approved
+                    Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
+                    else -> ApprovalResult.Rejected
+                }
             } else {
                 val answer = Messages.showYesNoDialog(project,
                     "The agent wants to perform:\n\n$description\n\nRisk level: ${riskLevel.name}",

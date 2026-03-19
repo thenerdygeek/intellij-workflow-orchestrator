@@ -49,6 +49,9 @@ class ConversationSession private constructor(
     var initialized: Boolean = false
         internal set
 
+    /** Rollback manager for undoing agent changes. Stored here so it persists across turns. */
+    var rollbackManager: AgentRollbackManager? = null
+
     /** Tracks files the agent has recently read or edited. LRU cache with 10 file limit. */
     val workingSet: WorkingSet = WorkingSet()
 

@@ -173,6 +173,24 @@ class AgentDashboardPanel(
     }
 
     // ═══════════════════════════════════════════════════
+    //  JCEF callback wiring — bridges JS actions to controller
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Wire JCEF JS→Kotlin callbacks for undo, view-trace, and example prompts.
+     * Called by [AgentController] after construction.
+     */
+    fun setCefCallbacks(
+        onUndo: () -> Unit,
+        onViewTrace: () -> Unit,
+        onPromptSubmitted: (String) -> Unit
+    ) {
+        cefPanel?.onUndoRequested = onUndo
+        cefPanel?.onViewTraceRequested = onViewTrace
+        cefPanel?.onPromptSubmitted = onPromptSubmitted
+    }
+
+    // ═══════════════════════════════════════════════════
     //  Delegate API — routes to JCEF or fallback
     // ═══════════════════════════════════════════════════
 
