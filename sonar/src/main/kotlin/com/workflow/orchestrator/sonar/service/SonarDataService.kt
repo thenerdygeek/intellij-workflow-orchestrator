@@ -165,12 +165,9 @@ class SonarDataService(private val project: Project) : Disposable {
 
         _stateFlow.value = newState
 
-        // Fire notification if quality gate status changed
+        // Notify only on status CHANGES — skip the first load to avoid stale notifications on IDE startup
         if (qualityGate.status != QualityGateStatus.NONE) {
             if (previousGateStatus != null && previousGateStatus != qualityGate.status) {
-                notifyGateTransition(qualityGate.status == QualityGateStatus.PASSED, projectKey)
-            }
-            if (previousGateStatus == null) {
                 notifyGateTransition(qualityGate.status == QualityGateStatus.PASSED, projectKey)
             }
             previousGateStatus = qualityGate.status

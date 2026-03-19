@@ -121,6 +121,9 @@ class BuildMonitorService : Disposable {
             _stateFlow.value = buildState
 
             // Only emit event and notify on terminal state changes
+            // Skip notifications on first poll (previousBuildNumber == null) to avoid
+            // stale "Build Failed" notifications on IDE startup
+            val isFirstPoll = previousBuildNumber == null
             val isTerminal = buildState.overallStatus == BuildStatus.SUCCESS ||
                 buildState.overallStatus == BuildStatus.FAILED
             val statusChanged = dto.buildNumber != previousBuildNumber ||
@@ -130,7 +133,7 @@ class BuildMonitorService : Disposable {
                 log.info("[Bamboo:Monitor] Build $planKey-${dto.buildNumber} changed from $previousStatus to ${buildState.overallStatus}")
             }
 
-            if (isTerminal && statusChanged) {
+            if (isTerminal && statusChanged && !isFirstPoll) {
                 val eventStatus = when (buildState.overallStatus) {
                     BuildStatus.SUCCESS -> WorkflowEvent.BuildEventStatus.SUCCESS
                     else -> WorkflowEvent.BuildEventStatus.FAILED
