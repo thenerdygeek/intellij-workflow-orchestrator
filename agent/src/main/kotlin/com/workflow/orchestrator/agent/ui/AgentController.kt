@@ -14,7 +14,9 @@ import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.AgentResult
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.agent.runtime.AgentPlan
 import com.workflow.orchestrator.agent.runtime.ConversationSession
+import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import kotlinx.coroutines.*
 import java.io.File
@@ -56,6 +58,19 @@ class AgentController(
             onUndo = { handleUndoRequest() },
             onViewTrace = { openLatestTrace() },
             onPromptSubmitted = { text -> executeTask(text) }
+        )
+
+        // Wire JCEF plan card callbacks (approve, revise)
+        dashboard.setCefPlanCallbacks(
+            onApprove = { session?.planManager?.approvePlan() },
+            onRevise = { commentsJson ->
+                try {
+                    val comments = kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(commentsJson)
+                    session?.planManager?.revisePlan(comments)
+                } catch (e: Exception) {
+                    session?.planManager?.approvePlan() // fallback: just approve if parsing fails
+                }
+            }
         )
 
         // Set model name
@@ -112,6 +127,22 @@ class AgentController(
 
         val currentSession = session!!
         currentSession.recordUserMessage(task)
+
+        // Set PlanManager on AgentService so tools can find it
+        try {
+            val agentSvc = AgentService.getInstance(project)
+            agentSvc.currentPlanManager = currentSession.planManager
+        } catch (_: Exception) {}
+
+        // Wire PlanManager UI callbacks
+        currentSession.planManager.onPlanCreated = { plan ->
+            val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
+            dashboard.renderPlan(json)
+        }
+        currentSession.planManager.onStepUpdated = { stepId, status ->
+            dashboard.updatePlanStep(stepId, status)
+        }
+
         dashboard.setBusy(true)
 
         // Create orchestrator (lightweight — just brain + registry + project)
