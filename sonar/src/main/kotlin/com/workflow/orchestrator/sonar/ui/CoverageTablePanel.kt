@@ -3,15 +3,19 @@ package com.workflow.orchestrator.sonar.ui
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.sonar.model.FileCoverageData
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JPanel
+import javax.swing.JTable
 import javax.swing.table.AbstractTableModel
+import javax.swing.table.DefaultTableCellRenderer
 
 class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) {
 
@@ -22,9 +26,31 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         rowHeight = 24
     }
 
+    private val emptyLabel = JBLabel("No coverage data available. Configure SonarQube project key in Settings > CI/CD.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = javax.swing.SwingConstants.CENTER
+        verticalAlignment = javax.swing.SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
+
+    private val scrollPane = JBScrollPane(table)
+
     init {
         border = JBUI.Borders.empty(8)
-        add(JBScrollPane(table), BorderLayout.CENTER)
+        add(scrollPane, BorderLayout.CENTER)
+
+        // File name column renderer with tooltip showing full path
+        table.columnModel.getColumn(0).cellRenderer = object : DefaultTableCellRenderer() {
+            override fun getTableCellRendererComponent(
+                table: JTable, value: Any?, isSelected: Boolean,
+                hasFocus: Boolean, row: Int, column: Int
+            ): Component {
+                val comp = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+                val modelRow = table.convertRowIndexToModel(row)
+                toolTipText = tableModel.getFilePath(modelRow)
+                return comp
+            }
+        }
 
         table.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
@@ -41,9 +67,19 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     fun update(fileCoverage: Map<String, FileCoverageData>, newCodeMode: Boolean = false) {
-        tableModel.setData(fileCoverage.values.toList().sortedBy {
+        val data = fileCoverage.values.toList().sortedBy {
             if (newCodeMode) it.newCoverage ?: 0.0 else it.lineCoverage
-        }, newCodeMode)
+        }
+        tableModel.setData(data, newCodeMode)
+
+        removeAll()
+        if (data.isEmpty()) {
+            add(emptyLabel, BorderLayout.CENTER)
+        } else {
+            add(scrollPane, BorderLayout.CENTER)
+        }
+        revalidate()
+        repaint()
     }
 
     private fun navigateToFile(filePath: String) {

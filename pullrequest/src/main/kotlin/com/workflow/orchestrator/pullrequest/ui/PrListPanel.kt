@@ -6,6 +6,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import java.awt.*
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
@@ -43,7 +44,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         isOpaque = false
     }
 
-    private val emptyLabel = JBLabel("No pull requests found.").apply {
+    private val emptyLabel = JBLabel("No pull requests found. Click Refresh to update.").apply {
         foreground = JBUI.CurrentTheme.Label.disabledForeground()
         horizontalAlignment = SwingConstants.CENTER
         verticalAlignment = SwingConstants.CENTER
@@ -195,6 +196,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     font = font.deriveFont(JBUI.scale(12).toFloat())
                     foreground = JBColor.foreground()
                     border = JBUI.Borders.emptyLeft(6)
+                    if (item.title.length > 45) toolTipText = item.title
                 }
                 val topLeft = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
                     isOpaque = false
@@ -219,11 +221,22 @@ class PrListPanel : JPanel(BorderLayout()) {
                 bottomRow.add(JBLabel("${truncate(item.fromBranch, 20)} \u2192 ${truncate(item.toBranch, 20)}").apply {
                     font = font.deriveFont(JBUI.scale(10).toFloat())
                     foreground = BRANCH_TEXT
+                    if (item.fromBranch.length > 20 || item.toBranch.length > 20) {
+                        toolTipText = "${item.fromBranch} \u2192 ${item.toBranch}"
+                    }
                 })
                 if (item.reviewerCount > 0) {
                     bottomRow.add(JBLabel("${item.reviewerCount} reviewers").apply {
                         font = font.deriveFont(JBUI.scale(10).toFloat())
                         foreground = SECONDARY_TEXT
+                    })
+                }
+                if (item.updatedDate > 0) {
+                    val (relativeText, absoluteText) = TimeFormatter.relativeWithTooltip(item.updatedDate)
+                    bottomRow.add(JBLabel(relativeText).apply {
+                        font = font.deriveFont(JBUI.scale(10).toFloat())
+                        foreground = SECONDARY_TEXT
+                        toolTipText = absoluteText
                     })
                 }
                 add(bottomRow, BorderLayout.CENTER)

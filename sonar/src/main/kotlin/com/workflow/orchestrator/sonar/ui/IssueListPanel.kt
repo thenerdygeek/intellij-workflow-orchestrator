@@ -30,6 +30,15 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
     private var allIssues: List<MappedIssue> = emptyList()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private val emptyLabel = JBLabel("No issues found. Click Refresh to update.").apply {
+        foreground = com.intellij.util.ui.JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = javax.swing.SwingConstants.CENTER
+        verticalAlignment = javax.swing.SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
+
+    private val scrollPane = JBScrollPane(issueList)
+
     init {
         border = JBUI.Borders.empty(8)
 
@@ -42,7 +51,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
             add(countLabel)
         }
         add(filterPanel, BorderLayout.NORTH)
-        add(JBScrollPane(issueList), BorderLayout.CENTER)
+        add(scrollPane, BorderLayout.CENTER)
 
         filterCombo.addActionListener { applyFilters() }
         severityCombo.addActionListener { applyFilters() }
@@ -110,6 +119,17 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         listModel.clear()
         filtered.sortedBy { it.severity.ordinal }.forEach { listModel.addElement(it) }
         countLabel.text = "${filtered.size} issue(s)"
+
+        // Show empty state or list
+        remove(scrollPane)
+        remove(emptyLabel)
+        if (filtered.isEmpty()) {
+            add(emptyLabel, BorderLayout.CENTER)
+        } else {
+            add(scrollPane, BorderLayout.CENTER)
+        }
+        revalidate()
+        repaint()
     }
 
     private fun navigateToIssue(issue: MappedIssue) {
@@ -170,6 +190,7 @@ private class IssueListCellRenderer : ListCellRenderer<MappedIssue> {
         label.text = "<html><font color='$color'>\u25CF</font> $typeStr " +
             "<font color='$color'>${value.severity}</font> ${value.message} — $fileName:${value.startLine}</html>"
         label.border = JBUI.Borders.empty(4, 8)
+        label.toolTipText = "[${value.rule}] ${value.message} — ${value.filePath}:${value.startLine}"
         if (isSelected) {
             label.background = list.selectionBackground
             label.foreground = list.selectionForeground

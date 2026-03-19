@@ -118,12 +118,15 @@ class PrDetailPanel(
     // Action buttons
     private val approveButton = JButton("Approve").apply {
         icon = AllIcons.Actions.Checked
+        mnemonic = java.awt.event.KeyEvent.VK_A
     }
     private val mergeButton = JButton("Merge").apply {
         icon = AllIcons.Vcs.Merge
+        mnemonic = java.awt.event.KeyEvent.VK_M
     }
     private val declineButton = JButton("Decline").apply {
         icon = AllIcons.Actions.Cancel
+        mnemonic = java.awt.event.KeyEvent.VK_D
     }
     private val openInBrowserButton = JButton("Open in Browser").apply {
         icon = AllIcons.General.Web
@@ -592,9 +595,16 @@ class PrDetailPanel(
             font = font.deriveFont(JBUI.scale(12).toFloat())
             border = JBUI.Borders.empty(8)
         }
-        private val editButton = JButton("Edit").apply { icon = AllIcons.Actions.Edit }
-        private val updateButton = JButton("Update")
-        private val cancelEditButton = JButton("Cancel")
+        private val editButton = JButton("Edit").apply {
+            icon = AllIcons.Actions.Edit
+            mnemonic = java.awt.event.KeyEvent.VK_E
+        }
+        private val updateButton = JButton("Update").apply {
+            mnemonic = java.awt.event.KeyEvent.VK_U
+        }
+        private val cancelEditButton = JButton("Cancel").apply {
+            mnemonic = java.awt.event.KeyEvent.VK_C
+        }
         private val enhanceWithCodyButton = JButton("Enhance with Cody").apply {
             icon = AllIcons.Actions.Lightning
             toolTipText = "Use AI to generate or enhance the PR description"
@@ -943,6 +953,7 @@ class PrDetailPanel(
                     contentPanel.add(JBLabel(PrListPanel.truncate(value.commentText, 150)).apply {
                         font = font.deriveFont(JBUI.scale(11).toFloat())
                         foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
+                        if (value.commentText.length > 150) toolTipText = value.commentText
                     })
                 }
 

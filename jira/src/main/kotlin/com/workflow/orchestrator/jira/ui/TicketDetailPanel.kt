@@ -223,6 +223,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             leftPanel.add(JBLabel(truncate(subtask.fields.summary, 50)).apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
                 foreground = SECONDARY_TEXT
+                if (subtask.fields.summary.length > 50) toolTipText = subtask.fields.summary
             })
 
             row.add(leftPanel, BorderLayout.CENTER)
@@ -596,6 +597,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             leftPanel.add(JBLabel(truncate(linkedIssue.fields.summary, 50)).apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
                 foreground = SECONDARY_TEXT
+                if (linkedIssue.fields.summary.length > 50) toolTipText = linkedIssue.fields.summary
             })
 
             add(leftPanel, BorderLayout.CENTER)

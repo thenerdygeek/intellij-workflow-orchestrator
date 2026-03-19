@@ -41,6 +41,7 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         this.isHovered = !isSelected && index == listHoveredIndex
 
         preferredSize = Dimension(list.width, JBUI.scale(ROW_HEIGHT))
+        toolTipText = "${value.key}: ${value.fields.summary}"
         return this
     }
 

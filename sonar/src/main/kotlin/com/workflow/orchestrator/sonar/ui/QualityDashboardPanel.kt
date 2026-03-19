@@ -54,10 +54,12 @@ class QualityDashboardPanel(
     private val newCodeButton = JButton("New Code").apply {
         isFocusPainted = false
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        mnemonic = java.awt.event.KeyEvent.VK_N
     }
     private val overallButton = JButton("Overall").apply {
         isFocusPainted = false
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        mnemonic = java.awt.event.KeyEvent.VK_O
     }
 
     init {
