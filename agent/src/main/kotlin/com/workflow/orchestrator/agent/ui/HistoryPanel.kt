@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.JBColor
+import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -9,6 +11,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
 import java.awt.*
 import javax.swing.*
+import javax.swing.event.DocumentEvent
 
 /**
  * Panel showing past agent sessions across all projects.
@@ -20,6 +23,11 @@ class HistoryPanel : JPanel(BorderLayout()) {
 
     private val listModel = DefaultListModel<GlobalSessionIndex.SessionEntry>()
     private val sessionList = JBList(listModel)
+    private var allSessions: List<GlobalSessionIndex.SessionEntry> = emptyList()
+
+    private val searchField = SearchTextField(false).apply {
+        textEditor.emptyText.setText("Search sessions...")
+    }
 
     /** Callback invoked when the user wants to resume a session. Receives sessionId. */
     var onResumeSession: ((String) -> Unit)? = null
@@ -27,22 +35,39 @@ class HistoryPanel : JPanel(BorderLayout()) {
     init {
         border = JBUI.Borders.empty(8)
 
-        // Header with refresh button
+        // Header with search field and refresh button
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
-            val title = JBLabel("Session History").apply {
-                font = JBUI.Fonts.label(14f).asBold()
-                border = JBUI.Borders.emptyBottom(8)
-            }
-            add(title, BorderLayout.WEST)
+            val titleRow = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                val title = JBLabel("Session History").apply {
+                    font = JBUI.Fonts.label(14f).asBold()
+                    border = JBUI.Borders.emptyBottom(8)
+                }
+                add(title, BorderLayout.WEST)
 
-            val refreshBtn = JButton("Refresh").apply {
-                icon = AllIcons.Actions.Refresh
-                addActionListener { refresh() }
+                val refreshBtn = JButton("Refresh").apply {
+                    icon = AllIcons.Actions.Refresh
+                    addActionListener { refresh() }
+                }
+                add(refreshBtn, BorderLayout.EAST)
             }
-            add(refreshBtn, BorderLayout.EAST)
+            add(titleRow, BorderLayout.NORTH)
+            add(searchField, BorderLayout.SOUTH)
         }
         add(header, BorderLayout.NORTH)
+
+        // Wire search filtering
+        searchField.addDocumentListener(object : DocumentAdapter() {
+            override fun textChanged(e: DocumentEvent) {
+                filterSessions(searchField.text.trim())
+            }
+        })
+
+        // Auto-refresh timer (30 seconds)
+        val refreshTimer = Timer(30_000) { if (isShowing) refresh() }
+        refreshTimer.isRepeats = true
+        refreshTimer.start()
 
         // Session list with custom renderer
         sessionList.cellRenderer = SessionCellRenderer()
@@ -95,13 +120,20 @@ class HistoryPanel : JPanel(BorderLayout()) {
      * Reload session list from the global index.
      */
     fun refresh() {
-        listModel.clear()
-        try {
-            val sessions = GlobalSessionIndex.getInstance().getSessions(50)
-            sessions.forEach { listModel.addElement(it) }
-        } catch (_: Exception) {
-            // Service not available (e.g., during tests)
+        allSessions = try {
+            GlobalSessionIndex.getInstance().getSessions(100)
+        } catch (_: Exception) { emptyList() }
+        filterSessions(searchField.text.trim())
+    }
+
+    private fun filterSessions(query: String) {
+        val filtered = if (query.isBlank()) allSessions
+        else allSessions.filter {
+            it.title.contains(query, ignoreCase = true) ||
+            it.projectName.contains(query, ignoreCase = true)
         }
+        listModel.clear()
+        filtered.forEach { listModel.addElement(it) }
     }
 
     private fun deleteSelected() {
