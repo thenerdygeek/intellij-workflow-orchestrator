@@ -182,7 +182,7 @@ class ConversationSession private constructor(
          * Create a new conversation session with fresh context.
          * Called on first message or "New Chat".
          */
-        fun create(project: Project, agentService: AgentService): ConversationSession {
+        fun create(project: Project, agentService: AgentService, planMode: Boolean = false): ConversationSession {
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
             val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
 
@@ -201,7 +201,8 @@ class ConversationSession private constructor(
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
                 projectName = project.name,
                 projectPath = project.basePath,
-                repoMapContext = repoMap.ifBlank { null }
+                repoMapContext = repoMap.ifBlank { null },
+                planMode = planMode
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
 

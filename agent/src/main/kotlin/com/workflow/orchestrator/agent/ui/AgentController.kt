@@ -119,7 +119,7 @@ class AgentController(
 
         // Create or reuse session — the core multi-turn fix
         if (session == null) {
-            session = ConversationSession.create(project, agentService)
+            session = ConversationSession.create(project, agentService, planMode = dashboard.isPlanMode)
             dashboard.startSession(task)
         } else {
             dashboard.appendUserMessage(task)

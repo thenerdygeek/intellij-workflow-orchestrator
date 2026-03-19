@@ -83,6 +83,12 @@ class AgentDashboardPanel(
         icon = AllIcons.General.Add
         putClientProperty("JButton.buttonType", "roundRect")
     }
+    val planModeToggle = JToggleButton("Plan").apply {
+        icon = AllIcons.Actions.ListFiles
+        toolTipText = "Plan mode \u2014 forces the agent to create an implementation plan before making changes"
+        putClientProperty("JButton.buttonType", "roundRect")
+        font = JBUI.Fonts.smallFont()
+    }
     val toolsButton = JButton("Tools").apply {
         icon = AllIcons.Nodes.Plugin
         putClientProperty("JButton.buttonType", "roundRect")
@@ -98,6 +104,8 @@ class AgentDashboardPanel(
         font = JBUI.Fonts.smallFont()
     }
 
+    val isPlanMode: Boolean get() = planModeToggle.isSelected
+
     var onSendMessage: ((String) -> Unit)? = null
 
     init {
@@ -112,6 +120,7 @@ class AgentDashboardPanel(
             val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
             left.add(cancelButton)
             left.add(newChatButton)
+            left.add(planModeToggle)
             left.add(toolsButton)
             add(left, BorderLayout.WEST)
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
