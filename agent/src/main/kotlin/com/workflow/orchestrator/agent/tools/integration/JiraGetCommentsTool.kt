@@ -9,9 +9,9 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class JiraGetTicketTool : AgentTool {
-    override val name = "jira_get_ticket"
-    override val description = "Get Jira ticket details: summary, status, assignee, type, priority, description, and available transitions."
+class JiraGetCommentsTool : AgentTool {
+    override val name = "jira_get_comments"
+    override val description = "Get all comments on a Jira ticket. Shows author, date, and comment body."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "key" to ParameterProperty(type = "string", description = "Jira ticket key (e.g., PROJ-123)")
@@ -25,10 +25,8 @@ class JiraGetTicketTool : AgentTool {
             ?: return ToolResult("Error: 'key' parameter required", "Error: missing key", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         ToolValidation.validateJiraKey(key)?.let { return it }
+        val service = ServiceLookup.jira(project) ?: return ServiceLookup.notConfigured("Jira")
 
-        val service = ServiceLookup.jira(project)
-            ?: return ServiceLookup.notConfigured("Jira")
-
-        return service.getTicket(key).toAgentToolResult()
+        return service.getComments(key).toAgentToolResult()
     }
 }

@@ -11,13 +11,13 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketPrTool : AgentTool {
     override val name = "bitbucket_create_pr"
-    override val description = "Create a pull request on Bitbucket Server."
+    override val description = "Create a pull request on Bitbucket Server. Validates all required fields before creating."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "title" to ParameterProperty(type = "string", description = "Pull request title"),
-            "description" to ParameterProperty(type = "string", description = "Pull request description"),
-            "from_branch" to ParameterProperty(type = "string", description = "Source branch name"),
-            "to_branch" to ParameterProperty(type = "string", description = "Target branch name (default: master)")
+            "title" to ParameterProperty(type = "string", description = "Pull request title (clear, concise summary of changes)"),
+            "description" to ParameterProperty(type = "string", description = "Pull request description (details of what changed and why)"),
+            "from_branch" to ParameterProperty(type = "string", description = "Source branch name (e.g., 'feature/PROJ-123-fix-auth')"),
+            "to_branch" to ParameterProperty(type = "string", description = "Target branch name. Optional, defaults to 'master'")
         ),
         required = listOf("title", "description", "from_branch")
     )
@@ -32,10 +32,19 @@ class BitbucketPrTool : AgentTool {
             ?: return ToolResult("Error: 'from_branch' parameter required", "Error: missing from_branch", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val toBranch = params["to_branch"]?.jsonPrimitive?.content ?: "master"
 
-        val service = ServiceLookup.bitbucket(project)
-            ?: return ServiceLookup.notConfigured("Bitbucket")
+        // Validate inputs
+        ToolValidation.validateNotBlank(title, "title")?.let { return it }
+        ToolValidation.validateNotBlank(fromBranch, "from_branch")?.let { return it }
 
-        val result = service.createPullRequest(title, description, fromBranch, toBranch)
-        return result.toAgentToolResult()
+        if (fromBranch == toBranch) {
+            return ToolResult(
+                content = "Cannot create PR: source branch '$fromBranch' is the same as target branch '$toBranch'.",
+                summary = "Same source and target branch", tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            )
+        }
+
+        val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
+
+        return service.createPullRequest(title, description, fromBranch, toBranch).toAgentToolResult()
     }
 }

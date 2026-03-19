@@ -42,12 +42,33 @@ class AgentService(
             register(TypeHierarchyTool())
             register(CallHierarchyTool())
 
-            // Integration tools
+            // Spring PSI tools
+            register(SpringContextTool())
+            register(SpringEndpointsTool())
+            register(SpringBeanGraphTool())
+
+            // Jira integration tools
             register(JiraGetTicketTool())
+            register(JiraGetTransitionsTool())
             register(JiraTransitionTool())
             register(JiraCommentTool())
+            register(JiraGetCommentsTool())
+            register(JiraLogWorkTool())
+
+            // Bamboo integration tools
             register(BambooBuildTool())
+            register(BambooGetBuildTool())
+            register(BambooTriggerBuildTool())
+            register(BambooGetBuildLogTool())
+            register(BambooGetTestResultsTool())
+
+            // SonarQube integration tools
             register(SonarIssuesTool())
+            register(SonarQualityGateTool())
+            register(SonarCoverageTool())
+            register(SonarSearchProjectsTool())
+
+            // Bitbucket integration tools
             register(BitbucketPrTool())
         }
     }
