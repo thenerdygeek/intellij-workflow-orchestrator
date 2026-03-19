@@ -3,6 +3,8 @@ package com.workflow.orchestrator.agent.runtime
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
+import com.workflow.orchestrator.agent.api.dto.FunctionCall
+import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
@@ -42,7 +44,13 @@ class ConversationSession private constructor(
 ) {
     /** Whether the system prompt has been added to context yet. */
     var initialized: Boolean = false
-        private set
+        internal set
+
+    /** Store for JSONL persistence. */
+    val store: ConversationStore = ConversationStore(sessionId)
+
+    /** Tracks how many messages have already been persisted to avoid duplicates. */
+    var persistedMessageCount: Int = 0
 
     /**
      * Initialize the session's context with system prompt.
@@ -69,6 +77,52 @@ class ConversationSession private constructor(
      */
     fun markCompleted(success: Boolean) {
         status = if (success) "completed" else "failed"
+    }
+
+    /**
+     * Convert a ChatMessage to PersistedMessage and append to JSONL.
+     */
+    fun persistMessage(message: ChatMessage) {
+        val persisted = PersistedMessage(
+            role = message.role,
+            content = message.content,
+            toolCalls = message.toolCalls?.map { tc ->
+                PersistedToolCall(tc.id, tc.function.name, tc.function.arguments)
+            },
+            toolCallId = message.toolCallId
+        )
+        store.saveMessage(persisted)
+    }
+
+    /**
+     * Persist only messages added since the last persist call.
+     * Safe to call repeatedly — tracks offset via [persistedMessageCount].
+     */
+    fun persistNewMessages() {
+        val allMessages = contextManager.getMessages()
+        val newMessages = allMessages.drop(persistedMessageCount)
+        for (msg in newMessages) {
+            persistMessage(msg)
+        }
+        persistedMessageCount = allMessages.size
+    }
+
+    /**
+     * Save session metadata to disk.
+     * Call after each turn so sessions are discoverable even if the IDE crashes.
+     */
+    fun saveMetadata(projectName: String, projectPath: String, model: String) {
+        store.saveMetadata(SessionMetadata(
+            sessionId = sessionId,
+            projectName = projectName,
+            projectPath = projectPath,
+            title = title,
+            model = model,
+            createdAt = createdAt,
+            lastMessageAt = lastMessageAt,
+            messageCount = messageCount,
+            status = status
+        ))
     }
 
     companion object {
@@ -118,6 +172,68 @@ class ConversationSession private constructor(
                 reservedTokens = reservedTokens,
                 createdAt = System.currentTimeMillis()
             )
+        }
+
+        /**
+         * Load a session from disk by replaying persisted messages into a fresh context.
+         *
+         * Creates the full session infrastructure (brain, tools, system prompt) from
+         * the current project + agentService, then replays the stored messages so the
+         * LLM sees the full conversation history on the next turn.
+         *
+         * Returns null if metadata or messages are missing/corrupt.
+         */
+        fun load(sessionId: String, project: Project, agentService: AgentService): ConversationSession? {
+            val store = ConversationStore(sessionId)
+            val metadata = store.loadMetadata() ?: return null
+            val messages = store.loadMessages()
+            if (messages.isEmpty()) return null
+
+            // Create a fresh session to get brain, tools, system prompt
+            val session = create(project, agentService)
+
+            // Override identity and timestamps with persisted values
+            // Note: sessionId from create() is different — we need to construct
+            // with the original sessionId. Use the fresh session's infra but
+            // build a new ConversationSession with the original ID.
+            val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+            val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
+
+            val loaded = ConversationSession(
+                sessionId = sessionId,
+                contextManager = ContextManager(
+                    maxInputTokens = maxInputTokens,
+                    reservedTokens = session.reservedTokens
+                ),
+                brain = session.brain,
+                toolDefinitions = session.toolDefinitions,
+                tools = session.tools,
+                systemPrompt = session.systemPrompt,
+                reservedTokens = session.reservedTokens,
+                createdAt = metadata.createdAt,
+                title = metadata.title,
+                lastMessageAt = metadata.lastMessageAt,
+                messageCount = metadata.messageCount,
+                status = metadata.status
+            )
+
+            // Replay messages into context manager
+            for (msg in messages) {
+                val chatMsg = ChatMessage(
+                    role = msg.role,
+                    content = msg.content,
+                    toolCalls = msg.toolCalls?.map { tc ->
+                        ToolCall(tc.id, function = FunctionCall(tc.name, tc.arguments))
+                    },
+                    toolCallId = msg.toolCallId
+                )
+                loaded.contextManager.addMessage(chatMsg)
+            }
+
+            loaded.initialized = true // system prompt already in replayed messages
+            loaded.persistedMessageCount = messages.size // all messages already on disk
+
+            return loaded
         }
     }
 }
