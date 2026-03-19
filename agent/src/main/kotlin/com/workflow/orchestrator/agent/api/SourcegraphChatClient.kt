@@ -200,12 +200,31 @@ class SourcegraphChatClient(
             }
         }
 
-        // Phase 3: ensure conversation starts with "user"
+        // Phase 3: drop messages with empty/null content (Anthropic rejects these)
+        merged.removeAll { msg ->
+            msg.content.isNullOrBlank() && msg.toolCalls.isNullOrEmpty()
+        }
+
+        // Phase 4: ensure conversation starts with "user"
         if (merged.isNotEmpty() && merged.first().role != "user") {
             merged.add(0, ChatMessage(role = "user", content = "[Context follows]"))
         }
 
-        return merged
+        // Phase 5: ensure no two consecutive same-role messages after removals
+        val final = mutableListOf<ChatMessage>()
+        for (msg in merged) {
+            val last = final.lastOrNull()
+            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
+                final[final.size - 1] = ChatMessage(
+                    role = msg.role,
+                    content = "${last.content ?: ""}\n\n${msg.content ?: ""}"
+                )
+            } else {
+                final.add(msg)
+            }
+        }
+
+        return final
     }
 
     /**
@@ -285,7 +304,11 @@ class SourcegraphChatClient(
                 }
 
                 val toolCalls = if (toolCallBuilders.isNotEmpty()) {
-                    toolCallBuilders.entries.sortedBy { it.key }.map { it.value.toToolCall() }
+                    toolCallBuilders.entries
+                        .sortedBy { it.key }
+                        .map { it.value.toToolCall() }
+                        .filter { it.function.name.isNotBlank() } // Drop tool calls with empty names
+                        .ifEmpty { null }
                 } else null
 
                 val finalMessage = ChatMessage(
