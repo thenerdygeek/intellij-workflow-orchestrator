@@ -39,11 +39,23 @@ class AgentCefPanel(
 
     private var browser: JBCefBrowser? = null
     private var sendQuery: JBCefJSQuery? = null
+    private var undoQuery: JBCefJSQuery? = null
+    private var traceQuery: JBCefJSQuery? = null
+    private var promptQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
     /** Callback when user sends a message from JS (not used yet — input is in Swing). */
     var onUserMessage: ((String) -> Unit)? = null
+
+    /** Callback when user clicks "Undo" in the JCEF footer. */
+    var onUndoRequested: (() -> Unit)? = null
+
+    /** Callback when user clicks "View Trace" in the JCEF footer. */
+    var onViewTraceRequested: (() -> Unit)? = null
+
+    /** Callback when user clicks an example prompt in the JCEF welcome screen. */
+    var onPromptSubmitted: ((String) -> Unit)? = null
 
     init {
         try {
@@ -80,6 +92,17 @@ class AgentCefPanel(
             }
         }
 
+        // Create JS→Kotlin bridges for UI actions (undo, view-trace, example prompts)
+        undoQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onUndoRequested?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        traceQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onViewTraceRequested?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        promptQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { text -> onPromptSubmitted?.invoke(text); JBCefJSQuery.Response("ok") }
+        }
+
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
@@ -89,6 +112,19 @@ class AgentCefPanel(
                 if (!isLoading) {
                     pageLoaded = true
                     applyCurrentTheme()
+                    // Inject JS→Kotlin bridge functions for JCEF UI actions
+                    undoQuery?.let { q ->
+                        val undoJs = q.inject("'undo'")
+                        js("window._requestUndo = function() { $undoJs }")
+                    }
+                    traceQuery?.let { q ->
+                        val traceJs = q.inject("'trace'")
+                        js("window._requestViewTrace = function() { $traceJs }")
+                    }
+                    promptQuery?.let { q ->
+                        val promptJs = q.inject("text")
+                        js("window._submitPrompt = function(text) { $promptJs }")
+                    }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
                         pendingCalls.forEach { js(it) }
@@ -263,8 +299,14 @@ class AgentCefPanel(
 
     override fun dispose() {
         sendQuery?.dispose()
+        undoQuery?.dispose()
+        traceQuery?.dispose()
+        promptQuery?.dispose()
         browser?.dispose()
         sendQuery = null
+        undoQuery = null
+        traceQuery = null
+        promptQuery = null
         browser = null
     }
 }
