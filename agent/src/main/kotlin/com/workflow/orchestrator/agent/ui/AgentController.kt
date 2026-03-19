@@ -108,6 +108,17 @@ class AgentController(
                     RichStreamingPanel.SessionStatus.FAILED)
             } finally {
                 dashboard.setBusy(false)
+                // Persist conversation state after each turn (best effort)
+                session?.let { s ->
+                    try {
+                        s.persistNewMessages()
+                        s.saveMetadata(
+                            projectName = project.name,
+                            projectPath = project.basePath ?: "",
+                            model = try { AgentSettings.getInstance(project).state.sourcegraphChatModel ?: "" } catch (_: Exception) { "" }
+                        )
+                    } catch (_: Exception) { /* best effort — don't break the UI flow */ }
+                }
             }
         }
     }
@@ -120,7 +131,17 @@ class AgentController(
     fun newChat() {
         currentOrchestrator?.cancelTask()
         currentOrchestrator = null
-        session?.markCompleted(true)
+        session?.let { s ->
+            s.markCompleted(true)
+            try {
+                s.persistNewMessages()
+                s.saveMetadata(
+                    projectName = project.name,
+                    projectPath = project.basePath ?: "",
+                    model = try { AgentSettings.getInstance(project).state.sourcegraphChatModel ?: "" } catch (_: Exception) { "" }
+                )
+            } catch (_: Exception) { /* best effort */ }
+        }
         session = null
         dashboard.reset()
         dashboard.focusInput()
