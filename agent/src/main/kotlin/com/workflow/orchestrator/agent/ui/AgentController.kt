@@ -34,6 +34,7 @@ class AgentController(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var currentOrchestrator: AgentOrchestrator? = null
     private var sessionStartMs = 0L
+    private var hasActiveSession = false
 
     init {
         dashboard.onSendMessage = { message -> executeTask(message) }
@@ -65,7 +66,13 @@ class AgentController(
         currentOrchestrator = orchestrator
         sessionStartMs = System.currentTimeMillis()
 
-        dashboard.startSession(task)
+        // First message clears chat; subsequent messages preserve conversation
+        if (!hasActiveSession) {
+            dashboard.startSession(task)
+            hasActiveSession = true
+        } else {
+            dashboard.appendUserMessage(task)
+        }
         dashboard.setBusy(true)
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
@@ -107,6 +114,7 @@ class AgentController(
     fun newChat() {
         currentOrchestrator?.cancelTask()
         currentOrchestrator = null
+        hasActiveSession = false
         dashboard.reset()
         dashboard.focusInput()
     }
