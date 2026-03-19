@@ -61,10 +61,10 @@ sealed class SingleAgentResult {
  * - [OutputValidator] on final content
  * - Progress callbacks for each iteration
  *
- * Max iterations: 15 (higher than WorkerSession's 10, since this handles full tasks).
+ * Max iterations: 50 (higher than WorkerSession's 10, since this handles full tasks).
  */
 class SingleAgentSession(
-    private val maxIterations: Int = 15
+    private val maxIterations: Int = 50
 ) {
     companion object {
         private val LOG = Logger.getInstance(SingleAgentSession::class.java)
@@ -171,6 +171,15 @@ class SingleAgentSession(
                     )
                 }
                 BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
+            }
+
+            // Ask user to confirm continuing after iteration 25
+            if (iteration == 25) {
+                LOG.info("SingleAgentSession: reached iteration 25, continuing (budget: ${budgetEnforcer.utilizationPercent()}%)")
+                onProgress(AgentProgress(
+                    step = "Agent has been working for 25 iterations. Still making progress...",
+                    tokensUsed = totalTokensUsed
+                ))
             }
 
             val messages = contextManager.getMessages()

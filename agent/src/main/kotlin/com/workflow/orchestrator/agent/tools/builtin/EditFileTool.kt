@@ -87,14 +87,18 @@ class EditFileTool : AgentTool {
             try {
                 val errors = SyntaxValidator.validate(project, path, newContent)
                 if (errors.isNotEmpty()) {
-                    // REVERT: do not write the file — return error with details
+                    // WARN: apply the edit but warn about syntax errors
+                    // Multi-step refactors require intermediate invalid states
                     val errorDetails = errors.joinToString("\n") { "  Line ${it.line}:${it.column}: ${it.message}" }
+                    // Still write the file (don't block)
+                    file.writeText(newContent, Charsets.UTF_8)
+                    val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath"
                     return ToolResult(
-                        content = "Edit rejected: syntax errors introduced. File NOT modified.\n$errorDetails",
-                        summary = "Edit rejected: ${errors.size} syntax error(s) in $rawPath",
-                        tokenEstimate = TokenEstimator.estimate(errorDetails),
+                        content = "$summary\nWARNING: This edit introduced ${errors.size} syntax error(s). You should fix these:\n$errorDetails",
+                        summary = "$summary (${errors.size} syntax warnings)",
+                        tokenEstimate = TokenEstimator.estimate(summary + errorDetails),
                         artifacts = listOf(path),
-                        isError = true
+                        isError = false // NOT an error — edit was applied
                     )
                 }
             } catch (_: Exception) {

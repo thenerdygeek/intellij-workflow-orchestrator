@@ -154,13 +154,13 @@ class SourcegraphChatClient(
                 }
                 "tool" -> {
                     // Convert tool result to user message
-                    val toolContent = "[Tool Result${msg.toolCallId?.let { " for $it" } ?: ""}]\n${msg.content ?: ""}"
+                    val toolContent = "<tool_result${msg.toolCallId?.let { " tool_use_id=\"$it\"" } ?: ""}>\n${msg.content ?: ""}\n</tool_result>"
                     converted.add(ChatMessage(role = "user", content = toolContent))
                 }
                 "user" -> {
                     // Merge any pending system content into this user message
                     val content = if (pendingSystemContent != null) {
-                        val merged = "[System Instructions]\n$pendingSystemContent\n\n[User Message]\n${msg.content ?: ""}"
+                        val merged = "<system_instructions>\n$pendingSystemContent\n</system_instructions>\n\n<user_message>\n${msg.content ?: ""}\n</user_message>"
                         pendingSystemContent = null
                         merged
                     } else {
@@ -171,7 +171,7 @@ class SourcegraphChatClient(
                 "assistant" -> {
                     // If there's buffered system content with no user message yet, emit as user first
                     if (pendingSystemContent != null) {
-                        converted.add(ChatMessage(role = "user", content = "[System Instructions]\n$pendingSystemContent"))
+                        converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
                         pendingSystemContent = null
                     }
                     converted.add(msg)
@@ -182,7 +182,7 @@ class SourcegraphChatClient(
 
         // Flush any remaining system content
         if (pendingSystemContent != null) {
-            converted.add(ChatMessage(role = "user", content = "[System Instructions]\n$pendingSystemContent"))
+            converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
         }
 
         // Phase 2: merge consecutive same-role messages (Anthropic requirement)
