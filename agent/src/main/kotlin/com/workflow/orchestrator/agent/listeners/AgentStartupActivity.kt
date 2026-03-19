@@ -1,14 +1,18 @@
 package com.workflow.orchestrator.agent.listeners
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.workflow.orchestrator.agent.service.GlobalSessionIndex
 import com.workflow.orchestrator.agent.settings.AgentSettings
-import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
-import java.io.File
 
 /**
- * Checks for interrupted agent tasks on IDE startup.
- * If a checkpoint exists, notifies the user to resume or discard.
+ * Checks for interrupted agent sessions on IDE startup.
+ *
+ * Uses GlobalSessionIndex to detect sessions that were "active" when the IDE
+ * shut down (or crashed). Marks them as "interrupted" and notifies the user
+ * so they can resume from the History tab.
  */
 class AgentStartupActivity : ProjectActivity {
 
@@ -21,21 +25,33 @@ class AgentStartupActivity : ProjectActivity {
         }
         if (!settings.state.agentEnabled) return
 
-        val basePath = project.basePath ?: return
-        val checkpointDir = File(basePath, ".workflow/agent")
-        if (!checkpointDir.exists()) return
+        // Check for interrupted sessions in global index
+        try {
+            val index = GlobalSessionIndex.getInstance()
+            val interrupted = index.getSessions().filter {
+                it.status == "active" || it.status == "interrupted"
+            }
 
-        val checkpointFiles = checkpointDir.listFiles { f ->
-            f.name.startsWith("checkpoint-") && f.extension == "json"
-        }
-        if (checkpointFiles.isNullOrEmpty()) return
+            if (interrupted.isNotEmpty()) {
+                // Mark them as interrupted
+                interrupted.forEach { entry ->
+                    index.updateSession(entry.sessionId) { it.copy(status = "interrupted") }
+                }
 
-        // Found interrupted task(s) - notify user
-        val notification = WorkflowNotificationService.getInstance(project)
-        notification.notifyInfo(
-            "workflow.agent",
-            "Agent Task Interrupted",
-            "A previous agent task was interrupted. Would you like to resume?"
-        )
+                // Notify user about the most recent one
+                val latest = interrupted.first()
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("workflow.agent")
+                    .createNotification(
+                        "Agent Session Interrupted",
+                        "\"${latest.title.take(80)}\" was interrupted. You can resume it from the History tab.",
+                        NotificationType.INFORMATION
+                    )
+                    .notify(project)
+            }
+
+            // Also run periodic cleanup of stale sessions
+            index.cleanup()
+        } catch (_: Exception) { /* service not available */ }
     }
 }

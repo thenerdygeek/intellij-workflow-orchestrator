@@ -112,6 +112,30 @@ class ConversationSession private constructor(
         persistedMessageCount = allMessages.size
     }
 
+    /** Save a checkpoint for this session (call after each tool execution). */
+    fun saveCheckpoint(iteration: Int, tokensUsed: Int, lastToolCall: String?, rollbackCheckpointId: String?) {
+        try {
+            SessionCheckpoint.save(
+                SessionCheckpoint(
+                    sessionId = sessionId,
+                    phase = "executing",
+                    iteration = iteration,
+                    tokensUsed = tokensUsed,
+                    lastToolCall = lastToolCall,
+                    touchedFiles = emptyList(),
+                    rollbackCheckpointId = rollbackCheckpointId,
+                    timestamp = System.currentTimeMillis()
+                ),
+                store.sessionDirectory
+            )
+        } catch (_: Exception) { /* best effort */ }
+    }
+
+    /** Delete checkpoint when session completes normally. */
+    fun deleteCheckpoint() {
+        try { SessionCheckpoint.delete(store.sessionDirectory) } catch (_: Exception) {}
+    }
+
     /**
      * Save session metadata to disk.
      * Call after each turn so sessions are discoverable even if the IDE crashes.
