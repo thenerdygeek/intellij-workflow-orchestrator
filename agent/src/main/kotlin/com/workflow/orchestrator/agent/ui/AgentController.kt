@@ -177,6 +177,12 @@ class AgentController(
             is AgentResult.Completed -> {
                 dashboard.flushStreamBuffer()
                 dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
+                if (result.artifacts.isNotEmpty()) {
+                    dashboard.appendStatus(
+                        "Agent modified ${result.artifacts.size} file(s). You can undo all changes via Edit > Undo or LocalHistory.",
+                        RichStreamingPanel.StatusType.INFO
+                    )
+                }
             }
             is AgentResult.Failed -> {
                 dashboard.appendError(result.error)
