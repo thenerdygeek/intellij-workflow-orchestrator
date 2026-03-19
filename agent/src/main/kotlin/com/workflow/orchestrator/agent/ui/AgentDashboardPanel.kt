@@ -252,8 +252,8 @@ class AgentDashboardPanel(
     }
 
     fun setBusy(busy: Boolean) = runOnEdt {
-        chatInput.isEnabled = !busy
-        sendButton.isEnabled = !busy
+        chatInput.isEnabled = true   // Always enabled — user can type mid-loop
+        sendButton.isEnabled = true  // Always enabled — user can send mid-loop
         cancelButton.isEnabled = busy
         if (!busy) chatInput.requestFocusInWindow()
     }

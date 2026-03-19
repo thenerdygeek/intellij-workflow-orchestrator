@@ -36,6 +36,7 @@ class AgentController(
     private var currentOrchestrator: AgentOrchestrator? = null
     private var sessionStartMs = 0L
     private var session: ConversationSession? = null
+    private val pendingUserMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     init {
         dashboard.onSendMessage = { message -> executeTask(message) }
@@ -52,6 +53,14 @@ class AgentController(
     }
 
     fun executeTask(task: String) {
+        // If agent is already running, queue the message as intervention
+        if (currentOrchestrator != null && session != null && dashboard.cancelButton.isEnabled) {
+            pendingUserMessages.add(task)
+            dashboard.appendUserMessage(task)
+            dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
+            return
+        }
+
         val agentService = try {
             AgentService.getInstance(project)
         } catch (e: Exception) {
@@ -153,8 +162,13 @@ class AgentController(
 
         val toolInfo = progress.toolCallInfo
         when {
-            progress.step.startsWith("Used tool:") && toolInfo != null -> {
+            progress.step.startsWith("Calling tool:") && toolInfo != null -> {
+                // Pre-execution: show tool call as RUNNING before it executes
                 dashboard.flushStreamBuffer()
+                dashboard.appendToolCall(toolInfo.toolName, toolInfo.args, RichStreamingPanel.ToolCallStatus.RUNNING)
+            }
+            progress.step.startsWith("Used tool:") && toolInfo != null -> {
+                // Post-execution: update with result
                 if (toolInfo.editFilePath != null && toolInfo.editOldText != null && toolInfo.editNewText != null) {
                     dashboard.appendEditDiff(toolInfo.editFilePath, toolInfo.editOldText, toolInfo.editNewText, !toolInfo.isError)
                 } else {
@@ -173,6 +187,14 @@ class AgentController(
     }
 
     private fun handleResult(result: AgentResult, durationMs: Long) {
+        // Process any queued user messages after the current task completes
+        val pending = pendingUserMessages.poll()
+        if (pending != null) {
+            LOG.info("AgentController: processing queued user intervention: ${pending.take(100)}")
+            // Schedule follow-up execution after current result is handled
+            SwingUtilities.invokeLater { executeTask(pending) }
+        }
+
         when (result) {
             is AgentResult.Completed -> {
                 dashboard.flushStreamBuffer()

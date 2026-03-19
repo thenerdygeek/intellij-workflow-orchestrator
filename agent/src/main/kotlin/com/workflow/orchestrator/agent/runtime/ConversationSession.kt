@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.context.WorkingSet
 import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
@@ -47,6 +48,9 @@ class ConversationSession private constructor(
     /** Whether the system prompt has been added to context yet. */
     var initialized: Boolean = false
         internal set
+
+    /** Tracks files the agent has recently read or edited. LRU cache with 10 file limit. */
+    val workingSet: WorkingSet = WorkingSet()
 
     /** Store for JSONL persistence. */
     val store: ConversationStore = ConversationStore(sessionId)
