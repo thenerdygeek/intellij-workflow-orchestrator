@@ -55,6 +55,12 @@ class AgentDashboardPanel(
 
     // ── UI components ──
     private val tokenWidget = TokenBudgetWidget()
+    private val modelLabel = JBLabel("").apply {
+        font = JBUI.Fonts.smallFont()
+        foreground = JBColor.GRAY
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        toolTipText = "Current LLM model \u2014 click to change in Settings"
+    }
 
     private val chatInput = JBTextArea(2, 40).apply {
         lineWrap = true
@@ -76,6 +82,11 @@ class AgentDashboardPanel(
     val newChatButton = JButton("New Chat").apply {
         icon = AllIcons.General.Add
         putClientProperty("JButton.buttonType", "roundRect")
+    }
+    val toolsButton = JButton("Tools").apply {
+        icon = AllIcons.Nodes.Plugin
+        putClientProperty("JButton.buttonType", "roundRect")
+        toolTipText = "View available agent tools"
     }
     val tracesButton = JButton("Traces").apply {
         icon = AllIcons.Actions.ListFiles
@@ -101,9 +112,11 @@ class AgentDashboardPanel(
             val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
             left.add(cancelButton)
             left.add(newChatButton)
+            left.add(toolsButton)
             add(left, BorderLayout.WEST)
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
             right.add(tracesButton)
+            right.add(modelLabel)
             right.add(tokenWidget)
             right.add(settingsLink)
             add(right, BorderLayout.EAST)
@@ -122,6 +135,11 @@ class AgentDashboardPanel(
             override fun keyPressed(e: KeyEvent) {
                 if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
                     e.consume(); submitMessage()
+                }
+                if (e.keyCode == KeyEvent.VK_ESCAPE) {
+                    e.consume()
+                    // Trigger cancel if agent is running
+                    cancelButton.doClick()
                 }
             }
             override fun keyReleased(e: KeyEvent) {}
@@ -274,6 +292,12 @@ class AgentDashboardPanel(
         sendButton.isEnabled = true  // Always enabled — user can send mid-loop
         cancelButton.isEnabled = busy
         if (!busy) chatInput.requestFocusInWindow()
+    }
+
+    fun setModelName(name: String) = runOnEdt {
+        // Show just the model name part (strip provider prefix)
+        val shortName = name.substringAfterLast("::").ifBlank { name }
+        modelLabel.text = shortName
     }
 
     fun focusInput() = runOnEdt { chatInput.requestFocusInWindow() }
