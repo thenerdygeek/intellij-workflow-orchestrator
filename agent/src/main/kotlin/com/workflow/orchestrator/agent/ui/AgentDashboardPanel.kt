@@ -77,6 +77,11 @@ class AgentDashboardPanel(
         icon = AllIcons.General.Add
         putClientProperty("JButton.buttonType", "roundRect")
     }
+    val tracesButton = JButton("Traces").apply {
+        icon = AllIcons.Actions.ListFiles
+        putClientProperty("JButton.buttonType", "roundRect")
+        toolTipText = "Open debug traces for recent agent sessions"
+    }
     val settingsLink = JBLabel("<html><a href=''>Settings</a></html>").apply {
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         font = JBUI.Fonts.smallFont()
@@ -98,6 +103,7 @@ class AgentDashboardPanel(
             left.add(newChatButton)
             add(left, BorderLayout.WEST)
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+            right.add(tracesButton)
             right.add(tokenWidget)
             right.add(settingsLink)
             add(right, BorderLayout.EAST)
