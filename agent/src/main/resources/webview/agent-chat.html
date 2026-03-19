@@ -79,6 +79,9 @@ body {
 .empty-state .icon { font-size: 36px; margin-bottom: 16px; opacity: 0.5; }
 .empty-state .title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--fg-secondary); }
 .empty-state .desc { font-size: 12px; max-width: 320px; line-height: 1.6; }
+.prompts { display: flex; flex-direction: column; gap: 8px; max-width: 420px; margin: 20px auto 0; }
+.prompt-btn { padding: 10px 14px; background: var(--tool-bg); border: 1px solid var(--border); border-radius: 8px; color: var(--fg-secondary); font-size: 12px; text-align: left; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.prompt-btn:hover { border-color: var(--link); color: var(--fg); }
 
 /* ═══════════════════════════════════════════════════
    Messages
@@ -145,6 +148,8 @@ body {
   cursor: pointer;
 }
 .tool-header:hover { background: rgba(255,255,255,0.03); }
+.tool-header .chevron { font-size: 10px; color: var(--fg-muted); transition: transform 0.2s; flex-shrink: 0; }
+.tool-header .chevron.open { transform: rotate(90deg); }
 
 .badge {
   font-size: 10px;
@@ -192,12 +197,14 @@ body {
   max-height: 120px;
   overflow-y: auto;
 }
+.tool-detail.collapsed { display: none; }
 .tool-result {
   padding: 6px 12px 8px 12px;
   font-size: 12px;
   color: var(--fg-secondary);
   border-top: 1px solid var(--border);
 }
+.tool-result.collapsed { display: none; }
 
 /* ═══════════════════════════════════════════════════
    Code Blocks
@@ -279,6 +286,7 @@ code {
   white-space: pre-wrap;
   word-break: break-all;
 }
+.diff-line .ln { display: inline-block; width: 28px; color: var(--fg-muted); text-align: right; margin-right: 8px; user-select: none; font-size: 11px; }
 .diff-add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
 .diff-rem { background: var(--diff-rem-bg); color: var(--diff-rem-fg); }
 
@@ -335,6 +343,10 @@ code {
   color: var(--fg-secondary);
 }
 .footer-files span { font-family: var(--font-mono); }
+.footer-btn { display: inline-block; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--fg-secondary); margin-right: 8px; }
+.footer-btn:hover { background: rgba(255,255,255,0.05); }
+.footer-btn.undo { color: var(--error); border-color: #5c2020; }
+.footer-btn.undo:hover { background: var(--diff-rem-bg); }
 </style>
 </head>
 <body>
@@ -342,7 +354,13 @@ code {
   <div class="empty-state" id="empty-state">
     <div class="icon">⚡</div>
     <div class="title">AI Agent</div>
-    <div class="desc">Type a message below to start. The agent can read, edit, and search code, run commands, and interact with Jira, Bamboo, SonarQube, and Bitbucket.</div>
+    <div class="desc">Ask me to analyze code, fix bugs, run builds, check quality, or manage tickets.</div>
+    <div class="prompts">
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Fix the SonarQube issues in this project">🔍 Fix the SonarQube issues in this project</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Create a PR for my current changes">🔀 Create a PR for my current changes</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="What is the status of the latest build?">📋 What is the status of the latest build?</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Run tests and fix any failures">🧪 Run tests and fix any failures</div>
+    </div>
   </div>
 </div>
 
@@ -366,6 +384,37 @@ function esc(text) {
   const d = document.createElement('div');
   d.textContent = text;
   return d.innerHTML;
+}
+
+/* ── Markdown Rendering ── */
+
+function renderMarkdown(text) {
+  var html = esc(text);
+
+  // Code blocks: ```lang\ncode\n```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+    var langLabel = lang ? '<div class="code-lang">' + lang + '</div>' : '';
+    return langLabel + '<div class="code-wrapper"><button class="code-copy">Copy</button><div class="code-block">' + code.trimEnd() + '</div></div>';
+  });
+
+  // Inline code: `text`
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bold: **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // Headers: # text (only at start of line)
+  html = html.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 4px;font-size:14px;">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h2 style="margin:12px 0 6px;font-size:15px;">$1</h2>');
+
+  // Lists: - item or * item
+  html = html.replace(/^[*-] (.+)$/gm, '<li style="margin-left:16px;list-style:disc;">$1</li>');
+
+  // Newlines to <br> (but not inside code blocks — they use <pre> which handles newlines)
+  html = html.replace(/\n/g, '<br>');
+
+  return html;
 }
 
 /* ── Session ── */
@@ -397,6 +446,10 @@ function completeSession(status, tokensUsed, durationMs, iterations, files) {
     ? '<div class="footer-files">Files: <span>' + files.map(f => esc(f.split('/').pop())).join(', ') + '</span></div>'
     : '';
 
+  const undoHtml = files && files.length > 0
+    ? '<div style="margin-top:10px;"><button class="footer-btn undo" onclick="requestUndo()">↩ Undo All Changes</button><button class="footer-btn" onclick="requestViewTrace()">📋 View Trace</button></div>'
+    : '';
+
   const footer = document.createElement('div');
   footer.className = 'session-footer';
   footer.innerHTML =
@@ -407,7 +460,7 @@ function completeSession(status, tokensUsed, durationMs, iterations, files) {
       '<span>' + tokensUsed.toLocaleString() + ' tokens</span>' +
       '<span>' + formatDuration(durationMs) + '</span>' +
       '<span>' + iterations + ' iterations</span>' +
-    '</div>' + filesHtml;
+    '</div>' + filesHtml + undoHtml;
   container.appendChild(footer);
   scrollToBottom();
 }
@@ -434,6 +487,9 @@ function appendToken(token) {
 function endStream() {
   if (activeStreamEl && activeStreamEl._inner) {
     activeStreamEl._inner.classList.remove('stream-cursor');
+    // Re-render with markdown
+    var raw = activeStreamEl._inner.textContent || '';
+    activeStreamEl._inner.innerHTML = renderMarkdown(raw);
   }
   activeStreamEl = null;
 }
@@ -450,13 +506,14 @@ function appendToolCall(toolName, args, statusStr) {
     : '<span class="tool-status-icon running">◌</span>';
 
   const argsHtml = args && args.length > 2
-    ? '<div class="tool-detail">' + esc(args.substring(0, 300)) + '</div>' : '';
+    ? '<div class="tool-detail collapsed">' + esc(args.substring(0, 300)) + '</div>' : '';
 
   const card = document.createElement('div');
   card.className = 'message';
   card.innerHTML =
     '<div class="tool-card type-' + type + '" id="tool-' + Date.now() + '">' +
       '<div class="tool-header">' +
+        '<span class="chevron">▶</span>' +
         badge + '<span class="tool-target">' + esc(target) + '</span>' +
         statusIcon +
       '</div>' + argsHtml +
@@ -472,7 +529,7 @@ function updateToolResult(result, durationMs) {
   if (!last) return;
   if (result) {
     const res = document.createElement('div');
-    res.className = 'tool-result';
+    res.className = 'tool-result collapsed';
     res.textContent = result.substring(0, 300);
     last.appendChild(res);
   }
@@ -498,8 +555,8 @@ function appendDiff(filePath, oldLines, newLines, accepted) {
   else if (accepted === false) statusBadge = '<span class="badge badge-fail">REJECTED</span>';
 
   let diffHtml = '';
-  oldLines.forEach(l => { diffHtml += '<div class="diff-line diff-rem">- ' + esc(l) + '</div>'; });
-  newLines.forEach(l => { diffHtml += '<div class="diff-line diff-add">+ ' + esc(l) + '</div>'; });
+  oldLines.forEach((l, i) => { diffHtml += '<div class="diff-line diff-rem"><span class="ln">' + (i+1) + '</span>- ' + esc(l) + '</div>'; });
+  newLines.forEach((l, i) => { diffHtml += '<div class="diff-line diff-add"><span class="ln">' + (i+1) + '</span>+ ' + esc(l) + '</div>'; });
 
   const card = document.createElement('div');
   card.className = 'message';
@@ -581,6 +638,48 @@ function formatDuration(ms) {
   if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
   return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
 }
+
+function submitPrompt(text) {
+  // Will be wired to Kotlin via JBCefJSQuery
+  if (window._submitPrompt) {
+    window._submitPrompt(text);
+  }
+}
+
+function requestUndo() {
+  if (window._requestUndo) window._requestUndo();
+}
+
+function requestViewTrace() {
+  if (window._requestViewTrace) window._requestViewTrace();
+}
+
+// Copy button handler
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('code-copy')) {
+    var codeEl = e.target.closest('.code-wrapper').querySelector('.code-block');
+    if (codeEl) {
+      navigator.clipboard.writeText(codeEl.textContent).then(function() {
+        e.target.textContent = 'Copied!';
+        setTimeout(function() { e.target.textContent = 'Copy'; }, 2000);
+      });
+    }
+  }
+});
+
+// Collapsible tool details handler
+document.addEventListener('click', function(e) {
+  var header = e.target.closest('.tool-header');
+  if (header) {
+    var card = header.closest('.tool-card');
+    if (card) {
+      var details = card.querySelectorAll('.tool-detail, .tool-result');
+      var chevron = header.querySelector('.chevron');
+      details.forEach(function(d) { d.classList.toggle('collapsed'); });
+      if (chevron) chevron.classList.toggle('open');
+    }
+  }
+});
 </script>
 </body>
 </html>
