@@ -125,27 +125,87 @@ class SourcegraphChatClient(
     }
 
     /**
-     * Convert messages to Sourcegraph-compatible format.
+     * Convert messages to Sourcegraph/Anthropic-compatible format.
      *
-     * Sourcegraph API restrictions (from OpenAPI spec + runtime validation):
-     * - "system" role is NOT supported → convert to "user" with [System Instructions] prefix
-     * - "tool" role may not be supported → convert to "user" with tool result formatting
-     * - Only "user" and "assistant" roles are guaranteed to work
+     * Constraints:
+     * 1. Sourcegraph rejects "system" role (400: "system role is not supported")
+     * 2. Anthropic requires strict user/assistant alternation (no consecutive same-role messages)
+     * 3. "tool" role may not pass through the proxy
+     *
+     * Strategy:
+     * - System messages: merge into the next user message as a prefix
+     * - Tool messages: merge into a synthetic user message
+     * - Consecutive same-role messages: merge into one message
+     * - Ensure conversation starts with "user" and alternates
      */
     private fun sanitizeMessages(messages: List<ChatMessage>): List<ChatMessage> {
-        return messages.map { msg ->
+        // Phase 1: convert system and tool roles to user content
+        val converted = mutableListOf<ChatMessage>()
+        var pendingSystemContent: String? = null
+
+        for (msg in messages) {
             when (msg.role) {
-                "system" -> ChatMessage(
-                    role = "user",
-                    content = "[System Instructions]\n${msg.content ?: ""}"
-                )
-                "tool" -> ChatMessage(
-                    role = "user",
-                    content = "[Tool Result${msg.toolCallId?.let { " for $it" } ?: ""}]\n${msg.content ?: ""}"
-                )
-                else -> msg
+                "system" -> {
+                    // Buffer system content to merge into next user message
+                    val content = msg.content ?: ""
+                    pendingSystemContent = if (pendingSystemContent != null) {
+                        "$pendingSystemContent\n$content"
+                    } else content
+                }
+                "tool" -> {
+                    // Convert tool result to user message
+                    val toolContent = "[Tool Result${msg.toolCallId?.let { " for $it" } ?: ""}]\n${msg.content ?: ""}"
+                    converted.add(ChatMessage(role = "user", content = toolContent))
+                }
+                "user" -> {
+                    // Merge any pending system content into this user message
+                    val content = if (pendingSystemContent != null) {
+                        val merged = "[System Instructions]\n$pendingSystemContent\n\n[User Message]\n${msg.content ?: ""}"
+                        pendingSystemContent = null
+                        merged
+                    } else {
+                        msg.content ?: ""
+                    }
+                    converted.add(ChatMessage(role = "user", content = content))
+                }
+                "assistant" -> {
+                    // If there's buffered system content with no user message yet, emit as user first
+                    if (pendingSystemContent != null) {
+                        converted.add(ChatMessage(role = "user", content = "[System Instructions]\n$pendingSystemContent"))
+                        pendingSystemContent = null
+                    }
+                    converted.add(msg)
+                }
+                else -> converted.add(msg)
             }
         }
+
+        // Flush any remaining system content
+        if (pendingSystemContent != null) {
+            converted.add(ChatMessage(role = "user", content = "[System Instructions]\n$pendingSystemContent"))
+        }
+
+        // Phase 2: merge consecutive same-role messages (Anthropic requirement)
+        val merged = mutableListOf<ChatMessage>()
+        for (msg in converted) {
+            val last = merged.lastOrNull()
+            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
+                // Merge into previous message
+                merged[merged.size - 1] = ChatMessage(
+                    role = msg.role,
+                    content = "${last.content ?: ""}\n\n${msg.content ?: ""}"
+                )
+            } else {
+                merged.add(msg)
+            }
+        }
+
+        // Phase 3: ensure conversation starts with "user"
+        if (merged.isNotEmpty() && merged.first().role != "user") {
+            merged.add(0, ChatMessage(role = "user", content = "[Context follows]"))
+        }
+
+        return merged
     }
 
     /**
