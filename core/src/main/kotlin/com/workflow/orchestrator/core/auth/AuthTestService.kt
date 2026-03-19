@@ -17,7 +17,7 @@ class AuthTestService {
 
     private val log = Logger.getInstance(AuthTestService::class.java)
 
-    private val testClient = OkHttpClient.Builder()
+    private val testClient = com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .followRedirects(true)
@@ -315,6 +315,26 @@ class AuthTestService {
         } catch (e: Exception) {
             log.debug("[Core:Auth] Bitbucket write permission check failed: ${e.message}")
             null // Don't block connection test for a permission check failure
+        }
+    }
+
+    /**
+     * Fetches the Bitbucket username via the whoami servlet endpoint.
+     * Returns the username string, or null if the call fails.
+     * Must be called off the EDT (runs a synchronous HTTP request).
+     */
+    fun fetchBitbucketUsername(baseUrl: String, token: String): String? {
+        return try {
+            val request = Request.Builder()
+                .url("${baseUrl.trimEnd('/')}/plugins/servlet/applinks/whoami")
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build()
+            val response = testClient.newCall(request).execute()
+            response.use { it.body?.string()?.trim()?.takeIf { u -> u.isNotBlank() } }
+        } catch (e: Exception) {
+            log.debug("[Core:Auth] Failed to fetch Bitbucket username: ${e.message}")
+            null
         }
     }
 

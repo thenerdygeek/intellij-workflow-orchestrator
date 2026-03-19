@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 class JiraTaskRepository : BaseRepositoryImpl {
 
     private val log = Logger.getInstance(JiraTaskRepository::class.java)
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+    private val httpClient: OkHttpClient = com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()

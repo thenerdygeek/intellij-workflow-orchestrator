@@ -68,7 +68,7 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
         val nexusUsername = settings.connections.nexusUsername.orEmpty()
         val nexusPassword = credentialStore.getNexusPassword() ?: ""
 
-        val httpClient = OkHttpClient.Builder()
+        val httpClient = com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .build()

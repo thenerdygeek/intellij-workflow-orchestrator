@@ -175,13 +175,13 @@ class PrDashboardPanel(
     private fun setupVisibilityListener() {
         addAncestorListener(object : javax.swing.event.AncestorListener {
             override fun ancestorAdded(e: javax.swing.event.AncestorEvent) {
-                // Panel became visible — resume polling
-                startDataCollection()
+                // Panel became visible — notify poller (resets backoff, polls immediately)
+                PrListService.getInstance(project).setVisible(true)
             }
 
             override fun ancestorRemoved(e: javax.swing.event.AncestorEvent) {
-                // Panel hidden (tab switched) — stop polling to save resources
-                PrListService.getInstance(project).stopPolling()
+                // Panel hidden (tab switched) — slow down polling to save resources
+                PrListService.getInstance(project).setVisible(false)
             }
 
             override fun ancestorMoved(e: javax.swing.event.AncestorEvent) {}

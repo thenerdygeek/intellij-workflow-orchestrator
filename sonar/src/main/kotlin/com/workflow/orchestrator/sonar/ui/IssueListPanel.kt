@@ -123,8 +123,31 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
             5 -> filtered = filtered.filter { it.severity == IssueSeverity.INFO }
         }
 
-        listModel.clear()
-        filtered.sortedBy { it.severity.ordinal }.forEach { listModel.addElement(it) }
+        val sorted = filtered.sortedBy { it.severity.ordinal }
+
+        // Preserve selection across update
+        val selectedIssue = issueList.selectedValue
+        val scrollPosition = scrollPane.verticalScrollBar.value
+
+        // Only update if data actually changed
+        val currentItems = (0 until listModel.size).map { listModel.getElementAt(it) }
+        if (currentItems != sorted) {
+            listModel.clear()
+            sorted.forEach { listModel.addElement(it) }
+
+            // Restore selection if the same issue is still present
+            if (selectedIssue != null) {
+                val newIndex = sorted.indexOf(selectedIssue)
+                if (newIndex >= 0) {
+                    issueList.selectedIndex = newIndex
+                }
+            }
+
+            // Restore scroll position
+            SwingUtilities.invokeLater {
+                scrollPane.verticalScrollBar.value = scrollPosition
+            }
+        }
 
         // Update count label — show "Showing X of Y" when filters are active
         val filtersActive = filterCombo.selectedIndex != 0 || severityCombo.selectedIndex != 0
@@ -138,7 +161,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         remove(scrollPane)
         remove(emptyLabel)
         remove(filteredEmptyLabel)
-        if (filtered.isEmpty()) {
+        if (sorted.isEmpty()) {
             if (filtersActive && allIssues.isNotEmpty()) {
                 add(filteredEmptyLabel, BorderLayout.CENTER)
             } else {

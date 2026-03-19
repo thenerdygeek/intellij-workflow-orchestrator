@@ -33,7 +33,7 @@ class BambooApiClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))

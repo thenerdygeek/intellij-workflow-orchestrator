@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,36 +36,30 @@ class PrListService(private val project: Project) : Disposable {
     private val _reviewingPrs = MutableStateFlow<List<BitbucketPrDetail>>(emptyList())
     val reviewingPrs: StateFlow<List<BitbucketPrDetail>> = _reviewingPrs.asStateFlow()
 
-    private var pollingJob: Job? = null
+    private val poller = SmartPoller(
+        name = "PR-List",
+        baseIntervalMs = 60_000,
+        maxIntervalMs = 300_000,
+        scope = scope,
+        action = {
+            val oldMySize = _myPrs.value.size
+            val oldReviewSize = _reviewingPrs.value.size
+            refresh()
+            _myPrs.value.size != oldMySize || _reviewingPrs.value.size != oldReviewSize
+        }
+    )
 
     companion object {
-        private const val POLL_INTERVAL_MS = 60_000L
-
         fun getInstance(project: Project): PrListService {
             return project.getService(PrListService::class.java)
         }
     }
 
-    fun startPolling() {
-        if (pollingJob?.isActive == true) return
-        pollingJob = scope.launch {
-            while (isActive) {
-                try {
-                    refresh()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    log.warn("[PR:List] Polling error: ${e.message}", e)
-                }
-                delay(POLL_INTERVAL_MS)
-            }
-        }
-    }
+    fun startPolling() = poller.start()
 
-    fun stopPolling() {
-        pollingJob?.cancel()
-        pollingJob = null
-    }
+    fun stopPolling() = poller.stop()
+
+    fun setVisible(visible: Boolean) = poller.setVisible(visible)
 
     /** Cached Bitbucket username — auto-detected on first refresh. */
     @Volatile

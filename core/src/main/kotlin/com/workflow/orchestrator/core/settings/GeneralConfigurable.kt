@@ -321,24 +321,14 @@ class GeneralConfigurable(
 
                         // On success, auto-detect username via whoami
                         if (result is ApiResult.Success) {
-                            try {
-                                val whoamiRequest = okhttp3.Request.Builder()
-                                    .url("${url.trimEnd('/')}/plugins/servlet/applinks/whoami")
-                                    .header("Authorization", "Bearer $token")
-                                    .get()
-                                    .build()
-                                val whoamiResponse = okhttp3.OkHttpClient().newCall(whoamiRequest).execute()
-                                val detectedUsername = whoamiResponse.use { it.body?.string()?.trim() }
-                                if (!detectedUsername.isNullOrBlank()) {
-                                    SwingUtilities.invokeLater {
-                                        usernameField?.text = detectedUsername
-                                        pendingBitbucketUsername = detectedUsername
-                                        statusLabel.text = "\u2713 Connected as $detectedUsername"
-                                    }
-                                    return@runBackgroundableTask
+                            val detectedUsername = authTestService.fetchBitbucketUsername(url, token)
+                            if (!detectedUsername.isNullOrBlank()) {
+                                SwingUtilities.invokeLater {
+                                    usernameField?.text = detectedUsername
+                                    pendingBitbucketUsername = detectedUsername
+                                    statusLabel.text = "\u2713 Connected as $detectedUsername"
                                 }
-                            } catch (_: Exception) {
-                                // whoami failed — fall through to normal success message
+                                return@runBackgroundableTask
                             }
                         }
 

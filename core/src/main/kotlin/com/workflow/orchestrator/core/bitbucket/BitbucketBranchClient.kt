@@ -316,7 +316,7 @@ class BitbucketBranchClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))

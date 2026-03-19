@@ -70,6 +70,13 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         val data = fileCoverage.values.toList().sortedBy {
             if (newCodeMode) it.newCoverage ?: 0.0 else it.lineCoverage
         }
+
+        // Preserve selected row
+        val selectedRow = table.selectedRow
+        val selectedFilePath = if (selectedRow >= 0) {
+            tableModel.getFilePath(table.convertRowIndexToModel(selectedRow))
+        } else null
+
         tableModel.setData(data, newCodeMode)
 
         removeAll()
@@ -78,6 +85,18 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         } else {
             add(scrollPane, BorderLayout.CENTER)
         }
+
+        // Restore selection by file path
+        if (selectedFilePath != null) {
+            for (viewRow in 0 until table.rowCount) {
+                val modelRow = table.convertRowIndexToModel(viewRow)
+                if (tableModel.getFilePath(modelRow) == selectedFilePath) {
+                    table.setRowSelectionInterval(viewRow, viewRow)
+                    break
+                }
+            }
+        }
+
         revalidate()
         repaint()
     }
@@ -97,9 +116,16 @@ private class CoverageTableModel : AbstractTableModel() {
     private val newCodeColumns = arrayOf("File", "New Coverage %", "New Branch %", "New Uncov. Lines", "New Lines")
 
     fun setData(newData: List<FileCoverageData>, isNewCode: Boolean) {
+        val modeChanged = newCodeMode != isNewCode
         data = newData
         newCodeMode = isNewCode
-        fireTableStructureChanged()
+        if (modeChanged) {
+            // Column names changed — must rebuild structure (resets sort/column widths)
+            fireTableStructureChanged()
+        } else {
+            // Same columns — preserve sort state and column widths
+            fireTableDataChanged()
+        }
     }
 
     fun getFilePath(row: Int): String = data[row].filePath

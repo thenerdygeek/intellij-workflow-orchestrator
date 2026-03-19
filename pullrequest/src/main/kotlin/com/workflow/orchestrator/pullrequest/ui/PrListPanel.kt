@@ -85,6 +85,7 @@ class PrListPanel : JPanel(BorderLayout()) {
 
     /**
      * Update the list with two sections. Pass empty lists for either section.
+     * Uses incremental update to preserve scroll position and selection.
      */
     fun updatePrs(myPrs: List<PrListItem>, reviewingPrs: List<PrListItem>) {
         if (myPrs.isEmpty() && reviewingPrs.isEmpty()) {
@@ -92,31 +93,54 @@ class PrListPanel : JPanel(BorderLayout()) {
             return
         }
 
-        removeAll()
-        add(JBScrollPane(prList).apply {
-            border = JBUI.Borders.empty()
-            isOpaque = false
-            viewport.isOpaque = false
-        }, BorderLayout.CENTER)
-
-        listModel.clear()
-
+        // Build the new items list
+        val newItems = mutableListOf<PrListItem>()
         if (myPrs.isNotEmpty()) {
-            listModel.addElement(PrListItem(
+            newItems.add(PrListItem(
                 id = -1, title = "My Pull Requests (${myPrs.size})", authorName = "",
                 status = "", reviewerCount = 0, updatedDate = 0,
                 fromBranch = "", toBranch = "", isHeader = true
             ))
-            myPrs.forEach { listModel.addElement(it) }
+            newItems.addAll(myPrs)
         }
-
         if (reviewingPrs.isNotEmpty()) {
-            listModel.addElement(PrListItem(
+            newItems.add(PrListItem(
                 id = -2, title = "Reviewing (${reviewingPrs.size})", authorName = "",
                 status = "", reviewerCount = 0, updatedDate = 0,
                 fromBranch = "", toBranch = "", isHeader = true
             ))
-            reviewingPrs.forEach { listModel.addElement(it) }
+            newItems.addAll(reviewingPrs)
+        }
+
+        // Check if data actually changed (compare by id + version to detect updates)
+        val currentItems = (0 until listModel.size).map { listModel.getElementAt(it) }
+        if (currentItems == newItems) return // No change — skip update
+
+        // Save selection before update
+        val selectedId = getSelectedPr()?.id
+
+        // Ensure scroll pane is showing (not empty state)
+        if (componentCount == 0 || getComponent(0) !is JBScrollPane) {
+            removeAll()
+            add(JBScrollPane(prList).apply {
+                border = JBUI.Borders.empty()
+                isOpaque = false
+                viewport.isOpaque = false
+            }, BorderLayout.CENTER)
+        }
+
+        listModel.clear()
+        newItems.forEach { listModel.addElement(it) }
+
+        // Restore selection
+        if (selectedId != null) {
+            for (i in 0 until listModel.size) {
+                val item = listModel.getElementAt(i)
+                if (!item.isHeader && item.id == selectedId) {
+                    prList.selectedIndex = i
+                    break
+                }
+            }
         }
 
         revalidate()
