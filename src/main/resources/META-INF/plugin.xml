@@ -102,6 +102,20 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.events.EventBus"/>
 
+        <!-- Unified Service Layer (shared by UI panels and AI agent) -->
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.JiraService"
+            serviceImplementation="com.workflow.orchestrator.jira.service.JiraServiceImpl"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.BambooService"
+            serviceImplementation="com.workflow.orchestrator.bamboo.service.BambooServiceImpl"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.SonarService"
+            serviceImplementation="com.workflow.orchestrator.sonar.service.SonarServiceImpl"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.BitbucketService"
+            serviceImplementation="com.workflow.orchestrator.pullrequest.service.BitbucketServiceImpl"/>
+
         <!-- Maven Build Service -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.maven.MavenBuildService"/>
