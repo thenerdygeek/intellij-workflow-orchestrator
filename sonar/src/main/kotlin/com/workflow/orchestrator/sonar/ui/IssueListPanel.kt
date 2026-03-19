@@ -37,6 +37,13 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         border = JBUI.Borders.emptyTop(40)
     }
 
+    private val filteredEmptyLabel = JBLabel("No issues match the current filters.").apply {
+        foreground = com.intellij.util.ui.JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = javax.swing.SwingConstants.CENTER
+        verticalAlignment = javax.swing.SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
+
     private val scrollPane = JBScrollPane(issueList)
 
     init {
@@ -118,13 +125,25 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
 
         listModel.clear()
         filtered.sortedBy { it.severity.ordinal }.forEach { listModel.addElement(it) }
-        countLabel.text = "${filtered.size} issue(s)"
+
+        // Update count label — show "Showing X of Y" when filters are active
+        val filtersActive = filterCombo.selectedIndex != 0 || severityCombo.selectedIndex != 0
+        countLabel.text = if (filtersActive && allIssues.isNotEmpty()) {
+            "Showing ${filtered.size} of ${allIssues.size} issues"
+        } else {
+            "${filtered.size} issue(s)"
+        }
 
         // Show empty state or list
         remove(scrollPane)
         remove(emptyLabel)
+        remove(filteredEmptyLabel)
         if (filtered.isEmpty()) {
-            add(emptyLabel, BorderLayout.CENTER)
+            if (filtersActive && allIssues.isNotEmpty()) {
+                add(filteredEmptyLabel, BorderLayout.CENTER)
+            } else {
+                add(emptyLabel, BorderLayout.CENTER)
+            }
         } else {
             add(scrollPane, BorderLayout.CENTER)
         }

@@ -14,6 +14,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import kotlinx.coroutines.*
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.JPanel
@@ -61,6 +62,7 @@ class PrDashboardPanel(
     private var currentReviewingPrs: List<BitbucketPrDetail> = emptyList()
     private enum class PrFilter { MY, REVIEWING, ALL }
     private var activeFilter = PrFilter.MY
+    private var lastUpdatedMillis: Long = 0
 
     init {
         background = JBColor.PanelBackground
@@ -93,14 +95,17 @@ class PrDashboardPanel(
         toolbar.targetComponent = this
         topPanel.add(toolbar.component, BorderLayout.WEST)
 
-        // Filter toggles
-        val filterPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+        // Filter toggles — use wrapping FlowLayout so they wrap at narrow widths
+        val filterPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2))).apply {
             isOpaque = false
             border = JBUI.Borders.emptyLeft(8)
         }
         filterGroup.add(myPrsToggle)
         filterGroup.add(reviewingToggle)
         filterGroup.add(allToggle)
+        myPrsToggle.minimumSize = myPrsToggle.preferredSize
+        reviewingToggle.minimumSize = reviewingToggle.preferredSize
+        allToggle.minimumSize = allToggle.preferredSize
         filterPanel.add(myPrsToggle)
         filterPanel.add(reviewingToggle)
         filterPanel.add(allToggle)
@@ -141,6 +146,12 @@ class PrDashboardPanel(
             } else {
                 detailPanel.showPr(prId)
             }
+        }
+
+        // Back navigation from detail panel clears selection
+        detailPanel.onBackClicked = {
+            listPanel.prList.clearSelection()
+            detailPanel.showEmpty()
         }
 
         myPrsToggle.addActionListener {
@@ -189,9 +200,10 @@ class PrDashboardPanel(
         scope.launch {
             prListService.myPrs.collect { prs ->
                 currentMyPrs = prs
+                lastUpdatedMillis = System.currentTimeMillis()
                 invokeLater {
                     refreshListView()
-                    setLoading(false, "${prs.size} PRs loaded")
+                    updateStatusWithTimestamp()
                 }
             }
         }
@@ -227,6 +239,16 @@ class PrDashboardPanel(
         statusLabel.text = message
     }
 
+    private fun updateStatusWithTimestamp() {
+        val totalPrs = when (activeFilter) {
+            PrFilter.MY -> currentMyPrs.size
+            PrFilter.REVIEWING -> currentReviewingPrs.size
+            PrFilter.ALL -> currentMyPrs.size + currentReviewingPrs.size
+        }
+        val timeStr = if (lastUpdatedMillis > 0) " \u2022 Updated ${TimeFormatter.relative(lastUpdatedMillis)}" else ""
+        setLoading(false, "$totalPrs PRs loaded$timeStr")
+    }
+
     // ---------------------------------------------------------------
     // DTO conversion
     // ---------------------------------------------------------------
@@ -257,8 +279,9 @@ class PrDashboardPanel(
             setLoading(true, "Refreshing...")
             scope.launch {
                 PrListService.getInstance(project).refresh()
+                lastUpdatedMillis = System.currentTimeMillis()
                 invokeLater {
-                    setLoading(false, "Refreshed")
+                    updateStatusWithTimestamp()
                 }
             }
         }

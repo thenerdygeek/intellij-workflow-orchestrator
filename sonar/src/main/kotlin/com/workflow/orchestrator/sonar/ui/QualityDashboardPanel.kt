@@ -66,16 +66,12 @@ class QualityDashboardPanel(
         border = JBUI.Borders.empty()
 
         // Header: left label + right toggle + refresh
-        val headerPanel = JPanel(BorderLayout()).apply {
+        // Use FlowLayout so elements wrap at narrow widths instead of overlapping
+        val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
             border = JBUI.Borders.empty(4, 8)
-            add(headerLabel, BorderLayout.WEST)
-
-            val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
-                isOpaque = false
-                add(newCodeButton)
-                add(overallButton)
-            }
-            add(rightPanel, BorderLayout.EAST)
+            add(headerLabel)
+            add(newCodeButton)
+            add(overallButton)
         }
 
         // Branch info bar

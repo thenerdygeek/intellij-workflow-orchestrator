@@ -29,7 +29,11 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
     init {
         border = JBUI.Borders.empty(12)
 
-        val cardsPanel = JPanel(GridLayout(1, 3, 12, 0))
+        val cardsPanel = JPanel(GridLayout(1, 3, 12, 0)).apply {
+            // Set a minimum width per card so they don't get squished
+            minimumSize = Dimension(JBUI.scale(450), JBUI.scale(100))
+            preferredSize = Dimension(JBUI.scale(600), JBUI.scale(100))
+        }
 
         // Quality Gate card
         val gateCard = createCard("QUALITY GATE", gateStatusLabel, gateConditionsPanel)
@@ -47,7 +51,17 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val issuesCard = createCard("ISSUES", issueCountLabel, issueBreakdownLabel)
         cardsPanel.add(issuesCard)
 
-        add(cardsPanel, BorderLayout.NORTH)
+        // Wrap in scroll pane for narrow tool windows
+        val cardsScrollPane = JBScrollPane(
+            cardsPanel,
+            JBScrollPane.VERTICAL_SCROLLBAR_NEVER,
+            JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        ).apply {
+            border = JBUI.Borders.empty()
+            isOpaque = false
+            viewport.isOpaque = false
+        }
+        add(cardsScrollPane, BorderLayout.NORTH)
 
         // Recent issues section
         val recentSection = JPanel(BorderLayout()).apply {

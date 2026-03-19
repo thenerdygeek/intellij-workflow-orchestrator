@@ -94,6 +94,17 @@ class PrDetailPanel(
         isOpaque = false
     }
 
+    // Back navigation callback — set by PrDashboardPanel
+    var onBackClicked: (() -> Unit)? = null
+
+    // Back link
+    private val backLabel = JBLabel("\u2190 Back to list").apply {
+        foreground = LINK_COLOR
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+        border = JBUI.Borders.emptyBottom(4)
+    }
+
     // Header
     private val titleLabel = JBLabel("").apply {
         font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
@@ -151,6 +162,13 @@ class PrDetailPanel(
     init {
         isOpaque = false
         background = JBColor.PanelBackground
+
+        // Wire back link click
+        backLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                onBackClicked?.invoke()
+            }
+        })
 
         add(emptyPanel, CARD_EMPTY)
         add(loadingPanel, CARD_LOADING)
@@ -282,6 +300,15 @@ class PrDetailPanel(
             isOpaque = false
             border = JBUI.Borders.empty(12, 16)
         }
+
+        // Back navigation link
+        val backRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(20))
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        backRow.add(backLabel)
+        contentPanel.add(backRow)
 
         // Title + PR ID
         val headerSection = JPanel(BorderLayout()).apply {
