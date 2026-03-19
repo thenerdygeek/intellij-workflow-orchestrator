@@ -46,7 +46,7 @@ class SourcegraphChatClient(
     httpClientOverride: OkHttpClient? = null
 ) {
     private val log = Logger.getInstance(SourcegraphChatClient::class.java)
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
 
     companion object {
         /** Sourcegraph API path for chat completions (from OpenAPI spec). */
