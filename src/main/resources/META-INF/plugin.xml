@@ -246,6 +246,8 @@
             serviceImplementation="com.workflow.orchestrator.core.settings.ConnectionSettings"/>
         <applicationService
             serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.agent.service.GlobalSessionIndex"/>
 
         <!-- Status Bar -->
         <statusBarWidgetFactory id="WorkflowAutomationStatusBar"
@@ -364,6 +366,7 @@
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.agent.ui.HistoryTabProvider"/>
     </extensions>
 
     <projectListeners>

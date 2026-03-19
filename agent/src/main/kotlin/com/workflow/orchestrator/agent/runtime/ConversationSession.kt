@@ -12,6 +12,7 @@ import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.service.GlobalSessionIndex
 import com.workflow.orchestrator.agent.tools.AgentTool
 import java.util.UUID
 
@@ -74,9 +75,13 @@ class ConversationSession private constructor(
 
     /**
      * Mark session as completed (successful or failed).
+     * Also updates the global session index.
      */
     fun markCompleted(success: Boolean) {
         status = if (success) "completed" else "failed"
+        try {
+            GlobalSessionIndex.getInstance().updateSession(sessionId) { it.copy(status = status) }
+        } catch (_: Exception) { /* best effort — index may not be available in tests */ }
     }
 
     /**
@@ -110,6 +115,7 @@ class ConversationSession private constructor(
     /**
      * Save session metadata to disk.
      * Call after each turn so sessions are discoverable even if the IDE crashes.
+     * Also updates the global session index for cross-project history.
      */
     fun saveMetadata(projectName: String, projectPath: String, model: String) {
         store.saveMetadata(SessionMetadata(
@@ -123,6 +129,17 @@ class ConversationSession private constructor(
             messageCount = messageCount,
             status = status
         ))
+        // Also update the global index
+        try {
+            GlobalSessionIndex.getInstance().updateSession(sessionId) { entry ->
+                entry.copy(
+                    title = title,
+                    lastMessageAt = lastMessageAt,
+                    messageCount = messageCount,
+                    status = status
+                )
+            }
+        } catch (_: Exception) { /* best effort — index may not be available in tests */ }
     }
 
     companion object {
@@ -162,7 +179,7 @@ class ConversationSession private constructor(
                 reservedTokens = reservedTokens
             )
 
-            return ConversationSession(
+            val session = ConversationSession(
                 sessionId = UUID.randomUUID().toString().take(12),
                 contextManager = contextManager,
                 brain = agentService.brain,
@@ -172,6 +189,22 @@ class ConversationSession private constructor(
                 reservedTokens = reservedTokens,
                 createdAt = System.currentTimeMillis()
             )
+
+            // Register in the global session index for cross-project history
+            try {
+                GlobalSessionIndex.getInstance().addSession(GlobalSessionIndex.SessionEntry(
+                    sessionId = session.sessionId,
+                    projectName = project.name,
+                    projectPath = project.basePath ?: "",
+                    title = "",
+                    createdAt = session.createdAt,
+                    lastMessageAt = session.createdAt,
+                    messageCount = 0,
+                    status = "active"
+                ))
+            } catch (_: Exception) { /* best effort — index may not be available in tests */ }
+
+            return session
         }
 
         /**
