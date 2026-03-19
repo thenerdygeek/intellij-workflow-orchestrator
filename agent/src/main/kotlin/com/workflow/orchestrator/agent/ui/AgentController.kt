@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.AgentResult
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.agent.runtime.ConversationSession
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import kotlinx.coroutines.*
 import java.io.File
@@ -34,7 +35,7 @@ class AgentController(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var currentOrchestrator: AgentOrchestrator? = null
     private var sessionStartMs = 0L
-    private var hasActiveSession = false
+    private var session: ConversationSession? = null
 
     init {
         dashboard.onSendMessage = { message -> executeTask(message) }
@@ -62,18 +63,22 @@ class AgentController(
             return
         }
 
-        val orchestrator = AgentOrchestrator(agentService.brain, agentService.toolRegistry, project)
-        currentOrchestrator = orchestrator
-        sessionStartMs = System.currentTimeMillis()
-
-        // First message clears chat; subsequent messages preserve conversation
-        if (!hasActiveSession) {
+        // Create or reuse session — the core multi-turn fix
+        if (session == null) {
+            session = ConversationSession.create(project, agentService)
             dashboard.startSession(task)
-            hasActiveSession = true
         } else {
             dashboard.appendUserMessage(task)
         }
+
+        val currentSession = session!!
+        currentSession.recordUserMessage(task)
         dashboard.setBusy(true)
+
+        // Create orchestrator (lightweight — just brain + registry + project)
+        val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
+        currentOrchestrator = orchestrator
+        sessionStartMs = System.currentTimeMillis()
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
         val approvalGate = ApprovalGate(
@@ -85,6 +90,7 @@ class AgentController(
             try {
                 val result = orchestrator.executeTask(
                     taskDescription = task,
+                    session = currentSession,
                     approvalGate = approvalGate,
                     onProgress = { handleProgress(it) },
                     onStreamChunk = { dashboard.appendStreamToken(it) }
@@ -114,7 +120,8 @@ class AgentController(
     fun newChat() {
         currentOrchestrator?.cancelTask()
         currentOrchestrator = null
-        hasActiveSession = false
+        session?.markCompleted(true)
+        session = null
         dashboard.reset()
         dashboard.focusInput()
     }
