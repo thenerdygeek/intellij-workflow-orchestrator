@@ -27,12 +27,12 @@ class SonarIssuesTool(
     override val description = "Get open SonarQube issues for a project, optionally filtered by file."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key"),
-            "file" to ParameterProperty(type = "string", description = "Optional file path to filter issues")
+            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')"),
+            "file" to ParameterProperty(type = "string", description = "Optional: filter by relative file path (e.g., 'src/main/java/com/example/MyService.java')")
         ),
         required = listOf("project_key")
     )
-    override val allowedWorkers = setOf(WorkerType.TOOLER)
+    override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val projectKey = params["project_key"]?.jsonPrimitive?.content

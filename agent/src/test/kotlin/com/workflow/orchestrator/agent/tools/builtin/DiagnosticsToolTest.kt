@@ -28,14 +28,26 @@ class DiagnosticsToolTest {
     }
 
     @Test
-    fun `execute returns placeholder message`() = runTest {
+    fun `execute handles file not found`() = runTest {
         val tool = DiagnosticsTool()
-        val params = buildJsonObject { put("path", "src/Main.kt") }
+        val params = buildJsonObject { put("path", "/nonexistent/file.kt") }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("not found"))
+    }
+
+    @Test
+    fun `execute returns no-diagnostics for non-java-kotlin files`() = runTest {
+        val tool = DiagnosticsTool()
+        val tmpFile = java.io.File.createTempFile("test", ".txt").apply { writeText("hello"); deleteOnExit() }
+        val params = buildJsonObject { put("path", tmpFile.absolutePath) }
 
         val result = tool.execute(params, project)
 
         assertFalse(result.isError)
-        assertTrue(result.content.contains("placeholder") || result.content.contains("Diagnostics require IDE context"))
+        assertTrue(result.content.contains("No diagnostics available"))
     }
 
     @Test
