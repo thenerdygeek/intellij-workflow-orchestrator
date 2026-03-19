@@ -208,6 +208,20 @@ class AgentDashboardPanel(
         cefPanel?.onPromptSubmitted = onPromptSubmitted
     }
 
+    fun setCefPlanCallbacks(onApprove: () -> Unit, onRevise: (String) -> Unit) {
+        cefPanel?.onPlanApproved = onApprove
+        cefPanel?.onPlanRevised = onRevise
+    }
+
+    fun renderPlan(planJson: String) {
+        cefPanel?.renderPlan(planJson)
+            ?: fallbackPanel?.appendStatus("Plan created — approve in the chat panel", RichStreamingPanel.StatusType.INFO)
+    }
+
+    fun updatePlanStep(stepId: String, status: String) {
+        cefPanel?.updatePlanStep(stepId, status)
+    }
+
     // ═══════════════════════════════════════════════════
     //  Delegate API — routes to JCEF or fallback
     // ═══════════════════════════════════════════════════

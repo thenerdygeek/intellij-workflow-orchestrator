@@ -42,6 +42,8 @@ class AgentCefPanel(
     private var undoQuery: JBCefJSQuery? = null
     private var traceQuery: JBCefJSQuery? = null
     private var promptQuery: JBCefJSQuery? = null
+    private var planApproveQuery: JBCefJSQuery? = null
+    private var planReviseQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -56,6 +58,12 @@ class AgentCefPanel(
 
     /** Callback when user clicks an example prompt in the JCEF welcome screen. */
     var onPromptSubmitted: ((String) -> Unit)? = null
+
+    /** Callback when user clicks "Approve & Execute" on a plan card. */
+    var onPlanApproved: (() -> Unit)? = null
+
+    /** Callback when user clicks "Revise with Comments" on a plan card. JSON string of {stepId: comment}. */
+    var onPlanRevised: ((String) -> Unit)? = null
 
     init {
         try {
@@ -102,6 +110,12 @@ class AgentCefPanel(
         promptQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { text -> onPromptSubmitted?.invoke(text); JBCefJSQuery.Response("ok") }
         }
+        planApproveQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onPlanApproved?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        planReviseQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { commentsJson -> onPlanRevised?.invoke(commentsJson); JBCefJSQuery.Response("ok") }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -124,6 +138,14 @@ class AgentCefPanel(
                     promptQuery?.let { q ->
                         val promptJs = q.inject("text")
                         js("window._submitPrompt = function(text) { $promptJs }")
+                    }
+                    planApproveQuery?.let { q ->
+                        val planApproveJs = q.inject("'approve'")
+                        js("window._approvePlan = function() { $planApproveJs }")
+                    }
+                    planReviseQuery?.let { q ->
+                        val planReviseJs = q.inject("comments")
+                        js("window._revisePlan = function(comments) { $planReviseJs }")
                     }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
@@ -201,6 +223,14 @@ class AgentCefPanel(
 
     fun clear() {
         callJs("clearChat()")
+    }
+
+    fun renderPlan(planJson: String) {
+        callJs("renderPlan(${jsonStr(planJson)})")
+    }
+
+    fun updatePlanStep(stepId: String, status: String) {
+        callJs("updatePlanStep(${jsonStr(stepId)}, ${jsonStr(status)})")
     }
 
     // Backward compat
@@ -302,11 +332,15 @@ class AgentCefPanel(
         undoQuery?.dispose()
         traceQuery?.dispose()
         promptQuery?.dispose()
+        planApproveQuery?.dispose()
+        planReviseQuery?.dispose()
         browser?.dispose()
         sendQuery = null
         undoQuery = null
         traceQuery = null
         promptQuery = null
+        planApproveQuery = null
+        planReviseQuery = null
         browser = null
     }
 }
