@@ -110,6 +110,10 @@ class AgentCefPanel(
         callJs("startSession(${jsonStr(task)})")
     }
 
+    fun appendUserMessage(text: String) {
+        callJs("appendUserMessage(${jsonStr(text)})")
+    }
+
     fun completeSession(
         tokensUsed: Int, iterations: Int, filesModified: List<String>,
         durationMs: Long, status: RichStreamingPanel.SessionStatus

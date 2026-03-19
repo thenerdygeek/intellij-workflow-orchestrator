@@ -302,6 +302,12 @@ class SingleAgentSession(
             LOG.info("SingleAgentSession: skipping empty assistant message (no content, no valid tool calls)")
         }
 
+        // Show assistant's text content in UI (for non-streaming responses,
+        // the onStreamChunk callback doesn't fire, so push content here)
+        if (!cleanMessage.content.isNullOrBlank()) {
+            onStreamChunk(cleanMessage.content!!)
+        }
+
         // Handle truncated responses (output token limit hit).
         // With Sourcegraph's 4K output cap, truncation is common for longer answers.
         // Instead of returning an incomplete answer, ask the LLM to continue.

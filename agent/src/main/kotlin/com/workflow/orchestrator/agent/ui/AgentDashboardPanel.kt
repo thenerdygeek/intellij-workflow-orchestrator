@@ -180,6 +180,10 @@ class AgentDashboardPanel(
         cefPanel?.startSession(task) ?: fallbackPanel?.startSession(task)
     }
 
+    fun appendUserMessage(text: String) {
+        cefPanel?.appendUserMessage(text) ?: fallbackPanel?.appendUserMessage(text)
+    }
+
     fun completeSession(
         tokensUsed: Int, iterations: Int, filesModified: List<String>,
         durationMs: Long, status: RichStreamingPanel.SessionStatus

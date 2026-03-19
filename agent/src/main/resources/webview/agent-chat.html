@@ -373,9 +373,15 @@ function esc(text) {
 function startSession(task) {
   hideEmpty();
   container.innerHTML = '';
+  appendUserMessage(task);
+}
+
+function appendUserMessage(text) {
+  hideEmpty();
+  endStream();
   const msg = document.createElement('div');
   msg.className = 'message';
-  msg.innerHTML = '<div class="user-msg"><div class="label">You</div>' + esc(task) + '</div>';
+  msg.innerHTML = '<div class="user-msg"><div class="label">You</div>' + esc(text) + '</div>';
   container.appendChild(msg);
   activeStreamEl = null;
   scrollToBottom();

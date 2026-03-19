@@ -99,7 +99,12 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
 
     fun startSession(task: String) = runOnEdt {
         editorPane.text = buildBaseHtml()
-        appendHtml("""<div class="user-bubble"><div class="user-label">You</div>${escapeHtml(task)}</div>""")
+        appendUserMessage(task)
+    }
+
+    fun appendUserMessage(text: String) = runOnEdt {
+        flushStreamBuffer()
+        appendHtml("""<div class="user-bubble"><div class="user-label">You</div>${escapeHtml(text)}</div>""")
     }
 
     fun completeSession(
