@@ -2,8 +2,8 @@ package com.workflow.orchestrator.jira.service
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.jira.api.dto.JiraAttachment
-import com.workflow.orchestrator.jira.api.dto.JiraComment
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
@@ -24,7 +24,7 @@ class IssueDetailCache {
     }
 
     data class IssueDetailData(
-        val comments: List<JiraComment>? = null,
+        val comments: List<JiraCommentData>? = null,
         val attachments: List<JiraAttachment>? = null,
         val fetchedAt: Instant = Instant.now()
     )
@@ -36,7 +36,7 @@ class IssueDetailCache {
         evictIfNeeded()
     }
 
-    fun updateComments(issueKey: String, comments: List<JiraComment>) {
+    fun updateComments(issueKey: String, comments: List<JiraCommentData>) {
         val existing = cache[issueKey] ?: IssueDetailData()
         cache[issueKey] = existing.copy(comments = comments, fetchedAt = Instant.now())
     }

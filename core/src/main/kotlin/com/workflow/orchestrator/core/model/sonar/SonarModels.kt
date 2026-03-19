@@ -47,3 +47,12 @@ data class CoverageData(
     val totalLines: Int,
     val coveredLines: Int
 )
+
+/**
+ * Simplified SonarQube project domain model for project search/picker.
+ */
+@Serializable
+data class SonarProjectData(
+    val key: String,
+    val name: String
+)

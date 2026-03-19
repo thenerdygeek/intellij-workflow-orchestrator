@@ -6,6 +6,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
 import com.workflow.orchestrator.core.services.JiraService
@@ -136,7 +137,12 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
-    override suspend fun transition(key: String, transitionId: String): ToolResult<Unit> {
+    override suspend fun transition(
+        key: String,
+        transitionId: String,
+        fields: Map<String, Any>?,
+        comment: String?
+    ): ToolResult<Unit> {
         val api = client ?: return ToolResult(
             data = Unit,
             summary = "Jira not configured. Cannot transition $key.",
@@ -144,7 +150,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.transitionIssue(key, transitionId)) {
+        return when (val result = api.transitionIssue(key, transitionId, fields = fields, comment = comment)) {
             is ApiResult.Success -> {
                 ToolResult.success(
                     data = Unit,
@@ -208,6 +214,41 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     summary = "Error logging work on $key: ${result.message}",
                     isError = true,
                     hint = "Verify the time format (e.g., '2h 30m', '1d')."
+                )
+            }
+        }
+    }
+
+    override suspend fun getComments(key: String): ToolResult<List<JiraCommentData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch comments for $key.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getComments(key)) {
+            is ApiResult.Success -> {
+                val comments = result.data.map { c ->
+                    JiraCommentData(
+                        id = c.id,
+                        author = c.author?.displayName ?: "Unknown",
+                        body = c.body,
+                        created = c.created
+                    )
+                }
+                ToolResult.success(
+                    data = comments,
+                    summary = "${comments.size} comment(s) on $key"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch comments for $key: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching comments for $key: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
                 )
             }
         }

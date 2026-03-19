@@ -10,6 +10,7 @@ import com.workflow.orchestrator.core.model.sonar.CoverageData
 import com.workflow.orchestrator.core.model.sonar.QualityCondition
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
+import com.workflow.orchestrator.core.model.sonar.SonarProjectData
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -226,6 +227,36 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     summary = "Error fetching coverage for $projectKey: ${result.message}",
                     isError = true,
                     hint = "Check SonarQube connection and project key."
+                )
+            }
+        }
+    }
+
+    override suspend fun searchProjects(query: String): ToolResult<List<SonarProjectData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "SonarQube not configured. Cannot search projects.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.searchProjects(query)) {
+            is ApiResult.Success -> {
+                val projects = result.data.map { dto ->
+                    SonarProjectData(key = dto.key, name = dto.name)
+                }
+                ToolResult.success(
+                    data = projects,
+                    summary = "${projects.size} project(s) found for '$query'"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to search projects for '$query': ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error searching SonarQube projects: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and token."
                 )
             }
         }

@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.sonar.ui
 
-import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -10,12 +9,8 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.sonar.api.SonarApiClient
-import com.workflow.orchestrator.sonar.api.dto.SonarProjectDto
+import com.workflow.orchestrator.core.model.sonar.SonarProjectData
+import com.workflow.orchestrator.core.services.SonarService
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.event.KeyAdapter
@@ -37,7 +32,7 @@ class SonarProjectPickerDialog(
     private val searchField = JBTextField(30).apply {
         emptyText.setText("Type to search SonarQube projects...")
     }
-    private val listModel = DefaultListModel<SonarProjectDto>()
+    private val listModel = DefaultListModel<SonarProjectData>()
     private val resultList = JBList(listModel).apply {
         cellRenderer = SonarProjectCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
@@ -111,45 +106,26 @@ class SonarProjectPickerDialog(
                 statusLabel.text = "Searching..."
             }
 
-            val client = createSonarClient() ?: run {
-                SwingUtilities.invokeLater {
-                    statusLabel.text = "SonarQube not configured. Set URL and token in Connections."
-                }
-                return@launch
-            }
+            val sonarService = project.getService(SonarService::class.java)
+            val result = sonarService.searchProjects(query)
 
-            val result = client.searchProjects(query)
             SwingUtilities.invokeLater {
                 listModel.clear()
-                when (result) {
-                    is ApiResult.Success -> {
-                        if (result.data.isEmpty()) {
-                            statusLabel.text = "No projects found for '$query'"
-                        } else {
-                            for (proj in result.data) {
-                                listModel.addElement(proj)
-                            }
-                            statusLabel.text = "${result.data.size} project(s) found"
+                if (!result.isError) {
+                    if (result.data.isEmpty()) {
+                        statusLabel.text = "No projects found for '$query'"
+                    } else {
+                        for (proj in result.data) {
+                            listModel.addElement(proj)
                         }
+                        statusLabel.text = "${result.data.size} project(s) found"
                     }
-                    is ApiResult.Error -> {
-                        statusLabel.text = "Error: ${result.message}"
-                        log.warn("[SonarPicker] Search failed: ${result.message}")
-                    }
+                } else {
+                    statusLabel.text = "Error: ${result.summary}"
+                    log.warn("[SonarPicker] Search failed: ${result.summary}")
                 }
             }
         }
-    }
-
-    private fun createSonarClient(): SonarApiClient? {
-        val settings = PluginSettings.getInstance(project)
-        val url = settings.connections.sonarUrl.orEmpty().trimEnd('/')
-        if (url.isBlank()) return null
-        val credentialStore = CredentialStore()
-        return SonarApiClient(
-            baseUrl = url,
-            tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) }
-        )
     }
 
     override fun doOKAction() {
@@ -174,7 +150,7 @@ class SonarProjectPickerDialog(
             cellHasFocus: Boolean
         ): java.awt.Component {
             val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-            if (value is SonarProjectDto) {
+            if (value is SonarProjectData) {
                 text = "${value.key} \u2014 ${value.name}"
             }
             return component

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.services
 
+import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
 
@@ -14,14 +15,22 @@ interface JiraService {
     /** Get available transitions for a ticket. */
     suspend fun getTransitions(key: String): ToolResult<List<JiraTransitionData>>
 
-    /** Transition a ticket to a new status. */
-    suspend fun transition(key: String, transitionId: String): ToolResult<Unit>
+    /** Transition a ticket to a new status, with optional fields and comment. */
+    suspend fun transition(
+        key: String,
+        transitionId: String,
+        fields: Map<String, Any>? = null,
+        comment: String? = null
+    ): ToolResult<Unit>
 
     /** Add a comment to a ticket. */
     suspend fun addComment(key: String, body: String): ToolResult<Unit>
 
     /** Log work on a ticket. */
     suspend fun logWork(key: String, timeSpent: String, comment: String?): ToolResult<Unit>
+
+    /** Get comments for a ticket. */
+    suspend fun getComments(key: String): ToolResult<List<JiraCommentData>>
 
     /** Test the Jira connection. */
     suspend fun testConnection(): ToolResult<Unit>

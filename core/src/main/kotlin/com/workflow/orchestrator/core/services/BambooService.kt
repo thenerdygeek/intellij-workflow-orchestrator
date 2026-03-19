@@ -2,6 +2,8 @@ package com.workflow.orchestrator.core.services
 
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
+import com.workflow.orchestrator.core.model.bamboo.TestResultsData
+import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
 
 /**
  * Bamboo operations used by both UI panels and AI agent.
@@ -19,4 +21,19 @@ interface BambooService {
 
     /** Test the Bamboo connection. */
     suspend fun testConnection(): ToolResult<Unit>
+
+    /** Get build log text. */
+    suspend fun getBuildLog(resultKey: String): ToolResult<String>
+
+    /** Get test results for a build. */
+    suspend fun getTestResults(resultKey: String): ToolResult<TestResultsData>
+
+    /** Rerun failed jobs in a build. */
+    suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ToolResult<Unit>
+
+    /** Get plan variables. */
+    suspend fun getPlanVariables(planKey: String): ToolResult<List<PlanVariableData>>
+
+    /** Trigger a specific stage. */
+    suspend fun triggerStage(planKey: String, variables: Map<String, String>, stage: String? = null): ToolResult<Unit>
 }

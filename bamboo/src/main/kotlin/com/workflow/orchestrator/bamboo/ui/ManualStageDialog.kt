@@ -7,9 +7,8 @@ import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.bamboo.api.dto.BambooPlanVariableDto
-import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
+import com.workflow.orchestrator.core.services.BambooService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.awt.GridBagConstraints
@@ -19,22 +18,22 @@ import javax.swing.JPanel
 
 class ManualStageDialog(
     private val project: Project,
-    private val apiClient: BambooApiClient,
     private val planKey: String,
     private val stageName: String,
     private val scope: CoroutineScope
 ) : DialogWrapper(project) {
 
+    private val bambooService = project.getService(BambooService::class.java)
     private val variableEditors = mutableMapOf<String, JComponent>()
-    private var variables: List<BambooPlanVariableDto> = emptyList()
+    private var variables: List<PlanVariableData> = emptyList()
 
     init {
         title = "Run Stage: $stageName"
         init()
         // Load variables asynchronously after dialog is shown
         scope.launch {
-            val result = apiClient.getVariables(planKey)
-            if (result is ApiResult.Success) {
+            val result = bambooService.getPlanVariables(planKey)
+            if (!result.isError) {
                 variables = result.data
                 invokeLater { rebuildForm() }
             }
@@ -100,7 +99,7 @@ class ManualStageDialog(
         }
 
         scope.launch {
-            apiClient.triggerBuild(planKey, vars, stageName)
+            bambooService.triggerStage(planKey, vars, stageName)
         }
 
         super.doOKAction()

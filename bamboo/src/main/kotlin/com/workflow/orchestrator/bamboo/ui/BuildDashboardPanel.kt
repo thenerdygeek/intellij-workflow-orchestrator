@@ -17,7 +17,6 @@ import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.service.BuildLogParser
 import com.workflow.orchestrator.bamboo.service.BuildMonitorService
@@ -29,6 +28,7 @@ import com.intellij.ui.JBColor
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
@@ -45,12 +45,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val settings = PluginSettings.getInstance(project)
     private var localBuildRunning = false
     private val credentialStore = CredentialStore()
-    private val apiClient = BambooApiClient(
-        baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-        tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-        connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-        readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-    )
+    private val bambooService = project.getService(BambooService::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // Auto-detected plan key (not saved to settings — it's branch-specific)
     @Volatile
@@ -403,21 +398,17 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 }
                 statusLabel.text = "Rerunning failed jobs..."
                 scope.launch {
-                    val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
-                    val result = apiClient.rerunFailedJobs(planKey, buildNumber)
+                    val result = bambooService.rerunFailedJobs(planKey, buildNumber)
                     invokeLater {
-                        when (result) {
-                            is ApiResult.Success -> {
-                                statusLabel.text = "Rerun triggered for $planKey #$buildNumber"
-                                // Poll immediately to get updated status
-                                scope.launch {
-                                    kotlinx.coroutines.delay(2000)
-                                    monitorService.pollOnce(planKey, state.branch)
-                                }
+                        if (!result.isError) {
+                            statusLabel.text = "Rerun triggered for $planKey #$buildNumber"
+                            // Poll immediately to get updated status
+                            scope.launch {
+                                kotlinx.coroutines.delay(2000)
+                                monitorService.pollOnce(planKey, state.branch)
                             }
-                            is ApiResult.Error -> {
-                                statusLabel.text = "Rerun failed: ${result.message}"
-                            }
+                        } else {
+                            statusLabel.text = "Rerun failed: ${result.summary}"
                         }
                     }
                 }
@@ -531,36 +522,31 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         scope.launch {
             // Fetch log first (needed for both display and test error extraction)
             var buildLogText: String? = null
-            val logResult = apiClient.getBuildLog(resultKey)
-            when (logResult) {
-                is ApiResult.Success -> {
-                    buildLogText = logResult.data
-                    log.info("[Build:Dashboard] Log loaded: ${buildLogText.length} chars")
-                    invokeLater { stageDetailPanel.showLog(buildLogText, emptyList()) }
-                }
-                is ApiResult.Error -> {
-                    invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.message}", emptyList()) }
-                }
+            val logResult = bambooService.getBuildLog(resultKey)
+            if (!logResult.isError) {
+                buildLogText = logResult.data
+                log.info("[Build:Dashboard] Log loaded: ${buildLogText.length} chars")
+                invokeLater { stageDetailPanel.showLog(buildLogText, emptyList()) }
+            } else {
+                invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.summary}", emptyList()) }
             }
 
             // Fetch test results for this job
-            val testResult = apiClient.getTestResults(resultKey)
-            when (testResult) {
-                is ApiResult.Success -> {
-                    val testData = testResult.data.testResults
-                    if (testData.all > 0) {
-                        log.info("[Build:Dashboard] Test results: ${testData.all} total, ${testData.failed} failed, ${testData.successful} passed")
-                        // Pass build log so failed test errors can be extracted from it
-                        val messages = com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
-                            .toTeamCityMessages(testData, buildLogText)
-                        if (messages.isNotEmpty()) {
-                            invokeLater { stageDetailPanel.showTestResults(messages) }
-                        }
+            val testResult = bambooService.getTestResults(resultKey)
+            if (!testResult.isError) {
+                val testData = testResult.data
+                if (testData.total > 0) {
+                    log.info("[Build:Dashboard] Test results: ${testData.total} total, ${testData.failed} failed, ${testData.passed} passed")
+                    // Convert to TeamCity messages for native test runner UI
+                    // Re-fetch raw DTO for BambooTestResultConverter compatibility
+                    val messages = com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
+                        .fromTestResultsData(testData, buildLogText)
+                    if (messages.isNotEmpty()) {
+                        invokeLater { stageDetailPanel.showTestResults(messages) }
                     }
                 }
-                is ApiResult.Error -> {
-                    log.warn("[Build:Dashboard] Failed to fetch test results: ${testResult.message}")
-                }
+            } else {
+                log.warn("[Build:Dashboard] Failed to fetch test results: ${testResult.summary}")
             }
         }
     }
@@ -571,20 +557,17 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
         scope.launch {
-            val logResult = apiClient.getBuildLog(resultKey)
-            when (logResult) {
-                is ApiResult.Success -> {
-                    invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
-                }
-                is ApiResult.Error -> {
-                    invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.message}", emptyList()) }
-                }
+            val logResult = bambooService.getBuildLog(resultKey)
+            if (!logResult.isError) {
+                invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
+            } else {
+                invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.summary}", emptyList()) }
             }
         }
     }
 
     private fun triggerManualStage(stageName: String) {
         val planKey = settings.state.bambooPlanKey.orEmpty()
-        ManualStageDialog(project, apiClient, planKey, stageName, scope).show()
+        ManualStageDialog(project, planKey, stageName, scope).show()
     }
 }

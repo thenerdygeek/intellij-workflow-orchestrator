@@ -9,11 +9,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.jira.api.JiraApiClient
+import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.jira.api.dto.JiraTransition
 import com.workflow.orchestrator.jira.api.dto.JiraTransitionFieldMeta
 import kotlinx.coroutines.*
@@ -120,12 +116,7 @@ class TransitionDialog(
         resultLabel.text = "Transitioning..."
         resultLabel.foreground = JBColor.foreground()
 
-        val settings = PluginSettings.getInstance(project)
-        val url = settings.connections.jiraUrl.orEmpty().trimEnd('/')
-        val client = JiraApiClient(
-            baseUrl = url,
-            tokenProvider = { CredentialStore().getToken(ServiceType.JIRA) }
-        )
+        val jiraService = project.getService(JiraService::class.java)
 
         // Build fields map
         val fields = mutableMapOf<String, Any>()
@@ -137,25 +128,22 @@ class TransitionDialog(
         val comment = commentArea.text.takeIf { it.isNotBlank() }
 
         scope.launch {
-            val result = client.transitionIssue(
-                issueKey = issueKey,
+            val result = jiraService.transition(
+                key = issueKey,
                 transitionId = transition.id,
                 fields = fields.takeIf { it.isNotEmpty() },
                 comment = comment
             )
 
             invokeLater {
-                when (result) {
-                    is ApiResult.Success -> {
-                        log.info("[Jira:Transition] $issueKey transitioned to ${transition.name}")
-                        onTransitioned()
-                        close(OK_EXIT_CODE)
-                    }
-                    is ApiResult.Error -> {
-                        isOKActionEnabled = true
-                        resultLabel.text = "Failed: ${result.message}"
-                        resultLabel.foreground = JBColor.RED
-                    }
+                if (!result.isError) {
+                    log.info("[Jira:Transition] $issueKey transitioned to ${transition.name}")
+                    onTransitioned()
+                    close(OK_EXIT_CODE)
+                } else {
+                    isOKActionEnabled = true
+                    resultLabel.text = "Failed: ${result.summary}"
+                    resultLabel.foreground = JBColor.RED
                 }
             }
         }

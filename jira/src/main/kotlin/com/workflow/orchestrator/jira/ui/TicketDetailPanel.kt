@@ -301,22 +301,14 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             val comments = if (cached?.comments != null) {
                 cached.comments
             } else {
-                val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
-                val url = settings.connections.jiraUrl.orEmpty().trimEnd('/')
-                if (url.isBlank()) return@launch
-                val client = com.workflow.orchestrator.jira.api.JiraApiClient(
-                    baseUrl = url,
-                    tokenProvider = { com.workflow.orchestrator.core.auth.CredentialStore().getToken(com.workflow.orchestrator.core.model.ServiceType.JIRA) }
-                )
-                when (val result = client.getComments(issueKey)) {
-                    is com.workflow.orchestrator.core.model.ApiResult.Success -> {
-                        cache.updateComments(issueKey, result.data)
-                        result.data
-                    }
-                    is com.workflow.orchestrator.core.model.ApiResult.Error -> {
-                        log.warn("[Jira:UI] Failed to load comments for $issueKey: ${result.message}")
-                        emptyList()
-                    }
+                val jiraService = project.getService(com.workflow.orchestrator.core.services.JiraService::class.java)
+                val result = jiraService.getComments(issueKey)
+                if (!result.isError) {
+                    cache.updateComments(issueKey, result.data)
+                    result.data
+                } else {
+                    log.warn("[Jira:UI] Failed to load comments for $issueKey: ${result.summary}")
+                    emptyList()
                 }
             }
 
@@ -327,7 +319,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
     }
 
-    private fun renderComments(comments: List<com.workflow.orchestrator.jira.api.dto.JiraComment>) {
+    private fun renderComments(comments: List<com.workflow.orchestrator.core.model.jira.JiraCommentData>) {
         // Replace placeholder with actual comments
         contentPanel.remove(commentsPlaceholder)
 
@@ -363,13 +355,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         contentPanel.repaint()
     }
 
-    private fun addComment(comment: com.workflow.orchestrator.jira.api.dto.JiraComment) {
+    private fun addComment(comment: com.workflow.orchestrator.core.model.jira.JiraCommentData) {
         val commentPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.empty(6, 8)
         }
 
-        val authorName = comment.author?.displayName ?: "Unknown"
+        val authorName = comment.author
         val timeAgo = formatRelativeTime(comment.created)
 
         val headerRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {

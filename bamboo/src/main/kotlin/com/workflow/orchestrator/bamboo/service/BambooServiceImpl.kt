@@ -9,6 +9,9 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildStageData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
+import com.workflow.orchestrator.core.model.bamboo.FailedTestData
+import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
+import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -133,6 +136,169 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Bamboo connection failed: ${result.message}",
                     isError = true,
                     hint = "Check URL and token in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getBuildLog(resultKey: String): ToolResult<String> {
+        val api = client ?: return ToolResult(
+            data = "",
+            summary = "Bamboo not configured. Cannot fetch build log for $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getBuildLog(resultKey)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = result.data,
+                summary = "Build log for $resultKey: ${result.data.length} chars"
+            )
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch build log for $resultKey: ${result.message}")
+                ToolResult(
+                    data = "",
+                    summary = "Error fetching build log for $resultKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getTestResults(resultKey: String): ToolResult<TestResultsData> {
+        val api = client ?: return ToolResult(
+            data = TestResultsData(total = 0, passed = 0, failed = 0, skipped = 0),
+            summary = "Bamboo not configured. Cannot fetch test results for $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getTestResults(resultKey)) {
+            is ApiResult.Success -> {
+                val dto = result.data.testResults
+                val failedTests = dto.failedTests.testResult.map { tc ->
+                    FailedTestData(
+                        className = tc.className,
+                        methodName = tc.methodName,
+                        message = null
+                    )
+                }
+                val data = TestResultsData(
+                    total = dto.all,
+                    passed = dto.successful,
+                    failed = dto.failed,
+                    skipped = dto.skipped,
+                    failedTests = failedTests
+                )
+                ToolResult.success(
+                    data = data,
+                    summary = "Tests for $resultKey: ${data.total} total, ${data.passed} passed, ${data.failed} failed, ${data.skipped} skipped"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch test results for $resultKey: ${result.message}")
+                ToolResult(
+                    data = TestResultsData(total = 0, passed = 0, failed = 0, skipped = 0),
+                    summary = "Error fetching test results for $resultKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Bamboo not configured. Cannot rerun failed jobs for $planKey #$buildNumber.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.rerunFailedJobs(planKey, buildNumber)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Rerun triggered for $planKey #$buildNumber."
+            )
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to rerun failed jobs for $planKey #$buildNumber: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error rerunning failed jobs for $planKey #$buildNumber: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                            "Check your Bamboo token in Settings."
+                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                            "You may not have permission to restart this build."
+                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                            "Build not found. Verify plan key and build number."
+                        else -> "Check Bamboo connection in Settings."
+                    }
+                )
+            }
+        }
+    }
+
+    override suspend fun getPlanVariables(planKey: String): ToolResult<List<PlanVariableData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch plan variables for $planKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getVariables(planKey)) {
+            is ApiResult.Success -> {
+                val data = result.data.map { PlanVariableData(name = it.name, value = it.value) }
+                ToolResult.success(
+                    data = data,
+                    summary = "Plan $planKey has ${data.size} variable(s): ${data.joinToString { it.name }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch plan variables for $planKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching plan variables for $planKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun triggerStage(
+        planKey: String,
+        variables: Map<String, String>,
+        stage: String?
+    ): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Bamboo not configured. Cannot trigger stage for $planKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.triggerBuild(planKey, variables, stage)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Stage '${stage ?: "all"}' triggered for $planKey (#${result.data.buildNumber})."
+            )
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to trigger stage for $planKey: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error triggering stage for $planKey: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                            "Check your Bamboo token in Settings."
+                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                            "You may not have permission to trigger this plan."
+                        else -> "Check Bamboo connection in Settings."
+                    }
                 )
             }
         }

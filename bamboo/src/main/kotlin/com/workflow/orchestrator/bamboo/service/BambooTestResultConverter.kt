@@ -3,6 +3,7 @@ package com.workflow.orchestrator.bamboo.service
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseDto
 import com.workflow.orchestrator.bamboo.api.dto.BambooTestResultsDto
+import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 
 /**
  * Converts Bamboo test results to TeamCity service messages format.
@@ -80,6 +81,35 @@ object BambooTestResultConverter {
         }
 
         return messages
+    }
+
+    /**
+     * Convert shared [TestResultsData] domain model to TeamCity service messages.
+     * Used by UI panels that obtain test results via [BambooService].
+     */
+    fun fromTestResultsData(testResults: TestResultsData, buildLog: String? = null): List<String> {
+        val failedDtos = testResults.failedTests.map { ft ->
+            BambooTestCaseDto(
+                className = ft.className,
+                methodName = ft.methodName,
+                status = "failed"
+            )
+        }
+
+        // Build a minimal BambooTestResultsDto to reuse existing conversion logic
+        val dto = BambooTestResultsDto(
+            all = testResults.total,
+            successful = testResults.passed,
+            failed = testResults.failed,
+            skipped = testResults.skipped,
+            failedTests = com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseCollection(
+                size = failedDtos.size,
+                testResult = failedDtos
+            ),
+            successfulTests = com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseCollection()
+        )
+
+        return toTeamCityMessages(dto, buildLog)
     }
 
     /**

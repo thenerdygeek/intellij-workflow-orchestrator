@@ -36,3 +36,34 @@ data class BuildTriggerData(
     val buildNumber: Int,
     val link: String
 )
+
+/**
+ * Test results summary for a Bamboo build/job.
+ */
+@Serializable
+data class TestResultsData(
+    val total: Int,
+    val passed: Int,
+    val failed: Int,
+    val skipped: Int,
+    val failedTests: List<FailedTestData> = emptyList()
+)
+
+/**
+ * A single failed test case.
+ */
+@Serializable
+data class FailedTestData(
+    val className: String,
+    val methodName: String,
+    val message: String? = null
+)
+
+/**
+ * A Bamboo plan variable (name-value pair).
+ */
+@Serializable
+data class PlanVariableData(
+    val name: String,
+    val value: String
+)

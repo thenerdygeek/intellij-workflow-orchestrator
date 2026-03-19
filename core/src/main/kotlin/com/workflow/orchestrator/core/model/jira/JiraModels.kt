@@ -28,3 +28,14 @@ data class JiraTransitionData(
     val name: String,
     val toStatus: String
 )
+
+/**
+ * Simplified Jira comment domain model shared between UI panels and AI agent.
+ */
+@Serializable
+data class JiraCommentData(
+    val id: String,
+    val author: String,
+    val body: String,
+    val created: String
+)
