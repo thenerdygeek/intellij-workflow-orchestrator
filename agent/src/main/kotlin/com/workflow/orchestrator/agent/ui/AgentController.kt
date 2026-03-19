@@ -1,9 +1,13 @@
 package com.workflow.orchestrator.agent.ui
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.orchestrator.AgentOrchestrator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
@@ -12,6 +16,7 @@ import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import kotlinx.coroutines.*
+import java.io.File
 import javax.swing.SwingUtilities
 
 /**
@@ -34,6 +39,7 @@ class AgentController(
         dashboard.onSendMessage = { message -> executeTask(message) }
         dashboard.cancelButton.addActionListener { cancelTask() }
         dashboard.newChatButton.addActionListener { newChat() }
+        dashboard.tracesButton.addActionListener { openLatestTrace() }
         dashboard.settingsLink.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
                 com.intellij.openapi.options.ShowSettingsUtil.getInstance()
@@ -139,6 +145,13 @@ class AgentController(
             is AgentResult.Failed -> {
                 dashboard.appendError(result.error)
                 dashboard.completeSession(0, 0, emptyList(), durationMs, RichStreamingPanel.SessionStatus.FAILED)
+                showFailureNotification(result.error)
+                // Log trace path for discoverability
+                val tracesPath = project.basePath?.let { "$it/.workflow/agent/traces/" }
+                if (tracesPath != null) {
+                    LOG.info("AgentController: session trace at $tracesPath")
+                    dashboard.appendStatus("Debug trace saved. View via notification or at: $tracesPath", RichStreamingPanel.StatusType.INFO)
+                }
             }
             is AgentResult.PlanReady -> {
                 dashboard.showOrchestrationPlan(result.plan.getAllTasks())
@@ -169,6 +182,71 @@ class AgentController(
         val msg = if (result is ApprovalResult.Approved) "Approved: $description" else "Blocked: $description"
         dashboard.appendStatus(msg, type)
         return result
+    }
+
+    /**
+     * Open the traces directory in the IDE file browser.
+     * Called from toolbar or notification.
+     */
+    fun openTracesDirectory() {
+        val basePath = project.basePath ?: return
+        val tracesDir = File(basePath, ".workflow/agent/traces")
+        if (!tracesDir.exists()) {
+            dashboard.appendStatus("No traces yet — run a task first. Traces will be at: ${tracesDir.absolutePath}", RichStreamingPanel.StatusType.INFO)
+            return
+        }
+        // Open the directory in IntelliJ's project view
+        val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(tracesDir)
+        if (vf != null) {
+            FileEditorManager.getInstance(project).openFile(vf, true)
+        }
+        dashboard.appendStatus("Traces directory: ${tracesDir.absolutePath}", RichStreamingPanel.StatusType.INFO)
+    }
+
+    /**
+     * Open the most recent trace file in the editor.
+     */
+    fun openLatestTrace() {
+        val basePath = project.basePath ?: return
+        val tracesDir = File(basePath, ".workflow/agent/traces")
+        val latest = tracesDir.listFiles()
+            ?.filter { it.extension == "jsonl" }
+            ?.maxByOrNull { it.lastModified() }
+
+        if (latest != null) {
+            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(latest)
+            if (vf != null) {
+                SwingUtilities.invokeLater {
+                    FileEditorManager.getInstance(project).openFile(vf, true)
+                }
+            }
+        } else {
+            dashboard.appendStatus("No trace files found at: ${tracesDir.absolutePath}", RichStreamingPanel.StatusType.INFO)
+        }
+    }
+
+    /**
+     * Show a notification with action to view the trace file.
+     */
+    private fun showFailureNotification(error: String) {
+        try {
+            val group = NotificationGroupManager.getInstance().getNotificationGroup("workflow.agent")
+            group.createNotification(
+                "Agent Task Failed",
+                error.take(200),
+                NotificationType.ERROR
+            ).addAction(object : com.intellij.openapi.actionSystem.AnAction("View Trace") {
+                override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
+                    openLatestTrace()
+                }
+            }).addAction(object : com.intellij.openapi.actionSystem.AnAction("Open Traces Folder") {
+                override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
+                    openTracesDirectory()
+                }
+            }).notify(project)
+        } catch (_: Exception) {
+            // Notification group may not exist
+        }
     }
 
     fun dispose() { scope.cancel() }
