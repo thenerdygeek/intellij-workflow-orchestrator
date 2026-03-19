@@ -107,6 +107,7 @@ class AgentOrchestrator(
      */
     suspend fun executeTask(
         taskDescription: String,
+        session: ConversationSession? = null,
         onProgress: (AgentProgress) -> Unit = {},
         onStreamChunk: (String) -> Unit = {},
         approvalGate: ApprovalGate? = null
@@ -114,7 +115,6 @@ class AgentOrchestrator(
         cancelled.set(false)
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-        val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
         val maxOutputTokens = settings?.state?.maxOutputTokens ?: SourcegraphChatClient.MAX_OUTPUT_TOKENS
 
         // Default: Single Agent Mode
@@ -122,37 +122,48 @@ class AgentOrchestrator(
 
         if (cancelled.get()) return AgentResult.Cancelled(0)
 
-        // Calculate tool definitions and their token overhead
-        val allTools = toolRegistry.allTools().associateBy { it.name }
-        val allToolDefs = toolRegistry.allTools().map { it.toToolDefinition() }
-        val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)
+        // Resolve context, tools, and system prompt — reuse from session or create fresh
+        val allTools: Map<String, com.workflow.orchestrator.agent.tools.AgentTool>
+        val allToolDefs: List<ToolDefinition>
+        val contextManager: ContextManager
+        val effectiveSystemPrompt: String?
 
-        // Generate repo map using PSI
-        val repoMap = try {
-            RepoMapGenerator.generate(project, maxTokens = 1500)
-        } catch (_: Exception) { "" }
-        val repoMapTokens = if (repoMap.isNotBlank()) TokenEstimator.estimate(repoMap) else 0
+        if (session != null) {
+            // Multi-turn: reuse session's context (the core fix)
+            allTools = session.tools
+            allToolDefs = session.toolDefinitions
+            contextManager = session.contextManager
 
-        // Build system prompt via PromptAssembler
-        val promptAssembler = PromptAssembler(toolRegistry)
-        val systemPrompt = promptAssembler.buildSingleAgentPrompt(
-            projectName = project.name,
-            projectPath = project.basePath,
-            repoMapContext = repoMap.ifBlank { null }
-        )
-        val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
+            // Initialize session (adds system prompt) on first use, then null to avoid re-adding
+            session.initialize()
+            effectiveSystemPrompt = null  // already in context from initialize()
+        } else {
+            // Backward compat: create everything from scratch (tests, orchestrated mode)
+            val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
 
-        // Calculate reserved tokens: tool defs + system prompt + repo map + safety buffer.
-        // System prompt and repo map are added as messages (counted in totalTokens) but are
-        // never compressed (system messages are skipped in compress()). Including them in
-        // reservedTokens ensures compression thresholds account for this permanent overhead.
-        val reservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
+            allTools = toolRegistry.allTools().associateBy { it.name }
+            allToolDefs = toolRegistry.allTools().map { it.toToolDefinition() }
+            val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)
 
-        // Create context manager with reserved tokens accounting
-        val contextManager = ContextManager(
-            maxInputTokens = maxInputTokens,
-            reservedTokens = reservedTokens
-        )
+            val repoMap = try {
+                RepoMapGenerator.generate(project, maxTokens = 1500)
+            } catch (_: Exception) { "" }
+
+            val promptAssembler = PromptAssembler(toolRegistry)
+            val systemPrompt = promptAssembler.buildSingleAgentPrompt(
+                projectName = project.name,
+                projectPath = project.basePath,
+                repoMapContext = repoMap.ifBlank { null }
+            )
+            val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
+            val reservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
+
+            contextManager = ContextManager(
+                maxInputTokens = maxInputTokens,
+                reservedTokens = reservedTokens
+            )
+            effectiveSystemPrompt = systemPrompt
+        }
 
         // Take snapshot before execution for rollback capability (Step 4)
         val fileGuard = FileGuard()
@@ -160,23 +171,23 @@ class AgentOrchestrator(
             fileGuard.snapshotFiles(project, emptyList())
         } catch (_: Exception) { null }
 
-        // Create event log and session trace for observability
-        val sessionId = UUID.randomUUID().toString().take(12)
-        val eventLog = project.basePath?.let { AgentEventLog(sessionId, it) }
-        val sessionTrace = project.basePath?.let { SessionTrace(sessionId, it) }
+        // Create event log and session trace for observability (per-task, not per-session)
+        val traceId = session?.sessionId ?: UUID.randomUUID().toString().take(12)
+        val eventLog = project.basePath?.let { AgentEventLog(traceId, it) }
+        val sessionTrace = project.basePath?.let { SessionTrace(traceId, it) }
         eventLog?.let {
             if (snapshotRef != null) it.log(AgentEventType.SNAPSHOT_CREATED, snapshotRef)
         }
 
-        val session = SingleAgentSession()
-        val result = session.execute(
+        val singleAgentSession = SingleAgentSession()
+        val result = singleAgentSession.execute(
             task = taskDescription,
             tools = allTools,
             toolDefinitions = allToolDefs,
             brain = brain,
             contextManager = contextManager,
             project = project,
-            systemPrompt = systemPrompt,
+            systemPrompt = effectiveSystemPrompt,
             maxOutputTokens = maxOutputTokens,
             approvalGate = approvalGate,
             eventLog = eventLog,
