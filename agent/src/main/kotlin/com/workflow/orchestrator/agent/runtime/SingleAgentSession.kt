@@ -287,10 +287,20 @@ class SingleAgentSession(
             error = "Empty response from LLM", tokensUsed = totalTokensUsed
         )
         val message = choice.message
-        val toolCalls = message.toolCalls
 
-        // Add assistant message to context
-        contextManager.addAssistantMessage(message)
+        // Filter out tool calls with empty/blank names (Sourcegraph streaming can produce these)
+        val validToolCalls = message.toolCalls?.filter { it.function.name.isNotBlank() }?.ifEmpty { null }
+        val cleanMessage = if (validToolCalls != message.toolCalls) {
+            message.copy(toolCalls = validToolCalls)
+        } else message
+        val toolCalls = cleanMessage.toolCalls
+
+        // Only add assistant message to context if it has content or valid tool calls
+        if (!cleanMessage.content.isNullOrBlank() || !toolCalls.isNullOrEmpty()) {
+            contextManager.addAssistantMessage(cleanMessage)
+        } else {
+            LOG.info("SingleAgentSession: skipping empty assistant message (no content, no valid tool calls)")
+        }
 
         // Handle truncated responses (output token limit hit).
         // With Sourcegraph's 4K output cap, truncation is common for longer answers.
