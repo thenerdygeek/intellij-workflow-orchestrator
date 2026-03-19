@@ -9,24 +9,24 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class BambooBuildTool : AgentTool {
-    override val name = "bamboo_build_status"
-    override val description = "Get the latest build status for a Bamboo plan: state, stages, duration, and test results."
+class BambooGetBuildTool : AgentTool {
+    override val name = "bamboo_get_build"
+    override val description = "Get a specific Bamboo build result by build key. Shows state, stages, duration, and test results."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "plan_key" to ParameterProperty(type = "string", description = "Bamboo plan key (e.g., PROJ-PLAN)")
+            "build_key" to ParameterProperty(type = "string", description = "Bamboo build key (e.g., PROJ-PLAN-123)")
         ),
-        required = listOf("plan_key")
+        required = listOf("build_key")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        val planKey = params["plan_key"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'plan_key' parameter required", "Error: missing plan_key", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        val buildKey = params["build_key"]?.jsonPrimitive?.content
+            ?: return ToolResult("Error: 'build_key' parameter required", "Error: missing build_key", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
+        ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
         val service = ServiceLookup.bamboo(project) ?: return ServiceLookup.notConfigured("Bamboo")
 
-        return service.getLatestBuild(planKey).toAgentToolResult()
+        return service.getBuild(buildKey).toAgentToolResult()
     }
 }
