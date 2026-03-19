@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.*
 import com.workflow.orchestrator.agent.tools.integration.*
@@ -28,6 +29,9 @@ class AgentService(
 
     /** Reference to the active AgentController, used for session resume from History tab. */
     var activeController: com.workflow.orchestrator.agent.ui.AgentController? = null
+
+    /** Plan manager for the current agent session, set by SingleAgentSession. */
+    var currentPlanManager: PlanManager? = null
 
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry().apply {
@@ -73,6 +77,10 @@ class AgentService(
 
             // Bitbucket integration tools
             register(BitbucketPrTool())
+
+            // Planning tools
+            register(CreatePlanTool())
+            register(UpdatePlanStepTool())
         }
     }
 
