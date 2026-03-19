@@ -52,6 +52,9 @@ class ConversationSession private constructor(
     /** Rollback manager for undoing agent changes. Stored here so it persists across turns. */
     var rollbackManager: AgentRollbackManager? = null
 
+    /** Plan manager for Antigravity-style planning. Persists across turns within a session. */
+    val planManager: PlanManager = PlanManager()
+
     /** Tracks files the agent has recently read or edited. LRU cache with 10 file limit. */
     val workingSet: WorkingSet = WorkingSet()
 
