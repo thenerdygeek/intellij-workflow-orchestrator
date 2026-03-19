@@ -22,7 +22,8 @@ class PromptAssembler(
         projectPath: String? = null,
         frameworkInfo: String? = null,
         previousStepResults: List<String>? = null,
-        repoMapContext: String? = null
+        repoMapContext: String? = null,
+        planMode: Boolean = false
     ): String {
         val sections = mutableListOf<String>()
 
@@ -50,7 +51,10 @@ class PromptAssembler(
             sections.add("<previous_results>\nContext from previous steps:\n$prev\n</previous_results>")
         }
 
-        // 6. Rules and Constraints (including anti-loop)
+        // 6. Planning instructions
+        sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
+
+        // 7. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -121,6 +125,30 @@ class PromptAssembler(
             - Review: Read diffs, check diagnostics, find issues
             - Enterprise: Read Jira tickets, transition statuses, add comments, check builds, query quality issues, create PRs
             </capabilities>
+        """.trimIndent()
+
+        val PLANNING_RULES = """
+            <planning>
+            - For complex tasks involving 3+ files, refactoring, new features, or architectural changes:
+              call create_plan first with a structured plan before making any code changes.
+            - For simple tasks (questions, single-file fixes, running commands, checking status):
+              act directly without creating a plan.
+            - When executing an approved plan, call update_plan_step to mark each step as
+              'running' when you start it and 'done' when you complete it (or 'failed' if it fails).
+            - If the user requests revision with comments, incorporate their feedback and
+              call create_plan again with the updated plan.
+            </planning>
+        """.trimIndent()
+
+        val FORCED_PLANNING_RULES = """
+            <planning mode="required">
+            - You MUST call create_plan before making any code changes or executing any write tools.
+            - First, analyze the task by reading relevant files using read_file, search_code, file_structure.
+            - Then produce a comprehensive implementation plan using create_plan.
+            - Do NOT call edit_file, run_command, or any write operations until the plan is approved by the user.
+            - After plan approval, execute step by step, calling update_plan_step to track progress.
+            - If the user requests revision, incorporate their feedback and call create_plan again.
+            </planning>
         """.trimIndent()
 
         val RULES = """
