@@ -30,14 +30,14 @@ sealed class AgentResult {
         val summary: String,
         val artifacts: List<String>,
         val totalTokens: Int,
-        val snapshotRef: String? = null
+        val rollbackCheckpointId: String? = null
     ) : AgentResult()
 
     /** Execution failed with an error. */
     data class Failed(
         val error: String,
         val partialResults: String? = null,
-        val snapshotRef: String? = null
+        val rollbackCheckpointId: String? = null
     ) : AgentResult()
 
     /** User cancelled the task. */
@@ -165,18 +165,16 @@ class AgentOrchestrator(
             effectiveSystemPrompt = systemPrompt
         }
 
-        // Take snapshot before execution for rollback capability (Step 4)
-        val fileGuard = FileGuard()
-        val snapshotRef = try {
-            fileGuard.snapshotFiles(project, emptyList())
-        } catch (_: Exception) { null }
+        // Create LocalHistory checkpoint before execution for rollback capability
+        val rollbackManager = AgentRollbackManager(project)
+        val checkpointId = rollbackManager.createCheckpoint(taskDescription.take(100))
 
         // Create event log and session trace for observability (per-task, not per-session)
         val traceId = session?.sessionId ?: UUID.randomUUID().toString().take(12)
         val eventLog = project.basePath?.let { AgentEventLog(traceId, it) }
         val sessionTrace = project.basePath?.let { SessionTrace(traceId, it) }
         eventLog?.let {
-            if (snapshotRef != null) it.log(AgentEventType.SNAPSHOT_CREATED, snapshotRef)
+            it.log(AgentEventType.SNAPSHOT_CREATED, "checkpoint:$checkpointId")
         }
 
         val singleAgentSession = SingleAgentSession()
@@ -198,15 +196,16 @@ class AgentOrchestrator(
 
         return when (result) {
             is SingleAgentResult.Completed -> {
+                result.artifacts.forEach { rollbackManager.trackFileChange(it) }
                 AgentResult.Completed(
                     result.summary, result.artifacts, result.tokensUsed,
-                    snapshotRef = snapshotRef
+                    rollbackCheckpointId = checkpointId
                 )
             }
             is SingleAgentResult.Failed -> {
                 AgentResult.Failed(
                     result.error,
-                    snapshotRef = snapshotRef
+                    rollbackCheckpointId = checkpointId
                 )
             }
             is SingleAgentResult.EscalateToOrchestrated -> {
@@ -298,12 +297,9 @@ class AgentOrchestrator(
             null
         }
 
-        // Create FileGuard for edit conflict prevention and rollback
-        val fileGuard = FileGuard()
-        // Snapshot working tree before execution for rollback capability
-        if (projectBasePath != null) {
-            try { fileGuard.snapshotFiles(project, emptyList()) } catch (_: Exception) { /* best effort */ }
-        }
+        // Create LocalHistory checkpoint for rollback capability
+        val rollbackManager = AgentRollbackManager(project)
+        rollbackManager.createCheckpoint("Plan: ${taskGraph.getAllTasks().firstOrNull()?.description?.take(80) ?: "orchestrated"}")
 
         while (!taskGraph.isComplete()) {
             if (cancelled.get()) return AgentResult.Cancelled(completedCount)
