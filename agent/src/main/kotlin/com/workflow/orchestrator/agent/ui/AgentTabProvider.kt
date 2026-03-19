@@ -33,13 +33,13 @@ class AgentTabProvider : WorkflowTabProvider {
             )
         }
 
-        // Create the dashboard and wire the controller
-        val dashboard = AgentDashboardPanel()
+        // Create dashboard with project as parent disposable for JCEF lifecycle
+        val dashboard = AgentDashboardPanel(parentDisposable = project as? Disposable)
         val controller = AgentController(project, dashboard)
 
-        // Register controller for disposal when the tool window is closed
-        if (project is Disposable) {
-            Disposer.register(project, Disposable { controller.dispose() })
+        // Register controller for disposal
+        (project as? Disposable)?.let {
+            Disposer.register(it, Disposable { controller.dispose() })
         }
 
         return dashboard
