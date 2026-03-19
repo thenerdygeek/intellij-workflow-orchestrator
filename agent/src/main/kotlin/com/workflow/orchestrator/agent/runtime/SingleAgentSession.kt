@@ -421,6 +421,18 @@ class SingleAgentSession(
                 }
             }
 
+            // Emit pre-execution progress so users see which tool is being called
+            // while it runs (fixes blank screen during non-streaming tool calls)
+            onProgress(AgentProgress(
+                step = "Calling tool: $toolName",
+                tokensUsed = totalTokensUsed,
+                toolCallInfo = ToolCallInfo(
+                    toolName = toolName,
+                    args = toolCall.function.arguments.take(200),
+                    isError = false
+                )
+            ))
+
             val toolStartMs = System.currentTimeMillis()
             try {
                 eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${toolCall.function.arguments.take(100)})")
