@@ -58,7 +58,28 @@ class AgentController(
             onPromptSubmitted = { text -> executeTask(text) }
         )
 
+        // Set model name
+        try {
+            val model = AgentSettings.getInstance(project).state.sourcegraphChatModel ?: ""
+            dashboard.setModelName(model)
+        } catch (_: Exception) {}
+
+        // Wire tools button
+        dashboard.toolsButton.addActionListener { showToolsPopup() }
+
         dashboard.focusInput()
+    }
+
+    private fun showToolsPopup() {
+        val agentService = try { AgentService.getInstance(project) } catch (_: Exception) { return }
+        val tools = agentService.toolRegistry.allTools()
+
+        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(tools.sortedBy { it.name }.map { "${it.name}: ${it.description.take(80)}" })
+            .setTitle("Agent Tools (${tools.size})")
+            .setNamerForFiltering { it }
+            .createPopup()
+        popup.showUnderneathOf(dashboard.toolsButton)
     }
 
     fun executeTask(task: String) {
