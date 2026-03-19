@@ -15,14 +15,8 @@ import kotlinx.coroutines.*
 import javax.swing.SwingUtilities
 
 /**
- * Controller that bridges the AgentOrchestrator (backend) with the AgentDashboardPanel (UI).
- *
- * Chat-first interaction model:
- * - User types in the chat input → Enter to send
- * - Agent streams its response into the rich panel
- * - Tool calls appear as inline cards
- * - Edits appear as inline diffs
- * - User can send follow-up messages
+ * Controller bridging AgentOrchestrator (backend) ↔ AgentDashboardPanel (UI).
+ * Routes orchestrator callbacks to the dashboard, which delegates to JCEF or JEditorPane.
  */
 class AgentController(
     private val project: Project,
@@ -37,10 +31,7 @@ class AgentController(
     private var sessionStartMs = 0L
 
     init {
-        // Wire chat input
         dashboard.onSendMessage = { message -> executeTask(message) }
-
-        // Wire buttons
         dashboard.cancelButton.addActionListener { cancelTask() }
         dashboard.newChatButton.addActionListener { newChat() }
         dashboard.settingsLink.addMouseListener(object : java.awt.event.MouseAdapter() {
@@ -49,27 +40,18 @@ class AgentController(
                     .showSettingsDialog(project, "workflow.orchestrator.agent")
             }
         })
-
-        // Focus input on init
         dashboard.focusInput()
     }
 
-    /**
-     * Execute a task from the chat input.
-     */
     fun executeTask(task: String) {
         val agentService = try {
             AgentService.getInstance(project)
         } catch (e: Exception) {
-            LOG.warn("AgentController: AgentService not available", e)
-            dashboard.getRichPanel().appendError("Agent service not available: ${e.message}")
+            dashboard.appendError("Agent service not available: ${e.message}")
             return
         }
-
         if (!agentService.isConfigured()) {
-            dashboard.getRichPanel().appendError(
-                "Agent not configured. Set up Sourcegraph connection and enable Agent in Settings."
-            )
+            dashboard.appendError("Agent not configured. Set up Sourcegraph connection and enable Agent in Settings.")
             return
         }
 
@@ -77,44 +59,34 @@ class AgentController(
         currentOrchestrator = orchestrator
         sessionStartMs = System.currentTimeMillis()
 
-        // Show user message in the chat
-        val richPanel = dashboard.getRichPanel()
-        richPanel.startSession(task)
+        dashboard.startSession(task)
         dashboard.setBusy(true)
 
-        // Build approval gate
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
         val approvalGate = ApprovalGate(
             approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
-            onApprovalNeeded = { description, riskLevel -> showApprovalDialog(description, riskLevel) }
+            onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) }
         )
 
-        // Execute in background
         scope.launch {
             try {
                 val result = orchestrator.executeTask(
                     taskDescription = task,
                     approvalGate = approvalGate,
-                    onProgress = { progress -> handleProgress(progress, richPanel) },
-                    onStreamChunk = { chunk -> richPanel.appendStreamToken(chunk) }
+                    onProgress = { handleProgress(it) },
+                    onStreamChunk = { dashboard.appendStreamToken(it) }
                 )
-
-                val durationMs = System.currentTimeMillis() - sessionStartMs
-                handleResult(result, richPanel, durationMs)
+                handleResult(result, System.currentTimeMillis() - sessionStartMs)
             } catch (e: CancellationException) {
-                richPanel.completeSession(
-                    tokensUsed = 0, iterations = 0, filesModified = emptyList(),
-                    durationMs = System.currentTimeMillis() - sessionStartMs,
-                    status = RichStreamingPanel.SessionStatus.CANCELLED
-                )
+                dashboard.completeSession(0, 0, emptyList(),
+                    System.currentTimeMillis() - sessionStartMs,
+                    RichStreamingPanel.SessionStatus.CANCELLED)
             } catch (e: Exception) {
-                LOG.error("AgentController: task execution failed", e)
-                richPanel.appendError("Unexpected error: ${e.message}")
-                richPanel.completeSession(
-                    tokensUsed = 0, iterations = 0, filesModified = emptyList(),
-                    durationMs = System.currentTimeMillis() - sessionStartMs,
-                    status = RichStreamingPanel.SessionStatus.FAILED
-                )
+                LOG.error("AgentController: task failed", e)
+                dashboard.appendError("Unexpected error: ${e.message}")
+                dashboard.completeSession(0, 0, emptyList(),
+                    System.currentTimeMillis() - sessionStartMs,
+                    RichStreamingPanel.SessionStatus.FAILED)
             } finally {
                 dashboard.setBusy(false)
             }
@@ -123,7 +95,7 @@ class AgentController(
 
     fun cancelTask() {
         currentOrchestrator?.cancelTask()
-        dashboard.getRichPanel().appendStatus("Cancellation requested...", RichStreamingPanel.StatusType.WARNING)
+        dashboard.appendStatus("Cancellation requested...", RichStreamingPanel.StatusType.WARNING)
     }
 
     fun newChat() {
@@ -133,138 +105,71 @@ class AgentController(
         dashboard.focusInput()
     }
 
-    private fun handleProgress(progress: AgentProgress, richPanel: RichStreamingPanel) {
-        val step = progress.step
-        val maxTokens = try {
-            AgentSettings.getInstance(project).state.maxInputTokens
-        } catch (_: Exception) { 150_000 }
-
-        SwingUtilities.invokeLater {
-            dashboard.updateProgress(step, progress.tokensUsed, maxTokens)
-        }
+    private fun handleProgress(progress: AgentProgress) {
+        val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
+        SwingUtilities.invokeLater { dashboard.updateProgress(progress.step, progress.tokensUsed, maxTokens) }
 
         val toolInfo = progress.toolCallInfo
-
         when {
-            step.startsWith("Used tool:") && toolInfo != null -> {
-                richPanel.flushStreamBuffer()
-
+            progress.step.startsWith("Used tool:") && toolInfo != null -> {
+                dashboard.flushStreamBuffer()
                 if (toolInfo.editFilePath != null && toolInfo.editOldText != null && toolInfo.editNewText != null) {
-                    richPanel.appendEditDiff(
-                        filePath = toolInfo.editFilePath,
-                        oldText = toolInfo.editOldText,
-                        newText = toolInfo.editNewText,
-                        accepted = !toolInfo.isError
-                    )
+                    dashboard.appendEditDiff(toolInfo.editFilePath, toolInfo.editOldText, toolInfo.editNewText, !toolInfo.isError)
                 } else {
-                    val status = if (toolInfo.isError)
-                        RichStreamingPanel.ToolCallStatus.FAILED
-                    else
-                        RichStreamingPanel.ToolCallStatus.SUCCESS
-
-                    richPanel.appendToolCall(
-                        toolName = toolInfo.toolName,
-                        args = toolInfo.args,
-                        status = status
-                    )
-                    richPanel.updateLastToolCall(
-                        status = status,
-                        result = toolInfo.result,
-                        durationMs = toolInfo.durationMs
-                    )
+                    val status = if (toolInfo.isError) RichStreamingPanel.ToolCallStatus.FAILED else RichStreamingPanel.ToolCallStatus.SUCCESS
+                    dashboard.appendToolCall(toolInfo.toolName, toolInfo.args, status)
+                    dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs)
                 }
             }
-            step.startsWith("Used tool:") -> {
-                val toolName = step.removePrefix("Used tool:").trim()
-                richPanel.appendToolCall(toolName, status = RichStreamingPanel.ToolCallStatus.SUCCESS)
+            progress.step.startsWith("Used tool:") -> {
+                dashboard.appendToolCall(progress.step.removePrefix("Used tool:").trim(), status = RichStreamingPanel.ToolCallStatus.SUCCESS)
             }
-            step.contains("complex") || step.contains("plan") -> {
-                richPanel.appendStatus(step, RichStreamingPanel.StatusType.WARNING)
+            progress.step.contains("complex") || progress.step.contains("plan") -> {
+                dashboard.appendStatus(progress.step, RichStreamingPanel.StatusType.WARNING)
             }
         }
     }
 
-    private fun handleResult(result: AgentResult, richPanel: RichStreamingPanel, durationMs: Long) {
+    private fun handleResult(result: AgentResult, durationMs: Long) {
         when (result) {
             is AgentResult.Completed -> {
-                richPanel.flushStreamBuffer()
-                richPanel.completeSession(
-                    tokensUsed = result.totalTokens,
-                    iterations = 0,
-                    filesModified = result.artifacts,
-                    durationMs = durationMs,
-                    status = RichStreamingPanel.SessionStatus.SUCCESS
-                )
+                dashboard.flushStreamBuffer()
+                dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
             }
             is AgentResult.Failed -> {
-                richPanel.appendError(result.error)
-                richPanel.completeSession(
-                    tokensUsed = 0, iterations = 0, filesModified = emptyList(),
-                    durationMs = durationMs,
-                    status = RichStreamingPanel.SessionStatus.FAILED
-                )
+                dashboard.appendError(result.error)
+                dashboard.completeSession(0, 0, emptyList(), durationMs, RichStreamingPanel.SessionStatus.FAILED)
             }
             is AgentResult.PlanReady -> {
-                SwingUtilities.invokeLater {
-                    dashboard.showOrchestrationPlan(result.plan.getAllTasks())
-                }
-                richPanel.appendStatus(
-                    "Plan generated with ${result.plan.getAllTasks().size} tasks. Review in the left panel.",
-                    RichStreamingPanel.StatusType.INFO
-                )
+                dashboard.showOrchestrationPlan(result.plan.getAllTasks())
             }
             is AgentResult.Cancelled -> {
-                richPanel.appendStatus("Task cancelled after ${result.completedSteps} steps.", RichStreamingPanel.StatusType.WARNING)
-                richPanel.completeSession(
-                    tokensUsed = 0, iterations = result.completedSteps, filesModified = emptyList(),
-                    durationMs = durationMs,
-                    status = RichStreamingPanel.SessionStatus.CANCELLED
-                )
+                dashboard.appendStatus("Cancelled after ${result.completedSteps} steps.", RichStreamingPanel.StatusType.WARNING)
+                dashboard.completeSession(0, result.completedSteps, emptyList(), durationMs, RichStreamingPanel.SessionStatus.CANCELLED)
             }
         }
     }
 
     private fun showApprovalDialog(description: String, riskLevel: RiskLevel): ApprovalResult {
         var result: ApprovalResult = ApprovalResult.Rejected
-        val latch = java.util.concurrent.CountDownLatch(1)
-
         ApplicationManager.getApplication().invokeAndWait {
             if (riskLevel == RiskLevel.HIGH && description.contains("run_command")) {
                 val cmdMatch = Regex("run_command\\((.+?)\\)").find(description)
-                val command = cmdMatch?.groupValues?.get(1) ?: description
-                val dialog = CommandApprovalDialog(
-                    project = project,
-                    command = command,
-                    workingDir = project.basePath ?: ".",
-                    riskAssessment = riskLevel.name
-                )
+                val dialog = CommandApprovalDialog(project, cmdMatch?.groupValues?.get(1) ?: description, project.basePath ?: ".", riskLevel.name)
                 dialog.show()
                 result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
             } else {
-                val answer = Messages.showYesNoDialog(
-                    project,
+                val answer = Messages.showYesNoDialog(project,
                     "The agent wants to perform:\n\n$description\n\nRisk level: ${riskLevel.name}",
-                    "Agent Action Approval",
-                    "Allow", "Block",
-                    Messages.getQuestionIcon()
-                )
+                    "Agent Action Approval", "Allow", "Block", Messages.getQuestionIcon())
                 result = if (answer == Messages.YES) ApprovalResult.Approved else ApprovalResult.Rejected
             }
-            latch.countDown()
         }
-
-        latch.await()
-
-        val statusType = if (result is ApprovalResult.Approved)
-            RichStreamingPanel.StatusType.SUCCESS else RichStreamingPanel.StatusType.WARNING
-        val statusMsg = if (result is ApprovalResult.Approved)
-            "Approved: $description" else "Blocked: $description"
-        dashboard.getRichPanel().appendStatus(statusMsg, statusType)
-
+        val type = if (result is ApprovalResult.Approved) RichStreamingPanel.StatusType.SUCCESS else RichStreamingPanel.StatusType.WARNING
+        val msg = if (result is ApprovalResult.Approved) "Approved: $description" else "Blocked: $description"
+        dashboard.appendStatus(msg, type)
         return result
     }
 
-    fun dispose() {
-        scope.cancel()
-    }
+    fun dispose() { scope.cancel() }
 }

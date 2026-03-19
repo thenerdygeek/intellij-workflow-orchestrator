@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+/* ═══════════════════════════════════════════════════
+   CSS Variables — injected from Kotlin on theme change
+   ═══════════════════════════════════════════════════ */
+:root {
+  --bg: #2B2D30;
+  --fg: #CBD5E1;
+  --fg-secondary: #94A3B8;
+  --fg-muted: #6B7280;
+  --border: #3F3F46;
+  --user-bg: #1E293B;
+  --tool-bg: #1A1D23;
+  --code-bg: #1E1E2E;
+  --thinking-bg: #1F2937;
+
+  --badge-read-bg: #1E3A5F; --badge-read-fg: #60A5FA;
+  --badge-write-bg: #14532D; --badge-write-fg: #4ADE80;
+  --badge-edit-bg: #451A03; --badge-edit-fg: #FBBF24;
+  --badge-cmd-bg: #450A0A; --badge-cmd-fg: #F87171;
+  --badge-search-bg: #083344; --badge-search-fg: #22D3EE;
+
+  --accent-read: #3B82F6;
+  --accent-write: #22C55E;
+  --accent-edit: #F59E0B;
+  --accent-cmd: #EF4444;
+  --accent-search: #06B6D4;
+
+  --diff-add-bg: #14332A; --diff-add-fg: #86EFAC;
+  --diff-rem-bg: #3B1818; --diff-rem-fg: #FCA5A5;
+
+  --success: #22C55E;
+  --error: #EF4444;
+  --warning: #F59E0B;
+  --link: #60A5FA;
+
+  --font-body: -apple-system, 'Segoe UI', system-ui, Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', Menlo, Consolas, 'Courier New', monospace;
+}
+
+/* ═══════════════════════════════════════════════════
+   Base
+   ═══════════════════════════════════════════════════ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-muted); }
+
+#chat-container {
+  padding: 16px;
+  min-height: 100vh;
+}
+
+/* ═══════════════════════════════════════════════════
+   Empty State
+   ═══════════════════════════════════════════════════ */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  color: var(--fg-muted);
+  text-align: center;
+}
+.empty-state .icon { font-size: 36px; margin-bottom: 16px; opacity: 0.5; }
+.empty-state .title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--fg-secondary); }
+.empty-state .desc { font-size: 12px; max-width: 320px; line-height: 1.6; }
+
+/* ═══════════════════════════════════════════════════
+   Messages
+   ═══════════════════════════════════════════════════ */
+.message { margin-bottom: 16px; animation: fadeIn 0.2s ease-out; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* User message */
+.user-msg {
+  background: var(--user-bg);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-left: 48px;
+  position: relative;
+}
+.user-msg .label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin-bottom: 3px;
+  letter-spacing: 0.3px;
+}
+
+/* Agent message */
+.agent-msg {
+  padding: 2px 0;
+}
+.agent-msg p { margin: 4px 0; }
+
+/* Streaming cursor */
+.stream-cursor::after {
+  content: '▊';
+  color: var(--fg-muted);
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ═══════════════════════════════════════════════════
+   Tool Call Cards
+   ═══════════════════════════════════════════════════ */
+.tool-card {
+  background: var(--tool-bg);
+  border-radius: 8px;
+  margin: 10px 0;
+  overflow: hidden;
+  border-left: 3px solid var(--accent-read);
+  transition: border-color 0.2s;
+}
+.tool-card.type-read { border-left-color: var(--accent-read); }
+.tool-card.type-edit { border-left-color: var(--accent-edit); }
+.tool-card.type-write { border-left-color: var(--accent-write); }
+.tool-card.type-cmd { border-left-color: var(--accent-cmd); }
+.tool-card.type-search { border-left-color: var(--accent-search); }
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+  cursor: pointer;
+}
+.tool-header:hover { background: rgba(255,255,255,0.03); }
+
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.badge-read { background: var(--badge-read-bg); color: var(--badge-read-fg); }
+.badge-write { background: var(--badge-write-bg); color: var(--badge-write-fg); }
+.badge-edit { background: var(--badge-edit-bg); color: var(--badge-edit-fg); }
+.badge-cmd { background: var(--badge-cmd-bg); color: var(--badge-cmd-fg); }
+.badge-search { background: var(--badge-search-bg); color: var(--badge-search-fg); }
+.badge-ok { background: var(--badge-write-bg); color: var(--badge-write-fg); }
+.badge-fail { background: var(--badge-cmd-bg); color: var(--badge-cmd-fg); }
+
+.tool-target {
+  font-size: 12px;
+  color: var(--fg);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-timing {
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.tool-status-icon { font-size: 13px; flex-shrink: 0; }
+.tool-status-icon.ok { color: var(--success); }
+.tool-status-icon.fail { color: var(--error); }
+.tool-status-icon.running { color: var(--fg-muted); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.tool-detail {
+  padding: 0 12px 8px 12px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.tool-result {
+  padding: 6px 12px 8px 12px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+/* ═══════════════════════════════════════════════════
+   Code Blocks
+   ═══════════════════════════════════════════════════ */
+.code-wrapper {
+  position: relative;
+  margin: 10px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--code-bg);
+}
+.code-lang {
+  font-size: 10px;
+  color: var(--fg-muted);
+  padding: 6px 12px 0 12px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.code-block {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.5;
+  tab-size: 4;
+}
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--border);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-wrapper:hover .code-copy { opacity: 1; }
+.code-copy:hover { background: var(--fg-muted); color: var(--bg); }
+
+/* Inline code */
+code {
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+/* ═══════════════════════════════════════════════════
+   Diff Cards
+   ═══════════════════════════════════════════════════ */
+.diff-card {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 10px 0;
+  overflow: hidden;
+}
+.diff-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--tool-bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.diff-file { font-family: var(--font-mono); font-weight: 600; flex: 1; }
+.diff-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diff-add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+.diff-rem { background: var(--diff-rem-bg); color: var(--diff-rem-fg); }
+
+/* ═══════════════════════════════════════════════════
+   Thinking Block
+   ═══════════════════════════════════════════════════ */
+.thinking {
+  color: var(--fg-muted);
+  font-style: italic;
+  font-size: 12px;
+  border-left: 2px solid var(--fg-muted);
+  padding: 6px 0 6px 12px;
+  margin: 8px 0;
+  background: var(--thinking-bg);
+  border-radius: 0 6px 6px 0;
+}
+
+/* ═══════════════════════════════════════════════════
+   Status Messages
+   ═══════════════════════════════════════════════════ */
+.status { font-size: 12px; padding: 4px 0; display: flex; align-items: center; gap: 6px; }
+.status-info { color: var(--fg-muted); }
+.status-success { color: var(--success); }
+.status-warning { color: var(--warning); }
+.status-error { color: var(--error); font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════
+   Session Footer
+   ═══════════════════════════════════════════════════ */
+.session-footer {
+  margin-top: 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  animation: fadeIn 0.3s ease-out;
+}
+.footer-status {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.footer-metrics {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.footer-files {
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
+.footer-files span { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div id="chat-container">
+  <div class="empty-state" id="empty-state">
+    <div class="icon">⚡</div>
+    <div class="title">AI Agent</div>
+    <div class="desc">Type a message below to start. The agent can read, edit, and search code, run commands, and interact with Jira, Bamboo, SonarQube, and Bitbucket.</div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   API called from Kotlin via executeJavaScript()
+   ═══════════════════════════════════════════════════ */
+const container = document.getElementById('chat-container');
+const emptyState = document.getElementById('empty-state');
+let activeStreamEl = null;
+
+function hideEmpty() {
+  if (emptyState) emptyState.style.display = 'none';
+}
+
+function scrollToBottom() {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+}
+
+function esc(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+/* ── Session ── */
+
+function startSession(task) {
+  hideEmpty();
+  container.innerHTML = '';
+  const msg = document.createElement('div');
+  msg.className = 'message';
+  msg.innerHTML = '<div class="user-msg"><div class="label">You</div>' + esc(task) + '</div>';
+  container.appendChild(msg);
+  activeStreamEl = null;
+  scrollToBottom();
+}
+
+function completeSession(status, tokensUsed, durationMs, iterations, files) {
+  endStream();
+  const colors = { SUCCESS: 'var(--success)', FAILED: 'var(--error)', CANCELLED: 'var(--fg-muted)' };
+  const icons = { SUCCESS: '✓', FAILED: '✗', CANCELLED: '■' };
+  const labels = { SUCCESS: 'Completed', FAILED: 'Failed', CANCELLED: 'Cancelled' };
+
+  const filesHtml = files && files.length > 0
+    ? '<div class="footer-files">Files: <span>' + files.map(f => esc(f.split('/').pop())).join(', ') + '</span></div>'
+    : '';
+
+  const footer = document.createElement('div');
+  footer.className = 'session-footer';
+  footer.innerHTML =
+    '<div class="footer-status" style="color:' + colors[status] + '">' +
+      icons[status] + ' ' + labels[status] +
+    '</div>' +
+    '<div class="footer-metrics">' +
+      '<span>' + tokensUsed.toLocaleString() + ' tokens</span>' +
+      '<span>' + formatDuration(durationMs) + '</span>' +
+      '<span>' + iterations + ' iterations</span>' +
+    '</div>' + filesHtml;
+  container.appendChild(footer);
+  scrollToBottom();
+}
+
+/* ── Streaming ── */
+
+function appendToken(token) {
+  hideEmpty();
+  if (!activeStreamEl) {
+    activeStreamEl = document.createElement('div');
+    activeStreamEl.className = 'message';
+    const inner = document.createElement('div');
+    inner.className = 'agent-msg stream-cursor';
+    activeStreamEl._inner = inner;
+    activeStreamEl.appendChild(inner);
+    container.appendChild(activeStreamEl);
+  }
+  // Convert markdown-like patterns
+  const html = esc(token).replace(/\n/g, '<br>');
+  activeStreamEl._inner.insertAdjacentHTML('beforeend', html);
+  scrollToBottom();
+}
+
+function endStream() {
+  if (activeStreamEl && activeStreamEl._inner) {
+    activeStreamEl._inner.classList.remove('stream-cursor');
+  }
+  activeStreamEl = null;
+}
+
+/* ── Tool Calls ── */
+
+function appendToolCall(toolName, args, statusStr) {
+  endStream(); hideEmpty();
+  const type = toolType(toolName);
+  const badge = badgeFor(type);
+  const target = extractTarget(toolName, args);
+  const statusIcon = statusStr === 'SUCCESS' ? '<span class="tool-status-icon ok">✓</span>'
+    : statusStr === 'FAILED' ? '<span class="tool-status-icon fail">✗</span>'
+    : '<span class="tool-status-icon running">◌</span>';
+
+  const argsHtml = args && args.length > 2
+    ? '<div class="tool-detail">' + esc(args.substring(0, 300)) + '</div>' : '';
+
+  const card = document.createElement('div');
+  card.className = 'message';
+  card.innerHTML =
+    '<div class="tool-card type-' + type + '" id="tool-' + Date.now() + '">' +
+      '<div class="tool-header">' +
+        badge + '<span class="tool-target">' + esc(target) + '</span>' +
+        statusIcon +
+      '</div>' + argsHtml +
+    '</div>';
+  container.appendChild(card);
+  scrollToBottom();
+}
+
+function updateToolResult(result, durationMs) {
+  // Append result to the last tool card
+  const cards = container.querySelectorAll('.tool-card');
+  const last = cards[cards.length - 1];
+  if (!last) return;
+  if (result) {
+    const res = document.createElement('div');
+    res.className = 'tool-result';
+    res.textContent = result.substring(0, 300);
+    last.appendChild(res);
+  }
+  if (durationMs > 0) {
+    const header = last.querySelector('.tool-header');
+    if (header) {
+      const timing = document.createElement('span');
+      timing.className = 'tool-timing';
+      timing.textContent = formatDuration(durationMs);
+      header.appendChild(timing);
+    }
+  }
+  scrollToBottom();
+}
+
+/* ── Diffs ── */
+
+function appendDiff(filePath, oldLines, newLines, accepted) {
+  endStream(); hideEmpty();
+  const fileName = filePath.split('/').pop();
+  let statusBadge = '';
+  if (accepted === true) statusBadge = '<span class="badge badge-ok">APPLIED</span>';
+  else if (accepted === false) statusBadge = '<span class="badge badge-fail">REJECTED</span>';
+
+  let diffHtml = '';
+  oldLines.forEach(l => { diffHtml += '<div class="diff-line diff-rem">- ' + esc(l) + '</div>'; });
+  newLines.forEach(l => { diffHtml += '<div class="diff-line diff-add">+ ' + esc(l) + '</div>'; });
+
+  const card = document.createElement('div');
+  card.className = 'message';
+  card.innerHTML =
+    '<div class="diff-card">' +
+      '<div class="diff-card-header">' +
+        '<span class="badge badge-edit">EDIT</span>' +
+        '<span class="diff-file">' + esc(fileName) + '</span>' +
+        statusBadge +
+      '</div>' + diffHtml +
+    '</div>';
+  container.appendChild(card);
+  scrollToBottom();
+}
+
+/* ── Status / Error / Thinking ── */
+
+function appendStatus(message, type) {
+  endStream(); hideEmpty();
+  const icons = { INFO: 'ℹ', SUCCESS: '✓', WARNING: '⚠', ERROR: '✗' };
+  const el = document.createElement('div');
+  el.className = 'message';
+  el.innerHTML = '<div class="status status-' + type.toLowerCase() + '">' +
+    '<span>' + (icons[type] || '') + '</span>' + esc(message) + '</div>';
+  container.appendChild(el);
+  scrollToBottom();
+}
+
+function appendThinking(text) {
+  endStream(); hideEmpty();
+  const el = document.createElement('div');
+  el.className = 'message';
+  el.innerHTML = '<div class="thinking">' + esc(text) + '</div>';
+  container.appendChild(el);
+  scrollToBottom();
+}
+
+function clearChat() {
+  container.innerHTML = '';
+  if (emptyState) { container.appendChild(emptyState); emptyState.style.display = ''; }
+  activeStreamEl = null;
+}
+
+/* ── Theme ── */
+
+function applyTheme(vars) {
+  const root = document.documentElement;
+  for (const [key, value] of Object.entries(vars)) {
+    root.style.setProperty('--' + key, value);
+  }
+}
+
+/* ── Helpers ── */
+
+function toolType(name) {
+  if (/read|find|structure|hierarchy|references|diagnostics|spring|jira_get|bamboo|sonar/.test(name)) return 'read';
+  if (/edit/.test(name)) return 'edit';
+  if (/write|create|bitbucket/.test(name)) return 'write';
+  if (/command|run/.test(name)) return 'cmd';
+  if (/search/.test(name)) return 'search';
+  return 'read';
+}
+
+function badgeFor(type) {
+  const labels = { read: 'READ', edit: 'EDIT', write: 'WRITE', cmd: 'CMD', search: 'SEARCH' };
+  return '<span class="badge badge-' + type + '">' + (labels[type] || 'TOOL') + '</span>';
+}
+
+function extractTarget(toolName, args) {
+  const pathMatch = args && args.match(/"path"\s*:\s*"([^"]+)"/);
+  if (pathMatch) return pathMatch[1].split('/').pop();
+  const queryMatch = args && args.match(/"query"\s*:\s*"([^"]+)"/);
+  if (queryMatch) return '"' + queryMatch[1].substring(0, 40) + '"';
+  return toolName.replace(/_/g, ' ');
+}
+
+function formatDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
+}
+</script>
+</body>
+</html>
