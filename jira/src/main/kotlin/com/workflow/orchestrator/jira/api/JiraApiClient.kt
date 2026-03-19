@@ -102,12 +102,34 @@ class JiraApiClient(
             .map { it.transitions }
     }
 
-    suspend fun postWorklog(issueKey: String, timeSpent: String): ApiResult<Unit> {
-        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/worklog (timeSpent=$timeSpent)")
+    suspend fun postWorklog(issueKey: String, timeSpent: String, comment: String? = null): ApiResult<Unit> {
+        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/worklog (timeSpent=$timeSpent, comment=${comment != null})")
         val body = buildJsonObject {
             put("timeSpent", timeSpent)
+            if (comment != null) put("comment", comment)
         }.toString()
         return post("/rest/api/2/issue/$issueKey/worklog", body)
+    }
+
+    /**
+     * Adds a standalone comment to a Jira issue.
+     * POST /rest/api/2/issue/{key}/comment
+     */
+    suspend fun addComment(issueKey: String, body: String): ApiResult<Unit> {
+        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/comment")
+        val payload = buildJsonObject {
+            put("body", body)
+        }.toString()
+        return post("/rest/api/2/issue/$issueKey/comment", payload)
+    }
+
+    /**
+     * Fetches the current user to validate the connection.
+     * GET /rest/api/2/myself
+     */
+    suspend fun getCurrentUser(): ApiResult<JsonObject> {
+        log.info("[Jira:API] GET /rest/api/2/myself")
+        return get("/rest/api/2/myself")
     }
 
     suspend fun transitionIssue(

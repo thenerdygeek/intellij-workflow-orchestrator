@@ -376,6 +376,14 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }.trim()
     }
 
+    /**
+     * Provides the underlying [BambooApiClient] for modules that need direct API access
+     * (e.g., automation services). Returns null if Bamboo is not configured.
+     *
+     * Prefer using the service-level methods (getLatestBuild, triggerBuild, etc.) when possible.
+     */
+    fun getApiClient(): BambooApiClient? = client
+
     companion object {
         @JvmStatic
         fun getInstance(project: Project): BambooServiceImpl =

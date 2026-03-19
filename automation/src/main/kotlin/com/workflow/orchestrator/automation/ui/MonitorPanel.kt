@@ -10,10 +10,9 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
+import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
 import com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
 import kotlinx.coroutines.cancel
@@ -316,12 +315,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     private fun createApiClient(): BambooApiClient? {
-        val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
-        if (url.isBlank()) return null
-        return BambooApiClient(
-            baseUrl = url,
-            tokenProvider = { CredentialStore().getToken(ServiceType.BAMBOO) }
-        )
+        return BambooServiceImpl.getInstance(project).getApiClient()
     }
 
     private class RunListCellRenderer : DefaultListCellRenderer() {

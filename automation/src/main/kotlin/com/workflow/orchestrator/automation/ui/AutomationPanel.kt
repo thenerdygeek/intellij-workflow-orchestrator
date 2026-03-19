@@ -12,6 +12,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
+import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
@@ -173,12 +174,8 @@ class AutomationPanel(
             currentTags = updatedTags
 
             // Load plan variables
-            val varsResult = tagBuilderService.run {
-                com.workflow.orchestrator.bamboo.api.BambooApiClient(
-                    baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-                    tokenProvider = { com.workflow.orchestrator.core.auth.CredentialStore().getToken(com.workflow.orchestrator.core.model.ServiceType.BAMBOO) }
-                ).getVariables(planKey)
-            }
+            val bambooClient = BambooServiceImpl.getInstance(project).getApiClient()
+            val varsResult = bambooClient?.getVariables(planKey)
 
             invokeLater {
                 // Update tag table
@@ -209,10 +206,14 @@ class AutomationPanel(
         statusLabel.text = "Triggering..."
 
         scope.launch {
-            val apiClient = com.workflow.orchestrator.bamboo.api.BambooApiClient(
-                baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-                tokenProvider = { com.workflow.orchestrator.core.auth.CredentialStore().getToken(com.workflow.orchestrator.core.model.ServiceType.BAMBOO) }
-            )
+            val apiClient = BambooServiceImpl.getInstance(project).getApiClient()
+            if (apiClient == null) {
+                invokeLater {
+                    statusLabel.text = "Bamboo not configured"
+                    statusLabel.foreground = JBColor.RED
+                }
+                return@launch
+            }
 
             val result = apiClient.triggerBuild(currentSuitePlanKey, variables)
             invokeLater {

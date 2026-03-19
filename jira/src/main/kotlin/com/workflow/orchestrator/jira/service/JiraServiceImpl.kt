@@ -170,7 +170,6 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     }
 
     override suspend fun addComment(key: String, body: String): ToolResult<Unit> {
-        @Suppress("UNUSED_VARIABLE")
         val api = client ?: return ToolResult(
             data = Unit,
             summary = "Jira not configured. Cannot add comment to $key.",
@@ -178,18 +177,29 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        // TODO: JiraApiClient needs a dedicated addComment(key, body) method
-        //   that POSTs to /rest/api/2/issue/{key}/comment.
-        //   Currently the only comment support is via transitionIssue() which embeds
-        //   a comment in a transition payload. For standalone comments, the post()
-        //   method in JiraApiClient needs to be exposed or a new method added.
-        //   For now, return an error so callers know this is not yet functional.
-        return ToolResult(
-            data = Unit,
-            summary = "Adding standalone comments is not yet supported. Use transition with comment instead.",
-            isError = true,
-            hint = "Use transition() with a comment parameter via the JiraApiClient directly."
-        )
+        return when (val result = api.addComment(key, body)) {
+            is ApiResult.Success -> {
+                ToolResult.success(
+                    data = Unit,
+                    summary = "Comment added to $key."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to add comment to $key: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error adding comment to $key: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                            "Check your Jira token in Settings."
+                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                            "Verify the ticket key is correct."
+                        else -> "Check Jira connection in Settings."
+                    }
+                )
+            }
+        }
     }
 
     override suspend fun logWork(key: String, timeSpent: String, comment: String?): ToolResult<Unit> {
@@ -200,7 +210,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.postWorklog(key, timeSpent)) {
+        return when (val result = api.postWorklog(key, timeSpent, comment)) {
             is ApiResult.Success -> {
                 ToolResult.success(
                     data = Unit,
@@ -262,26 +272,29 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set Jira URL and token in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        // Test by fetching current user (GET /rest/api/2/myself)
-        return when (val result = api.getIssue("TEST-0")) {
+        return when (val result = api.getCurrentUser()) {
             is ApiResult.Success -> {
                 ToolResult.success(Unit, "Jira connection successful.")
             }
             is ApiResult.Error -> {
-                // A 404 for a non-existent ticket still means the connection works
-                if (result.type == com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND) {
-                    ToolResult.success(Unit, "Jira connection successful.")
-                } else {
-                    ToolResult(
-                        data = Unit,
-                        summary = "Jira connection failed: ${result.message}",
-                        isError = true,
-                        hint = "Check URL and token in Settings."
-                    )
-                }
+                ToolResult(
+                    data = Unit,
+                    summary = "Jira connection failed: ${result.message}",
+                    isError = true,
+                    hint = "Check URL and token in Settings."
+                )
             }
         }
     }
+
+    /**
+     * Provides the underlying [JiraApiClient] for modules that need direct API access
+     * (e.g., SprintService, BranchingService). Returns null if Jira is not configured.
+     *
+     * Prefer using the service-level methods (getTicket, addComment, etc.) when possible.
+     * This avoids duplicate client construction and ensures consistent auth handling.
+     */
+    fun getApiClient(): JiraApiClient? = client
 
     companion object {
         @JvmStatic
