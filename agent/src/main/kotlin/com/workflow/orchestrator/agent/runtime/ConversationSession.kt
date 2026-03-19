@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.DynamicToolSelector
 import java.util.UUID
 
 /**

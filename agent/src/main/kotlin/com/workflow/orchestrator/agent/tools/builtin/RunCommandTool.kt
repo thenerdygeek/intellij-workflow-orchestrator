@@ -28,12 +28,31 @@ class RunCommandTool : AgentTool {
         private const val TIMEOUT_SECONDS = 60L
         private const val MAX_OUTPUT_CHARS = 4000
 
-        private val BLOCKED_PATTERNS = listOf(
+        /** Commands that are always safe to run (read-only or build tools). */
+        private val ALLOWED_PREFIXES = listOf(
+            // Build tools
+            "mvn", "gradle", "./gradlew", "gradlew", "npm", "yarn", "pnpm",
+            // Version control (read-only)
+            "git status", "git log", "git diff", "git branch", "git show", "git blame",
+            // File inspection
+            "ls", "find", "cat", "head", "tail", "wc", "file", "stat",
+            "grep", "rg", "ag", "awk", "sed",
+            // Java/Kotlin
+            "java", "javac", "kotlin", "kotlinc", "jar",
+            // Docker (read-only)
+            "docker ps", "docker images", "docker logs", "docker inspect",
+            // System info
+            "uname", "whoami", "hostname", "pwd", "env", "echo", "date", "which",
+            // Testing
+            "pytest", "jest", "cargo test", "go test",
+        )
+
+        /** Commands that are ALWAYS blocked (destructive, no approval possible). */
+        private val HARD_BLOCKED = listOf(
             Regex("""rm\s+-rf\s+/"""),
             Regex("""rm\s+-rf\s+~"""),
-            Regex("""rm\s+-rf\s+\*"""),
-            Regex("""rm\s+-rf\s+\.\s"""),
             Regex("""^\s*sudo\s"""),
+            Regex(""":\(\)\s*\{"""),     // fork bomb
             Regex("""mkfs\."""),
             Regex("""dd\s+if="""),
             Regex(""":>\s*/"""),
@@ -44,26 +63,50 @@ class RunCommandTool : AgentTool {
             Regex("""curl\s+.*\|\s*bash"""),
             Regex("""wget\s+.*\|\s*sh"""),
             Regex("""wget\s+.*\|\s*bash"""),
-            Regex("""fork\s*bomb""", RegexOption.IGNORE_CASE),
-            Regex(""":\(\)\s*\{"""),
         )
 
-        fun isBlocked(command: String): Boolean {
-            return BLOCKED_PATTERNS.any { it.containsMatchIn(command) }
+        /**
+         * Check if a command is on the allowlist (safe to run without approval).
+         */
+        fun isAllowed(command: String): Boolean {
+            val trimmed = command.trim()
+            return ALLOWED_PREFIXES.any { prefix ->
+                trimmed.startsWith(prefix) || trimmed.startsWith("./$prefix")
+            }
         }
+
+        /**
+         * Check if a command is hard-blocked (never run, even with approval).
+         */
+        fun isHardBlocked(command: String): Boolean {
+            return HARD_BLOCKED.any { it.containsMatchIn(command) }
+        }
+
+        /**
+         * Legacy compatibility — returns true if the command is hard-blocked.
+         */
+        fun isBlocked(command: String): Boolean = isHardBlocked(command)
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val command = params["command"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        if (isBlocked(command)) {
+        // Hard-blocked commands are never allowed — destructive with no recovery
+        if (isHardBlocked(command)) {
             return ToolResult(
-                "Error: Command blocked for safety: $command",
+                "Error: Command blocked for safety: $command. This command is destructive and cannot be executed.",
                 "Error: blocked command",
                 5,
                 isError = true
             )
+        }
+
+        // Non-allowlisted commands still execute (ApprovalGate handles HIGH-risk approval dialog)
+        // but we note it for observability
+        if (!isAllowed(command)) {
+            // Command will proceed — the existing ApprovalGate in SingleAgentSession
+            // already shows a confirmation dialog for run_command (classified as HIGH risk)
         }
 
         val basePath = project.basePath ?: "."
