@@ -42,6 +42,7 @@ class AgentController(
     private var session: ConversationSession? = null
     private val pendingUserMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private var sessionAutoApprove = false
+    private var currentPlanFile: com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile? = null
 
     init {
         // Tie coroutine scope to project lifecycle — cancel when project closes
@@ -186,9 +187,25 @@ class AgentController(
         currentSession.planManager.onPlanCreated = { plan ->
             val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
             dashboard.renderPlan(json)
+            // Open full-screen plan in editor tab (don't steal focus from chat)
+            ApplicationManager.getApplication().invokeLater {
+                val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
+                FileEditorManager.getInstance(project).openFile(virtualFile, false)
+                currentPlanFile = virtualFile
+            }
         }
         currentSession.planManager.onStepUpdated = { stepId, status ->
             dashboard.updatePlanStep(stepId, status)
+            // Update editor tab
+            ApplicationManager.getApplication().invokeLater {
+                currentPlanFile?.let { file ->
+                    currentSession.planManager.currentPlan?.let { file.currentPlan = it }
+                    FileEditorManager.getInstance(project)
+                        .getEditors(file)
+                        .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
+                        .forEach { editor -> editor.updatePlanStep(stepId, status) }
+                }
+            }
         }
 
         // Set session directory for plan persistence
@@ -272,6 +289,7 @@ class AgentController(
             } catch (_: Exception) { /* best effort */ }
         }
         session = null
+        currentPlanFile = null
         dashboard.reset()
         dashboard.focusInput()
     }
