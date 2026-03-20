@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.context
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
+import com.workflow.orchestrator.agent.brain.LlmBrain
+import com.workflow.orchestrator.core.model.ApiResult
 
 /**
  * Manages the conversation history for a worker session.
@@ -12,15 +14,14 @@ import com.workflow.orchestrator.agent.api.dto.ChatMessage
  * Anchored summaries: Only newly dropped messages are summarized.
  * Already-summarized spans are preserved as-is.
  *
- * The [brain] parameter is deprecated and unused — LLM-powered summarization was
- * removed because brain was never passed in production (always null), and the
- * implementation used runBlocking which is an anti-pattern inside coroutine contexts.
- * The parameter is retained for backward compatibility with tests.
+ * When [brain] is provided, [compressWithLlm] can use LLM-powered summarization
+ * for tool results (which contain high-information content like file paths, line
+ * numbers, and code changes). The synchronous [compress] method always uses the
+ * truncation summarizer.
  */
 class ContextManager(
     private val maxInputTokens: Int = 150_000,
-    @Deprecated("LLM summarization removed — brain was never passed in production. Kept for backward compat.")
-    private val brain: Any? = null,
+    private val brain: LlmBrain? = null,
     private val tMaxRatio: Double = 0.70,
     private val tRetainedRatio: Double = 0.40,
     private val toolResultMaxTokens: Int = 500,
@@ -147,12 +148,86 @@ class ContextManager(
     }
 
     /**
-     * Summarize messages using the truncation summarizer.
+     * LLM-powered compression: uses the LLM to summarize tool results (which contain
+     * high-information content like file paths, line numbers, code changes, and errors)
+     * while falling back to the truncation summarizer for non-tool messages or on error.
      *
-     * Note: LLM-powered summarization via brain was removed because brain
-     * is never passed to ContextManager in production (always null).
-     * The default truncation summarizer is sufficient and avoids runBlocking.
+     * Unlike [compress] (which is synchronous and called automatically from [addMessage]),
+     * this method is a suspend function that must be called explicitly by the session loop.
      */
+    suspend fun compressWithLlm(llmBrain: LlmBrain) {
+        if (messages.size <= 2) return
+
+        var tokensToRemove = totalTokens - tRetained
+        val messagesToDrop = mutableListOf<ChatMessage>()
+        val indicesToRemove = mutableListOf<Int>()
+
+        for (i in messages.indices) {
+            if (tokensToRemove <= 0) break
+            val msg = messages[i]
+            if (msg.role == "system") continue
+
+            val msgTokens = TokenEstimator.estimate(listOf(msg))
+            messagesToDrop.add(msg)
+            indicesToRemove.add(i)
+            tokensToRemove -= msgTokens
+        }
+
+        if (messagesToDrop.isEmpty()) return
+
+        val hasToolResults = messagesToDrop.any { it.role == "tool" }
+
+        val summary = if (hasToolResults) {
+            // Tool results contain high-information content — use LLM to preserve key details
+            try {
+                val promptContent = messagesToDrop.mapNotNull { it.content }.joinToString("\n---\n")
+                val summarizationPrompt = listOf(
+                    ChatMessage(
+                        role = "system",
+                        content = "Summarize the following conversation messages concisely. " +
+                            "Preserve all file paths, line numbers, code changes, errors, and key decisions. " +
+                            "Output only the summary, no preamble."
+                    ),
+                    ChatMessage(
+                        role = "user",
+                        content = promptContent
+                    )
+                )
+
+                when (val result = llmBrain.chat(summarizationPrompt, null, 500, null)) {
+                    is ApiResult.Success -> {
+                        val llmSummary = result.data.choices.firstOrNull()?.message?.content
+                        if (!llmSummary.isNullOrBlank()) {
+                            "Previous context summary (LLM): $llmSummary"
+                        } else {
+                            // Empty LLM response — fall back
+                            summarizer(messagesToDrop)
+                        }
+                    }
+                    is ApiResult.Error -> {
+                        // LLM failed — fall back to truncation (never throw)
+                        summarizer(messagesToDrop)
+                    }
+                }
+            } catch (_: Exception) {
+                // Catch-all safety net — fall back to truncation
+                summarizer(messagesToDrop)
+            }
+        } else {
+            // No tool results — truncation is sufficient and cheaper
+            summarizer(messagesToDrop)
+        }
+
+        anchoredSummaries.add(summary)
+
+        // Remove compressed messages (reverse order to preserve indices)
+        indicesToRemove.reversed().forEach { messages.removeAt(it) }
+
+        // Recalculate total tokens
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
+    /** Summarize messages using the truncation summarizer. */
     private fun summarizeMessages(messagesToSummarize: List<ChatMessage>): String {
         return summarizer(messagesToSummarize)
     }
