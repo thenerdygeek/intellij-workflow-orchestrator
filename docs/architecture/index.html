@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflow Orchestrator &mdash; Architecture</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e; color: #d4d4d4;
+            max-width: 1200px; margin: 0 auto; padding: 20px 30px;
+            line-height: 1.6;
+        }
+        h1 { color: #569cd6; font-size: 28px; margin-bottom: 4px; }
+        h2 { color: #4ec9b0; border-bottom: 1px solid #333; padding-bottom: 8px; margin-top: 32px; }
+        h3 { color: #9cdcfe; margin-top: 24px; }
+        .subtitle { color: #808080; font-size: 14px; margin-bottom: 24px; }
+        .mermaid {
+            background: #2d2d2d; padding: 20px; border-radius: 8px; margin: 16px 0;
+            overflow-x: auto;
+        }
+        details {
+            margin: 12px 0;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #252525;
+        }
+        details[open] { border-color: #444; }
+        summary {
+            cursor: pointer; font-size: 18px; font-weight: bold;
+            color: #dcdcaa; padding: 12px 16px;
+            user-select: none;
+        }
+        summary:hover { background: #2a2a2a; border-radius: 6px; }
+        details > .content { padding: 0 16px 16px; }
+        a { color: #569cd6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        code {
+            background: #333; padding: 2px 6px; border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+        }
+        pre {
+            background: #2d2d2d; padding: 16px; border-radius: 6px;
+            overflow-x: auto; font-size: 13px;
+        }
+        pre code { background: none; padding: 0; }
+        table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+        th, td { border: 1px solid #444; padding: 8px 12px; text-align: left; }
+        th { background: #333; color: #9cdcfe; font-weight: 600; }
+        tr:hover { background: #2a2a2a; }
+
+        /* TOC */
+        .toc {
+            background: #252525; border: 1px solid #333; border-radius: 8px;
+            padding: 16px 24px; margin: 20px 0;
+        }
+        .toc h2 { border: none; margin-top: 0; padding-bottom: 4px; }
+        .toc ol { margin: 0; padding-left: 20px; }
+        .toc li { margin: 6px 0; }
+        .toc a { font-size: 15px; }
+
+        /* Legend */
+        .legend {
+            display: flex; flex-wrap: wrap; gap: 16px;
+            background: #252525; border: 1px solid #333; border-radius: 8px;
+            padding: 12px 20px; margin: 16px 0;
+        }
+        .legend-item {
+            display: flex; align-items: center; gap: 8px; font-size: 13px;
+        }
+        .legend-swatch {
+            width: 20px; height: 14px; border-radius: 3px; border: 1px solid #555;
+        }
+
+        /* Section numbering */
+        .section-num {
+            color: #569cd6; font-size: 14px; font-weight: normal;
+            margin-right: 6px;
+        }
+
+        p { margin: 8px 0; }
+    </style>
+</head>
+<body>
+
+<h1>Workflow Orchestrator &mdash; Architecture</h1>
+<p class="subtitle">IntelliJ IDEA Plugin | Kotlin 2.1.10 | IntelliJ Platform 2025.1+ | 9 Gradle Submodules</p>
+
+<!-- ===== TABLE OF CONTENTS ===== -->
+<div class="toc">
+    <h2>Table of Contents</h2>
+    <ol>
+        <li><a href="#module-structure">Module Structure &amp; Dependencies</a></li>
+        <li><a href="#cross-module">Cross-Module Communication</a></li>
+        <li><a href="#data-flow-daily">Data Flow: Daily Developer Loop</a></li>
+        <li><a href="#data-flow-cody">Data Flow: Cody AI Augmentation</a></li>
+        <li><a href="#data-flow-health">Data Flow: Health Check &rarr; Commit</a></li>
+        <li><a href="#data-flow-handover">Data Flow: Automation &rarr; PR &rarr; Handover</a></li>
+        <li><a href="#data-flow-branch">Data Flow: Branch Change &rarr; Ticket Sync</a></li>
+        <li><a href="#data-flow-cross-tab">Data Flow: Cross-Tab Branch Awareness</a></li>
+        <li><a href="#service-layer">Service Layer &amp; ToolResult Pattern</a></li>
+        <li><a href="#service-interfaces">Service Interfaces</a></li>
+        <li><a href="#event-bus">Event Bus: All 21 Event Types</a></li>
+        <li><a href="#event-matrix">Event Subscription Matrix</a></li>
+        <li><a href="#threading">Threading Model</a></li>
+        <li><a href="#external-apis">External API Integration</a></li>
+        <li><a href="#connection-pool">Connection Pooling</a></li>
+        <li><a href="#ui-toolwindow">UI: Tool Window Tabs</a></li>
+        <li><a href="#ui-panels">UI: Panel Hierarchies</a></li>
+        <li><a href="#ui-settings">UI: Settings Pages</a></li>
+        <li><a href="#ui-editor">UI: Editor Integration Points</a></li>
+    </ol>
+</div>
+
+<!-- ===== LEGEND ===== -->
+<div class="legend">
+    <strong>Color Legend:</strong>
+    <div class="legend-item"><div class="legend-swatch" style="background:#264f78"></div> Core / Infrastructure</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#2d4a22"></div> UI / Feature Modules</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#c47e1a"></div> Events / Event Bus</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#6b2027"></div> External Services</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#4e3a24"></div> Status Bar / Widgets</div>
+</div>
+
+<!-- ===== 1. MODULE STRUCTURE ===== -->
+<details open id="module-structure">
+    <summary><span class="section-num">1.</span> Module Structure &amp; Dependencies</summary>
+    <div class="content">
+        <p>The plugin is a modular monolith: 9 Gradle submodules with a strict dependency rule. Feature modules depend <strong>only on <code>:core</code></strong>, never on each other. The one exception is <code>:automation</code> &rarr; <code>:bamboo</code> (for BambooApiClient).</p>
+        <div class="mermaid">
+graph TD
+    root["&lt;b&gt;:root&lt;/b&gt;&lt;br/&gt;Plugin Shell"]
+    core["&lt;b&gt;:core&lt;/b&gt;&lt;br/&gt;Shared Infrastructure&lt;br/&gt;&lt;i&gt;auth, HTTP, events, settings&lt;/i&gt;"]
+    jira["&lt;b&gt;:jira&lt;/b&gt;&lt;br/&gt;Sprint &amp; Tickets"]
+    bamboo["&lt;b&gt;:bamboo&lt;/b&gt;&lt;br/&gt;CI Builds"]
+    sonar["&lt;b&gt;:sonar&lt;/b&gt;&lt;br/&gt;Code Quality"]
+    cody["&lt;b&gt;:cody&lt;/b&gt;&lt;br/&gt;AI Assistant"]
+    pr["&lt;b&gt;:pullrequest&lt;/b&gt;&lt;br/&gt;Pull Requests"]
+    auto["&lt;b&gt;:automation&lt;/b&gt;&lt;br/&gt;Test Automation"]
+    handover["&lt;b&gt;:handover&lt;/b&gt;&lt;br/&gt;Task Completion"]
+    git["&lt;b&gt;:git-integration&lt;/b&gt;&lt;br/&gt;Git Operations"]
+
+    root --> core
+    root --> jira
+    root --> bamboo
+    root --> sonar
+    root --> cody
+    root --> pr
+    root --> auto
+    root --> handover
+    root --> git
+
+    jira --> core
+    bamboo --> core
+    sonar --> core
+    cody --> core
+    pr --> core
+    auto --> core
+    auto -.->|"BambooApiClient"| bamboo
+    handover --> core
+    git --> core
+
+    style core fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style jira fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style bamboo fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style sonar fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style cody fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style pr fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style auto fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style handover fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style git fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style root fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+        </div>
+
+        <table>
+            <tr><th>Module</th><th>Responsibility</th></tr>
+            <tr><td><code>:core</code></td><td>Authentication, HTTP client factory, event bus, plugin settings, tool window shell, onboarding, notifications, service interfaces</td></tr>
+            <tr><td><code>:jira</code></td><td>Sprint dashboard (scrum + kanban), Start Work flow, branch creation, commit prefix, time tracking</td></tr>
+            <tr><td><code>:bamboo</code></td><td>Build dashboard with stage list and log viewer, background polling, build status bar widget, CVE remediation</td></tr>
+            <tr><td><code>:sonar</code></td><td>Quality tab (overview, issues, coverage), gutter markers, ExternalAnnotator, editor banners, coverage badges</td></tr>
+            <tr><td><code>:cody</code></td><td>Standalone Cody CLI agent (JSON-RPC over stdio), fix/generate actions, commit message and PR description generation</td></tr>
+            <tr><td><code>:pullrequest</code></td><td>PR dashboard with list and detail views, PR creation via Bitbucket API, PR status tracking</td></tr>
+            <tr><td><code>:automation</code></td><td>Docker tag staging, Nexus validation, drift detector, conflict detector, smart queue, config persistence</td></tr>
+            <tr><td><code>:handover</code></td><td>Jira closure comment, Cody pre-review, copyright fix panel, time log, QA clipboard</td></tr>
+            <tr><td><code>:git-integration</code></td><td>Git branch change listeners, diff provider, branch-to-ticket resolution</td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 2. CROSS-MODULE COMMUNICATION ===== -->
+<details id="cross-module">
+    <summary><span class="section-num">2.</span> Cross-Module Communication</summary>
+    <div class="content">
+        <p>All cross-module communication uses the <code>EventBus</code> &mdash; a Kotlin <code>MutableSharedFlow</code> with 64-element buffer. Modules emit <code>WorkflowEvent</code> subtypes; other modules subscribe and react.</p>
+        <div class="mermaid">
+flowchart LR
+    subgraph Emitters
+        J[":jira"]
+        B[":bamboo"]
+        S[":sonar"]
+        C[":cody"]
+        P[":pullrequest"]
+        A[":automation"]
+        H[":handover"]
+        G[":git-integration"]
+    end
+
+    EB["EventBus&lt;br/&gt;SharedFlow"]
+
+    subgraph Consumers
+        J2[":jira"]
+        B2[":bamboo"]
+        S2[":sonar"]
+        P2[":pullrequest"]
+        A2[":automation"]
+        H2[":handover"]
+        UI["Status Bar"]
+    end
+
+    J -->|TicketChanged| EB
+    B -->|BuildFinished| EB
+    S -->|QualityGateResult| EB
+    C -->|CodyEditReady| EB
+    P -->|PullRequestCreated| EB
+    A -->|AutomationTriggered| EB
+    H -->|JiraCommentPosted| EB
+    G -->|BranchChanged| EB
+
+    EB --> J2
+    EB --> B2
+    EB --> S2
+    EB --> P2
+    EB --> A2
+    EB --> H2
+    EB --> UI
+
+    style EB fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
+        </div>
+    </div>
+</details>
+
+<!-- ===== 3. DAILY DEVELOPER LOOP ===== -->
+<details id="data-flow-daily">
+    <summary><span class="section-num">3.</span> Data Flow: Daily Developer Loop</summary>
+    <div class="content">
+        <p>The core workflow: pick a ticket, write code, push, wait for CI build, check quality gate.</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant Dev as Developer
+    participant Sprint as Sprint Tab
+    participant Jira as Jira Server
+    participant Git as Git (Local)
+    participant BB as Bitbucket
+    participant Build as Build Tab
+    participant Bamboo as Bamboo Server
+    participant Quality as Quality Tab
+    participant Sonar as SonarQube
+
+    Dev->>Sprint: Select ticket PROJ-123
+    Sprint->>Jira: GET /rest/agile/.../issue
+    Jira-->>Sprint: Ticket details
+    Dev->>Sprint: Click "Start Work"
+    Sprint->>BB: Create branch feature/PROJ-123
+    Sprint->>Jira: POST /transitions (In Progress)
+    Sprint->>Git: GitBrancher.checkoutNewBranch()
+
+    Note over Dev: Developer writes code...
+
+    Dev->>Git: Commit with prefix "PROJ-123: ..."
+    Dev->>Git: Push to Bitbucket
+
+    Note over Bamboo: CI build triggered
+
+    Bamboo-->>Build: Polling detects build
+    Build->>Build: emit(BuildFinished)
+    Bamboo->>Sonar: Analysis runs
+    Sonar-->>Quality: Data available
+    Quality->>Quality: emit(QualityGateResult)
+        </div>
+    </div>
+</details>
+
+<!-- ===== 4. CODY AI AUGMENTATION ===== -->
+<details id="data-flow-cody">
+    <summary><span class="section-num">4.</span> Data Flow: Cody AI Augmentation</summary>
+    <div class="content">
+        <p>The Cody CLI agent communicates via JSON-RPC over stdio. It powers three AI features: code fixes, commit messages, and PR descriptions.</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant Dev as Developer
+    participant IDE as IntelliJ Editor
+    participant Cody as Cody CLI Agent
+    participant SG as Sourcegraph
+
+    Note over IDE,Cody: Agent startup
+    IDE->>Cody: initialize(ClientInfo)
+    Cody->>SG: Authenticate
+    IDE->>Cody: initialized(null)
+
+    rect rgb(40, 60, 40)
+    Note over Dev,SG: Fix with Cody
+    Dev->>IDE: Click gutter action
+    IDE->>Cody: editCommands/code
+    Cody->>SG: LLM request
+    SG-->>Cody: Generated fix
+    Cody->>IDE: workspace/edit
+    Dev->>IDE: Accept/reject
+    IDE->>Cody: editTask/accept
+    end
+
+    rect rgb(40, 40, 60)
+    Note over Dev,SG: Commit message
+    Dev->>IDE: Open commit dialog
+    IDE->>Cody: chat/submitMessage(diff)
+    Cody->>SG: LLM request
+    SG-->>Cody: Message
+    Cody-->>IDE: Pre-fill commit
+    end
+        </div>
+    </div>
+</details>
+
+<!-- ===== 5. HEALTH CHECK ===== -->
+<details id="data-flow-health">
+    <summary><span class="section-num">5.</span> Data Flow: Health Check &rarr; Commit</summary>
+    <div class="content">
+        <p>Pre-commit gates: Maven compile, tests, copyright headers, SonarQube gate, and CVE scan all run in parallel before allowing a commit.</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant Dev as Developer
+    participant VCS as VcsCheckinHandler
+    participant HC as HealthCheckService
+    participant Maven as Maven Runner
+    participant Copy as Copyright Enforcer
+    participant Sonar as SonarQube
+    participant CVE as CVE Checker
+
+    Dev->>VCS: Click "Commit"
+    VCS->>HC: runHealthChecks()
+    HC->>HC: emit(HealthCheckStarted)
+
+    par Parallel checks
+        HC->>Maven: Incremental compile
+        Maven-->>HC: Result
+    and
+        HC->>Maven: Run tests
+        Maven-->>HC: Result
+    and
+        HC->>Copy: Check headers
+        Copy-->>HC: Result
+    and
+        HC->>Sonar: Quality gate
+        Sonar-->>HC: Result
+    and
+        HC->>CVE: Scan pom.xml
+        CVE-->>HC: Result
+    end
+
+    alt All pass
+        HC->>HC: emit(HealthCheckFinished, passed=true)
+        HC-->>VCS: Allow commit
+    else Any fails
+        HC->>HC: emit(HealthCheckFinished, passed=false)
+        HC-->>VCS: Block commit
+    end
+        </div>
+    </div>
+</details>
+
+<!-- ===== 6. AUTOMATION HANDOVER ===== -->
+<details id="data-flow-handover">
+    <summary><span class="section-num">6.</span> Data Flow: Automation &rarr; PR &rarr; Handover</summary>
+    <div class="content">
+        <p>The end-of-task flow: create PR, run automation suites with docker tags, close Jira ticket, hand over to QA.</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant Dev as Developer
+    participant PR as PR Tab
+    participant BB as Bitbucket
+    participant Auto as Automation Tab
+    participant Bamboo as Bamboo
+    participant Nexus as Nexus Registry
+    participant HO as Handover Tab
+    participant Jira as Jira Server
+
+    Dev->>PR: Create PR
+    PR->>BB: POST /pull-requests
+    BB-->>PR: PR created
+    PR->>PR: emit(PullRequestCreated)
+
+    Dev->>Auto: Select docker tags
+    Auto->>Nexus: Validate tags (HEAD manifest)
+    Dev->>Auto: Queue automation suite
+    Auto->>Bamboo: POST /queue with dockerTagsAsJson
+    Auto->>Auto: emit(AutomationTriggered)
+
+    loop Poll
+        Auto->>Bamboo: GET /result
+        Auto->>Auto: emit(QueuePositionChanged)
+    end
+    Auto->>Auto: emit(AutomationFinished)
+
+    Dev->>HO: Close Jira ticket
+    HO->>Jira: POST /comment (rich text)
+    HO->>Jira: POST /transitions (Done)
+    Dev->>HO: Copy QA summary
+        </div>
+    </div>
+</details>
+
+<!-- ===== 7. BRANCH CHANGE ===== -->
+<details id="data-flow-branch">
+    <summary><span class="section-num">7.</span> Data Flow: Branch Change &rarr; Ticket Sync</summary>
+    <div class="content">
+        <p>Switching git branches auto-resolves the ticket ID from the branch name and updates the active ticket across all tabs.</p>
+        <div class="mermaid">
+flowchart TD
+    A["Git branch change"] --> B["BranchChangeListener"]
+    B --> C["emit(BranchChanged)"]
+    C --> D["ActiveTicketService"]
+    D --> E{"Branch matches pattern?"}
+    E -->|Yes| F["Extract ticket ID"]
+    E -->|No| G["Clear active ticket"]
+    F --> H["Jira API: GET ticket"]
+    H --> I["Update PluginSettings"]
+    I --> J["emit(TicketChanged)"]
+    J --> K["Status Bar"]
+    J --> L["Sprint Tab"]
+    J --> M["Commit Prefix"]
+    J --> N["Build Tab"]
+    G --> O["Clear settings"]
+    O --> K
+
+    style A fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style C fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
+    style J fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
+    style K fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style L fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style M fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style N fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 8. CROSS-TAB AWARENESS ===== -->
+<details id="data-flow-cross-tab">
+    <summary><span class="section-num">8.</span> Data Flow: Cross-Tab Branch Awareness</summary>
+    <div class="content">
+        <p>Selecting a PR in the PR tab filters the Quality and Build tabs to the relevant branch. Build completion triggers Quality tab refresh.</p>
+        <div class="mermaid">
+flowchart LR
+    PRS["PR Selected"] -->|"emit(PrSelected)"| EB["EventBus"]
+    EB --> QT["Quality Tab: filter to branch"]
+    EB --> BT["Build Tab: filter to branch"]
+
+    BF["BuildFinished"] -->|"EventBus"| QR["Quality Tab: refresh data"]
+
+    style EB fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
+    style PRS fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style BF fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style QT fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style BT fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style QR fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 9. SERVICE LAYER ===== -->
+<details id="service-layer">
+    <summary><span class="section-num">9.</span> Service Layer &amp; ToolResult Pattern</summary>
+    <div class="content">
+        <p>Every service method returns <code>ToolResult&lt;T&gt;</code> &mdash; a dual-purpose type serving both UI panels (via typed <code>data</code>) and the AI agent (via text <code>summary</code>).</p>
+        <div class="mermaid">
+classDiagram
+    class ToolResultT {
+        +T data
+        +String summary
+        +Boolean isError
+        +String hint
+        +Int tokenEstimate
+        +success(data, summary, hint)$
+        +error(summary, hint)$
+    }
+
+    class UIPanel {
+        Uses data T
+        Renders structured content
+    }
+
+    class AIAgent {
+        Uses summary String
+        Token-efficient text
+    }
+
+    ToolResultT --> UIPanel : data
+    ToolResultT --> AIAgent : summary
+        </div>
+
+        <h3>Service Architecture Chain</h3>
+        <div class="mermaid">
+flowchart TD
+    subgraph Consumers
+        UI["UI Panels"]
+        AI["Cody AI Agent"]
+    end
+
+    subgraph "Service Interfaces (in :core)"
+        JS["JiraService"]
+        BS["BambooService"]
+        SS["SonarService"]
+        BBS["BitbucketService"]
+    end
+
+    subgraph "Implementations (in feature modules)"
+        JSI["JiraServiceImpl"]
+        BSI["BambooServiceImpl"]
+        SSI["SonarServiceImpl"]
+        BBSI["BitbucketServiceImpl"]
+    end
+
+    subgraph "API Clients"
+        JC["JiraApiClient"]
+        BC["BambooApiClient"]
+        SC["SonarApiClient"]
+        BBC["BitbucketApiClient"]
+    end
+
+    subgraph "HTTP Layer"
+        HCF["HttpClientFactory"]
+        SP["sharedPool + sharedCache"]
+    end
+
+    UI --> JS & BS & SS & BBS
+    AI --> JS & BS & SS & BBS
+    JS --> JSI --> JC --> HCF
+    BS --> BSI --> BC --> HCF
+    SS --> SSI --> SC --> HCF
+    BBS --> BBSI --> BBC --> HCF
+    HCF --> SP
+
+    style UI fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style AI fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+    style HCF fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style SP fill:#264f78,stroke:#569cd6,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 10. SERVICE INTERFACES ===== -->
+<details id="service-interfaces">
+    <summary><span class="section-num">10.</span> Service Interfaces</summary>
+    <div class="content">
+        <div class="mermaid">
+classDiagram
+    class JiraService {
+        &lt;&lt;interface&gt;&gt;
+        +getTicket(key) ToolResult
+        +getTransitions(key) ToolResult
+        +transition(key, id, fields, comment) ToolResult
+        +addComment(key, body) ToolResult
+        +logWork(key, timeSpent, comment) ToolResult
+        +getComments(key) ToolResult
+        +testConnection() ToolResult
+    }
+
+    class BambooService {
+        &lt;&lt;interface&gt;&gt;
+        +getLatestBuild(planKey) ToolResult
+        +getBuild(buildKey) ToolResult
+        +triggerBuild(planKey, variables) ToolResult
+        +getBuildLog(resultKey) ToolResult
+        +getTestResults(resultKey) ToolResult
+        +rerunFailedJobs(planKey, num) ToolResult
+        +getPlanVariables(planKey) ToolResult
+        +triggerStage(planKey, vars, stage) ToolResult
+        +testConnection() ToolResult
+    }
+
+    class SonarService {
+        &lt;&lt;interface&gt;&gt;
+        +getIssues(projectKey, filePath) ToolResult
+        +getQualityGateStatus(projectKey) ToolResult
+        +getCoverage(projectKey) ToolResult
+        +searchProjects(query) ToolResult
+        +getAnalysisTasks(projectKey) ToolResult
+        +testConnection() ToolResult
+    }
+
+    class BitbucketService {
+        &lt;&lt;interface&gt;&gt;
+        +createPullRequest(title, desc, from, to) ToolResult
+        +testConnection() ToolResult
+    }
+        </div>
+
+        <h3>Module-Internal Services</h3>
+        <table>
+            <tr><th>Module</th><th>Service</th><th>Responsibility</th></tr>
+            <tr><td><code>:jira</code></td><td>SprintService</td><td>Fetch sprint tickets, filter by assignee, board type handling</td></tr>
+            <tr><td><code>:jira</code></td><td>ActiveTicketService</td><td>Resolve branch name to ticket ID, manage active ticket state</td></tr>
+            <tr><td><code>:jira</code></td><td>BranchingService</td><td>Generate branch names, create branches on Bitbucket + local</td></tr>
+            <tr><td><code>:jira</code></td><td>CommitPrefixService</td><td>Inject ticket ID prefix into commit messages</td></tr>
+            <tr><td><code>:bamboo</code></td><td>BuildMonitorService</td><td>Background polling for build status changes</td></tr>
+            <tr><td><code>:bamboo</code></td><td>PlanDetectionService</td><td>Auto-detect Bamboo plan key from project</td></tr>
+            <tr><td><code>:bamboo</code></td><td>CveRemediationService</td><td>Scan pom.xml for CVEs, suggest version bumps</td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 11. EVENT BUS ===== -->
+<details id="event-bus">
+    <summary><span class="section-num">11.</span> Event Bus: All 21 Event Types</summary>
+    <div class="content">
+        <p>The <code>EventBus</code> is a project-level service backed by <code>MutableSharedFlow&lt;WorkflowEvent&gt;</code> (replay=0, buffer=64).</p>
+        <div class="mermaid">
+flowchart LR
+    subgraph "Build Events"
+        BF["BuildFinished"]
+        BLR["BuildLogReady"]
+    end
+
+    subgraph "Quality Events"
+        QGR["QualityGateResult"]
+        CU["CoverageUpdated"]
+    end
+
+    subgraph "AI Events"
+        CER["CodyEditReady"]
+    end
+
+    subgraph "Health Check Events"
+        HCS["HealthCheckStarted"]
+        HCF["HealthCheckFinished"]
+    end
+
+    subgraph "Automation Events"
+        AT["AutomationTriggered"]
+        AF["AutomationFinished"]
+        QPC["QueuePositionChanged"]
+    end
+
+    subgraph "PR Events"
+        PRC["PullRequestCreated"]
+        PRU["PullRequestUpdated"]
+        PRM["PullRequestMerged"]
+        PRD["PullRequestDeclined"]
+        PRA["PullRequestApproved"]
+        PRS["PrSelected"]
+    end
+
+    subgraph "Ticket/Branch Events"
+        TC["TicketChanged"]
+        BC["BranchChanged"]
+    end
+
+    subgraph "Handover Events"
+        JCP["JiraCommentPosted"]
+        PRF["PreReviewFinished"]
+    end
+        </div>
+    </div>
+</details>
+
+<!-- ===== 12. EVENT MATRIX ===== -->
+<details id="event-matrix">
+    <summary><span class="section-num">12.</span> Event Subscription Matrix</summary>
+    <div class="content">
+        <div class="mermaid">
+flowchart LR
+    subgraph Emitters
+        E_B[":bamboo"]
+        E_S[":sonar"]
+        E_C[":cody"]
+        E_CO[":core"]
+        E_A[":automation"]
+        E_P[":pullrequest"]
+        E_J[":jira"]
+        E_G[":git-integration"]
+        E_H[":handover"]
+    end
+
+    EB(("EventBus"))
+
+    subgraph Consumers
+        C_SP["Sprint Tab"]
+        C_BU["Build Tab"]
+        C_QU["Quality Tab"]
+        C_PR["PR Tab"]
+        C_AU["Automation Tab"]
+        C_HO["Handover Tab"]
+        C_SB["Status Bar"]
+    end
+
+    E_B -->|"BuildFinished, BuildLogReady"| EB
+    E_S -->|"QualityGateResult, CoverageUpdated"| EB
+    E_C -->|"CodyEditReady"| EB
+    E_CO -->|"HealthCheck*"| EB
+    E_A -->|"Automation*, QueuePosition*"| EB
+    E_P -->|"PullRequest*, PrSelected"| EB
+    E_J -->|"TicketChanged"| EB
+    E_G -->|"BranchChanged"| EB
+    E_H -->|"JiraCommentPosted, PreReviewFinished"| EB
+
+    EB --> C_SP & C_BU & C_QU & C_PR & C_AU & C_HO & C_SB
+
+    style EB fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
+        </div>
+
+        <table>
+            <tr><th>Event</th><th>Emitted By</th><th>Consumed By</th></tr>
+            <tr><td>BuildFinished</td><td>:bamboo</td><td>Build Tab, Quality Tab, Status Bar, Project Tree</td></tr>
+            <tr><td>BuildLogReady</td><td>:bamboo</td><td>Build Tab (log viewer)</td></tr>
+            <tr><td>QualityGateResult</td><td>:sonar</td><td>Quality Tab, Status Bar, Handover Tab</td></tr>
+            <tr><td>CoverageUpdated</td><td>:sonar</td><td>Quality Tab, Editor Gutter</td></tr>
+            <tr><td>CodyEditReady</td><td>:cody</td><td>Editor (apply/reject UI)</td></tr>
+            <tr><td>HealthCheckStarted</td><td>:core</td><td>Status Bar (progress)</td></tr>
+            <tr><td>HealthCheckFinished</td><td>:core</td><td>VcsCheckinHandler</td></tr>
+            <tr><td>AutomationTriggered</td><td>:automation</td><td>Automation Tab, Status Bar</td></tr>
+            <tr><td>AutomationFinished</td><td>:automation</td><td>Automation Tab, Handover Tab</td></tr>
+            <tr><td>QueuePositionChanged</td><td>:automation</td><td>Automation Tab, Status Bar</td></tr>
+            <tr><td>PullRequestCreated</td><td>:pullrequest</td><td>PR Tab, Handover Tab</td></tr>
+            <tr><td>PullRequestUpdated</td><td>:pullrequest</td><td>PR Tab</td></tr>
+            <tr><td>PullRequestMerged</td><td>:pullrequest</td><td>PR Tab, Jira, Status Bar</td></tr>
+            <tr><td>PullRequestDeclined</td><td>:pullrequest</td><td>PR Tab, Status Bar</td></tr>
+            <tr><td>PullRequestApproved</td><td>:pullrequest</td><td>PR Tab</td></tr>
+            <tr><td>PrSelected</td><td>:pullrequest</td><td>Quality Tab, Build Tab</td></tr>
+            <tr><td>TicketChanged</td><td>:jira</td><td>Sprint Tab, Status Bar, Commit Prefix, Build Tab</td></tr>
+            <tr><td>BranchChanged</td><td>:git-integration</td><td>ActiveTicketService, PR Tab, Build Tab</td></tr>
+            <tr><td>JiraCommentPosted</td><td>:handover</td><td>Handover Tab</td></tr>
+            <tr><td>PreReviewFinished</td><td>:handover</td><td>Handover Tab</td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 13. THREADING MODEL ===== -->
+<details id="threading">
+    <summary><span class="section-num">13.</span> Threading Model</summary>
+    <div class="content">
+        <p>IntelliJ enforces strict threading: never block the EDT, never write off the EDT. The plugin uses three execution contexts.</p>
+        <div class="mermaid">
+flowchart TD
+    subgraph EDT ["EDT (Event Dispatch Thread)"]
+        UI_UP["UI Updates"]
+        WRITE["WriteCommandAction"]
+        SWING["Swing Callbacks"]
+    end
+
+    subgraph IO ["Dispatchers.IO"]
+        API["API Calls (suspend fun)"]
+        HTTP["HTTP Requests"]
+        FILE["File I/O"]
+    end
+
+    subgraph BG ["Background Pool"]
+        POLL["Build Polling (CoroutineScope)"]
+        HEALTH["Health Check (runBackgroundableTask)"]
+        CODY["Cody CLI (stdio reader)"]
+    end
+
+    SWING -->|"launch(IO)"| API
+    API -->|"withContext(EDT)"| UI_UP
+    POLL -->|"withContext(EDT)"| UI_UP
+    API -->|"WriteCommandAction"| WRITE
+
+    style EDT fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style IO fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style BG fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+        </div>
+
+        <h3>Common Pattern</h3>
+        <div class="mermaid">
+flowchart LR
+    BTN["Button Click (EDT)"] --> BG2["launch(IO)"] --> API2["API Call"] --> PROC["Process"] --> EDT2["withContext(EDT)"] --> UPD["Update Panel"]
+
+    style BTN fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style BG2 fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style API2 fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style PROC fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style EDT2 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style UPD fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+
+        <h3>Anti-Patterns</h3>
+        <table>
+            <tr><th>Anti-Pattern</th><th>Problem</th><th>Fix</th></tr>
+            <tr><td><code>runBlocking</code> on EDT</td><td>Freezes IDE</td><td><code>launch(Dispatchers.IO)</code></td></tr>
+            <tr><td><code>Thread.sleep()</code> on EDT</td><td>Freezes IDE</td><td><code>delay()</code> in coroutine</td></tr>
+            <tr><td>Writing PSI off EDT</td><td>IncorrectOperationException</td><td><code>WriteCommandAction</code></td></tr>
+            <tr><td>Updating Swing off EDT</td><td>Race conditions</td><td><code>withContext(Dispatchers.EDT)</code></td></tr>
+            <tr><td><code>SwingWorker</code></td><td>No structured concurrency</td><td><code>CoroutineScope + SupervisorJob</code></td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 14. EXTERNAL APIs ===== -->
+<details id="external-apis">
+    <summary><span class="section-num">14.</span> External API Integration</summary>
+    <div class="content">
+        <p>All services are self-hosted/on-premise. Five use HTTP REST, one (Cody) uses JSON-RPC over stdio.</p>
+        <div class="mermaid">
+flowchart TD
+    subgraph Plugin
+        HCF["HttpClientFactory"]
+        POOL["ConnectionPool (5 idle, 3min)"]
+        CACHE["Cache (10MB ETag/304)"]
+        AUTH["AuthInterceptor"]
+        RETRY["RetryInterceptor"]
+        CODY_P["Cody CLI Process"]
+
+        HCF --> POOL --> AUTH --> RETRY
+        HCF --> CACHE
+    end
+
+    subgraph External
+        JIRA["Jira Server (Bearer)"]
+        BAMBOO["Bamboo Server (Bearer)"]
+        SONAR["SonarQube (Bearer)"]
+        BB["Bitbucket Server (Bearer)"]
+        NEXUS["Nexus Registry (Basic)"]
+        SG["Sourcegraph (Token)"]
+    end
+
+    RETRY -->|HTTPS| JIRA
+    RETRY -->|HTTPS| BAMBOO
+    RETRY -->|HTTPS| SONAR
+    RETRY -->|HTTPS| BB
+    RETRY -->|HTTPS| NEXUS
+    CODY_P -->|"stdio JSON-RPC"| SG
+
+    style JIRA fill:#6b2027,stroke:#f48771,color:#d4d4d4
+    style BAMBOO fill:#6b2027,stroke:#f48771,color:#d4d4d4
+    style SONAR fill:#6b2027,stroke:#f48771,color:#d4d4d4
+    style BB fill:#6b2027,stroke:#f48771,color:#d4d4d4
+    style NEXUS fill:#6b2027,stroke:#f48771,color:#d4d4d4
+    style SG fill:#6b2027,stroke:#f48771,color:#d4d4d4
+    style HCF fill:#264f78,stroke:#569cd6,color:#d4d4d4
+        </div>
+
+        <h3>Authentication Methods</h3>
+        <table>
+            <tr><th>Service</th><th>Auth Type</th><th>Header</th><th>Storage</th></tr>
+            <tr><td>Jira Server</td><td>Bearer PAT</td><td><code>Authorization: Bearer &lt;PAT&gt;</code></td><td>PasswordSafe</td></tr>
+            <tr><td>Bamboo Server</td><td>Bearer PAT</td><td><code>Authorization: Bearer &lt;PAT&gt;</code></td><td>PasswordSafe</td></tr>
+            <tr><td>SonarQube</td><td>Bearer Token</td><td><code>Authorization: Bearer &lt;token&gt;</code></td><td>PasswordSafe</td></tr>
+            <tr><td>Bitbucket Server</td><td>Bearer Token</td><td><code>Authorization: Bearer &lt;token&gt;</code></td><td>PasswordSafe</td></tr>
+            <tr><td>Nexus Registry</td><td>Basic Auth</td><td><code>Authorization: Basic &lt;b64&gt;</code></td><td>PasswordSafe</td></tr>
+            <tr><td>Sourcegraph/Cody</td><td>Access Token</td><td>ExtensionConfiguration.accessToken</td><td>PasswordSafe</td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 15. CONNECTION POOLING ===== -->
+<details id="connection-pool">
+    <summary><span class="section-num">15.</span> Connection Pooling</summary>
+    <div class="content">
+        <p>All per-service <code>OkHttpClient</code> instances share a single connection pool and cache via <code>OkHttpClient.newBuilder()</code>.</p>
+        <div class="mermaid">
+flowchart LR
+    subgraph HttpClientFactory
+        BASE["Base OkHttpClient"]
+        BASE --> JC["Jira Client (Bearer)"]
+        BASE --> BC["Bamboo Client (Bearer)"]
+        BASE --> SC["Sonar Client (Bearer)"]
+        BASE --> BBC["Bitbucket Client (Bearer)"]
+        BASE --> NC["Nexus Client (Basic)"]
+    end
+
+    subgraph Shared
+        CP["ConnectionPool: 5 idle, 3min TTL"]
+        HC["HTTP Cache: 10MB, ETag/304"]
+    end
+
+    BASE --> CP
+    BASE --> HC
+
+    style CP fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style HC fill:#264f78,stroke:#569cd6,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 16. TOOL WINDOW TABS ===== -->
+<details id="ui-toolwindow">
+    <summary><span class="section-num">16.</span> UI: Tool Window Tabs</summary>
+    <div class="content">
+        <p>One tool window named "Workflow", bottom-docked, 6 tabs. Each contributed by a <code>WorkflowTabProvider</code> extension point.</p>
+        <div class="mermaid">
+graph TD
+    TW["Workflow Tool Window"]
+    TW --> T1["Sprint (order=0)"]
+    TW --> T2["Build (order=1)"]
+    TW --> T3["PR (order=2)"]
+    TW --> T4["Quality (order=3)"]
+    TW --> T5["Automation (order=4)"]
+    TW --> T6["Handover (order=5)"]
+
+    T1 --> T1P["SprintTabProvider / SprintDashboardPanel"]
+    T2 --> T2P["BuildTabProvider / BuildDashboardPanel"]
+    T3 --> T3P["PrTabProvider / PrDashboardPanel"]
+    T4 --> T4P["QualityTabProvider / QualityDashboardPanel"]
+    T5 --> T5P["AutomationTabProvider / AutomationPanel"]
+    T6 --> T6P["HandoverTabProvider / HandoverPanel"]
+
+    style TW fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style T1 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style T2 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style T3 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style T4 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style T5 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style T6 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 17. PANEL HIERARCHIES ===== -->
+<details id="ui-panels">
+    <summary><span class="section-num">17.</span> UI: Panel Hierarchies</summary>
+    <div class="content">
+        <h3>Sprint Tab</h3>
+        <div class="mermaid">
+graph TD
+    SP["SprintDashboardPanel"] --> TL["Ticket List (JBList)"]
+    SP --> TD2["TicketDetailPanel"]
+    TD2 --> TI["Ticket Info"]
+    TD2 --> TA["Actions: Start Work, Transition, Log Time"]
+    style SP fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+
+        <h3>Build Tab</h3>
+        <div class="mermaid">
+graph TD
+    BD["BuildDashboardPanel"] --> BL["Build List (JBTable)"]
+    BD --> BS["JBSplitter"]
+    BS --> SL["StageListPanel"]
+    BS --> SD["StageDetailPanel (logs, tests)"]
+    style BD fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+
+        <h3>Quality Tab</h3>
+        <div class="mermaid">
+graph TD
+    QD["QualityDashboardPanel"] --> OV["OverviewPanel (gate, metrics)"]
+    QD --> IL["IssueListPanel (JBTable)"]
+    QD --> CT["CoverageTablePanel (JBTable)"]
+    style QD fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+
+        <h3>Automation Tab</h3>
+        <div class="mermaid">
+graph TD
+    AP["AutomationPanel"] --> TS["TagStagingPanel"]
+    AP --> SC["SuiteConfigPanel"]
+    AP --> QS["QueueStatusPanel"]
+    AP --> MP["MonitorPanel"]
+    style AP fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+
+        <h3>Handover Tab</h3>
+        <div class="mermaid">
+graph TD
+    HP["HandoverPanel"] --> HC2["HandoverContextPanel"]
+    HP --> PRV["PreReviewPanel"]
+    HP --> JC2["JiraCommentPanel"]
+    HP --> TL2["TimeLogPanel"]
+    HP --> CP2["CopyrightPanel"]
+    HP --> CM["CompletionMacroPanel"]
+    HP --> QA["QaClipboardPanel"]
+    style HP fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 18. SETTINGS ===== -->
+<details id="ui-settings">
+    <summary><span class="section-num">18.</span> UI: Settings Pages</summary>
+    <div class="content">
+        <div class="mermaid">
+graph TD
+    ROOT["Tools &gt; Workflow Orchestrator"] --> GEN["General"]
+    ROOT --> CONN["Connections"]
+    ROOT --> AI["AI &amp; Advanced"]
+
+    GEN --> G1["Board ID / Type / Name"]
+    GEN --> G2["Module toggles (Sprint, Build, Quality...)"]
+    GEN --> G3["Branch patterns, plan keys"]
+
+    CONN --> C1["Jira URL + PAT"]
+    CONN --> C2["Bamboo URL + PAT"]
+    CONN --> C3["Bitbucket URL + Token"]
+    CONN --> C4["SonarQube URL + Token"]
+    CONN --> C5["Sourcegraph URL + Token"]
+    CONN --> C6["Nexus URL + Token"]
+
+    AI --> A1["Cody CLI path"]
+    AI --> A2["HTTP timeouts"]
+    AI --> A3["Polling intervals"]
+
+    style ROOT fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style GEN fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style CONN fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style AI fill:#264f78,stroke:#569cd6,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
+<!-- ===== 19. EDITOR INTEGRATION ===== -->
+<details id="ui-editor">
+    <summary><span class="section-num">19.</span> UI: Editor Integration Points</summary>
+    <div class="content">
+        <div class="mermaid">
+flowchart LR
+    subgraph Editor
+        GUTTER["Gutter Markers"]
+        ANNOT["Inline Annotations"]
+        BANNER["Editor Banners"]
+        INTENT["Quick Fixes Alt+Enter"]
+    end
+
+    subgraph Project
+        TREE_B["Build Status Badges"]
+        TREE_C["Coverage Badges"]
+    end
+
+    subgraph StatusBar
+        SB_T["Ticket: PROJ-123"]
+        SB_B["Build Status"]
+        SB_Q["Queue Position"]
+    end
+
+    GUTTER --> G1["Red: blocker/critical"]
+    GUTTER --> G2["Yellow: major"]
+    GUTTER --> G3["Grey: minor"]
+    GUTTER --> G4["Fix with Cody"]
+    GUTTER --> G5["Generate Test"]
+
+    ANNOT --> A1["ExternalAnnotator (3-phase async)"]
+
+    BANNER --> B1["EditorNotificationProvider"]
+
+    INTENT --> I1["CVE version bump in pom.xml"]
+
+    style GUTTER fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style ANNOT fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style BANNER fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style INTENT fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style SB_T fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+    style SB_B fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+    style SB_Q fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+        </div>
+
+        <h3>Gutter Marker Details</h3>
+        <table>
+            <tr><th>Type</th><th>Size</th><th>Trigger</th></tr>
+            <tr><td>Sonar severity (red/yellow/grey)</td><td>12x12 Classic, 14x14 New UI</td><td>ExternalAnnotator result</td></tr>
+            <tr><td>Fix with Cody</td><td>Standard icon size</td><td>Sonar issue present</td></tr>
+            <tr><td>Generate Test</td><td>Standard icon size</td><td>Class/method context</td></tr>
+        </table>
+    </div>
+</details>
+
+<hr style="border-color: #333; margin-top: 40px;">
+<p style="color: #666; font-size: 12px; text-align: center;">
+    Workflow Orchestrator v0.26.0 &mdash; Architecture Documentation
+    <br>Generated from codebase analysis. Diagrams rendered by <a href="https://mermaid.js.org/">Mermaid.js</a>.
+</p>
+
+<script>
+    mermaid.initialize({
+        theme: 'dark',
+        startOnLoad: true,
+        securityLevel: 'loose',
+        flowchart: { htmlLabels: true, curve: 'basis' },
+        sequence: { useMaxWidth: true }
+    });
+</script>
+
+</body>
+</html>
