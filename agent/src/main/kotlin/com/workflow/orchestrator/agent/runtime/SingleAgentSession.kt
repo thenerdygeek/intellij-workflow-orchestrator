@@ -169,17 +169,25 @@ class SingleAgentSession(
 
             // Budget check before each LLM call
             when (budgetEnforcer.check()) {
-                BudgetEnforcer.BudgetStatus.ESCALATE -> {
-                    LOG.warn("SingleAgentSession: budget critical at iteration $iteration, escalating")
+                BudgetEnforcer.BudgetStatus.TERMINATE -> {
+                    LOG.warn("SingleAgentSession: budget exhausted at iteration $iteration, terminating")
                     eventLog?.log(AgentEventType.ESCALATION_TRIGGERED, "Budget ${budgetEnforcer.utilizationPercent()}% at iteration $iteration")
-                    sessionTrace?.dumpConversationState(contextManager.getMessages(), "budget_escalation_at_${budgetEnforcer.utilizationPercent()}%")
-                    sessionTrace?.sessionFailed("Budget escalation at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
+                    sessionTrace?.dumpConversationState(contextManager.getMessages(), "budget_terminate_at_${budgetEnforcer.utilizationPercent()}%")
+                    sessionTrace?.sessionFailed("Budget terminated at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
                     val contextSummary = buildContextSummary(contextManager)
                     return SingleAgentResult.EscalateToOrchestrated(
-                        reason = "Token budget exceeded (${budgetEnforcer.utilizationPercent()}% utilization) at iteration $iteration",
+                        reason = "Token budget exhausted (${budgetEnforcer.utilizationPercent()}% utilization) at iteration $iteration",
                         partialContext = contextSummary,
                         tokensUsed = totalTokensUsed
                     )
+                }
+                BudgetEnforcer.BudgetStatus.STRONG_NUDGE -> {
+                    LOG.warn("SingleAgentSession: budget critical at iteration $iteration (${budgetEnforcer.utilizationPercent()}%), strongly nudging LLM")
+                    // TODO: Task 2 will inject nudge message into context for LLM to see
+                }
+                BudgetEnforcer.BudgetStatus.NUDGE -> {
+                    LOG.info("SingleAgentSession: budget elevated at iteration $iteration (${budgetEnforcer.utilizationPercent()}%), nudging LLM")
+                    // TODO: Task 2 will inject nudge message into context for LLM to see
                 }
                 BudgetEnforcer.BudgetStatus.COMPRESS -> {
                     LOG.info("SingleAgentSession: triggering compression at iteration $iteration")
