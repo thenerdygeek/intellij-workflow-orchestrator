@@ -137,10 +137,12 @@ class SingleAgentSessionTest {
     }
 
     @Test
-    fun `budget escalation when context exceeds threshold`() = runTest {
-        // Simulate context already at critical level (over 60%)
-        every { contextManager.currentTokens } returns 100_000
-        every { contextManager.remainingBudget() } returns 50_000
+    fun `budget terminate when context exceeds 90 percent`() = runTest {
+        // Simulate context already at terminal level (over 90%)
+        // effectiveBudget = currentTokens + remainingBudget = 140_000 + 10_000 = 150_000
+        // utilization = 140_000 / 150_000 = 93% → TERMINATE
+        every { contextManager.currentTokens } returns 140_000
+        every { contextManager.remainingBudget() } returns 10_000
 
         val result = session.execute(
             task = "Complex refactoring task",
@@ -151,9 +153,9 @@ class SingleAgentSessionTest {
             project = project
         )
 
-        assertTrue(result is SingleAgentResult.EscalateToOrchestrated, "Expected escalation, got $result")
-        val escalation = result as SingleAgentResult.EscalateToOrchestrated
-        assertTrue(escalation.reason.contains("budget"))
+        assertTrue(result is SingleAgentResult.Failed, "Expected Failed, got $result")
+        val failed = result as SingleAgentResult.Failed
+        assertTrue(failed.error.contains("budget exhausted", ignoreCase = true))
     }
 
     @Test

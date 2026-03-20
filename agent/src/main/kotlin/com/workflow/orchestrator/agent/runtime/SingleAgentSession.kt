@@ -38,7 +38,8 @@ sealed class SingleAgentResult {
         val snapshotRef: String? = null
     ) : SingleAgentResult()
 
-    /** Task is too complex for single agent — escalate to orchestrated mode. */
+    /** @deprecated Replaced by nudge injection + TERMINATE. TODO: Task 5 removes this and AgentOrchestrator references. */
+    @Deprecated("Replaced by nudge injection + TERMINATE — Task 5 removes this")
     data class EscalateToOrchestrated(
         val reason: String,
         val partialContext: String,
@@ -57,7 +58,7 @@ sealed class SingleAgentResult {
  * Includes:
  * - [BudgetEnforcer] check before each LLM call
  * - [LoopGuard] for loop detection, error nudges, and auto-verification
- * - Auto-escalation to orchestrated mode if budget is exceeded
+ * - Nudge injection (NUDGE, STRONG_NUDGE) and budget termination instead of escalation
  * - Graceful retry on rate limits (429) and context length exceeded
  * - [OutputValidator] on final content
  * - Progress callbacks for each iteration
@@ -92,7 +93,7 @@ class SingleAgentSession(
      * @param eventLog Optional structured event log for audit trail
      * @param onProgress Callback for progress updates
      * @param onStreamChunk Callback for streaming LLM output tokens (for real-time UI)
-     * @return [SingleAgentResult] — completed, failed, or escalation signal
+     * @return [SingleAgentResult] — completed or failed
      */
     suspend fun execute(
         task: String,
@@ -168,39 +169,40 @@ class SingleAgentSession(
             } catch (e: Exception) { LOG.warn("Failed to expand pending tool activations", e) }
 
             // Budget check before each LLM call
-            when (budgetEnforcer.check()) {
+            val budgetStatus = budgetEnforcer.check()
+            when (budgetStatus) {
                 BudgetEnforcer.BudgetStatus.TERMINATE -> {
-                    LOG.warn("SingleAgentSession: budget exhausted at iteration $iteration, terminating")
-                    eventLog?.log(AgentEventType.ESCALATION_TRIGGERED, "Budget ${budgetEnforcer.utilizationPercent()}% at iteration $iteration")
-                    sessionTrace?.dumpConversationState(contextManager.getMessages(), "budget_terminate_at_${budgetEnforcer.utilizationPercent()}%")
+                    LOG.warn("SingleAgentSession: budget exhausted at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+                    eventLog?.log(AgentEventType.SESSION_FAILED, "Budget terminated at ${budgetEnforcer.utilizationPercent()}%")
                     sessionTrace?.sessionFailed("Budget terminated at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
-                    val contextSummary = buildContextSummary(contextManager)
-                    return SingleAgentResult.EscalateToOrchestrated(
-                        reason = "Token budget exhausted (${budgetEnforcer.utilizationPercent()}% utilization) at iteration $iteration",
-                        partialContext = contextSummary,
+                    return SingleAgentResult.Failed(
+                        error = "Context budget exhausted at ${budgetEnforcer.utilizationPercent()}%. Please start a new conversation for remaining work.",
                         tokensUsed = totalTokensUsed
                     )
                 }
                 BudgetEnforcer.BudgetStatus.STRONG_NUDGE -> {
-                    LOG.warn("SingleAgentSession: budget critical at iteration $iteration (${budgetEnforcer.utilizationPercent()}%), strongly nudging LLM")
-                    // TODO: Task 2 will inject nudge message into context for LLM to see
+                    LOG.warn("SingleAgentSession: strong nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+                    // Note: addMessage() auto-triggers truncation compression if tokens exceed tMax
+                    contextManager.addMessage(ChatMessage(
+                        role = "system",
+                        content = "WARNING: You have used ${budgetEnforcer.utilizationPercent()}% of your context budget. You MUST use delegate_task for any remaining task touching 2+ files. Single-file edits are still allowed directly."
+                    ))
                 }
                 BudgetEnforcer.BudgetStatus.NUDGE -> {
-                    LOG.info("SingleAgentSession: budget elevated at iteration $iteration (${budgetEnforcer.utilizationPercent()}%), nudging LLM")
-                    // TODO: Task 2 will inject nudge message into context for LLM to see
+                    LOG.info("SingleAgentSession: nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+                    contextManager.addMessage(ChatMessage(
+                        role = "system",
+                        content = "Context at ${budgetEnforcer.utilizationPercent()}%. Prefer delegate_task for remaining multi-file work — each worker gets a fresh context window."
+                    ))
                 }
                 BudgetEnforcer.BudgetStatus.COMPRESS -> {
-                    LOG.info("SingleAgentSession: triggering compression at iteration $iteration")
+                    LOG.info("SingleAgentSession: triggering LLM compression at iteration $iteration")
                     eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration, ${budgetEnforcer.utilizationPercent()}% used")
                     val tokensBefore = contextManager.currentTokens
                     val messagesBefore = contextManager.messageCount
-                    contextManager.compress()
-                    sessionTrace?.compressionTriggered(
-                        "budget_enforcer",
-                        tokensBefore,
-                        contextManager.currentTokens,
-                        messagesBefore - contextManager.messageCount
-                    )
+                    // Use LLM-powered compression when brain is available
+                    contextManager.compressWithLlm(brain)
+                    sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, contextManager.currentTokens, messagesBefore - contextManager.messageCount)
                 }
                 BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
             }
@@ -687,22 +689,4 @@ class SingleAgentSession(
         """.trimIndent()
     }
 
-    /**
-     * Build a summary of the current context for escalation handoff.
-     */
-    private fun buildContextSummary(contextManager: ContextManager): String {
-        val messages = contextManager.getMessages()
-        val toolResults = messages.filter { it.role == "tool" }
-        val assistantMessages = messages.filter { it.role == "assistant" }
-
-        return buildString {
-            appendLine("Partial context from single-agent session:")
-            appendLine("- Messages exchanged: ${messages.size}")
-            appendLine("- Tool calls made: ${toolResults.size}")
-            if (assistantMessages.isNotEmpty()) {
-                val lastAssistant = assistantMessages.last()
-                appendLine("- Last assistant response: ${(lastAssistant.content ?: "").take(200)}")
-            }
-        }
-    }
 }
