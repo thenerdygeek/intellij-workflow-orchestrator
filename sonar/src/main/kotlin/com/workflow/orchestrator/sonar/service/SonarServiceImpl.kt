@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.sonar.CoverageData
 import com.workflow.orchestrator.core.model.sonar.QualityCondition
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
+import com.workflow.orchestrator.core.model.sonar.ProjectHealthData
 import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
@@ -291,6 +292,90 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                 )
             }
         }
+    }
+
+    override suspend fun getProjectHealth(projectKey: String): ToolResult<ProjectHealthData> {
+        val api = client ?: return ToolResult(
+            data = ProjectHealthData(
+                technicalDebtMinutes = 0, technicalDebtFormatted = "0min",
+                maintainabilityRating = "?", reliabilityRating = "?", securityRating = "?",
+                duplicatedLinesDensity = 0.0, cognitiveComplexity = 0,
+                lineCoverage = 0.0, branchCoverage = 0.0
+            ),
+            summary = "SonarQube not configured. Cannot fetch project health.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getProjectMeasures(projectKey)) {
+            is ApiResult.Success -> {
+                val measures = result.data.associateBy { it.metric }
+
+                val debtMinutes = measures["sqale_index"]?.value?.toDoubleOrNull()?.toLong() ?: 0L
+                val maintainability = measures["sqale_rating"]?.value?.toDoubleOrNull()?.let { ratingLetter(it) } ?: "?"
+                val reliability = measures["reliability_rating"]?.value?.toDoubleOrNull()?.let { ratingLetter(it) } ?: "?"
+                val security = measures["security_rating"]?.value?.toDoubleOrNull()?.let { ratingLetter(it) } ?: "?"
+                val duplication = measures["duplicated_lines_density"]?.value?.toDoubleOrNull() ?: 0.0
+                val complexity = measures["cognitive_complexity"]?.value?.toDoubleOrNull()?.toLong() ?: 0L
+                val lineCov = measures["coverage"]?.value?.toDoubleOrNull() ?: 0.0
+                val branchCov = measures["branch_coverage"]?.value?.toDoubleOrNull() ?: 0.0
+
+                val data = ProjectHealthData(
+                    technicalDebtMinutes = debtMinutes,
+                    technicalDebtFormatted = formatDebt(debtMinutes),
+                    maintainabilityRating = maintainability,
+                    reliabilityRating = reliability,
+                    securityRating = security,
+                    duplicatedLinesDensity = duplication,
+                    cognitiveComplexity = complexity,
+                    lineCoverage = lineCov,
+                    branchCoverage = branchCov
+                )
+
+                val summary = buildString {
+                    append("Project Health for $projectKey")
+                    append("\nRatings: Maintainability=$maintainability | Reliability=$reliability | Security=$security")
+                    append("\nTechnical Debt: ${formatDebt(debtMinutes)}")
+                    append("\nDuplication: ${"%.1f".format(duplication)}%")
+                    append("\nCoverage: Line=${"%.1f".format(lineCov)}% | Branch=${"%.1f".format(branchCov)}%")
+                    append("\nCognitive Complexity: $complexity")
+                }
+
+                ToolResult.success(data = data, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch project health for $projectKey: ${result.message}")
+                ToolResult(
+                    data = ProjectHealthData(
+                        technicalDebtMinutes = 0, technicalDebtFormatted = "0min",
+                        maintainabilityRating = "?", reliabilityRating = "?", securityRating = "?",
+                        duplicatedLinesDensity = 0.0, cognitiveComplexity = 0,
+                        lineCoverage = 0.0, branchCoverage = 0.0
+                    ),
+                    summary = "Error fetching project health for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and project key."
+                )
+            }
+        }
+    }
+
+    private fun ratingLetter(value: Double): String = when {
+        value <= 1.0 -> "A"
+        value <= 2.0 -> "B"
+        value <= 3.0 -> "C"
+        value <= 4.0 -> "D"
+        else -> "E"
+    }
+
+    private fun formatDebt(minutes: Long): String {
+        if (minutes < 60) return "${minutes}min"
+        val hours = minutes / 60
+        val mins = minutes % 60
+        if (hours < 24) return if (mins > 0) "${hours}h ${mins}min" else "${hours}h"
+        val days = hours / 24
+        val remainingHours = hours % 24
+        return if (remainingHours > 0) "${days}d ${remainingHours}h" else "${days}d"
     }
 
     override suspend fun testConnection(): ToolResult<Unit> {
