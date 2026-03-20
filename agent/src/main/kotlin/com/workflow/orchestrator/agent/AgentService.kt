@@ -39,6 +39,15 @@ class AgentService(
     /** Tools requested by LLM via request_tools, expanded on next iteration. */
     val pendingToolActivations = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
+    /** Number of currently active worker sessions (max 5). */
+    val activeWorkerCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Total tokens consumed across all workers in the current session. */
+    val totalSessionTokens = java.util.concurrent.atomic.AtomicLong(0)
+
+    /** Tracks delegation attempts per retry key to limit retries (max 2 per key). */
+    val delegationAttempts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry().apply {
             // Builtin tools
