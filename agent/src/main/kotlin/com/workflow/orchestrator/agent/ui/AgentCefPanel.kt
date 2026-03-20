@@ -44,6 +44,12 @@ class AgentCefPanel(
     private var planApproveQuery: JBCefJSQuery? = null
     private var planReviseQuery: JBCefJSQuery? = null
     private var toolToggleQuery: JBCefJSQuery? = null
+    private var questionAnsweredQuery: JBCefJSQuery? = null
+    private var questionSkippedQuery: JBCefJSQuery? = null
+    private var chatAboutQuery: JBCefJSQuery? = null
+    private var questionsSubmittedQuery: JBCefJSQuery? = null
+    private var questionsCancelledQuery: JBCefJSQuery? = null
+    private var editQuestionQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -64,6 +70,20 @@ class AgentCefPanel(
 
     /** Callback when user toggles a tool checkbox in the Tools panel. */
     var onToolToggled: ((String, Boolean) -> Unit)? = null
+
+    // Question wizard callbacks
+    /** Callback when user answers a question. Params: questionId, selectedOptionsJson. */
+    var onQuestionAnswered: ((String, String) -> Unit)? = null
+    /** Callback when user skips a question. Param: questionId. */
+    var onQuestionSkipped: ((String) -> Unit)? = null
+    /** Callback when user clicks "Chat about this" on an option. Params: questionId, optionLabel, message. */
+    var onChatAboutOption: ((String, String, String) -> Unit)? = null
+    /** Callback when user submits all question answers. */
+    var onQuestionsSubmitted: (() -> Unit)? = null
+    /** Callback when user cancels the question wizard. */
+    var onQuestionsCancelled: (() -> Unit)? = null
+    /** Callback when user edits a previously answered question. Param: questionId. */
+    var onEditQuestion: ((String) -> Unit)? = null
 
     init {
         try {
@@ -121,6 +141,36 @@ class AgentCefPanel(
             }
         }
 
+        // Question wizard bridges
+        questionAnsweredQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                // data format: "questionId:optionsJson"
+                val sep = data.indexOf(':')
+                if (sep > 0) onQuestionAnswered?.invoke(data.substring(0, sep), data.substring(sep + 1))
+                JBCefJSQuery.Response("ok")
+            }
+        }
+        questionSkippedQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data -> onQuestionSkipped?.invoke(data); JBCefJSQuery.Response("ok") }
+        }
+        chatAboutQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                // data format: "questionId\x1FoptionLabel\x1Fmessage" (unit separator avoids colon conflicts)
+                val parts = data.split("\u001F")
+                if (parts.size >= 3) onChatAboutOption?.invoke(parts[0], parts[1], parts.drop(2).joinToString("\u001F"))
+                JBCefJSQuery.Response("ok")
+            }
+        }
+        questionsSubmittedQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onQuestionsSubmitted?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        questionsCancelledQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onQuestionsCancelled?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        editQuestionQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data -> onEditQuestion?.invoke(data); JBCefJSQuery.Response("ok") }
+        }
+
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
@@ -154,6 +204,31 @@ class AgentCefPanel(
                     toolToggleQuery?.let { q ->
                         val toolToggleJs = q.inject("data")
                         js("window._toggleTool = function(data) { $toolToggleJs }")
+                    }
+                    // Question wizard bridges
+                    questionAnsweredQuery?.let { q ->
+                        val qaJs = q.inject("qid + ':' + opts")
+                        js("window._questionAnswered = function(qid, opts) { $qaJs }")
+                    }
+                    questionSkippedQuery?.let { q ->
+                        val qsJs = q.inject("qid")
+                        js("window._questionSkipped = function(qid) { $qsJs }")
+                    }
+                    chatAboutQuery?.let { q ->
+                        val caJs = q.inject("qid + '\\x1F' + label + '\\x1F' + msg")
+                        js("window._chatAboutOption = function(qid, label, msg) { $caJs }")
+                    }
+                    questionsSubmittedQuery?.let { q ->
+                        val qsubJs = q.inject("'submit'")
+                        js("window._questionsSubmitted = function() { $qsubJs }")
+                    }
+                    questionsCancelledQuery?.let { q ->
+                        val qcanJs = q.inject("'cancel'")
+                        js("window._questionsCancelled = function() { $qcanJs }")
+                    }
+                    editQuestionQuery?.let { q ->
+                        val eqJs = q.inject("qid")
+                        js("window._editQuestion = function(qid) { $eqJs }")
                     }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
@@ -247,6 +322,24 @@ class AgentCefPanel(
 
     fun updatePlanStep(stepId: String, status: String) {
         callJs("updatePlanStep(${jsonStr(stepId)}, ${jsonStr(status)})")
+    }
+
+    // ── Question wizard rendering ──
+
+    fun showQuestions(questionsJson: String) {
+        callJs("showQuestions(${jsonStr(questionsJson)})")
+    }
+
+    fun showQuestion(index: Int) {
+        callJs("showQuestion($index)")
+    }
+
+    fun showQuestionSummary(summaryJson: String) {
+        callJs("showQuestionSummary(${jsonStr(summaryJson)})")
+    }
+
+    fun enableChatInput() {
+        callJs("enableChatInput()")
     }
 
     // Backward compat
@@ -350,6 +443,12 @@ class AgentCefPanel(
         planApproveQuery?.dispose()
         planReviseQuery?.dispose()
         toolToggleQuery?.dispose()
+        questionAnsweredQuery?.dispose()
+        questionSkippedQuery?.dispose()
+        chatAboutQuery?.dispose()
+        questionsSubmittedQuery?.dispose()
+        questionsCancelledQuery?.dispose()
+        editQuestionQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -357,6 +456,12 @@ class AgentCefPanel(
         planApproveQuery = null
         planReviseQuery = null
         toolToggleQuery = null
+        questionAnsweredQuery = null
+        questionSkippedQuery = null
+        chatAboutQuery = null
+        questionsSubmittedQuery = null
+        questionsCancelledQuery = null
+        editQuestionQuery = null
         browser = null
     }
 }
