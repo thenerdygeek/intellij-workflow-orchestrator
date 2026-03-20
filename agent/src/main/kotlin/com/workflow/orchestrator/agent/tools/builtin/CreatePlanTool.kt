@@ -97,9 +97,9 @@ class CreatePlanTool : AgentTool {
         return when (result) {
             is PlanApprovalResult.Approved -> {
                 ToolResult(
-                    content = "Plan approved by user. Execute the plan step by step. As you work on each step, call update_plan_step with the step ID and status ('running' when starting, 'done' when complete, 'failed' if it fails).",
+                    content = "Plan approved by user. Execute the plan step by step. For simple steps (1-2 files), handle them directly. For complex steps (3+ files, multi-step edits), use delegate_task to spawn a focused worker. Update step status with update_plan_step as you progress ('running' when starting, 'done' when complete, 'failed' if it fails).",
                     summary = "Plan approved (${steps.size} steps)",
-                    tokenEstimate = 30
+                    tokenEstimate = 40
                 )
             }
             is PlanApprovalResult.Revised -> {

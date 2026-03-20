@@ -54,7 +54,10 @@ class PromptAssembler(
         // 6. Planning instructions
         sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
 
-        // 7. Rules and Constraints (including anti-loop)
+        // 7. Delegation instructions
+        sections.add(DELEGATION_RULES)
+
+        // 8. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -138,6 +141,25 @@ class PromptAssembler(
             - If the user requests revision with comments, incorporate their feedback and
               call create_plan again with the updated plan.
             </planning>
+        """.trimIndent()
+
+        val DELEGATION_RULES = """
+            <delegation>
+            You have access to delegate_task to spawn focused workers for specific sub-tasks.
+            Each worker gets a fresh context window with scoped tools — they won't see your
+            conversation history, so provide clear context in the task description.
+
+            Guidelines:
+            - Simple tasks (1-2 files, quick fix): handle yourself
+            - Moderate to complex tasks (3+ files, multi-step edits): delegate to a coder worker
+            - Analysis tasks (understand codebase, find references across modules): delegate to an analyzer worker
+            - Review tasks (check quality after changes): delegate to a reviewer worker
+            - Enterprise tool tasks (Jira, Bamboo, Sonar operations): delegate to a tooler worker
+            - When you create a plan and a step is non-trivial, delegate it
+            - Always provide the worker with: what to do, which files, and any relevant context
+              from your conversation (the worker cannot see your history)
+            - If a delegated task fails twice, handle it yourself or skip it
+            </delegation>
         """.trimIndent()
 
         val FORCED_PLANNING_RULES = """
