@@ -87,7 +87,7 @@
 <body>
 
 <h1>Workflow Orchestrator &mdash; Architecture</h1>
-<p class="subtitle">IntelliJ IDEA Plugin | Kotlin 2.1.10 | IntelliJ Platform 2025.1+ | 10 Gradle Submodules</p>
+<p class="subtitle">IntelliJ IDEA Plugin | Kotlin 2.1.10 | IntelliJ Platform 2025.1+ | 11 Gradle Submodules (incl. AI Agent)</p>
 
 <!-- ===== TABLE OF CONTENTS ===== -->
 <div class="toc">
@@ -115,6 +115,7 @@
         <li><a href="#ui-settings">UI: Settings Pages</a></li>
         <li><a href="#ui-editor">UI: Editor Integration Points</a></li>
         <li><a href="#ui-utilities">Shared UI Utilities</a></li>
+        <li><a href="#agent-arch">Agent Architecture (Phase 3)</a></li>
     </ol>
 </div>
 
@@ -132,7 +133,7 @@
 <details open id="module-structure">
     <summary><span class="section-num">1.</span> Module Structure &amp; Dependencies</summary>
     <div class="content">
-        <p>The plugin is a modular monolith: 10 Gradle submodules with a strict dependency rule. Feature modules depend <strong>only on <code>:core</code></strong>, never on each other. The one exception is <code>:automation</code> &rarr; <code>:bamboo</code> (for BambooApiClient).</p>
+        <p>The plugin is a modular monolith: 11 Gradle submodules with a strict dependency rule. Feature modules depend <strong>only on <code>:core</code></strong>, never on each other. The one exception is <code>:automation</code> &rarr; <code>:bamboo</code> (for BambooApiClient).</p>
         <div class="mermaid">
 graph TD
     root["&lt;b&gt;:root&lt;/b&gt;&lt;br/&gt;Plugin Shell"]
@@ -145,6 +146,7 @@ graph TD
     auto["&lt;b&gt;:automation&lt;/b&gt;&lt;br/&gt;Test Automation"]
     handover["&lt;b&gt;:handover&lt;/b&gt;&lt;br/&gt;Task Completion"]
     git["&lt;b&gt;:git-integration&lt;/b&gt;&lt;br/&gt;Git Operations"]
+    agent["&lt;b&gt;:agent&lt;/b&gt;&lt;br/&gt;AI Coding Agent"]
 
     root --> core
     root --> jira
@@ -155,6 +157,7 @@ graph TD
     root --> auto
     root --> handover
     root --> git
+    root --> agent
 
     jira --> core
     bamboo --> core
@@ -165,6 +168,7 @@ graph TD
     auto -.->|"BambooApiClient"| bamboo
     handover --> core
     git --> core
+    agent --> core
 
     style core fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style jira fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
@@ -175,6 +179,7 @@ graph TD
     style auto fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
     style handover fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
     style git fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style agent fill:#4a2d5e,stroke:#c586c0,color:#d4d4d4
     style root fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
         </div>
 
@@ -189,6 +194,7 @@ graph TD
             <tr><td><code>:automation</code></td><td>Docker tag staging, Nexus validation, drift detector, conflict detector, smart queue, config persistence</td></tr>
             <tr><td><code>:handover</code></td><td>Jira closure comment, Cody pre-review, copyright fix panel, time log, QA clipboard</td></tr>
             <tr><td><code>:git-integration</code></td><td>Git branch change listeners, diff provider, branch-to-ticket resolution</td></tr>
+            <tr><td><code>:agent</code></td><td>AI coding agent &mdash; ReAct loop, 52 tools, worker delegation, plan persistence, JCEF chat UI, skill system, cross-session memory</td></tr>
         </table>
     </div>
 </details>
@@ -1139,6 +1145,122 @@ flowchart LR
             <tr><td><code>TimeFormatter</code></td><td>Relative time ("2h ago") and absolute time formatting for timestamps</td></tr>
             <tr><td><code>EmptyStatePanel</code></td><td>Standardized empty state with message text and action link for all tabs</td></tr>
         </table>
+    </div>
+</details>
+
+<!-- ===== 21. AGENT ARCHITECTURE ===== -->
+<details id="agent-arch">
+    <summary><span class="section-num">21.</span> Agent Architecture (Phase 3)</summary>
+    <div class="content">
+
+        <h3>Overview</h3>
+        <p>The <code>:agent</code> module adds an AI coding assistant powered by Sourcegraph Enterprise's LLM API. It features a ReAct loop with 52 tools, LLM-controlled worker delegation, interactive planning, cross-session memory, and user-extensible skills.</p>
+
+        <h3>Agent ReAct Loop</h3>
+        <div class="mermaid">
+graph TD
+    A[User Message] --> B[ConversationSession]
+    B --> C[SingleAgentSession.execute]
+    C --> D{BudgetEnforcer.check}
+    D -->|OK| E[LLM Call]
+    D -->|COMPRESS| F[compressWithLlm] --> E
+    D -->|NUDGE| G[Inject nudge message] --> E
+    D -->|STRONG_NUDGE| H[Inject strong nudge + compress] --> E
+    D -->|TERMINATE| I[Return error: budget exhausted]
+    E --> J{Tool calls?}
+    J -->|Yes| K[Execute tools]
+    K --> L{delegate_task?}
+    L -->|Yes| M[Spawn WorkerSession<br/>fresh context, scoped tools]
+    L -->|No| N[Normal tool execution]
+    M --> O[Worker result] --> C
+    N --> C
+    J -->|No| P[Final response to user]
+    style A fill:#4ec9b0,color:#000
+    style P fill:#4ec9b0,color:#000
+    style I fill:#f44747,color:#fff
+    style M fill:#c586c0,color:#000
+        </div>
+
+        <h3>Tool Categories (52 tools)</h3>
+        <div class="mermaid">
+graph LR
+    subgraph Core [Core - Always Active]
+        read_file
+        edit_file
+        search_code
+        run_command
+        diagnostics
+        delegate_task
+        think
+    end
+    subgraph IDE [IDE Intelligence]
+        run_inspections
+        refactor_rename
+        compile_module
+        run_tests
+    end
+    subgraph Integration [Enterprise Integration]
+        jira_tools[Jira: 6 tools]
+        bamboo_tools[Bamboo: 5 tools]
+        sonar_tools[Sonar: 6 tools]
+        bitbucket_tools[Bitbucket: 1 tool]
+    end
+    subgraph Planning [Planning &amp; Memory]
+        create_plan
+        ask_questions
+        save_memory
+        activate_skill
+    end
+    style Core fill:#22C55E20,stroke:#22C55E
+    style IDE fill:#F59E0B20,stroke:#F59E0B
+    style Integration fill:#A855F720,stroke:#A855F7
+    style Planning fill:#89b4fa20,stroke:#89b4fa
+        </div>
+
+        <h3>Three-Layer Plan Persistence</h3>
+        <div class="mermaid">
+graph TD
+    A[LLM calls create_plan] --> B[PlanManager.submitPlan]
+    B --> C[Layer 1: plan.json on disk]
+    B --> D[Layer 2: planAnchor in context<br/>compression-proof]
+    B --> E[Layer 3: JCEF plan card + editor tab]
+    F[LLM calls update_plan_step] --> G[Update all 3 layers]
+    G --> C
+    G --> D
+    G --> E
+    style C fill:#22C55E20,stroke:#22C55E
+    style D fill:#89b4fa20,stroke:#89b4fa
+    style E fill:#F59E0B20,stroke:#F59E0B
+        </div>
+
+        <h3>Skill System</h3>
+        <div class="mermaid">
+graph TD
+    A[SKILL.md files] --> B[SkillRegistry.scan]
+    B --> C[Descriptions in system prompt]
+    D[User types /skill-name] --> E[AgentController intercept]
+    F[LLM calls activate_skill] --> E
+    G[Toolbar dropdown click] --> E
+    E --> H[SkillManager.activateSkill]
+    H --> I[skillAnchor injected into context]
+    H --> J[Banner shown in chat UI]
+    H --> K[preferredTools applied]
+    style A fill:#c586c020,stroke:#c586c0
+    style I fill:#89b4fa20,stroke:#89b4fa
+        </div>
+
+        <h3>Budget Enforcement &amp; Context Compression</h3>
+        <table>
+            <tr><th>Threshold</th><th>Action</th></tr>
+            <tr><td>50% token budget</td><td>Soft nudge injected into next message</td></tr>
+            <tr><td>70% token budget</td><td>Context compressed via LLM summarization; plan/skill anchors preserved</td></tr>
+            <tr><td>85% token budget</td><td>Strong nudge + forced compression</td></tr>
+            <tr><td>95% token budget</td><td>Session terminated with error</td></tr>
+        </table>
+
+        <h3>Worker Delegation</h3>
+        <p>The <code>delegate_task</code> tool spawns a <code>WorkerSession</code> with fresh context, a scoped tool subset, and its own budget. Workers cannot delegate further (single-depth). Results are summarized and returned to the parent session.</p>
+
     </div>
 </details>
 
