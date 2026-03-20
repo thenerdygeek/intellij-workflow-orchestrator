@@ -4,6 +4,7 @@ import com.workflow.orchestrator.core.model.sonar.CoverageData
 import com.workflow.orchestrator.core.model.sonar.PagedIssuesData
 import com.workflow.orchestrator.core.model.sonar.ProjectMeasuresData
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
+import com.workflow.orchestrator.core.model.sonar.ProjectHealthData
 import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
 import com.workflow.orchestrator.core.model.sonar.SonarBranchData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
@@ -29,6 +30,9 @@ interface SonarService {
 
     /** Get recent analysis tasks for a project. */
     suspend fun getAnalysisTasks(projectKey: String, repoName: String? = null): ToolResult<List<SonarAnalysisTaskData>>
+
+    /** Get project-level health metrics: tech debt, ratings, duplication, complexity. */
+    suspend fun getProjectHealth(projectKey: String): ToolResult<ProjectHealthData>
 
     /** Test the SonarQube connection. */
     suspend fun testConnection(): ToolResult<Unit>
