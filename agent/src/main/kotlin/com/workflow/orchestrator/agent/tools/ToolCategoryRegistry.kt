@@ -79,7 +79,7 @@ object ToolCategoryRegistry {
             color = "#EC4899",
             badgePrefix = "QA",
             description = "Code issues, quality gate status, coverage metrics, project search",
-            tools = listOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects")
+            tools = listOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health")
         ),
         ToolCategory(
             id = "bitbucket",

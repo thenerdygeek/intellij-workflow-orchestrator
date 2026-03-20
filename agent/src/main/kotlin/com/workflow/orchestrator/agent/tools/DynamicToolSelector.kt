@@ -42,12 +42,19 @@ object DynamicToolSelector {
         "deploy" to setOf("bamboo_trigger_build"),
 
         // Sonar tools triggered by quality/coverage/sonar keywords
-        "sonar" to setOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects"),
+        "sonar" to setOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health"),
         "quality" to setOf("sonar_issues", "sonar_quality_gate"),
         "coverage" to setOf("sonar_coverage"),
         "code smell" to setOf("sonar_issues"),
         "vulnerability" to setOf("sonar_issues"),
         "quality gate" to setOf("sonar_quality_gate"),
+        "analysis" to setOf("sonar_analysis_tasks"),
+        "compute engine" to setOf("sonar_analysis_tasks"),
+        "tech debt" to setOf("sonar_project_health"),
+        "technical debt" to setOf("sonar_project_health"),
+        "rating" to setOf("sonar_project_health"),
+        "health" to setOf("sonar_project_health"),
+        "duplication" to setOf("sonar_project_health"),
 
         // Bitbucket tools triggered by PR/pull request keywords
         "bitbucket" to setOf("bitbucket_create_pr"),

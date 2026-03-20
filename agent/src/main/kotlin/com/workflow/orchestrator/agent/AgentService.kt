@@ -92,6 +92,8 @@ class AgentService(
             register(SonarQualityGateTool())
             register(SonarCoverageTool())
             register(SonarSearchProjectsTool())
+            register(SonarAnalysisTasksTool())
+            register(SonarProjectHealthTool())
 
             // Bitbucket integration tools
             register(BitbucketPrTool())
