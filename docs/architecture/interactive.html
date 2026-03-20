@@ -436,8 +436,17 @@ svg text { font-family: inherit; }
     and a text <code>.summary</code> for logging and notifications. Click <strong>Animate</strong> to trace
     a request from UI through the service layer to the external API and back.
   </p>
-  <div style="margin-bottom:16px;">
-    <button id="svc-animate-btn" class="btn">&#9654; Animate</button>
+  <div style="margin-bottom:16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <button class="btn svc-btn" data-svc="0">Jira</button>
+    <button class="btn svc-btn" data-svc="1">Bamboo</button>
+    <button class="btn svc-btn" data-svc="2">SonarQube</button>
+    <button class="btn svc-btn" data-svc="3">Bitbucket</button>
+    <label style="color:var(--text-dim); font-size:13px; display:flex; align-items:center; gap:8px; margin-left:16px;">
+      Speed:
+      <input id="svc-speed" type="range" min="1" max="5" value="3" step="1"
+        style="width:100px; accent-color:var(--blue); cursor:pointer;">
+      <span id="svc-speed-label" style="min-width:24px;">1x</span>
+    </label>
   </div>
   <div style="position:relative;">
     <svg id="service-svg"></svg>
@@ -1176,23 +1185,48 @@ svg text { font-family: inherit; }
     .attr('text-anchor', 'middle').attr('fill', '#6a9955').attr('font-size', 12).attr('font-weight', 700)
     .text('Consumer');
 
-  /* Animate button */
+  /* Speed control */
+  const svcSpeedMap = { 1: 0.25, 2: 0.5, 3: 1, 4: 2, 5: 3 };
+  const svcSpeedLabelMap = { 1: '0.25x', 2: '0.5x', 3: '1x', 4: '2x', 5: '3x' };
+  let svcSpeed = 1;
+  const svcSpeedSlider = document.getElementById('svc-speed');
+  const svcSpeedLabel = document.getElementById('svc-speed-label');
+  svcSpeedLabel.textContent = '1x';
+  svcSpeedSlider.addEventListener('input', () => {
+    svcSpeed = svcSpeedMap[svcSpeedSlider.value];
+    svcSpeedLabel.textContent = svcSpeedLabelMap[svcSpeedSlider.value];
+  });
+  function sd(ms) { return ms / svcSpeed; }
+
+  /* Per-service snippet data */
+  const snippetData = [
+    { svc: 'JiraTicketData', fields: 'key, summary, status, assignee', example: 'result.data.status → renders badge\nresult.data.assignee → shows name' },
+    { svc: 'BuildResultData', fields: 'planKey, buildNumber, state, stages', example: 'result.data.state → status icon\nresult.data.stages → stage list' },
+    { svc: 'SonarIssueData', fields: 'rule, severity, message, line', example: 'result.data.severity → color coding\nresult.data.line → gutter marker' },
+    { svc: 'PullRequestData', fields: 'id, title, state, fromBranch', example: 'result.data.state → status badge\nresult.data.title → PR header' },
+  ];
+
+  /* Animate buttons */
   let animating = false;
-  const animBtn = document.getElementById('svc-animate-btn');
   const snippet1 = document.getElementById('svc-snippet-1');
   const snippet2 = document.getElementById('svc-snippet-2');
   const snippet3 = document.getElementById('svc-snippet-3');
 
-  animBtn.addEventListener('click', () => {
-    if (animating) return;
-    animating = true;
-    animBtn.classList.add('active');
-    runServiceAnimation();
+  document.querySelectorAll('.svc-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      if (animating) return;
+      animating = true;
+      document.querySelectorAll('.svc-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      const idx = parseInt(this.dataset.svc);
+      runServiceAnimation(idx);
+    });
   });
 
-  function runServiceAnimation() {
-    const svc = services[0]; /* Jira as example */
-    const api = apis[0];
+  function runServiceAnimation(idx) {
+    const svc = services[idx];
+    const api = apis[idx];
+    const snip = snippetData[idx];
     const dotLayer = g.append('g').attr('class', 'svc-anim-dots');
 
     /* Phase 1: Request from UI Panel -> Service */
@@ -1200,22 +1234,22 @@ svg text { font-family: inherit; }
       .attr('cx', colRightTop - 62).attr('cy', consumers[0].y)
       .attr('fill', '#6a9955').attr('opacity', 0);
 
-    reqDot.transition().duration(200).attr('opacity', 1)
-      .transition().duration(800).ease(d3.easeQuadInOut)
+    reqDot.transition().duration(sd(200)).attr('opacity', 1)
+      .transition().duration(sd(800)).ease(d3.easeQuadInOut)
         .attr('cx', colCenter + svcW / 2).attr('cy', svc.y)
-      .transition().duration(600).ease(d3.easeQuadInOut)
+      .transition().duration(sd(600)).ease(d3.easeQuadInOut)
         .attr('cx', colCenter - svcW / 2).attr('cy', svc.y)
       /* Phase 2: Service -> External API */
-      .transition().duration(800).ease(d3.easeQuadInOut)
+      .transition().duration(sd(800)).ease(d3.easeQuadInOut)
         .attr('cx', colLeft + 30).attr('cy', api.y)
         .attr('fill', '#f44747')
       /* Phase 3: Response back to Service */
-      .transition().delay(400).duration(800).ease(d3.easeQuadInOut)
+      .transition().delay(sd(400)).duration(sd(800)).ease(d3.easeQuadInOut)
         .attr('cx', colCenter).attr('cy', svc.y)
         .attr('fill', '#569cd6')
       .on('end', function() {
         /* Show code snippet at service */
-        snippet1.innerHTML = '<span class="kw">ToolResult</span>(\n  <span class="prop">data</span> = <span class="kw">JiraTicketData</span>(<span class="str">...</span>),\n  <span class="prop">summary</span> = <span class="str">"PROJ-123: Add auth..."</span>\n)';
+        snippet1.innerHTML = `<span class="kw">ToolResult</span>(\n  <span class="prop">data</span> = <span class="kw">${snip.svc}</span>(<span class="str">${snip.fields}</span>),\n  <span class="prop">summary</span> = <span class="str">"concise text..."</span>\n)`;
         snippet1.style.left = (colCenter - 80) + 'px';
         snippet1.style.top = (svc.y + svcH / 2 + 30) + 'px';
         snippet1.classList.add('visible');
@@ -1225,18 +1259,18 @@ svg text { font-family: inherit; }
           .attr('cx', colCenter).attr('cy', svc.y)
           .attr('fill', '#6a9955').attr('opacity', 0.9);
 
-        dataDot.transition().duration(700).ease(d3.easeQuadInOut)
+        dataDot.transition().duration(sd(700)).ease(d3.easeQuadInOut)
           .attr('cx', colRightTop - 62).attr('cy', consumers[0].y)
           .on('end', function() {
-            snippet2.innerHTML = '<span class="prop">result.data.status</span> → renders badge\n<span class="prop">result.data.assignee</span> → shows name';
+            snippet2.innerHTML = `<span class="prop">${snip.example}</span>`;
             snippet2.style.left = (colRightTop - 100) + 'px';
             snippet2.style.top = (consumers[0].y - 60) + 'px';
             snippet2.classList.add('visible');
           })
-          .transition().duration(500).attr('opacity', 0).remove();
+          .transition().duration(sd(500)).attr('opacity', 0).remove();
 
         /* Fade out original dot */
-        d3.select(this).transition().duration(300).attr('opacity', 0).remove();
+        d3.select(this).transition().duration(sd(300)).attr('opacity', 0).remove();
 
         /* Cleanup after animation */
         setTimeout(() => {
@@ -1244,8 +1278,8 @@ svg text { font-family: inherit; }
           snippet1.classList.remove('visible');
           snippet2.classList.remove('visible');
           animating = false;
-          animBtn.classList.remove('active');
-        }, 3000);
+          document.querySelectorAll('.svc-btn').forEach(b => b.classList.remove('active'));
+        }, sd(3000));
       });
   }
 })();
