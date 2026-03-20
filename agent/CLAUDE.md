@@ -7,7 +7,8 @@ AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning
 Uses Sourcegraph Enterprise's OpenAI-compatible API:
 - Endpoint: `/.api/llm/chat/completions`
 - Auth: `token` scheme via `Authorization: token <sourcegraph-access-token>`
-- Constraints: 150K input tokens, 4K output tokens max, no `system` role (converted to user with `<system_instructions>` tags), no `tool_choice`, strict user/assistant alternation
+- Constraints: 190K input tokens (configurable), no `system` role (converted to user with `<system_instructions>` tags), no `tool_choice`, strict user/assistant alternation
+- Output limit varies per model — no hardcoded clamp. User configures maxOutputTokens in settings.
 - Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with `<tool_result>` tags, consecutive same-role merging
 
 ## Architecture
@@ -24,9 +25,9 @@ AgentController (UI entry point)
 
 ## Key Components
 
-- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression.
+- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Two-threshold compression (T_max=70%, T_retained=40%). `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Dedicated `planAnchor` slot survives compression.
+- **ContextManager** — Two-threshold compression (T_max=70%, T_retained=40%). `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call.
 - **BudgetEnforcer** — Four-status budget monitoring: OK, COMPRESS, NUDGE, STRONG_NUDGE, TERMINATE.
 - **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
@@ -93,6 +94,7 @@ Three layers:
 - Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `activate_skill`
 - `preferred-tools` field provides soft tool preference (not hard restriction)
 - Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
+- Built-in skills: `systematic-debugging` and `create-skill` ship with the plugin from resources
 
 ## Security
 
