@@ -309,23 +309,7 @@ svg text { font-family: inherit; }
 /* ============================================================
    SECTION 7: QUALITY TAB DATA FLOW
    ============================================================ */
-#quality-svg { width: 100%; height: 520px; }
-
-.quality-source { cursor: pointer; transition: opacity .3s; }
-.quality-source.dimmed { opacity: 0.12; }
-.quality-arrow { transition: opacity .3s; }
-.quality-arrow.dimmed { opacity: 0.08; }
-.quality-arrow-label {
-  font-size: 9px; fill: var(--text-dim);
-  pointer-events: none;
-}
-.quality-arrow-label.dimmed { opacity: 0.08; }
-
-.debounce-area {
-  stroke: var(--orange); stroke-dasharray: 4 3;
-  fill: rgba(206, 145, 120, 0.05);
-  rx: 6;
-}
+#quality-svg { width: 100%; height: 420px; }
 
 @media (max-width: 768px) {
   nav { padding: 0 12px; gap: 12px; font-size: 12px; }
@@ -334,7 +318,7 @@ svg text { font-family: inherit; }
   #eventbus-svg  { height: 380px; }
   #service-svg   { height: 360px; }
   #threading-svg { height: 280px; }
-  #quality-svg   { height: 440px; }
+  #quality-svg   { height: 380px; }
   .step-card { flex: 0 0 100px; }
 }
 </style>
@@ -470,8 +454,15 @@ svg text { font-family: inherit; }
     <button class="btn scenario-btn" data-scenario="1">Background Polling</button>
     <button class="btn scenario-btn" data-scenario="2">Write Action (File Edit)</button>
     <button id="threading-play-btn" class="btn" style="margin-left:auto;">&#9654; Play</button>
+    <label style="color:var(--text-dim); font-size:13px; display:flex; align-items:center; gap:8px; margin-left:12px;">
+      Speed:
+      <input id="threading-speed" type="range" min="1" max="5" value="3" step="1"
+        style="width:100px; accent-color:var(--blue); cursor:pointer;">
+      <span id="threading-speed-label" style="min-width:24px;">1x</span>
+    </label>
   </div>
   <svg id="threading-svg"></svg>
+  <div id="threading-narration" style="margin-top:12px; padding:12px 16px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); font-size:13px; color:var(--text-dim); min-height:40px;"></div>
 </section>
 
 <!-- ============================================================
@@ -480,14 +471,25 @@ svg text { font-family: inherit; }
 <section id="sec-quality">
   <h2>Quality Tab Data Flow</h2>
   <p class="section-desc">
-    The Quality dashboard aggregates 6 SonarQube endpoints plus events, Git context, and settings.
-    Click a data source to highlight its flow. Watch the debounce mechanism coalesce rapid events.
+    The Quality tab is the most complex — it reacts to events from 3 other tabs,
+    fetches 6 SonarQube endpoints in parallel, and debounces rapid events (500ms).
+    Select a scenario to see the flow animated step by step.
   </p>
-  <div style="margin-bottom:16px; display:flex; gap:12px; flex-wrap:wrap;">
-    <button id="quality-animate-btn" class="btn">&#9654; Animate Debounce</button>
-    <button id="quality-reset-btn" class="btn">Reset</button>
+  <div style="margin-bottom:16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <button class="btn quality-scenario-btn selected" data-scenario="0">PR Selected</button>
+    <button class="btn quality-scenario-btn" data-scenario="1">Branch Switch</button>
+    <button class="btn quality-scenario-btn" data-scenario="2">Build Finished</button>
+    <button class="btn quality-scenario-btn" data-scenario="3">Manual Refresh</button>
+    <button id="quality-play-btn" class="btn" style="margin-left:auto;">&#9654; Play</button>
+    <label style="color:var(--text-dim); font-size:13px; display:flex; align-items:center; gap:8px;">
+      Speed:
+      <input id="quality-speed" type="range" min="1" max="5" value="3" step="1"
+        style="width:100px; accent-color:var(--blue); cursor:pointer;">
+      <span id="quality-speed-label" style="min-width:24px;">1x</span>
+    </label>
   </div>
   <svg id="quality-svg"></svg>
+  <div id="quality-narration" style="margin-top:12px; padding:12px 16px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); font-size:13px; color:var(--text-dim); min-height:40px;"></div>
 </section>
 
 </main>
@@ -1286,7 +1288,7 @@ svg text { font-family: inherit; }
 
 
 /* ============================================================
-   SECTION 6: THREADING MODEL (Animated Swimlanes)
+   SECTION 6: THREADING MODEL (Animated Swimlanes with Narration)
    ============================================================ */
 (function() {
   const svg = d3.select('#threading-svg');
@@ -1296,6 +1298,21 @@ svg text { font-family: inherit; }
   svg.attr('viewBox', `0 0 ${w} ${h}`);
 
   const g = svg.append('g');
+  const narrationEl = document.getElementById('threading-narration');
+
+  /* Speed control */
+  const thSpeedMap = { 1: 0.25, 2: 0.5, 3: 1, 4: 2, 5: 3 };
+  const thSpeedLabelMap = { 1: '0.25x', 2: '0.5x', 3: '1x', 4: '2x', 5: '3x' };
+  let thSpeed = 1;
+  const thSpeedSlider = document.getElementById('threading-speed');
+  const thSpeedLabel = document.getElementById('threading-speed-label');
+  thSpeedLabel.textContent = '1x';
+  thSpeedSlider.addEventListener('input', () => {
+    thSpeed = thSpeedMap[thSpeedSlider.value];
+    thSpeedLabel.textContent = thSpeedLabelMap[thSpeedSlider.value];
+    if (playing) { stopAnimation(); playing = true; playBtn.innerHTML = '&#9724; Pause'; playBtn.classList.add('active'); runThreadingAnimation(); }
+  });
+  function td(ms) { return ms / thSpeed; }
 
   /* Lane layout */
   const labelW = 140;
@@ -1325,31 +1342,31 @@ svg text { font-family: inherit; }
     .attr('x1', laneX).attr('y1', h - 20).attr('x2', laneX + laneW).attr('y2', h - 20)
     .attr('stroke', '#3c3c3c').attr('stroke-width', 1);
   g.append('text').attr('x', laneX + laneW / 2).attr('y', h - 4)
-    .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 10).text('Time →');
+    .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 10).text('Time \u2192');
 
   const laneYCenter = id => lanes.find(l => l.id === id).y + laneH / 2;
 
-  /* Scenarios */
+  /* Scenarios with narration */
   const scenarios = [
     { name: 'API Call from Button Click', steps: [
-      { lane: 'edt', x: 0.08, label: 'click',    dur: 300 },
-      { lane: 'io',  x: 0.25, label: 'scope.launch', dur: 200, from: 'edt' },
-      { lane: 'io',  x: 0.45, label: 'HTTP GET',  dur: 600 },
-      { lane: 'edt', x: 0.72, label: 'invokeLater', dur: 200, from: 'io' },
-      { lane: 'edt', x: 0.88, label: 'render',    dur: 300, timing: '~16ms budget' },
+      { lane: 'edt', x: 0.08, label: 'click',    dur: 300, narration: 'User clicks a button on EDT' },
+      { lane: 'io',  x: 0.25, label: 'scope.launch', dur: 200, from: 'edt', narration: 'scope.launch switches to IO thread for the API call' },
+      { lane: 'io',  x: 0.45, label: 'HTTP GET',  dur: 600, narration: 'HTTP request executes on IO thread (~200ms)' },
+      { lane: 'edt', x: 0.72, label: 'invokeLater', dur: 200, from: 'io', narration: 'invokeLater dispatches result back to EDT' },
+      { lane: 'edt', x: 0.88, label: 'render',    dur: 300, timing: '~16ms budget', narration: 'UI renders on EDT (must complete within 16ms frame budget)' },
     ]},
     { name: 'Background Polling', steps: [
-      { lane: 'bg',  x: 0.08, label: 'SmartPoller', dur: 300 },
-      { lane: 'io',  x: 0.28, label: 'API call',   dur: 400, from: 'bg' },
-      { lane: 'edt', x: 0.52, label: 'invokeLater', dur: 200, from: 'io' },
-      { lane: 'edt', x: 0.65, label: 'update UI',  dur: 200 },
-      { lane: 'bg',  x: 0.82, label: 'delay(30s)',  dur: 400, from: 'edt', timing: '~30s wait', pulse: true },
+      { lane: 'bg',  x: 0.08, label: 'SmartPoller', dur: 300, narration: 'SmartPoller fires on background coroutine scope' },
+      { lane: 'io',  x: 0.28, label: 'API call',   dur: 400, from: 'bg', narration: 'API call dispatched to IO thread' },
+      { lane: 'edt', x: 0.52, label: 'invokeLater', dur: 200, from: 'io', narration: 'invokeLater sends response to EDT for UI update' },
+      { lane: 'edt', x: 0.65, label: 'update UI',  dur: 200, narration: 'UI panel updates with new data' },
+      { lane: 'bg',  x: 0.82, label: 'delay(30s)',  dur: 400, from: 'edt', timing: '~30s wait', pulse: true, narration: 'Poller waits 30s (with backoff if no changes)' },
     ]},
     { name: 'Write Action (File Edit)', steps: [
-      { lane: 'io',  x: 0.10, label: 'Cody fix',    dur: 400 },
-      { lane: 'edt', x: 0.35, label: 'invokeLater', dur: 200, from: 'io' },
-      { lane: 'edt', x: 0.55, label: 'WriteCommandAction', dur: 500, timing: '~16ms budget' },
-      { lane: 'edt', x: 0.82, label: 'file saved',  dur: 300 },
+      { lane: 'io',  x: 0.10, label: 'Cody fix',    dur: 400, narration: 'Cody returns fix text on IO thread' },
+      { lane: 'edt', x: 0.35, label: 'invokeLater', dur: 200, from: 'io', narration: 'invokeLater switches to EDT (required for file writes)' },
+      { lane: 'edt', x: 0.55, label: 'WriteCommandAction', dur: 500, timing: '~16ms budget', narration: 'WriteCommandAction ensures thread-safe document modification' },
+      { lane: 'edt', x: 0.82, label: 'file saved',  dur: 300, narration: 'File saved, editor refreshes' },
     ]},
   ];
 
@@ -1390,6 +1407,7 @@ svg text { font-family: inherit; }
     g.selectAll('.thread-label').remove();
     g.selectAll('.thread-line').remove();
     g.selectAll('.timing-label').remove();
+    narrationEl.textContent = '';
   }
 
   function runThreadingAnimation() {
@@ -1418,14 +1436,14 @@ svg text { font-family: inherit; }
             .attr('stroke', lanes.find(l => l.id === step.lane).color)
             .attr('stroke-width', 1.5).attr('stroke-dasharray', '3 3')
             .attr('opacity', 0);
-          line.transition().duration(200).attr('opacity', 0.5);
+          line.transition().duration(td(200)).attr('opacity', 0.5);
 
           /* Moving dot from previous lane */
           const moveDot = dotLayer.append('circle').attr('class', 'thread-dot')
             .attr('cx', fromX).attr('cy', fromY).attr('r', 8)
             .attr('fill', lanes.find(l => l.id === step.lane).color)
             .attr('opacity', 0.9);
-          moveDot.transition().duration(400).ease(d3.easeQuadInOut)
+          moveDot.transition().duration(td(400)).ease(d3.easeQuadInOut)
             .attr('cx', cx).attr('cy', cy)
             .on('end', () => { moveDot.remove(); showDot(); });
         } else {
@@ -1439,14 +1457,17 @@ svg text { font-family: inherit; }
             .attr('cx', cx).attr('cy', cy).attr('r', 0)
             .attr('fill', laneColor).attr('opacity', 0.9);
 
-          dot.transition().duration(200).attr('r', 8);
+          dot.transition().duration(td(200)).attr('r', 8);
+
+          /* Set narration text */
+          narrationEl.textContent = step.narration;
 
           /* Pulse effect for waiting states */
           if (step.pulse) {
             (function pulseFn() {
               if (!playing) return;
-              dot.transition().duration(600).attr('r', 12).attr('opacity', 1)
-                .transition().duration(600).attr('r', 8).attr('opacity', 0.7)
+              dot.transition().duration(td(600)).attr('r', 12).attr('opacity', 1)
+                .transition().duration(td(600)).attr('r', 8).attr('opacity', 0.7)
                 .on('end', pulseFn);
             })();
           }
@@ -1456,14 +1477,14 @@ svg text { font-family: inherit; }
             .attr('cx', cx).attr('cy', cy).attr('r', 8)
             .attr('fill', 'none').attr('stroke', laneColor).attr('stroke-width', 2)
             .attr('opacity', 0.6)
-            .transition().duration(800).attr('r', 18).attr('opacity', 0).remove();
+            .transition().duration(td(800)).attr('r', 18).attr('opacity', 0).remove();
 
           /* Label */
           const lbl = dotLayer.append('text').attr('class', 'thread-label')
             .attr('x', cx).attr('y', cy - 16).attr('text-anchor', 'middle')
             .attr('fill', laneColor).attr('font-size', 10).attr('font-weight', 600)
             .text(step.label).attr('opacity', 0);
-          lbl.transition().duration(200).attr('opacity', 1);
+          lbl.transition().duration(td(200)).attr('opacity', 1);
 
           /* Timing annotation */
           if (step.timing) {
@@ -1471,18 +1492,18 @@ svg text { font-family: inherit; }
               .attr('x', cx).attr('y', cy + 24).attr('text-anchor', 'middle')
               .attr('fill', '#808080').attr('font-size', 9).attr('font-style', 'italic')
               .text(step.timing).attr('opacity', 0);
-            tLbl.transition().delay(300).duration(200).attr('opacity', 1);
+            tLbl.transition().delay(td(300)).duration(td(200)).attr('opacity', 1);
           }
 
           /* Fade dot after duration (unless it's the last or pulsing) */
           if (!step.pulse && i < sc.steps.length - 1) {
-            dot.transition().delay(step.dur + 200).duration(400).attr('opacity', 0.3);
+            dot.transition().delay(td(step.dur + 200)).duration(td(400)).attr('opacity', 0.3);
           }
         }
       }, stepDelay);
       animTimers.push(t);
 
-      totalDelay += step.dur + (step.from ? 500 : 300);
+      totalDelay += td(step.dur + (step.from ? 500 : 300));
     });
 
     /* Loop */
@@ -1493,256 +1514,391 @@ svg text { font-family: inherit; }
       g.selectAll('.timing-label').remove();
       dotLayer.remove();
       if (playing) runThreadingAnimation();
-    }, totalDelay + 2500);
+    }, totalDelay + td(2500));
     animTimers.push(loopTimer);
   }
 })();
 
 
 /* ============================================================
-   SECTION 7: QUALITY TAB DATA FLOW
+   SECTION 7: QUALITY TAB DATA FLOW (Narrative Visualization)
    ============================================================ */
 (function() {
   const svg = d3.select('#quality-svg');
   const container = svg.node().parentElement;
   const w = container.clientWidth;
-  const h = 520;
+  const h = 420;
   svg.attr('viewBox', `0 0 ${w} ${h}`);
 
   const g = svg.append('g');
+  const narrationEl = document.getElementById('quality-narration');
 
-  /* Central dashboard */
-  const dashX = w / 2, dashY = h / 2;
-  const dashW = 200, dashH = 120;
+  /* Speed control */
+  const qSpeedMap = { 1: 0.25, 2: 0.5, 3: 1, 4: 2, 5: 3 };
+  const qSpeedLabelMap = { 1: '0.25x', 2: '0.5x', 3: '1x', 4: '2x', 5: '3x' };
+  let qSpeed = 1;
+  const qSpeedSlider = document.getElementById('quality-speed');
+  const qSpeedLabel = document.getElementById('quality-speed-label');
+  qSpeedLabel.textContent = '1x';
+  qSpeedSlider.addEventListener('input', () => {
+    qSpeed = qSpeedMap[qSpeedSlider.value];
+    qSpeedLabel.textContent = qSpeedLabelMap[qSpeedSlider.value];
+    if (playing) { stopAnimation(); playing = true; playBtn.innerHTML = '&#9724; Pause'; playBtn.classList.add('active'); runScenario(); }
+  });
+  function sd(ms) { return ms / qSpeed; }
 
-  g.append('rect')
-    .attr('x', dashX - dashW / 2).attr('y', dashY - dashH / 2)
+  /* ---- LAYOUT POSITIONS ---- */
+  const leftCol = 80;                  /* trigger circles X */
+  const centerX = w * 0.42;           /* SonarDataService center */
+  const rightX = w * 0.76;            /* Dashboard center */
+  const centerY = 180;                /* vertical center line */
+
+  /* Trigger circles (left column) */
+  const triggers = [
+    { id: 'pr',      label: 'PR Tab',        y: 60,  color: '#c586c0' },
+    { id: 'git',     label: 'Git',           y: 150, color: '#4ec9b0' },
+    { id: 'bamboo',  label: 'Bamboo Build',  y: 240, color: '#dcdcaa' },
+    { id: 'refresh', label: 'Refresh Btn',   y: 330, color: '#569cd6' },
+  ];
+
+  /* Draw trigger circles */
+  triggers.forEach(t => {
+    const tg = g.append('g').attr('class', 'q-trigger').attr('data-id', t.id);
+    tg.append('circle').attr('cx', leftCol).attr('cy', t.y).attr('r', 26)
+      .attr('fill', t.color + '1a').attr('stroke', t.color).attr('stroke-width', 2);
+    tg.append('text').attr('x', leftCol).attr('y', t.y + 4)
+      .attr('text-anchor', 'middle').attr('fill', t.color).attr('font-size', 10).attr('font-weight', 600)
+      .text(t.label);
+  });
+
+  /* SonarDataService box (center) */
+  const svcW = 160, svcH = 70;
+  const svcX = centerX - svcW / 2, svcY = centerY - svcH / 2;
+  g.append('rect').attr('x', svcX).attr('y', svcY)
+    .attr('width', svcW).attr('height', svcH).attr('rx', 8)
+    .attr('fill', 'rgba(206,145,120,0.08)').attr('stroke', '#ce9178').attr('stroke-width', 2);
+  g.append('text').attr('x', centerX).attr('y', centerY - 8)
+    .attr('text-anchor', 'middle').attr('fill', '#ce9178').attr('font-size', 12).attr('font-weight', 700)
+    .text('SonarDataService');
+  g.append('text').attr('x', centerX).attr('y', centerY + 12)
+    .attr('text-anchor', 'middle').attr('fill', '#ce9178').attr('font-size', 9).attr('font-style', 'italic')
+    .text('500ms debounce');
+
+  /* Quality Dashboard box (right) */
+  const dashW = 160, dashH = 120;
+  const dashX = rightX - dashW / 2, dashY = 80;
+  g.append('rect').attr('x', dashX).attr('y', dashY)
     .attr('width', dashW).attr('height', dashH).attr('rx', 8)
-    .attr('fill', 'rgba(86, 156, 214, 0.08)').attr('stroke', '#569cd6').attr('stroke-width', 2);
-  g.append('text').attr('x', dashX).attr('y', dashY - dashH / 2 + 24)
-    .attr('text-anchor', 'middle').attr('fill', '#569cd6').attr('font-size', 13).attr('font-weight', 700)
+    .attr('fill', 'rgba(86,156,214,0.08)').attr('stroke', '#569cd6').attr('stroke-width', 2);
+  g.append('text').attr('x', rightX).attr('y', dashY + 20)
+    .attr('text-anchor', 'middle').attr('fill', '#569cd6').attr('font-size', 12).attr('font-weight', 700)
     .text('Quality Dashboard');
 
-  /* Sub-sections inside dashboard */
-  const subSections = ['Overview', 'Issues', 'Coverage'];
-  subSections.forEach((s, i) => {
-    const subW = 56, subH = 28;
-    const sx = dashX - 90 + i * 66;
-    const sy = dashY + 4;
-    g.append('rect')
-      .attr('x', sx).attr('y', sy).attr('width', subW).attr('height', subH).attr('rx', 4)
-      .attr('fill', 'rgba(78, 201, 176, 0.1)').attr('stroke', '#4ec9b0').attr('stroke-width', 1);
-    g.append('text').attr('x', sx + subW / 2).attr('y', sy + 18)
-      .attr('text-anchor', 'middle').attr('fill', '#4ec9b0').attr('font-size', 9).attr('font-weight', 600)
+  /* Dashboard sub-sections */
+  const dashSubs = ['Overview', 'Issues', 'Coverage'];
+  const subRects = [];
+  dashSubs.forEach((s, i) => {
+    const subW = 44, subH = 24;
+    const sx = dashX + 10 + i * 50;
+    const sy = dashY + 40;
+    const rect = g.append('rect').attr('x', sx).attr('y', sy)
+      .attr('width', subW).attr('height', subH).attr('rx', 4)
+      .attr('fill', 'rgba(78,201,176,0.1)').attr('stroke', '#4ec9b0').attr('stroke-width', 1);
+    g.append('text').attr('x', sx + subW / 2).attr('y', sy + 16)
+      .attr('text-anchor', 'middle').attr('fill', '#4ec9b0').attr('font-size', 8).attr('font-weight', 600)
+      .text(s);
+    subRects.push(rect);
+  });
+
+  /* Editor box (below dashboard) */
+  const edW = 140, edH = 70;
+  const edX = rightX - edW / 2, edY = 260;
+  g.append('rect').attr('x', edX).attr('y', edY)
+    .attr('width', edW).attr('height', edH).attr('rx', 8)
+    .attr('fill', 'rgba(106,153,85,0.08)').attr('stroke', '#6a9955').attr('stroke-width', 2);
+  g.append('text').attr('x', rightX).attr('y', edY + 20)
+    .attr('text-anchor', 'middle').attr('fill', '#6a9955').attr('font-size', 12).attr('font-weight', 700)
+    .text('Editor');
+
+  const edSubs = ['Gutter Markers', 'Banners'];
+  edSubs.forEach((s, i) => {
+    const subW = 56, subH = 20;
+    const sx = edX + 14 + i * 62;
+    const sy = edY + 36;
+    g.append('rect').attr('x', sx).attr('y', sy)
+      .attr('width', subW).attr('height', subH).attr('rx', 3)
+      .attr('fill', 'rgba(106,153,85,0.1)').attr('stroke', '#6a9955').attr('stroke-width', 1);
+    g.append('text').attr('x', sx + subW / 2).attr('y', sy + 14)
+      .attr('text-anchor', 'middle').attr('fill', '#6a9955').attr('font-size', 7).attr('font-weight', 600)
       .text(s);
   });
 
-  /* Data sources with their arrows */
-  const sources = [
-    { id: 'sonar', label: 'SonarQube API', x: 100, y: 80, color: '#f44747', r: 36,
-      arrows: [
-        { label: 'issues/search', target: 'Issues' },
-        { label: 'qualitygates/project_status', target: 'Overview' },
-        { label: 'measures/component_tree', target: 'Coverage' },
-        { label: 'sources/lines', target: 'Gutter markers' },
-        { label: 'ce/activity', target: 'Analysis status' },
-        { label: 'new_code_periods', target: 'New code label' },
-      ]},
-    { id: 'eventbus', label: 'EventBus', x: w - 100, y: 80, color: '#ce9178', r: 32,
-      arrows: [
-        { label: 'PrSelected', target: 'refresh branch' },
-        { label: 'BranchChanged', target: 'refresh branch' },
-        { label: 'BuildFinished', target: 'refresh data' },
-      ]},
-    { id: 'git', label: 'Git', x: 100, y: h - 80, color: '#4ec9b0', r: 28,
-      arrows: [
-        { label: 'currentBranchName', target: 'branch context' },
-      ]},
-    { id: 'settings', label: 'PluginSettings', x: w - 100, y: h - 80, color: '#808080', r: 32,
-      arrows: [
-        { label: 'sonarProjectKey', target: 'project context' },
-        { label: 'coverageThresholds', target: 'color coding' },
-      ]},
+  /* Static connector lines (dim, always visible) */
+  const connectors = [
+    /* triggers to service */
+    { x1: leftCol + 26, y1: 60,  x2: svcX, y2: centerY - 15, color: '#c586c0' },
+    { x1: leftCol + 26, y1: 150, x2: svcX, y2: centerY,      color: '#4ec9b0' },
+    { x1: leftCol + 26, y1: 240, x2: svcX, y2: centerY + 15, color: '#dcdcaa' },
+    { x1: leftCol + 26, y1: 330, x2: svcX, y2: centerY + 20, color: '#569cd6' },
+    /* service to dashboard */
+    { x1: svcX + svcW,  y1: centerY - 10, x2: dashX, y2: dashY + dashH / 2, color: '#ce9178' },
+    /* dashboard to editor */
+    { x1: rightX,       y1: dashY + dashH, x2: rightX, y2: edY, color: '#569cd6' },
+  ];
+  connectors.forEach(c => {
+    g.append('line')
+      .attr('x1', c.x1).attr('y1', c.y1).attr('x2', c.x2).attr('y2', c.y2)
+      .attr('stroke', c.color).attr('stroke-width', 1).attr('stroke-dasharray', '4 3').attr('opacity', 0.15);
+  });
+
+  /* ---- HELPER: animate a dot along a straight line ---- */
+  function animDot(layer, x1, y1, x2, y2, color, dur) {
+    const dot = layer.append('circle').attr('cx', x1).attr('cy', y1).attr('r', 7)
+      .attr('fill', color).attr('opacity', 0.9);
+    dot.transition().duration(sd(dur)).ease(d3.easeQuadInOut)
+      .attr('cx', x2).attr('cy', y2)
+      .on('end', () => dot.remove());
+    /* trail glow */
+    layer.append('circle').attr('cx', x1).attr('cy', y1).attr('r', 7)
+      .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2).attr('opacity', 0.5)
+      .transition().duration(sd(600)).attr('r', 16).attr('opacity', 0).remove();
+    return dot;
+  }
+
+  /* ---- HELPER: flash a rect border ---- */
+  function flashRect(x, y, w, h, color) {
+    g.append('rect').attr('x', x).attr('y', y).attr('width', w).attr('height', h).attr('rx', 8)
+      .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 3).attr('opacity', 0.9)
+      .transition().duration(sd(500)).attr('opacity', 0).remove();
+  }
+
+  /* ---- HELPER: pulsing indicator at a position ---- */
+  function pulseAt(layer, cx, cy, color, duration) {
+    const p = layer.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 6)
+      .attr('fill', color).attr('opacity', 0.8);
+    let active = true;
+    (function pulse() {
+      if (!active) return;
+      p.transition().duration(sd(300)).attr('r', 12).attr('opacity', 1)
+        .transition().duration(sd(300)).attr('r', 6).attr('opacity', 0.6)
+        .on('end', pulse);
+    })();
+    setTimeout(() => { active = false; p.transition().duration(sd(200)).attr('opacity', 0).remove(); }, sd(duration));
+    return p;
+  }
+
+  /* ---- HELPER: fan out 6 API dots ---- */
+  function fanApiDots(layer, cx, cy, color) {
+    const offsets = [-50, -30, -10, 10, 30, 50];
+    offsets.forEach((off, i) => {
+      const targetY = cy - 60;
+      const targetX = cx + off;
+      const dot = layer.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 4)
+        .attr('fill', color).attr('opacity', 0);
+      dot.transition().delay(sd(i * 40)).duration(sd(100)).attr('opacity', 0.9)
+        .transition().duration(sd(300)).ease(d3.easeQuadOut)
+          .attr('cx', targetX).attr('cy', targetY)
+        .transition().duration(sd(300)).ease(d3.easeQuadIn)
+          .attr('cx', cx).attr('cy', cy).attr('opacity', 0.3)
+        .transition().duration(sd(100)).attr('opacity', 0).remove();
+    });
+  }
+
+  /* ---- SCENARIOS ---- */
+  /* Positions for dot endpoints */
+  const trigPos = id => { const t = triggers.find(t => t.id === id); return { x: leftCol, y: t.y }; };
+  const svcCenter = { x: centerX, y: centerY };
+  const dashCenter = { x: rightX, y: dashY + dashH / 2 };
+  const edCenter = { x: rightX, y: edY + edH / 2 };
+
+  const scenarios = [
+    { name: 'PR Selected', trigger: 'pr', steps: [
+      { narration: 'User selects a PR in the PR tab',                          action: 'highlight-trigger' },
+      { narration: 'PrSelected event emitted via EventBus',                    action: 'dot-to-service' },
+      { narration: 'Debounce timer starts (500ms)',                            action: 'pulse-service' },
+      { narration: "SonarDataService.refreshForBranch('feature/PROJ-123')",    action: 'glow-service' },
+      { narration: '6 parallel API calls to SonarQube',                        action: 'fan-api' },
+      { narration: 'StateFlow emits new SonarState',                           action: 'dot-to-dashboard' },
+      { narration: 'Quality tab updates: issues, coverage, quality gate',      action: 'flash-dashboard' },
+      { narration: 'Gutter markers refresh for the new branch',                action: 'dot-to-editor' },
+    ]},
+    { name: 'Branch Switch', trigger: 'git', steps: [
+      { narration: 'User switches git branch in IDE',                          action: 'highlight-trigger' },
+      { narration: 'BranchChanged event via EventBus',                         action: 'dot-to-service' },
+      { narration: 'Debounce timer starts (500ms)',                            action: 'pulse-service' },
+      { narration: "SonarDataService.refreshForBranch('new-branch')",          action: 'glow-service' },
+      { narration: '6 parallel API calls to SonarQube',                        action: 'fan-api' },
+      { narration: 'StateFlow emits new SonarState',                           action: 'dot-to-dashboard' },
+      { narration: 'Quality tab updates: issues, coverage, quality gate',      action: 'flash-dashboard' },
+      { narration: 'Gutter markers refresh for the new branch',                action: 'dot-to-editor' },
+    ]},
+    { name: 'Build Finished', trigger: 'bamboo', steps: [
+      { narration: 'Bamboo build completes',                                   action: 'highlight-trigger' },
+      { narration: 'BuildFinished event via EventBus',                         action: 'dot-to-service' },
+      { narration: 'Debounce: if PrSelected also fired, they coalesce',        action: 'merge-dots' },
+      { narration: "SonarDataService.refreshForBranch(currentBranch)",         action: 'glow-service' },
+      { narration: '6 parallel API calls to SonarQube',                        action: 'fan-api' },
+      { narration: 'StateFlow emits new SonarState',                           action: 'dot-to-dashboard' },
+      { narration: 'Quality tab updates: issues, coverage, quality gate',      action: 'flash-dashboard' },
+      { narration: 'Gutter markers refresh for the new branch',                action: 'dot-to-editor' },
+    ]},
+    { name: 'Manual Refresh', trigger: 'refresh', steps: [
+      { narration: 'User clicks Refresh button in Quality tab',               action: 'highlight-trigger' },
+      { narration: 'Direct call to SonarDataService.refresh() (no debounce)',  action: 'dot-to-service-fast' },
+      { narration: "SonarDataService.refresh() executes immediately",          action: 'glow-service' },
+      { narration: '6 parallel API calls to SonarQube',                        action: 'fan-api' },
+      { narration: 'StateFlow emits new SonarState',                           action: 'dot-to-dashboard' },
+      { narration: 'Quality tab updates: issues, coverage, quality gate',      action: 'flash-dashboard' },
+      { narration: 'Gutter markers refresh',                                   action: 'dot-to-editor' },
+    ]},
   ];
 
-  /* Draw arrows first (below nodes) */
-  const arrowLayer = g.append('g');
-  const arrowElements = [];
+  /* ---- STATE ---- */
+  let currentScenario = 0;
+  let playing = false;
+  let animTimers = [];
 
-  sources.forEach(src => {
-    src.arrows.forEach((arrow, ai) => {
-      /* Calculate control points for curved arrows */
-      const dx = dashX - src.x;
-      const dy = dashY - src.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const angle = Math.atan2(dy, dx);
-
-      /* Start from edge of source circle */
-      const startX = src.x + Math.cos(angle) * (src.r + 4);
-      const startY = src.y + Math.sin(angle) * (src.r + 4);
-
-      /* End at edge of dashboard */
-      const endAngle = Math.atan2(src.y - dashY, src.x - dashX);
-      const endX = dashX + Math.cos(endAngle) * (dashW / 2 + 4);
-      const endY = dashY + Math.sin(endAngle) * (dashH / 2 + 4);
-
-      /* Offset for multiple arrows */
-      const spread = (ai - (src.arrows.length - 1) / 2) * 12;
-      const perpAngle = angle + Math.PI / 2;
-      const offsetX = Math.cos(perpAngle) * spread;
-      const offsetY = Math.sin(perpAngle) * spread;
-
-      const midX = (startX + endX) / 2 + offsetX;
-      const midY = (startY + endY) / 2 + offsetY;
-
-      const path = arrowLayer.append('path')
-        .attr('class', 'quality-arrow')
-        .attr('data-source', src.id)
-        .attr('d', `M${startX},${startY} Q${midX},${midY} ${endX},${endY}`)
-        .attr('fill', 'none').attr('stroke', src.color).attr('stroke-width', 1.5)
-        .attr('stroke-dasharray', '4 3').attr('opacity', 0.5);
-
-      /* Arrow label at midpoint */
-      const lblX = midX;
-      const lblY = midY - 8;
-      const lbl = arrowLayer.append('text')
-        .attr('class', 'quality-arrow-label')
-        .attr('data-source', src.id)
-        .attr('x', lblX).attr('y', lblY)
-        .attr('text-anchor', 'middle').attr('fill', src.color).attr('font-size', 9)
-        .text(arrow.label);
-
-      arrowElements.push({ path, lbl, sourceId: src.id });
+  /* Scenario buttons */
+  document.querySelectorAll('.quality-scenario-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.quality-scenario-btn').forEach(b => b.classList.remove('selected'));
+      this.classList.add('selected');
+      currentScenario = parseInt(this.dataset.scenario);
+      stopAnimation();
+      if (playing) runScenario();
     });
   });
 
-  /* Draw source nodes */
-  sources.forEach(src => {
-    const srcG = g.append('g').attr('class', 'quality-source')
-      .attr('data-source', src.id)
-      .attr('transform', `translate(${src.x},${src.y})`);
-
-    srcG.append('circle').attr('r', src.r)
-      .attr('fill', `${src.color}1a`).attr('stroke', src.color).attr('stroke-width', 2);
-
-    /* Split label if needed */
-    const words = src.label.split(/(?=[A-Z])/).join(' ').split(' ');
-    if (words.length <= 2) {
-      srcG.append('text').attr('text-anchor', 'middle').attr('dy', 4)
-        .attr('fill', src.color).attr('font-size', 10).attr('font-weight', 600)
-        .text(src.label);
+  const playBtn = document.getElementById('quality-play-btn');
+  playBtn.addEventListener('click', () => {
+    if (playing) {
+      stopAnimation();
     } else {
-      srcG.append('text').attr('text-anchor', 'middle').attr('dy', -2)
-        .attr('fill', src.color).attr('font-size', 10).attr('font-weight', 600)
-        .text(words.slice(0, 2).join(' '));
-      srcG.append('text').attr('text-anchor', 'middle').attr('dy', 12)
-        .attr('fill', src.color).attr('font-size', 10).attr('font-weight', 600)
-        .text(words.slice(2).join(' '));
+      playing = true;
+      playBtn.innerHTML = '&#9724; Pause';
+      playBtn.classList.add('active');
+      runScenario();
     }
-
-    /* Click to highlight */
-    srcG.on('click', function() {
-      const id = src.id;
-      const allDimmed = d3.select(this).classed('highlighted');
-
-      /* Reset all */
-      g.selectAll('.quality-source').classed('dimmed', false).classed('highlighted', false);
-      g.selectAll('.quality-arrow').classed('dimmed', false);
-      g.selectAll('.quality-arrow-label').classed('dimmed', false);
-
-      if (!allDimmed) {
-        /* Dim everything except this source */
-        g.selectAll('.quality-source').each(function() {
-          if (d3.select(this).attr('data-source') !== id) {
-            d3.select(this).classed('dimmed', true);
-          }
-        });
-        g.selectAll('.quality-arrow').each(function() {
-          if (d3.select(this).attr('data-source') !== id) {
-            d3.select(this).classed('dimmed', true);
-          }
-        });
-        g.selectAll('.quality-arrow-label').each(function() {
-          if (d3.select(this).attr('data-source') !== id) {
-            d3.select(this).classed('dimmed', true);
-          }
-        });
-        d3.select(this).classed('highlighted', true);
-      }
-    });
   });
 
-  /* Debounce visualization area (near EventBus) */
-  const dbX = w - 100, dbY = 140;
-  const debounceG = g.append('g').attr('class', 'debounce-group');
-  debounceG.append('rect').attr('class', 'debounce-area')
-    .attr('x', dbX - 50).attr('y', dbY).attr('width', 100).attr('height', 40);
-  debounceG.append('text')
-    .attr('x', dbX).attr('y', dbY + 24).attr('text-anchor', 'middle')
-    .attr('fill', '#ce9178').attr('font-size', 9).attr('font-style', 'italic')
-    .text('500ms debounce');
+  function stopAnimation() {
+    playing = false;
+    playBtn.innerHTML = '&#9654; Play';
+    playBtn.classList.remove('active');
+    animTimers.forEach(clearTimeout);
+    animTimers = [];
+    g.selectAll('.q-anim').remove();
+    narrationEl.textContent = '';
+  }
 
-  /* Animate debounce button */
-  let debounceAnimating = false;
-  document.getElementById('quality-animate-btn').addEventListener('click', () => {
-    if (debounceAnimating) return;
-    debounceAnimating = true;
+  function runScenario() {
+    if (!playing) return;
+    const sc = scenarios[currentScenario];
+    const dotLayer = g.append('g').attr('class', 'q-anim');
+    const trig = trigPos(sc.trigger);
+    const trigColor = triggers.find(t => t.id === sc.trigger).color;
+    let totalDelay = 0;
 
-    const eventBusSrc = sources.find(s => s.id === 'eventbus');
-    const dotLayer = g.append('g');
+    sc.steps.forEach((step, i) => {
+      const stepDelay = totalDelay;
 
-    /* 3 rapid events arrive at EventBus */
-    [0, 150, 300].forEach((delay, i) => {
-      setTimeout(() => {
-        const dot = dotLayer.append('circle')
-          .attr('cx', eventBusSrc.x + 40 - i * 10).attr('cy', eventBusSrc.y - 20)
-          .attr('r', 6).attr('fill', '#ce9178').attr('opacity', 0);
+      const t = setTimeout(() => {
+        if (!playing) return;
+        narrationEl.textContent = step.narration;
 
-        dot.transition().duration(150).attr('opacity', 0.9)
-          .transition().duration(300).ease(d3.easeQuadIn)
-            .attr('cx', dbX).attr('cy', dbY + 20)
-          .transition().duration(200).attr('r', 4).attr('opacity', 0.5);
-
-        /* After all 3 arrive, merge into 1 */
-        if (i === 2) {
-          setTimeout(() => {
-            dotLayer.selectAll('circle').transition().duration(300)
-              .attr('cx', dbX).attr('cy', dbY + 20).attr('r', 3).attr('opacity', 0).remove();
-
-            /* Single merged dot flows to dashboard */
-            const merged = dotLayer.append('circle')
-              .attr('cx', dbX).attr('cy', dbY + 20)
-              .attr('r', 10).attr('fill', '#ce9178').attr('opacity', 0);
-
-            merged.transition().duration(200).attr('opacity', 1).attr('r', 8)
-              .transition().duration(800).ease(d3.easeQuadInOut)
-                .attr('cx', dashX + dashW / 2 + 4).attr('cy', dashY)
-              .transition().duration(400).attr('r', 14).attr('opacity', 0)
-              .on('end', () => {
-                /* Flash dashboard border */
-                g.append('rect')
-                  .attr('x', dashX - dashW / 2).attr('y', dashY - dashH / 2)
-                  .attr('width', dashW).attr('height', dashH).attr('rx', 8)
-                  .attr('fill', 'none').attr('stroke', '#ce9178').attr('stroke-width', 3)
-                  .attr('opacity', 0.8)
-                  .transition().duration(600).attr('opacity', 0).remove();
-
-                dotLayer.remove();
-                debounceAnimating = false;
-              })
-              .remove();
-          }, 600);
+        switch (step.action) {
+          case 'highlight-trigger': {
+            /* Glow around the trigger circle */
+            dotLayer.append('circle').attr('cx', trig.x).attr('cy', trig.y).attr('r', 26)
+              .attr('fill', 'none').attr('stroke', trigColor).attr('stroke-width', 3).attr('opacity', 0.9)
+              .transition().duration(sd(600)).attr('r', 36).attr('opacity', 0).remove();
+            dotLayer.append('circle').attr('cx', trig.x).attr('cy', trig.y).attr('r', 8)
+              .attr('fill', trigColor).attr('opacity', 0.9)
+              .transition().duration(sd(500)).attr('opacity', 0.4);
+            break;
+          }
+          case 'dot-to-service': {
+            animDot(dotLayer, trig.x + 26, trig.y, svcX, svcCenter.y, trigColor, 700);
+            break;
+          }
+          case 'dot-to-service-fast': {
+            animDot(dotLayer, trig.x + 26, trig.y, svcX, svcCenter.y, trigColor, 400);
+            break;
+          }
+          case 'pulse-service': {
+            pulseAt(dotLayer, centerX, centerY, '#ce9178', 1200);
+            break;
+          }
+          case 'merge-dots': {
+            /* Show 2 dots arriving and merging into 1 */
+            const prTrig = trigPos('pr');
+            const d1 = dotLayer.append('circle').attr('cx', trig.x + 26).attr('cy', trig.y).attr('r', 5)
+              .attr('fill', trigColor).attr('opacity', 0.9);
+            const d2 = dotLayer.append('circle').attr('cx', prTrig.x + 26).attr('cy', prTrig.y).attr('r', 5)
+              .attr('fill', '#c586c0').attr('opacity', 0.9);
+            d1.transition().duration(sd(500)).ease(d3.easeQuadInOut)
+              .attr('cx', centerX - 10).attr('cy', centerY).attr('opacity', 0.5)
+              .transition().duration(sd(200)).attr('cx', centerX).attr('r', 3).attr('opacity', 0).remove();
+            d2.transition().duration(sd(500)).ease(d3.easeQuadInOut)
+              .attr('cx', centerX + 10).attr('cy', centerY).attr('opacity', 0.5)
+              .transition().duration(sd(200)).attr('cx', centerX).attr('r', 3).attr('opacity', 0).remove();
+            /* Merged dot appears */
+            const merged = dotLayer.append('circle').attr('cx', centerX).attr('cy', centerY).attr('r', 0)
+              .attr('fill', '#ce9178').attr('opacity', 0);
+            merged.transition().delay(sd(650)).duration(sd(200)).attr('r', 10).attr('opacity', 0.9)
+              .transition().duration(sd(400)).attr('r', 7).attr('opacity', 0.4);
+            /* Pulse the service box */
+            pulseAt(dotLayer, centerX, centerY, '#ce9178', 1000);
+            break;
+          }
+          case 'glow-service': {
+            flashRect(svcX, svcY, svcW, svcH, '#ce9178');
+            break;
+          }
+          case 'fan-api': {
+            fanApiDots(dotLayer, centerX, centerY, '#f44747');
+            break;
+          }
+          case 'dot-to-dashboard': {
+            animDot(dotLayer, svcX + svcW, svcCenter.y - 10, dashX, dashY + dashH / 2, '#ce9178', 600);
+            break;
+          }
+          case 'flash-dashboard': {
+            flashRect(dashX, dashY, dashW, dashH, '#569cd6');
+            /* Flash each sub-section */
+            subRects.forEach((rect, j) => {
+              setTimeout(() => {
+                rect.transition().duration(sd(200)).attr('stroke', '#fff').attr('stroke-width', 2)
+                  .transition().duration(sd(300)).attr('stroke', '#4ec9b0').attr('stroke-width', 1);
+              }, sd(j * 120));
+            });
+            break;
+          }
+          case 'dot-to-editor': {
+            animDot(dotLayer, rightX, dashY + dashH, rightX, edY, '#6a9955', 500);
+            flashRect(edX, edY, edW, edH, '#6a9955');
+            break;
+          }
         }
-      }, delay);
-    });
-  });
+      }, stepDelay);
+      animTimers.push(t);
 
-  /* Reset button */
-  document.getElementById('quality-reset-btn').addEventListener('click', () => {
-    g.selectAll('.quality-source').classed('dimmed', false).classed('highlighted', false);
-    g.selectAll('.quality-arrow').classed('dimmed', false);
-    g.selectAll('.quality-arrow-label').classed('dimmed', false);
-  });
+      /* Duration per action type */
+      const durMap = {
+        'highlight-trigger': 800, 'dot-to-service': 900, 'dot-to-service-fast': 600,
+        'pulse-service': 1400, 'merge-dots': 1200, 'glow-service': 700,
+        'fan-api': 1200, 'dot-to-dashboard': 800, 'flash-dashboard': 900, 'dot-to-editor': 800,
+      };
+      totalDelay += sd(durMap[step.action] || 800);
+    });
+
+    /* Loop */
+    const loopTimer = setTimeout(() => {
+      g.selectAll('.q-anim').remove();
+      if (playing) runScenario();
+    }, totalDelay + sd(2000));
+    animTimers.push(loopTimer);
+  }
 })();
 </script>
 </body>
