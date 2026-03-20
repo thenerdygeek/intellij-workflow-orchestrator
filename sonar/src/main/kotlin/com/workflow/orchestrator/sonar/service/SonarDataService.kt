@@ -37,6 +37,8 @@ class SonarDataService(private val project: Project) : Disposable {
     @Volatile private var cachedApiClient: SonarApiClient? = null
     @Volatile private var cachedSonarUrl: String? = null
 
+    private var refreshDebounceJob: Job? = null
+
     /**
      * Cache of per-file line coverage data, keyed by relative file path.
      * Populated on-demand when files are opened in the editor (via [getLineCoverage]).
@@ -104,10 +106,14 @@ class SonarDataService(private val project: Project) : Disposable {
      * indicate the branch context has changed (PR selected, git branch switch, build finished).
      */
     fun refreshForBranch(branch: String) {
-        val client = apiClient ?: return
-        val projectKey = settings.state.sonarProjectKey.orEmpty()
-        if (projectKey.isBlank()) return
-        scope.launch { refreshWith(client, projectKey, branch) }
+        refreshDebounceJob?.cancel()
+        refreshDebounceJob = scope.launch {
+            delay(500) // Coalesce rapid events
+            val client = apiClient ?: return@launch
+            val projectKey = settings.state.sonarProjectKey.orEmpty()
+            if (projectKey.isBlank()) return@launch
+            refreshWith(client, projectKey, branch)
+        }
     }
 
     fun refresh() {
@@ -198,10 +204,9 @@ class SonarDataService(private val project: Project) : Disposable {
             }
         }
         val projectHealthDeferred = scope.async { client.getProjectMeasures(projectKey, branch) }
-
-        val gateResult = client.getQualityGateStatus(projectKey, branch)
+        val gateDeferred = scope.async { client.getQualityGateStatus(projectKey, branch) }
         val metricKeys = settings.state.sonarMetricKeys.orEmpty()
-        val measuresResult = client.getMeasures(projectKey, branch, metricKeys)
+        val measuresDeferred = scope.async { client.getMeasures(projectKey, branch, metricKeys) }
 
         val overallIssuesResult = overallIssuesDeferred.await()
         val newCodeIssuesResult = newCodeIssuesDeferred.await()
@@ -209,6 +214,8 @@ class SonarDataService(private val project: Project) : Disposable {
         val ceTasksResult = ceTasksDeferred.await()
         val newCodePeriodResult = newCodePeriodDeferred.await()
         val projectHealthResult = projectHealthDeferred.await()
+        val gateResult = gateDeferred.await()
+        val measuresResult = measuresDeferred.await()
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> mapQualityGate(gateResult.data)
@@ -238,7 +245,23 @@ class SonarDataService(private val project: Project) : Disposable {
             is ApiResult.Error -> _stateFlow.value.fileCoverage
         }
 
-        val overallCoverage = calculateOverallCoverage(fileCoverage)
+        // Prefer project-level coverage from getProjectMeasures() (weighted by SonarQube)
+        // over unweighted file-level average
+        val projectHealth = when (projectHealthResult) {
+            is ApiResult.Success -> mapProjectHealth(projectHealthResult.data)
+            is ApiResult.Error -> {
+                log.warn("[Sonar:Health] Failed to fetch project health metrics: ${projectHealthResult.message}")
+                ProjectHealthMetrics()
+            }
+        }
+        val overallCoverage = if (projectHealth.lineCoverage != null) {
+            CoverageMetrics(
+                projectHealth.lineCoverage,
+                projectHealth.branchCoverage ?: 0.0
+            )
+        } else {
+            calculateOverallCoverage(fileCoverage)
+        }
 
         // Build new-code coverage from the same measures response (new_* fields)
         val newCodeFileCoverage = fileCoverage
@@ -321,15 +344,6 @@ class SonarDataService(private val project: Project) : Disposable {
                 null
             }
             null -> null
-        }
-
-        // Map project-level health metrics
-        val projectHealth = when (projectHealthResult) {
-            is ApiResult.Success -> mapProjectHealth(projectHealthResult.data)
-            is ApiResult.Error -> {
-                log.warn("[Sonar:Health] Failed to fetch project health metrics: ${projectHealthResult.message}")
-                ProjectHealthMetrics()
-            }
         }
 
         val newState = SonarState(
@@ -421,7 +435,9 @@ class SonarDataService(private val project: Project) : Disposable {
             reliabilityRating = ratingLetter(byMetric["reliability_rating"]?.value),
             securityRating = ratingLetter(byMetric["security_rating"]?.value),
             duplicatedLinesDensity = byMetric["duplicated_lines_density"]?.value?.toDoubleOrNull() ?: 0.0,
-            cognitiveComplexity = byMetric["cognitive_complexity"]?.value?.toDoubleOrNull()?.toInt() ?: 0
+            cognitiveComplexity = byMetric["cognitive_complexity"]?.value?.toDoubleOrNull()?.toInt() ?: 0,
+            lineCoverage = byMetric["coverage"]?.value?.toDoubleOrNull(),
+            branchCoverage = byMetric["branch_coverage"]?.value?.toDoubleOrNull()
         ).also { h ->
             log.info("[Sonar:Health] Maintainability=${h.maintainabilityRating}, Debt=${h.formattedDebt}, " +
                 "Reliability=${h.reliabilityRating}, Security=${h.securityRating}, " +
@@ -459,6 +475,12 @@ class SonarDataService(private val project: Project) : Disposable {
     override fun dispose() {
         scope.cancel()
     }
+
+    /**
+     * Exposes the lazily-created [SonarApiClient] so other services (e.g. [SonarServiceImpl])
+     * can reuse the same client instance instead of duplicating credentials + caching logic.
+     */
+    fun getSharedApiClient(): SonarApiClient? = apiClient
 
     companion object {
         fun getInstance(project: Project): SonarDataService {

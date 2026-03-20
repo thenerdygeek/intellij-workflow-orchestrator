@@ -19,7 +19,7 @@ import java.awt.event.MouseEvent
 import java.time.Instant
 import javax.swing.*
 
-class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
+class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
     private val listModel = DefaultListModel<MappedIssue>()
     private val issueList = JBList(listModel).apply {
@@ -200,6 +200,10 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         val basePath = project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, issue.filePath).path) ?: return
         OpenFileDescriptor(project, vf, issue.startLine - 1, issue.startOffset).navigate(true)
+    }
+
+    override fun dispose() {
+        scope.cancel()
     }
 
     private fun fixWithCody(issue: MappedIssue, codyService: TextGenerationService) {

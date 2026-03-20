@@ -39,14 +39,17 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
             if (pendingFetches.putIfAbsent(relativePath, true) == null) {
                 val psiFile = element.containingFile
                 service.fetchLineCoverageAsync(relativePath) {
-                    pendingFetches.remove(relativePath)
-                    // Re-trigger gutter marker rendering on the EDT
-                    if (psiFile.isValid && !project.isDisposed) {
-                        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-                            if (!project.isDisposed && psiFile.isValid) {
-                                DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
+                    try {
+                        // Re-trigger gutter marker rendering on the EDT
+                        if (psiFile.isValid && !project.isDisposed) {
+                            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                                if (!project.isDisposed && psiFile.isValid) {
+                                    DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
+                                }
                             }
                         }
+                    } finally {
+                        pendingFetches.remove(relativePath)
                     }
                 }
             }

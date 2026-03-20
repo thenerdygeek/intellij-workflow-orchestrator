@@ -206,6 +206,9 @@ data class SonarNewCodePeriodDto(
 // --- Source Lines (per-line coverage) ---
 
 @Serializable
+data class SonarSourceLinesResponse(val sources: List<SonarSourceLineDto> = emptyList())
+
+@Serializable
 data class SonarSourceLineDto(
     val line: Int,
     val code: String = "",

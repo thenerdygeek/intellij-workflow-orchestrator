@@ -37,7 +37,7 @@ class SonarApiClient(
         /** Project-level health metrics (not file-level). */
         const val PROJECT_HEALTH_METRIC_KEYS =
             "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
-            "reliability_rating,security_rating"
+            "reliability_rating,security_rating,coverage,branch_coverage"
 
         private val companionLog = Logger.getInstance(SonarApiClient::class.java)
 
@@ -212,7 +212,7 @@ class SonarApiClient(
             from?.let { append("&from=$it") }
             to?.let { append("&to=$it") }
         }
-        return get<List<SonarSourceLineDto>>(params)
+        return get<SonarSourceLinesResponse>(params).map { it.sources }
     }
 
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =

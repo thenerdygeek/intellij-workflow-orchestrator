@@ -40,13 +40,13 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
             SonarDataService.getInstance(project).stateFlow.value
         } catch (_: Exception) { return null }
 
-        if (state.issues.none { it.filePath == relativePath }) return null
+        if (state.activeIssues.none { it.filePath == relativePath }) return null
 
         return SonarAnnotationInput(relativePath, state)
     }
 
     override fun doAnnotate(collectedInfo: SonarAnnotationInput): SonarAnnotationResult {
-        val fileIssues = collectedInfo.state.issues.filter { it.filePath == collectedInfo.filePath }
+        val fileIssues = collectedInfo.state.activeIssues.filter { it.filePath == collectedInfo.filePath }
         return SonarAnnotationResult(fileIssues)
     }
 

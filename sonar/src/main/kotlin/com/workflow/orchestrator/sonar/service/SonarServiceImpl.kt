@@ -3,9 +3,7 @@ package com.workflow.orchestrator.sonar.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.sonar.CoverageData
 import com.workflow.orchestrator.core.model.sonar.QualityCondition
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
@@ -14,7 +12,6 @@ import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
-import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.api.SonarApiClient
 
 /**
@@ -28,27 +25,9 @@ import com.workflow.orchestrator.sonar.api.SonarApiClient
 class SonarServiceImpl(private val project: Project) : SonarService {
 
     private val log = Logger.getInstance(SonarServiceImpl::class.java)
-    private val credentialStore = CredentialStore()
-    private val settings get() = PluginSettings.getInstance(project)
-
-    @Volatile private var cachedClient: SonarApiClient? = null
-    @Volatile private var cachedBaseUrl: String? = null
 
     private val client: SonarApiClient?
-        get() {
-            val url = settings.connections.sonarUrl.orEmpty().trimEnd('/')
-            if (url.isBlank()) return null
-            if (url != cachedBaseUrl || cachedClient == null) {
-                cachedBaseUrl = url
-                cachedClient = SonarApiClient(
-                    baseUrl = url,
-                    tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) },
-                    connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-                    readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-                )
-            }
-            return cachedClient
-        }
+        get() = SonarDataService.getInstance(project).getSharedApiClient()
 
     override suspend fun getIssues(
         projectKey: String,

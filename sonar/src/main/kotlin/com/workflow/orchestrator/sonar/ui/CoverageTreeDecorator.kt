@@ -31,7 +31,7 @@ class CoverageTreeDecorator : ProjectViewNodeDecorator {
         }
 
         val state = getSonarState(project)
-        val coverage = state.fileCoverage[relativePath] ?: return
+        val coverage = state.activeFileCoverage[relativePath] ?: return
 
         val pct = coverage.lineCoverage
         val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state

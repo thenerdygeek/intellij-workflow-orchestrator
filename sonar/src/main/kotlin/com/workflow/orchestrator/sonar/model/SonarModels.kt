@@ -87,7 +87,9 @@ data class ProjectHealthMetrics(
     val reliabilityRating: String = "",
     val securityRating: String = "",
     val duplicatedLinesDensity: Double = 0.0,
-    val cognitiveComplexity: Int = 0
+    val cognitiveComplexity: Int = 0,
+    val lineCoverage: Double? = null,
+    val branchCoverage: Double? = null
 ) {
     /** Format technical debt as human-readable duration (e.g., "4h 30min", "2d 3h"). */
     val formattedDebt: String get() {
