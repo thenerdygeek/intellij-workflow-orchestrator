@@ -17,11 +17,11 @@ class OrchestratorPromptsTest {
     }
 
     @Test
-    fun `ORCHESTRATOR prompt contains plan or orchestrator`() {
+    fun `ORCHESTRATOR prompt contains assistant or ai`() {
         val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.ORCHESTRATOR).lowercase()
         assertTrue(
-            prompt.contains("plan") || prompt.contains("orchestrator"),
-            "ORCHESTRATOR prompt should mention 'plan' or 'orchestrator'"
+            prompt.contains("assistant") || prompt.contains("ai"),
+            "ORCHESTRATOR prompt should mention 'assistant' or 'ai'"
         )
     }
 
