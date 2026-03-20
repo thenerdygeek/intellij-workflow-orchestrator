@@ -128,10 +128,10 @@ svg text { font-family: inherit; }
 #pipeline-container { position: relative; }
 #pipeline-svg { width: 100%; height: 160px; }
 
-.pipeline-node {
+#pipeline-svg .pipeline-node {
   cursor: pointer; transition: transform .2s;
 }
-.pipeline-node:hover { transform: scale(1.08); }
+#pipeline-svg .pipeline-node:hover { transform: scale(1.08); }
 
 /* Flowing dots along pipeline arrows */
 @keyframes flowDot {
@@ -425,7 +425,7 @@ svg text { font-family: inherit; }
   const nodeGroup = g.append('g');
   const nodeEls = nodeGroup.selectAll('g')
     .data(nodes).join('g')
-    .attr('class', 'pipeline-node');
+    .attr('class', 'dep-node');
 
   nodeEls.append('circle')
     .attr('class', 'node-circle')
