@@ -42,6 +42,9 @@ class AgentController(
     private var sessionAutoApprove = false
 
     init {
+        // Tie coroutine scope to project lifecycle — cancel when project closes
+        com.intellij.openapi.util.Disposer.register(project, com.intellij.openapi.Disposable { scope.cancel() })
+
         dashboard.onSendMessage = { message -> executeTask(message) }
         dashboard.cancelButton.addActionListener { cancelTask() }
         dashboard.newChatButton.addActionListener { newChat() }

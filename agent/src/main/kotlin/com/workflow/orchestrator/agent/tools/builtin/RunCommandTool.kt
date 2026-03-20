@@ -109,10 +109,11 @@ class RunCommandTool : AgentTool {
             // already shows a confirmation dialog for run_command (classified as HIGH risk)
         }
 
-        val basePath = project.basePath ?: "."
         val workingDir = params["working_dir"]?.jsonPrimitive?.content?.let { dir ->
-            if (dir.startsWith("/")) dir else "$basePath/$dir"
-        } ?: basePath
+            val (validated, error) = PathValidator.resolveAndValidate(dir, project.basePath)
+            if (error != null) return error
+            validated!!
+        } ?: (project.basePath ?: ".")
 
         val workDir = File(workingDir)
         if (!workDir.exists() || !workDir.isDirectory) {
