@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.runtime.QuestionManager
+import com.workflow.orchestrator.agent.runtime.SkillManager
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.*
 import com.workflow.orchestrator.agent.tools.framework.*
@@ -39,6 +40,9 @@ class AgentService(
 
     /** Question manager for the current agent session, set by AgentController. */
     @Volatile var currentQuestionManager: QuestionManager? = null
+
+    /** Skill manager for the current agent session, set by AgentController. */
+    @Volatile var currentSkillManager: SkillManager? = null
 
     /** Tools requested by LLM via request_tools, expanded on next iteration. */
     val pendingToolActivations = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -108,6 +112,8 @@ class AgentService(
             register(DelegateTaskTool())
             register(ThinkTool())
             register(SaveMemoryTool())
+            register(ActivateSkillTool())
+            register(DeactivateSkillTool())
 
             // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
             register(SemanticDiagnosticsTool()) // name = "diagnostics"
