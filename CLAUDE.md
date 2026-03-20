@@ -93,6 +93,14 @@ When making changes that affect architecture, modules, events, services, APIs, o
 
 Do this immediately as part of the same commit — never defer documentation updates.
 
+## Release Process
+
+When asked to release:
+1. Bump `pluginVersion` in `gradle.properties`
+2. Run `./gradlew clean buildPlugin`
+3. Push commits to GitHub
+4. Create a GitHub release with `gh release create` attaching the built ZIP from `build/distributions/`
+
 ## Key References
 
 - Architecture diagrams: `docs/architecture/` (open `index.html` in browser for interactive view)
