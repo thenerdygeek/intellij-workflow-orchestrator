@@ -375,6 +375,287 @@ code {
 .plan-btn.revise { background: transparent; border: 1px solid var(--border); color: var(--fg-secondary); }
 .plan-btn.revise:hover { border-color: var(--link); color: var(--fg); }
 
+/* ═══════════════════════════════════════════════════
+   Question Wizard
+   ═══════════════════════════════════════════════════ */
+.question-wizard {
+  background: var(--tool-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 12px 0;
+  overflow: hidden;
+  animation: fadeIn 0.3s ease-out;
+}
+.question-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.question-header .question-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.question-header .question-badge.single { background: var(--badge-read-bg); color: var(--link); }
+.question-header .question-badge.multiple { background: var(--badge-write-bg); color: var(--success); }
+.question-header .question-cancel {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.question-header .question-cancel:hover { color: var(--error); }
+.question-header .question-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.question-header .question-dots .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.question-header .question-dots .dot.active { background: var(--link); }
+.question-header .question-dots .dot.answered { background: var(--success); }
+.question-body {
+  padding: 12px 16px 8px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.question-options {
+  padding: 4px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.question-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.question-option:hover { border-color: var(--fg-muted); background: rgba(255,255,255,0.03); }
+.question-option.selected { border-color: var(--link); background: rgba(96,165,250,0.08); }
+.question-option.selected.multi-selected { border-color: var(--success); background: rgba(34,197,94,0.08); }
+.question-option-indicator {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--fg-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.question-option-indicator.radio { border-radius: 50%; }
+.question-option-indicator.checkbox { border-radius: 3px; }
+.question-option.selected .question-option-indicator.radio {
+  border-color: var(--link);
+  background: var(--link);
+  box-shadow: inset 0 0 0 3px var(--code-bg);
+}
+.question-option.selected .question-option-indicator.checkbox {
+  border-color: var(--success);
+  background: var(--success);
+}
+.question-option.selected .question-option-indicator.checkbox::after {
+  content: '\2713';
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+}
+.question-option-content {
+  flex: 1;
+  min-width: 0;
+}
+.question-option-label {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.question-option-desc {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.question-option-chat {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.question-option:hover .question-option-chat { opacity: 1; }
+.question-option-chat:hover { color: var(--link); border-color: var(--link); }
+.question-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.question-nav .qnav-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+.question-nav .qnav-btn.next { background: var(--link); color: white; margin-left: auto; }
+.question-nav .qnav-btn.next:hover { opacity: 0.85; }
+.question-nav .qnav-btn.skip { background: transparent; border: 1px solid var(--border); color: var(--fg-muted); margin-left: auto; }
+.question-nav .qnav-btn.skip:hover { border-color: var(--fg-muted); color: var(--fg-secondary); }
+.question-nav .qnav-btn.back { background: transparent; border: 1px solid var(--border); color: var(--fg-secondary); }
+.question-nav .qnav-btn.back:hover { border-color: var(--fg-muted); color: var(--fg); }
+
+/* Question Summary */
+.question-summary {
+  background: var(--tool-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 12px 0;
+  overflow: hidden;
+  animation: fadeIn 0.3s ease-out;
+}
+.question-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+}
+.question-summary-items {
+  padding: 8px 16px;
+}
+.question-summary-item {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.question-summary-item:last-child { border-bottom: none; }
+.question-summary-item.skipped { opacity: 0.5; }
+.question-summary-question {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.question-summary-answer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.question-summary-answer .pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(96,165,250,0.15);
+  color: var(--link);
+}
+.question-summary-note {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  font-style: italic;
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--fg-muted);
+}
+.question-summary-edit {
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: none;
+  border: none;
+  float: right;
+}
+.question-summary-edit:hover { color: var(--link); background: rgba(59,130,246,0.1); }
+.question-summary-actions {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.question-summary-actions .qnav-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+.question-summary-actions .qnav-btn.submit { background: var(--success); color: white; }
+.question-summary-actions .qnav-btn.submit:hover { opacity: 0.85; }
+.question-summary-actions .qnav-btn.cancel { background: transparent; border: 1px solid var(--border); color: var(--error); }
+.question-summary-actions .qnav-btn.cancel:hover { background: rgba(239,68,68,0.1); }
+
+/* Chat-about banner */
+.question-chat-banner {
+  background: rgba(96,165,250,0.1);
+  border: 1px solid rgba(96,165,250,0.3);
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--link);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: fadeIn 0.2s ease-out;
+}
+.question-chat-banner .banner-label { flex: 1; }
+.question-chat-banner .banner-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.question-chat-banner .banner-close:hover { color: var(--fg); }
+
+/* Disabled overlay for chat input */
+.question-disabled-overlay {
+  position: relative;
+}
+.question-disabled-overlay::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.3);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 /* Tools Panel Overlay */
 .tools-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; }
 .tools-overlay.visible { display: flex; justify-content: center; align-items: center; }
@@ -712,6 +993,18 @@ function formatDuration(ms) {
 }
 
 function submitPrompt(text) {
+  // Intercept for chat-about mode
+  if (_chatAboutMode && text) {
+    var qid = _chatAboutQId;
+    var label = _chatAboutLabel;
+    _chatAboutMode = false;
+    _chatAboutQId = null;
+    _chatAboutLabel = null;
+    if (window._chatAboutOption) {
+      window._chatAboutOption(qid, label, text);
+    }
+    return;
+  }
   // Will be wired to Kotlin via JBCefJSQuery
   if (window._submitPrompt) {
     window._submitPrompt(text);
@@ -1004,6 +1297,373 @@ function switchDetailTab(tabEl, index) {
   if (overlay && overlay._tabContent && content) {
     content.innerHTML = overlay._tabContent[index] || '';
   }
+}
+
+/* ═══════════════════════════════════════════════════
+   Question Wizard
+   ═══════════════════════════════════════════════════ */
+
+var _questionData = null;
+var _questionAnswers = {};
+var _questionIndex = 0;
+var _chatAboutMode = false;
+var _chatAboutQId = null;
+var _chatAboutLabel = null;
+
+function showQuestions(questionsJson) {
+  var data;
+  try { data = typeof questionsJson === 'string' ? JSON.parse(questionsJson) : questionsJson; } catch(e) { return; }
+  _questionData = data;
+  _questionAnswers = {};
+  _questionIndex = 0;
+  _chatAboutMode = false;
+  _chatAboutQId = null;
+  _chatAboutLabel = null;
+  showQuestion(0);
+}
+
+function showQuestion(index) {
+  _questionIndex = index;
+  var q = _questionData.questions[index];
+  if (!q) return;
+  var total = _questionData.questions.length;
+  var isMulti = q.type === 'multiple';
+
+  // Remove any existing wizard card or summary
+  removeQuestionElements();
+
+  // Build progress dots
+  var dotsHtml = '';
+  for (var di = 0; di < total; di++) {
+    var dotClass = 'dot';
+    if (di === index) dotClass += ' active';
+    else if (_questionAnswers[_questionData.questions[di].id]) dotClass += ' answered';
+    dotsHtml += '<span class="' + dotClass + '"></span>';
+  }
+
+  // Build badge
+  var badgeClass = isMulti ? 'question-badge multiple' : 'question-badge single';
+  var badgeText = 'QUESTION ' + (index + 1) + ' OF ' + total;
+
+  // Build options
+  var existingSelections = _questionAnswers[q.id] || [];
+  var optionsHtml = '';
+  q.options.forEach(function(opt) {
+    var isSelected = existingSelections.indexOf(opt.id) !== -1;
+    var selectedClass = isSelected ? (isMulti ? ' selected multi-selected' : ' selected') : '';
+    var indicatorClass = isMulti ? 'question-option-indicator checkbox' : 'question-option-indicator radio';
+    var descHtml = opt.description ? '<div class="question-option-desc">' + esc(opt.description) + '</div>' : '';
+
+    optionsHtml += '<div class="question-option' + selectedClass + '" data-option-id="' + esc(opt.id) + '">'
+      + '<div class="' + indicatorClass + '"></div>'
+      + '<div class="question-option-content">'
+      + '<div class="question-option-label">' + esc(opt.label) + '</div>'
+      + descHtml
+      + '</div>'
+      + '<button class="question-option-chat" data-qid="' + esc(q.id) + '" data-label="' + esc(opt.label) + '" data-oid="' + esc(opt.id) + '">&#x1F4AC; Chat about this</button>'
+      + '</div>';
+  });
+
+  // Build nav buttons
+  var navHtml = '';
+  if (index > 0) {
+    navHtml += '<button class="qnav-btn back" onclick="questionBack()">&#x2190; Back</button>';
+  }
+  navHtml += '<button class="qnav-btn skip" onclick="questionSkip()">Skip</button>';
+  navHtml += '<button class="qnav-btn next" onclick="questionNext()">Next &#x2192;</button>';
+
+  var card = document.createElement('div');
+  card.className = 'message question-wizard-wrapper';
+  card.innerHTML = '<div class="question-wizard" id="active-question">'
+    + '<div class="question-header">'
+    + '<span class="' + badgeClass + '">' + badgeText + '</span>'
+    + '<div class="question-dots">' + dotsHtml + '</div>'
+    + '<button class="question-cancel" onclick="questionCancel()">&#xd7;</button>'
+    + '</div>'
+    + '<div class="question-body">' + esc(q.text) + '</div>'
+    + '<div class="question-options">' + optionsHtml + '</div>'
+    + '<div class="question-nav">' + navHtml + '</div>'
+    + '</div>';
+
+  container.appendChild(card);
+  scrollToBottom();
+
+  // Bind option click handlers
+  card.querySelectorAll('.question-option').forEach(function(optEl) {
+    optEl.addEventListener('click', function(e) {
+      if (e.target.closest('.question-option-chat')) return;
+      toggleQuestionOption(optEl, q.type);
+    });
+  });
+
+  // Bind chat-about handlers
+  card.querySelectorAll('.question-option-chat').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var optionEl = btn.closest('.question-option');
+      // Auto-select the option
+      if (!optionEl.classList.contains('selected')) {
+        toggleQuestionOption(optionEl, q.type);
+      }
+      enableChatAbout(btn.dataset.qid, btn.dataset.label);
+    });
+  });
+}
+
+function toggleQuestionOption(optEl, type) {
+  var wizard = optEl.closest('.question-wizard');
+  var isMulti = type === 'multiple';
+
+  if (isMulti) {
+    optEl.classList.toggle('selected');
+    optEl.classList.toggle('multi-selected');
+  } else {
+    // Deselect all others first
+    wizard.querySelectorAll('.question-option').forEach(function(o) {
+      o.classList.remove('selected');
+      o.classList.remove('multi-selected');
+    });
+    optEl.classList.add('selected');
+  }
+}
+
+function getSelectedOptionIds() {
+  var wizard = document.getElementById('active-question');
+  if (!wizard) return [];
+  var ids = [];
+  wizard.querySelectorAll('.question-option.selected').forEach(function(o) {
+    ids.push(o.dataset.optionId);
+  });
+  return ids;
+}
+
+function questionNext() {
+  var q = _questionData.questions[_questionIndex];
+  var selections = getSelectedOptionIds();
+
+  if (selections.length === 0 && q.type !== 'multiple') {
+    // No selection on single-select = skip
+    if (window._questionSkipped) window._questionSkipped(q.id);
+  } else {
+    _questionAnswers[q.id] = selections;
+    if (window._questionAnswered) window._questionAnswered(q.id, JSON.stringify(selections));
+  }
+
+  if (_questionIndex < _questionData.questions.length - 1) {
+    showQuestion(_questionIndex + 1);
+  } else {
+    // Last question — show summary
+    showQuestionSummaryFromState();
+  }
+}
+
+function questionSkip() {
+  var q = _questionData.questions[_questionIndex];
+  if (window._questionSkipped) window._questionSkipped(q.id);
+
+  if (_questionIndex < _questionData.questions.length - 1) {
+    showQuestion(_questionIndex + 1);
+  } else {
+    showQuestionSummaryFromState();
+  }
+}
+
+function questionBack() {
+  if (_questionIndex > 0) {
+    showQuestion(_questionIndex - 1);
+  }
+}
+
+function questionCancel() {
+  removeQuestionElements();
+  enableChatInput();
+  if (window._questionsCancelled) window._questionsCancelled();
+}
+
+function showQuestionSummaryFromState() {
+  // Build summary from internal state and show it
+  removeQuestionElements();
+
+  var total = _questionData.questions.length;
+  var itemsHtml = '';
+
+  _questionData.questions.forEach(function(q) {
+    var answers = _questionAnswers[q.id];
+    var isSkipped = !answers || answers.length === 0;
+
+    var editLabel = isSkipped ? '&#x270E; Answer' : '&#x270E; Edit';
+    var skippedClass = isSkipped ? ' skipped' : '';
+
+    itemsHtml += '<div class="question-summary-item' + skippedClass + '">'
+      + '<button class="question-summary-edit" data-qid="' + esc(q.id) + '">' + editLabel + '</button>'
+      + '<div class="question-summary-question">' + esc(q.text) + '</div>';
+
+    if (answers && answers.length > 0) {
+      itemsHtml += '<div class="question-summary-answer">';
+      answers.forEach(function(aid) {
+        var opt = q.options.find(function(o) { return o.id === aid; });
+        if (opt) {
+          itemsHtml += '<span class="pill">' + esc(opt.label) + '</span>';
+        }
+      });
+      itemsHtml += '</div>';
+    }
+
+    itemsHtml += '</div>';
+  });
+
+  var card = document.createElement('div');
+  card.className = 'message question-wizard-wrapper';
+  card.innerHTML = '<div class="question-summary" id="active-question-summary">'
+    + '<div class="question-summary-header">&#x1F4CB; Summary &mdash; ' + total + ' Questions</div>'
+    + '<div class="question-summary-items">' + itemsHtml + '</div>'
+    + '<div class="question-summary-actions">'
+    + '<button class="qnav-btn cancel" onclick="questionSummaryCancel()">Cancel</button>'
+    + '<button class="qnav-btn submit" onclick="questionSummarySubmit()">Submit</button>'
+    + '</div>'
+    + '</div>';
+
+  container.appendChild(card);
+  scrollToBottom();
+
+  // Bind edit/answer handlers
+  card.querySelectorAll('.question-summary-edit').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var qid = btn.dataset.qid;
+      if (window._editQuestion) window._editQuestion(qid);
+      // Find question index and show it
+      for (var i = 0; i < _questionData.questions.length; i++) {
+        if (_questionData.questions[i].id === qid) {
+          showQuestion(i);
+          break;
+        }
+      }
+    });
+  });
+}
+
+function showQuestionSummary(summaryJson) {
+  var result;
+  try { result = typeof summaryJson === 'string' ? JSON.parse(summaryJson) : summaryJson; } catch(e) { return; }
+
+  removeQuestionElements();
+
+  var total = result.answers ? result.answers.length : 0;
+  var itemsHtml = '';
+
+  (result.answers || []).forEach(function(a) {
+    var isSkipped = a.skipped || !a.selectedOptions || a.selectedOptions.length === 0;
+    var editLabel = isSkipped ? '&#x270E; Answer' : '&#x270E; Edit';
+    var skippedClass = isSkipped ? ' skipped' : '';
+
+    itemsHtml += '<div class="question-summary-item' + skippedClass + '">'
+      + '<button class="question-summary-edit" data-qid="' + esc(a.questionId) + '">' + editLabel + '</button>'
+      + '<div class="question-summary-question">' + esc(a.questionText || a.questionId) + '</div>';
+
+    if (a.selectedOptions && a.selectedOptions.length > 0) {
+      itemsHtml += '<div class="question-summary-answer">';
+      a.selectedOptions.forEach(function(optLabel) {
+        itemsHtml += '<span class="pill">' + esc(optLabel) + '</span>';
+      });
+      itemsHtml += '</div>';
+    }
+
+    if (a.chatNote) {
+      itemsHtml += '<div class="question-summary-note">' + esc(a.chatNote) + '</div>';
+    }
+
+    itemsHtml += '</div>';
+  });
+
+  var card = document.createElement('div');
+  card.className = 'message question-wizard-wrapper';
+  card.innerHTML = '<div class="question-summary" id="active-question-summary">'
+    + '<div class="question-summary-header">&#x1F4CB; Summary &mdash; ' + total + ' Questions</div>'
+    + '<div class="question-summary-items">' + itemsHtml + '</div>'
+    + '<div class="question-summary-actions">'
+    + '<button class="qnav-btn cancel" onclick="questionSummaryCancel()">Cancel</button>'
+    + '<button class="qnav-btn submit" onclick="questionSummarySubmit()">Submit</button>'
+    + '</div>'
+    + '</div>';
+
+  container.appendChild(card);
+  scrollToBottom();
+
+  // Bind edit/answer handlers
+  card.querySelectorAll('.question-summary-edit').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var qid = btn.dataset.qid;
+      if (window._editQuestion) window._editQuestion(qid);
+      if (_questionData) {
+        for (var i = 0; i < _questionData.questions.length; i++) {
+          if (_questionData.questions[i].id === qid) {
+            showQuestion(i);
+            break;
+          }
+        }
+      }
+    });
+  });
+}
+
+function questionSummarySubmit() {
+  var summaryEl = document.getElementById('active-question-summary');
+  if (summaryEl) {
+    var actions = summaryEl.querySelector('.question-summary-actions');
+    if (actions) actions.innerHTML = '<div style="color:var(--success);font-size:13px;padding:4px;">&#x2713; Submitted</div>';
+  }
+  enableChatInput();
+  if (window._questionsSubmitted) window._questionsSubmitted();
+}
+
+function questionSummaryCancel() {
+  removeQuestionElements();
+  enableChatInput();
+  if (window._questionsCancelled) window._questionsCancelled();
+}
+
+function enableChatAbout(questionId, optionLabel) {
+  _chatAboutMode = true;
+  _chatAboutQId = questionId;
+  _chatAboutLabel = optionLabel;
+
+  // Remove the question wizard card
+  removeQuestionElements();
+
+  // Show a chat-about banner
+  var banner = document.createElement('div');
+  banner.className = 'message question-wizard-wrapper';
+  banner.innerHTML = '<div class="question-chat-banner" id="chat-about-banner">'
+    + '<span class="banner-label">&#x1F4AC; Chatting about: <strong>' + esc(optionLabel) + '</strong> &mdash; Type your note below</span>'
+    + '<button class="banner-close" onclick="cancelChatAbout()">&#xd7;</button>'
+    + '</div>';
+  container.appendChild(banner);
+  scrollToBottom();
+}
+
+function cancelChatAbout() {
+  _chatAboutMode = false;
+  _chatAboutQId = null;
+  _chatAboutLabel = null;
+  removeQuestionElements();
+  // Re-show the question we were on
+  if (_questionData) {
+    showQuestion(_questionIndex);
+  }
+}
+
+function enableChatInput() {
+  _chatAboutMode = false;
+  _chatAboutQId = null;
+  _chatAboutLabel = null;
+  // Remove any chat-about banner
+  var banners = container.querySelectorAll('.question-chat-banner');
+  banners.forEach(function(b) { var p = b.closest('.question-wizard-wrapper'); if (p) p.remove(); else b.remove(); });
+}
+
+function removeQuestionElements() {
+  var els = container.querySelectorAll('.question-wizard-wrapper');
+  els.forEach(function(el) { el.remove(); });
 }
 </script>
 </body>
