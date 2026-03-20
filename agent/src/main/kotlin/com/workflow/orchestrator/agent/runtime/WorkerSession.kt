@@ -34,7 +34,8 @@ data class WorkerResult(
  * Max iterations: 10 to prevent infinite loops.
  */
 class WorkerSession(
-    private val maxIterations: Int = 10
+    private val maxIterations: Int = 10,
+    private val parentJob: kotlinx.coroutines.Job? = null
 ) {
     companion object {
         private val LOG = Logger.getInstance(WorkerSession::class.java)
@@ -74,6 +75,17 @@ class WorkerSession(
         val allArtifacts = mutableListOf<String>()
 
         for (iteration in 1..maxIterations) {
+            if (parentJob?.isActive == false) {
+                LOG.info("WorkerSession: cancelled by parent at iteration $iteration")
+                return WorkerResult(
+                    content = "Worker cancelled by parent session.",
+                    summary = "Cancelled at iteration $iteration",
+                    tokensUsed = totalTokensUsed,
+                    artifacts = allArtifacts,
+                    isError = true
+                )
+            }
+
             LOG.info("WorkerSession: iteration $iteration/$maxIterations")
 
             val messages = contextManager.getMessages()
@@ -120,6 +132,12 @@ class WorkerSession(
                     // Execute tool calls and add results
                     for (toolCall in toolCalls) {
                         val toolName = toolCall.function.name
+
+                        if (parentJob?.isActive == false) {
+                            LOG.info("WorkerSession: cancelled before tool '$toolName' execution")
+                            return WorkerResult("Cancelled", "Cancelled", totalTokensUsed, allArtifacts, isError = true)
+                        }
+
                         val tool = tools[toolName]
 
                         if (tool == null) {
