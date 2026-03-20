@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.runtime
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -233,7 +234,8 @@ class SessionTrace(
             sessionId = sessionId
         )
         try {
-            traceFile.appendText(json.encodeToString(enriched) + "\n")
+            val jsonStr = json.encodeToString(enriched)
+            traceFile.appendText(CredentialRedactor.redact(jsonStr) + "\n")
         } catch (e: Exception) {
             LOG.debug("SessionTrace: failed to write trace entry: ${e.message}")
         }

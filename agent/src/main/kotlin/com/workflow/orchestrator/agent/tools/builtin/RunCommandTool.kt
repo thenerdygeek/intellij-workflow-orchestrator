@@ -36,7 +36,7 @@ class RunCommandTool : AgentTool {
             "git status", "git log", "git diff", "git branch", "git show", "git blame",
             // File inspection
             "ls", "find", "cat", "head", "tail", "wc", "file", "stat",
-            "grep", "rg", "ag", "awk", "sed",
+            "grep", "rg", "ag",
             // Java/Kotlin
             "java", "javac", "kotlin", "kotlinc", "jar",
             // Docker (read-only)
