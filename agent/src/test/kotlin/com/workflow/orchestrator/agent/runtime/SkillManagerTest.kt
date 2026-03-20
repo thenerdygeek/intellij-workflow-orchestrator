@@ -40,7 +40,7 @@ class SkillManagerTest {
 
     @BeforeEach
     fun setup() {
-        registry = SkillRegistry(projectDir.toString(), userDir.toString())
+        registry = SkillRegistry(projectDir.toString(), userDir.toString(), loadBuiltins = false)
         manager = SkillManager(registry)
         writeProjectSkill("review", reviewSkill)
         writeProjectSkill("deploy", deploySkill)

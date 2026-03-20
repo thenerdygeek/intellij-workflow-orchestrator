@@ -19,7 +19,7 @@ class SkillRegistryTest {
 
     @BeforeEach
     fun setup() {
-        registry = SkillRegistry(projectDir.toString(), userDir.toString())
+        registry = SkillRegistry(projectDir.toString(), userDir.toString(), loadBuiltins = false)
     }
 
     private fun writeSkill(base: File, skillName: String, content: String) {
@@ -190,9 +190,41 @@ class SkillRegistryTest {
 
     @Test
     fun `scan returns empty when no skills directory exists`() {
-        val emptyRegistry = SkillRegistry("/nonexistent/path", "/also/nonexistent")
+        val emptyRegistry = SkillRegistry("/nonexistent/path", "/also/nonexistent", loadBuiltins = false)
         val results = emptyRegistry.scan()
 
         assertTrue(results.isEmpty())
+    }
+
+    @Test
+    fun `scan loads built-in skills when loadBuiltins is true`() {
+        val builtinRegistry = SkillRegistry("/nonexistent", "/nonexistent", loadBuiltins = true)
+        val results = builtinRegistry.scan()
+
+        // Should find at least the systematic-debugging built-in skill
+        assertTrue(results.any { it.name == "systematic-debugging" })
+        val skill = results.find { it.name == "systematic-debugging" }!!
+        assertEquals(SkillRegistry.SkillScope.BUILTIN, skill.scope)
+        assertTrue(skill.description.contains("bug"))
+        assertTrue(skill.preferredTools.contains("diagnostics"))
+    }
+
+    @Test
+    fun `project skill overrides built-in skill with same name`() {
+        val projectDir = this.projectDir.toFile()
+        writeSkill(projectDir, "systematic-debugging", """
+            ---
+            name: systematic-debugging
+            description: Custom project debugging workflow
+            ---
+            Custom content
+        """.trimIndent())
+
+        val overrideRegistry = SkillRegistry(projectDir.absolutePath, "/nonexistent", loadBuiltins = true)
+        val results = overrideRegistry.scan()
+
+        val skill = results.find { it.name == "systematic-debugging" }!!
+        assertEquals(SkillRegistry.SkillScope.PROJECT, skill.scope)
+        assertEquals("Custom project debugging workflow", skill.description)
     }
 }
