@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Agent UI Mockup — All Fixes Applied</title>
+<style>
+/* Simulates IntelliJ Dark Theme */
+:root {
+  --bg: #2B2D30;
+  --fg: #CBD5E1;
+  --fg-secondary: #94A3B8;
+  --fg-muted: #6B7280;
+  --border: #3F3F46;
+  --user-bg: #1E293B;
+  --tool-bg: #1A1D23;
+  --code-bg: #1E1E2E;
+  --badge-read-bg: #1E3A5F; --badge-read-fg: #60A5FA;
+  --badge-edit-bg: #451A03; --badge-edit-fg: #FBBF24;
+  --badge-write-bg: #14532D; --badge-write-fg: #4ADE80;
+  --badge-cmd-bg: #450A0A; --badge-cmd-fg: #F87171;
+  --badge-search-bg: #083344; --badge-search-fg: #22D3EE;
+  --accent-read: #3B82F6; --accent-edit: #F59E0B;
+  --accent-write: #22C55E; --accent-cmd: #EF4444;
+  --diff-add-bg: #14332A; --diff-add-fg: #86EFAC;
+  --diff-rem-bg: #3B1818; --diff-rem-fg: #FCA5A5;
+  --success: #22C55E; --error: #EF4444; --warning: #F59E0B;
+  --link: #60A5FA;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; background: #1E1F22; color: var(--fg); padding: 20px; }
+h2 { color: var(--fg); margin: 30px 0 10px; font-size: 16px; }
+.mockup-label { color: var(--warning); font-size: 11px; font-weight: 600; letter-spacing: 1px; margin-bottom: 4px; }
+
+/* Plugin window frame */
+.plugin-frame {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 700px;
+  margin: 12px 0 30px;
+}
+
+/* ═══════════════════════════════════════════
+   MOCKUP 1: TOOLBAR (Swing)
+   ═══════════════════════════════════════════ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  background: #2B2D30;
+}
+.toolbar .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.toolbar .btn:hover { background: #35373B; }
+.toolbar .btn.danger { color: var(--error); border-color: #5c2020; }
+.toolbar .btn.danger:hover { background: #3B1818; }
+.toolbar .spacer { flex: 1; }
+.toolbar .model-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+  padding: 3px 8px;
+  background: #1A1D23;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.toolbar .model-label:hover { color: var(--link); }
+.toolbar .token-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: monospace;
+}
+.toolbar .token-bar .bar {
+  width: 80px;
+  height: 6px;
+  background: #1A1D23;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.toolbar .token-bar .fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.toolbar .token-bar .fill.warn { background: var(--warning); }
+
+/* ═══════════════════════════════════════════
+   MOCKUP 2: WORKING SET COLLAPSIBLE (Swing/JCEF)
+   ═══════════════════════════════════════════ */
+.working-set {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: #25272B;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.working-set .chevron { font-size: 9px; transition: transform 0.2s; }
+.working-set .file-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  background: #1A1D23;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 10px;
+}
+.working-set .file-pill.edited { border-left: 2px solid var(--accent-edit); }
+.working-set .file-pill.read { border-left: 2px solid var(--accent-read); }
+
+/* ═══════════════════════════════════════════
+   MOCKUP 3: CHAT AREA (JCEF)
+   ═══════════════════════════════════════════ */
+.chat-area {
+  padding: 16px;
+  min-height: 400px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+/* Empty state with example prompts */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--fg-muted);
+}
+.empty-state .icon { font-size: 36px; margin-bottom: 16px; opacity: 0.5; }
+.empty-state .title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--fg-secondary); }
+.empty-state .desc { font-size: 12px; margin-bottom: 24px; line-height: 1.6; }
+.empty-state .prompts { display: flex; flex-direction: column; gap: 8px; max-width: 400px; margin: 0 auto; }
+.empty-state .prompt-btn {
+  padding: 10px 14px;
+  background: #1A1D23;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.empty-state .prompt-btn:hover { border-color: var(--link); color: var(--fg); }
+.empty-state .prompt-btn .icon-sm { margin-right: 6px; }
+
+/* Messages */
+.message { margin-bottom: 16px; animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+.user-msg {
+  background: var(--user-bg);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-left: 48px;
+}
+.user-msg .label { font-size: 11px; font-weight: 600; color: var(--fg-muted); margin-bottom: 3px; letter-spacing: 0.3px; }
+
+.agent-msg { padding: 4px 0; line-height: 1.6; }
+.agent-msg strong { color: var(--fg); }
+.agent-msg code {
+  background: var(--code-bg);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+/* Code block with copy button */
+.code-wrapper {
+  position: relative;
+  margin: 10px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--code-bg);
+}
+.code-lang { font-size: 10px; color: var(--fg-muted); padding: 6px 12px 0; font-family: monospace; letter-spacing: 0.5px; text-transform: uppercase; }
+.code-block {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 10px 14px;
+  white-space: pre;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.code-copy {
+  position: absolute;
+  top: 6px; right: 6px;
+  background: var(--border);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.code-wrapper:hover .code-copy { opacity: 1; }
+.code-copy:hover { background: var(--fg-muted); color: var(--bg); }
+
+/* Tool cards — collapsible */
+.tool-card {
+  background: var(--tool-bg);
+  border-radius: 8px;
+  margin: 10px 0;
+  overflow: hidden;
+  border-left: 3px solid var(--accent-read);
+}
+.tool-card.type-edit { border-left-color: var(--accent-edit); }
+.tool-card.type-cmd { border-left-color: var(--accent-cmd); }
+.tool-card.type-search { border-left-color: var(--badge-search-fg); }
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+  cursor: pointer;
+}
+.tool-header:hover { background: rgba(255,255,255,0.03); }
+.tool-header .chevron { font-size: 10px; color: var(--fg-muted); transition: transform 0.2s; }
+.tool-header .chevron.open { transform: rotate(90deg); }
+
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.badge-read { background: var(--badge-read-bg); color: var(--badge-read-fg); }
+.badge-edit { background: var(--badge-edit-bg); color: var(--badge-edit-fg); }
+.badge-cmd { background: var(--badge-cmd-bg); color: var(--badge-cmd-fg); }
+.badge-search { background: var(--badge-search-bg); color: var(--badge-search-fg); }
+.badge-ok { background: var(--badge-write-bg); color: var(--badge-write-fg); }
+
+.tool-target { font-size: 12px; color: var(--fg); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-timing { font-size: 11px; color: var(--fg-muted); font-family: monospace; }
+.tool-status-icon { font-size: 13px; }
+.tool-status-icon.ok { color: var(--success); }
+
+.tool-detail {
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  font-family: monospace;
+  border-top: 1px solid var(--border);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.tool-detail.collapsed { display: none; }
+
+/* Diff cards */
+.diff-card { border-radius: 8px; border: 1px solid var(--border); margin: 10px 0; overflow: hidden; }
+.diff-card-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--tool-bg); border-bottom: 1px solid var(--border); font-size: 12px; }
+.diff-file { font-family: monospace; font-weight: 600; flex: 1; }
+.diff-file a { color: var(--link); text-decoration: none; }
+.diff-file a:hover { text-decoration: underline; }
+.diff-line { font-family: monospace; font-size: 12px; padding: 1px 14px; line-height: 1.6; }
+.diff-line .ln { display: inline-block; width: 32px; color: var(--fg-muted); text-align: right; margin-right: 8px; user-select: none; }
+.diff-add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+.diff-rem { background: var(--diff-rem-bg); color: var(--diff-rem-fg); }
+
+/* Session footer */
+.session-footer {
+  margin-top: 20px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+.footer-status { font-size: 14px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.footer-metrics { font-size: 11px; font-family: monospace; color: var(--fg-muted); display: flex; gap: 12px; margin-bottom: 8px; }
+.footer-files { font-size: 11px; color: var(--fg-secondary); margin-bottom: 10px; }
+.footer-files span { font-family: monospace; }
+.footer-actions { display: flex; gap: 8px; }
+.footer-actions .btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-secondary);
+}
+.footer-actions .btn.undo {
+  color: var(--error);
+  border-color: #5c2020;
+}
+.footer-actions .btn.undo:hover { background: #3B1818; }
+.footer-actions .btn:hover { background: #35373B; }
+
+/* ═══════════════════════════════════════════
+   MOCKUP 4: INPUT BAR (Swing)
+   ═══════════════════════════════════════════ */
+.input-bar {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: #2B2D30;
+}
+.input-row { display: flex; gap: 8px; align-items: flex-end; }
+.input-field {
+  flex: 1;
+  background: #1E1F22;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+  outline: none;
+}
+.input-field:focus { border-color: var(--link); }
+.input-field::placeholder { color: var(--fg-muted); }
+.send-btn {
+  padding: 10px 16px;
+  background: #3B82F6;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.send-btn:hover { background: #2563EB; }
+.input-hint { font-size: 10px; color: var(--fg-muted); margin-top: 4px; }
+.input-hint kbd { background: #1A1D23; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 10px; }
+
+/* ═══════════════════════════════════════════
+   MOCKUP 5: HISTORY TAB
+   ═══════════════════════════════════════════ */
+.history-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.history-header .title { font-size: 14px; font-weight: 600; flex: 1; }
+.history-search {
+  background: #1E1F22;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--fg);
+  font-size: 12px;
+  width: 200px;
+  outline: none;
+}
+.session-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #27272A;
+  cursor: pointer;
+}
+.session-item:hover { background: #35373B; }
+.session-item .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 10px; flex-shrink: 0; }
+.session-item .dot.completed { background: var(--success); }
+.session-item .dot.interrupted { background: var(--warning); }
+.session-item .dot.failed { background: var(--error); }
+.session-item .dot.active { background: var(--link); }
+.session-item .info { flex: 1; }
+.session-item .info .title { font-size: 13px; font-weight: 500; }
+.session-item .info .meta { font-size: 11px; color: var(--fg-muted); margin-top: 2px; }
+.session-item .actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
+.session-item:hover .actions { opacity: 1; }
+.session-item .actions .btn {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.session-item .actions .btn.resume { color: var(--success); border-color: #14532D; }
+.session-item .actions .btn:hover { background: #35373B; }
+.session-item .time { font-size: 11px; color: var(--fg-muted); margin-left: 8px; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MOCKUP A: EMPTY STATE (first time user sees Agent tab)
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="mockup-label">MOCKUP A — EMPTY STATE (first visit)</div>
+<div class="plugin-frame">
+  <div class="toolbar">
+    <button class="btn" disabled>⏹ Stop</button>
+    <button class="btn">✦ New Chat</button>
+    <div class="spacer"></div>
+    <span class="model-label">claude-sonnet-4 ▾</span>
+    <div class="token-bar">
+      <span>Budget: 150K</span>
+    </div>
+    <button class="btn">📋 Traces</button>
+    <button class="btn">⚙</button>
+  </div>
+  <div class="chat-area">
+    <div class="empty-state">
+      <div class="icon">⚡</div>
+      <div class="title">AI Agent</div>
+      <div class="desc">Ask me to analyze code, fix bugs, run builds, check quality, or manage tickets. I have access to your IDE, Jira, Bamboo, SonarQube, and Bitbucket.</div>
+      <div class="prompts">
+        <div class="prompt-btn"><span class="icon-sm">🔍</span> Fix the SonarQube issues in UserService.kt</div>
+        <div class="prompt-btn"><span class="icon-sm">🔀</span> Create a PR for my current changes</div>
+        <div class="prompt-btn"><span class="icon-sm">📋</span> What's the status of PROJ-123?</div>
+        <div class="prompt-btn"><span class="icon-sm">🧪</span> Run the test suite and fix any failures</div>
+      </div>
+    </div>
+  </div>
+  <div class="input-bar">
+    <div class="input-row">
+      <textarea class="input-field" placeholder="Ask the agent to do something..." rows="1"></textarea>
+      <button class="send-btn">Send ↵</button>
+    </div>
+    <div class="input-hint"><kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line · <kbd>Esc</kbd> to stop</div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MOCKUP B: ACTIVE SESSION (agent working with tool calls)
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="mockup-label">MOCKUP B — ACTIVE SESSION (agent working)</div>
+<div class="plugin-frame">
+  <div class="toolbar">
+    <button class="btn danger">⏹ Stop</button>
+    <button class="btn">✦ New Chat</button>
+    <button class="btn">🔧 Tools (12)</button>
+    <div class="spacer"></div>
+    <span class="model-label">claude-sonnet-4</span>
+    <div class="token-bar">
+      <span>34K / 145K</span>
+      <div class="bar"><div class="fill" style="width: 23%"></div></div>
+    </div>
+    <button class="btn">📋 Traces</button>
+    <button class="btn">⚙</button>
+  </div>
+
+  <!-- Working set (collapsible) -->
+  <div class="working-set">
+    <span class="chevron">▶</span>
+    <span>Working files:</span>
+    <span class="file-pill edited">UserService.kt</span>
+    <span class="file-pill read">UserRepository.kt</span>
+    <span class="file-pill read">pom.xml</span>
+  </div>
+
+  <div class="chat-area">
+    <!-- User message -->
+    <div class="message">
+      <div class="user-msg">
+        <div class="label">You</div>
+        Fix the null pointer exception in UserService.getUser()
+      </div>
+    </div>
+
+    <!-- Agent response with markdown rendering -->
+    <div class="message">
+      <div class="agent-msg">
+        I'll analyze the issue. Let me start by reading the file and understanding the code structure.
+      </div>
+    </div>
+
+    <!-- Tool call — collapsible, with expand chevron -->
+    <div class="message">
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="chevron open">▶</span>
+          <span class="badge badge-read">READ</span>
+          <span class="tool-target">UserService.kt</span>
+          <span class="tool-status-icon ok">✓</span>
+          <span class="tool-timing">25ms</span>
+        </div>
+        <div class="tool-detail">
+          Read 45 lines from src/main/kotlin/com/example/UserService.kt
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent reasoning with markdown -->
+    <div class="message">
+      <div class="agent-msg">
+        Found the issue on <strong>line 23</strong>. The <code>repo</code> field can be null when the service is initialized before Spring context is ready. The fix is to add null-safe access:
+      </div>
+    </div>
+
+    <!-- Tool call — EDIT with inline diff -->
+    <div class="message">
+      <div class="diff-card">
+        <div class="diff-card-header">
+          <span class="badge badge-edit">EDIT</span>
+          <span class="diff-file"><a href="#">UserService.kt</a></span>
+          <span class="badge badge-ok">APPLIED</span>
+        </div>
+        <div class="diff-line diff-rem"><span class="ln">23</span>- return repo.findById(id)</div>
+        <div class="diff-line diff-add"><span class="ln">23</span>+ return repo?.findById(id)</div>
+      </div>
+    </div>
+
+    <!-- Tool call — diagnostics -->
+    <div class="message">
+      <div class="tool-card">
+        <div class="tool-header">
+          <span class="chevron">▶</span>
+          <span class="badge badge-read">READ</span>
+          <span class="tool-target">diagnostics — UserService.kt</span>
+          <span class="tool-status-icon ok">✓</span>
+          <span class="tool-timing">180ms</span>
+        </div>
+        <div class="tool-detail collapsed">
+          No errors found in UserService.kt.
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent final response with code block -->
+    <div class="message">
+      <div class="agent-msg">
+        Fixed the NPE. The issue was that <code>repo</code> could be <code>null</code> during early initialization. Here's what changed:
+      </div>
+    </div>
+
+    <div class="message">
+      <div class="code-wrapper">
+        <div class="code-lang">kotlin</div>
+        <button class="code-copy" style="opacity:1">Copy</button>
+        <div class="code-block">// Before
+return repo.findById(id)
+
+// After — null-safe access
+return repo?.findById(id)</div>
+      </div>
+    </div>
+
+    <!-- Session footer with UNDO button -->
+    <div class="session-footer">
+      <div class="footer-status" style="color: var(--success);">✓ Completed</div>
+      <div class="footer-metrics">
+        <span>3,200 tokens</span>
+        <span>8.2s</span>
+        <span>4 iterations</span>
+      </div>
+      <div class="footer-files">Files modified: <span>UserService.kt</span></div>
+      <div class="footer-actions">
+        <button class="btn undo">↩ Undo All Changes</button>
+        <button class="btn">📋 View Trace</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="input-bar">
+    <div class="input-row">
+      <textarea class="input-field" placeholder="Ask a follow-up question..." rows="1"></textarea>
+      <button class="send-btn">Send ↵</button>
+    </div>
+    <div class="input-hint"><kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for new line · <kbd>Esc</kbd> to stop</div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MOCKUP C: HISTORY TAB (cross-project)
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="mockup-label">MOCKUP C — HISTORY TAB (cross-project sessions)</div>
+<div class="plugin-frame">
+  <div class="history-header">
+    <span class="title">Session History</span>
+    <input class="history-search" placeholder="Search sessions..." />
+    <button class="btn" style="font-size:11px; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--fg-secondary); cursor:pointer;">↻ Refresh</button>
+  </div>
+
+  <div class="session-item">
+    <div class="dot active"></div>
+    <div class="info">
+      <div class="title">Fix NPE in UserService.getUser()</div>
+      <div class="meta">my-service · 12 messages · ● Active</div>
+    </div>
+    <div class="time">2m ago</div>
+    <div class="actions">
+      <button class="btn">Open</button>
+    </div>
+  </div>
+
+  <div class="session-item">
+    <div class="dot interrupted"></div>
+    <div class="info">
+      <div class="title">Refactor authentication module to OAuth2</div>
+      <div class="meta">auth-service · 34 messages · ⚠ Interrupted</div>
+    </div>
+    <div class="time">15m ago</div>
+    <div class="actions">
+      <button class="btn resume">▶ Resume</button>
+      <button class="btn">✕ Delete</button>
+    </div>
+  </div>
+
+  <div class="session-item">
+    <div class="dot completed"></div>
+    <div class="info">
+      <div class="title">Add pagination to /api/users endpoint</div>
+      <div class="meta">my-service · 24 messages · ✓ Completed</div>
+    </div>
+    <div class="time">1h ago</div>
+    <div class="actions">
+      <button class="btn">Open</button>
+      <button class="btn">✕ Delete</button>
+    </div>
+  </div>
+
+  <div class="session-item">
+    <div class="dot completed"></div>
+    <div class="info">
+      <div class="title">What's the build status of MYAPP-BUILD?</div>
+      <div class="meta">checkout-service · 4 messages · ✓ Completed</div>
+    </div>
+    <div class="time">3h ago</div>
+    <div class="actions">
+      <button class="btn">Open</button>
+      <button class="btn">✕ Delete</button>
+    </div>
+  </div>
+
+  <div class="session-item">
+    <div class="dot failed"></div>
+    <div class="info">
+      <div class="title">Fix all critical SonarQube vulnerabilities</div>
+      <div class="meta">payment-service · 8 messages · ✗ Failed</div>
+    </div>
+    <div class="time">1d ago</div>
+    <div class="actions">
+      <button class="btn resume">▶ Resume</button>
+      <button class="btn">✕ Delete</button>
+    </div>
+  </div>
+</div>
+
+<div style="color: var(--fg-muted); font-size: 11px; margin-top: 40px; text-align: center;">
+  Open this file in a browser to preview. All elements are achievable in JCEF (Chromium) + Swing.
+</div>
+
+</body>
+</html>
