@@ -13,7 +13,8 @@ data class GateCondition(
     val comparator: String,
     val threshold: String,
     val actualValue: String,
-    val passed: Boolean
+    val passed: Boolean,
+    val warningThreshold: String? = null
 )
 
 data class QualityGateState(
@@ -32,7 +33,9 @@ data class MappedIssue(
     val endLine: Int,
     val startOffset: Int,
     val endOffset: Int,
-    val effort: String?
+    val effort: String?,
+    val creationDate: String? = null,
+    val status: String = "OPEN"
 )
 
 data class FileCoverageData(
@@ -75,6 +78,28 @@ data class NewCodePeriod(
     val value: String,         // branch name, number of days, or version
     val inherited: Boolean
 )
+
+data class ProjectHealthMetrics(
+    val technicalDebtMinutes: Int = 0,
+    val maintainabilityRating: String = "",  // A, B, C, D, E
+    val reliabilityRating: String = "",
+    val securityRating: String = "",
+    val duplicatedLinesDensity: Double = 0.0,
+    val cognitiveComplexity: Int = 0
+) {
+    /** Format technical debt as human-readable duration (e.g., "4h 30min", "2d 3h"). */
+    val formattedDebt: String get() {
+        if (technicalDebtMinutes <= 0) return "0min"
+        val days = technicalDebtMinutes / (8 * 60) // 8h work day
+        val hours = (technicalDebtMinutes % (8 * 60)) / 60
+        val mins = technicalDebtMinutes % 60
+        return buildString {
+            if (days > 0) append("${days}d ")
+            if (hours > 0) append("${hours}h ")
+            if (mins > 0 && days == 0) append("${mins}min") // skip mins when days present
+        }.trim().ifEmpty { "0min" }
+    }
+}
 
 data class SonarBranch(
     val name: String,

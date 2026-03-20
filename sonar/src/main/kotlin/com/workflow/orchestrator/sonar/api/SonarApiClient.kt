@@ -30,7 +30,14 @@ class SonarApiClient(
             "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,lines_to_cover," +
             "new_coverage,new_branch_coverage,new_uncovered_lines,new_uncovered_conditions,new_lines_to_cover," +
             "bugs,vulnerabilities,code_smells," +
-            "new_bugs,new_vulnerabilities,new_code_smells"
+            "new_bugs,new_vulnerabilities,new_code_smells," +
+            "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
+            "reliability_rating,security_rating"
+
+        /** Project-level health metrics (not file-level). */
+        const val PROJECT_HEALTH_METRIC_KEYS =
+            "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
+            "reliability_rating,security_rating"
 
         private val companionLog = Logger.getInstance(SonarApiClient::class.java)
 
@@ -123,6 +130,27 @@ class SonarApiClient(
         return get<SonarIssueSearchResult>(params).map { it.issues }
     }
 
+    /**
+     * Fetches issues with paging metadata (total count) for truncation detection.
+     */
+    suspend fun getIssuesWithPaging(
+        projectKey: String,
+        branch: String? = null,
+        filePath: String? = null,
+        inNewCodePeriod: Boolean = false
+    ): ApiResult<SonarIssueSearchResult> {
+        log.info("[Sonar:API] GET /api/issues/search (with paging) for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")
+        val params = buildString {
+            append("/api/issues/search?componentKeys=")
+            append(URLEncoder.encode(projectKey, "UTF-8"))
+            append("&resolved=false&ps=500")
+            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+            filePath?.let { append("&components=${URLEncoder.encode(filePath, "UTF-8")}") }
+            if (inNewCodePeriod) append("&inNewCodePeriod=true")
+        }
+        return get<SonarIssueSearchResult>(params)
+    }
+
     suspend fun getMeasures(
         projectKey: String,
         branch: String? = null,
@@ -135,6 +163,24 @@ class SonarApiClient(
             "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
                 "&metricKeys=$metrics&qualifiers=FIL&ps=500$branchParam"
         ).map { it.components }
+    }
+
+    /**
+     * Fetch project-level aggregate measures (not file-level).
+     * Uses /api/measures/component (without _tree) to get project-level metrics
+     * like technical debt, ratings, and duplication density.
+     */
+    suspend fun getProjectMeasures(
+        projectKey: String,
+        branch: String? = null,
+        metricKeys: String = PROJECT_HEALTH_METRIC_KEYS
+    ): ApiResult<List<SonarMeasureDto>> {
+        log.info("[Sonar:API] GET /api/measures/component for project '$projectKey' branch='${branch ?: "default"}'")
+        val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
+        return get<SonarComponentMeasureResponse>(
+            "/api/measures/component?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
+                "&metricKeys=$metricKeys$branchParam"
+        ).map { it.component.measures }
     }
 
     suspend fun getAnalysisTasks(projectKey: String): ApiResult<List<SonarCeTaskDto>> {

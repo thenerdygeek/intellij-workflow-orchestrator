@@ -51,7 +51,8 @@ data class SonarConditionDto(
     val metricKey: String,
     val comparator: String,
     val errorThreshold: String = "",
-    val actualValue: String = ""
+    val actualValue: String = "",
+    val warningThreshold: String? = null
 )
 
 // --- Issues ---
@@ -71,7 +72,12 @@ data class SonarIssueDto(
     val component: String,
     val type: String,
     val effort: String? = null,
-    val textRange: SonarTextRangeDto? = null
+    val textRange: SonarTextRangeDto? = null,
+    val creationDate: String? = null,
+    val updateDate: String? = null,
+    val status: String = "OPEN",       // OPEN, CONFIRMED, REOPENED, RESOLVED, CLOSED
+    val tags: List<String> = emptyList(),
+    val author: String? = null
 )
 
 @Serializable
@@ -112,6 +118,21 @@ data class SonarMeasureComponentDto(
 data class SonarMeasureDto(
     val metric: String,
     val value: String = ""
+)
+
+// --- Project-level Measures (aggregate, not file-level) ---
+
+@Serializable
+data class SonarComponentMeasureResponse(
+    val component: SonarComponentWithMeasures = SonarComponentWithMeasures()
+)
+
+@Serializable
+data class SonarComponentWithMeasures(
+    val key: String = "",
+    val name: String = "",
+    val qualifier: String = "",
+    val measures: List<SonarMeasureDto> = emptyList()
 )
 
 // --- Branch List ---

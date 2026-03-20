@@ -3,17 +3,20 @@ package com.workflow.orchestrator.sonar.ui
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.TextGenerationService
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.sonar.model.*
 import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.time.Instant
 import javax.swing.*
 
 class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
@@ -29,6 +32,13 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private var allIssues: List<MappedIssue> = emptyList()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val paginationWarning = JBLabel().apply {
+        foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+        font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat())
+        border = JBUI.Borders.empty(2, 8)
+        isVisible = false
+    }
 
     private val emptyLabel = JBLabel("No issues found. Click Refresh to update.").apply {
         foreground = com.intellij.util.ui.JBUI.CurrentTheme.Label.disabledForeground()
@@ -50,12 +60,17 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         border = JBUI.Borders.empty(8)
 
         // Filter toolbar
-        val filterPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            add(JBLabel("Type:"))
-            add(filterCombo)
-            add(JBLabel("Severity:"))
-            add(severityCombo)
-            add(countLabel)
+        val filterPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            val filterRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+                add(JBLabel("Type:"))
+                add(filterCombo)
+                add(JBLabel("Severity:"))
+                add(severityCombo)
+                add(countLabel)
+            }
+            add(filterRow)
+            add(paginationWarning)
         }
         add(filterPanel, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
@@ -100,8 +115,15 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()) {
         })
     }
 
-    fun update(issues: List<MappedIssue>) {
+    fun update(issues: List<MappedIssue>, totalCount: Int? = null) {
         allIssues = issues
+        // Show pagination warning when results are truncated
+        if (totalCount != null && totalCount > issues.size) {
+            paginationWarning.text = "\u26A0 Showing first ${issues.size} of $totalCount issues. More exist on the server."
+            paginationWarning.isVisible = true
+        } else {
+            paginationWarning.isVisible = false
+        }
         applyFilters()
     }
 
@@ -220,7 +242,14 @@ private class IssueListCellRenderer : ListCellRenderer<MappedIssue> {
         list: JList<out MappedIssue>, value: MappedIssue,
         index: Int, isSelected: Boolean, cellHasFocus: Boolean
     ): Component {
-        val label = JBLabel()
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.empty(4, 8)
+            isOpaque = isSelected
+            if (isSelected) {
+                background = list.selectionBackground
+            }
+        }
         val color = when (value.severity) {
             IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> "#ff4444"
             IssueSeverity.MAJOR -> "#e68a00"
@@ -229,15 +258,43 @@ private class IssueListCellRenderer : ListCellRenderer<MappedIssue> {
         }
         val typeStr = value.type.name.replace("_", " ")
         val fileName = java.io.File(value.filePath).name
-        label.text = "<html><font color='$color'>\u25CF</font> $typeStr " +
-            "<font color='$color'>${value.severity}</font> ${value.message} — $fileName:${value.startLine}</html>"
-        label.border = JBUI.Borders.empty(4, 8)
-        label.toolTipText = "[${value.rule}] ${value.message} — ${value.filePath}:${value.startLine}"
+
+        // Main line: severity dot + type + severity + message + file:line
+        val mainLabel = JBLabel("<html><font color='$color'>\u25CF</font> $typeStr " +
+            "<font color='$color'>${value.severity}</font>  ${value.message} \u2014 $fileName:${value.startLine}</html>")
         if (isSelected) {
-            label.background = list.selectionBackground
-            label.foreground = list.selectionForeground
-            label.isOpaque = true
+            mainLabel.foreground = list.selectionForeground
         }
-        return label
+        panel.add(mainLabel)
+
+        // Detail line: effort + age
+        val detailParts = mutableListOf<String>()
+        value.effort?.let { detailParts.add("$it to fix") }
+        value.creationDate?.let { dateStr ->
+            try {
+                val instant = Instant.parse(dateStr)
+                val relativeTime = TimeFormatter.relative(instant.toEpochMilli())
+                if (relativeTime.isNotEmpty()) detailParts.add(relativeTime)
+            } catch (_: Exception) {
+                // Sonar dates may be in different format (2024-03-15T14:32:00+0000)
+                // Silently skip if unparseable
+            }
+        }
+        if (detailParts.isNotEmpty()) {
+            val dimColor = if (isSelected) list.selectionForeground else
+                JBUI.CurrentTheme.Label.disabledForeground()
+            val detailLabel = JBLabel("  ${detailParts.joinToString(" \u2022 ")}").apply {
+                font = font.deriveFont(font.size2D - 1f)
+                foreground = dimColor
+            }
+            panel.add(detailLabel)
+        }
+
+        panel.toolTipText = buildString {
+            append("[${value.rule}] ${value.message} \u2014 ${value.filePath}:${value.startLine}")
+            value.effort?.let { append(" | Effort: $it") }
+            append(" | Status: ${value.status}")
+        }
+        return panel
     }
 }

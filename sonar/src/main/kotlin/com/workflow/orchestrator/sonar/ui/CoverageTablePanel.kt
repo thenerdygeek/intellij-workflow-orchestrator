@@ -3,6 +3,7 @@ package com.workflow.orchestrator.sonar.ui
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
@@ -24,6 +25,13 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         autoCreateRowSorter = true
         setShowGrid(false)
         rowHeight = 24
+    }
+
+    private val paginationWarning = JBLabel().apply {
+        foreground = JBColor(java.awt.Color(0xB0, 0x6D, 0x00), java.awt.Color(0xFA, 0xB3, 0x87))
+        font = font.deriveFont(java.awt.Font.ITALIC, JBUI.scale(10).toFloat())
+        border = JBUI.Borders.empty(2, 8)
+        isVisible = false
     }
 
     private val emptyLabel = JBLabel("No coverage data available. Configure SonarQube project key in Settings > CI/CD.").apply {
@@ -66,7 +74,7 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         })
     }
 
-    fun update(fileCoverage: Map<String, FileCoverageData>, newCodeMode: Boolean = false) {
+    fun update(fileCoverage: Map<String, FileCoverageData>, newCodeMode: Boolean = false, totalFileCount: Int? = null) {
         val data = fileCoverage.values.toList().sortedBy {
             if (newCodeMode) it.newCoverage ?: 0.0 else it.lineCoverage
         }
@@ -79,11 +87,23 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
         tableModel.setData(data, newCodeMode)
 
+        // Show pagination warning when file count hits the page size limit
+        if (data.size >= 500 && totalFileCount != null && totalFileCount >= 500) {
+            paginationWarning.text = "\u26A0 Showing first 500 files. More may exist."
+            paginationWarning.isVisible = true
+        } else {
+            paginationWarning.isVisible = false
+        }
+
         removeAll()
         if (data.isEmpty()) {
             add(emptyLabel, BorderLayout.CENTER)
         } else {
-            add(scrollPane, BorderLayout.CENTER)
+            val contentPanel = JPanel(BorderLayout()).apply {
+                add(paginationWarning, BorderLayout.NORTH)
+                add(scrollPane, BorderLayout.CENTER)
+            }
+            add(contentPanel, BorderLayout.CENTER)
         }
 
         // Restore selection by file path

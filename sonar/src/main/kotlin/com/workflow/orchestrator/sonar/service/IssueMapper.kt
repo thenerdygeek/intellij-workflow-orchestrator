@@ -26,7 +26,9 @@ object IssueMapper {
                 endLine = dto.textRange?.endLine ?: 1,
                 startOffset = dto.textRange?.startOffset ?: 0,
                 endOffset = dto.textRange?.endOffset ?: 0,
-                effort = dto.effort
+                effort = dto.effort,
+                creationDate = dto.creationDate,
+                status = dto.status
             )
         }
     }

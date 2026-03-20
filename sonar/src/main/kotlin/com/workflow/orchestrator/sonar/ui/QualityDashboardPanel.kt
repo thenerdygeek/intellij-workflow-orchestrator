@@ -276,11 +276,12 @@ class QualityDashboardPanel(
         }
 
         overviewPanel.update(state)
-        issueListPanel.update(state.activeIssues)
+        issueListPanel.update(state.activeIssues, state.activeTotalIssueCount)
         val coverageData = state.activeFileCoverage.ifEmpty { state.fileCoverage }
         coverageTablePanel.update(
             coverageData,
-            state.newCodeMode && state.activeFileCoverage.isNotEmpty()
+            state.newCodeMode && state.activeFileCoverage.isNotEmpty(),
+            state.totalCoverageFileCount
         )
 
         loadingIcon.isVisible = false

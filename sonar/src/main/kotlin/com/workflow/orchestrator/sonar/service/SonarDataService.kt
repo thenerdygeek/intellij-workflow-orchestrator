@@ -118,8 +118,8 @@ class SonarDataService(private val project: Project) : Disposable {
     /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */
     internal suspend fun refreshWith(client: SonarApiClient, projectKey: String, branch: String) {
         // Fetch overall + new code issues + branches + CE tasks in parallel
-        val overallIssuesDeferred = scope.async { client.getIssues(projectKey, branch) }
-        val newCodeIssuesDeferred = scope.async { client.getIssues(projectKey, branch, inNewCodePeriod = true) }
+        val overallIssuesDeferred = scope.async { client.getIssuesWithPaging(projectKey, branch) }
+        val newCodeIssuesDeferred = scope.async { client.getIssuesWithPaging(projectKey, branch, inNewCodePeriod = true) }
         val branchesDeferred = scope.async { client.getBranches(projectKey) }
         val ceTasksDeferred = scope.async { client.getAnalysisTasks(projectKey) }
         val newCodePeriodDeferred = scope.async {
@@ -129,6 +129,7 @@ class SonarDataService(private val project: Project) : Disposable {
                 null
             }
         }
+        val projectHealthDeferred = scope.async { client.getProjectMeasures(projectKey, branch) }
 
         val gateResult = client.getQualityGateStatus(projectKey, branch)
         val metricKeys = settings.state.sonarMetricKeys.orEmpty()
@@ -139,6 +140,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val branchesResult = branchesDeferred.await()
         val ceTasksResult = ceTasksDeferred.await()
         val newCodePeriodResult = newCodePeriodDeferred.await()
+        val projectHealthResult = projectHealthDeferred.await()
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> mapQualityGate(gateResult.data)
@@ -146,13 +148,21 @@ class SonarDataService(private val project: Project) : Disposable {
         }
 
         val issues = when (overallIssuesResult) {
-            is ApiResult.Success -> IssueMapper.mapIssues(overallIssuesResult.data, projectKey)
+            is ApiResult.Success -> IssueMapper.mapIssues(overallIssuesResult.data.issues, projectKey)
             is ApiResult.Error -> _stateFlow.value.issues
+        }
+        val totalIssueCount = when (overallIssuesResult) {
+            is ApiResult.Success -> overallIssuesResult.data.paging.total
+            is ApiResult.Error -> null
         }
 
         val newCodeIssues = when (newCodeIssuesResult) {
-            is ApiResult.Success -> IssueMapper.mapIssues(newCodeIssuesResult.data, projectKey)
+            is ApiResult.Success -> IssueMapper.mapIssues(newCodeIssuesResult.data.issues, projectKey)
             is ApiResult.Error -> emptyList()
+        }
+        val totalNewCodeIssueCount = when (newCodeIssuesResult) {
+            is ApiResult.Success -> newCodeIssuesResult.data.paging.total
+            is ApiResult.Error -> null
         }
 
         val fileCoverage = when (measuresResult) {
@@ -245,6 +255,15 @@ class SonarDataService(private val project: Project) : Disposable {
             null -> null
         }
 
+        // Map project-level health metrics
+        val projectHealth = when (projectHealthResult) {
+            is ApiResult.Success -> mapProjectHealth(projectHealthResult.data)
+            is ApiResult.Error -> {
+                log.warn("[Sonar:Health] Failed to fetch project health metrics: ${projectHealthResult.message}")
+                ProjectHealthMetrics()
+            }
+        }
+
         val newState = SonarState(
             projectKey = projectKey,
             branch = branch,
@@ -264,7 +283,11 @@ class SonarDataService(private val project: Project) : Disposable {
             currentBranchAnalysisDate = currentBranchAnalysisDate,
             recentAnalyses = recentAnalyses,
             newCodePeriod = newCodePeriod,
-            lastAnalysisForBranch = lastAnalysisForBranch
+            lastAnalysisForBranch = lastAnalysisForBranch,
+            totalIssueCount = totalIssueCount,
+            totalNewCodeIssueCount = totalNewCodeIssueCount,
+            totalCoverageFileCount = fileCoverage.size,
+            projectHealth = projectHealth
         )
 
         _stateFlow.value = newState
@@ -307,10 +330,35 @@ class SonarDataService(private val project: Project) : Disposable {
                 comparator = cond.comparator,
                 threshold = cond.errorThreshold,
                 actualValue = cond.actualValue,
-                passed = cond.status == "OK"
+                passed = cond.status == "OK",
+                warningThreshold = cond.warningThreshold
             )
         }
         return QualityGateState(status, conditions)
+    }
+
+    private fun mapProjectHealth(measures: List<com.workflow.orchestrator.sonar.api.dto.SonarMeasureDto>): ProjectHealthMetrics {
+        val byMetric = measures.associateBy { it.metric }
+        // SonarQube ratings are stored as 1.0=A, 2.0=B, 3.0=C, 4.0=D, 5.0=E
+        fun ratingLetter(value: String?): String {
+            val num = value?.toDoubleOrNull()?.toInt() ?: return ""
+            return when (num) {
+                1 -> "A"; 2 -> "B"; 3 -> "C"; 4 -> "D"; 5 -> "E"
+                else -> ""
+            }
+        }
+        return ProjectHealthMetrics(
+            technicalDebtMinutes = byMetric["sqale_index"]?.value?.toDoubleOrNull()?.toInt() ?: 0,
+            maintainabilityRating = ratingLetter(byMetric["sqale_rating"]?.value),
+            reliabilityRating = ratingLetter(byMetric["reliability_rating"]?.value),
+            securityRating = ratingLetter(byMetric["security_rating"]?.value),
+            duplicatedLinesDensity = byMetric["duplicated_lines_density"]?.value?.toDoubleOrNull() ?: 0.0,
+            cognitiveComplexity = byMetric["cognitive_complexity"]?.value?.toDoubleOrNull()?.toInt() ?: 0
+        ).also { h ->
+            log.info("[Sonar:Health] Maintainability=${h.maintainabilityRating}, Debt=${h.formattedDebt}, " +
+                "Reliability=${h.reliabilityRating}, Security=${h.securityRating}, " +
+                "Duplication=${h.duplicatedLinesDensity}%, Complexity=${h.cognitiveComplexity}")
+        }
     }
 
     private fun calculateOverallCoverage(fileCoverage: Map<String, FileCoverageData>): CoverageMetrics {

@@ -23,7 +23,11 @@ data class SonarState(
     val currentBranchAnalysisDate: String? = null,
     val recentAnalyses: List<SonarAnalysisTask> = emptyList(),
     val newCodePeriod: NewCodePeriod? = null,
-    val lastAnalysisForBranch: SonarAnalysisTask? = null
+    val lastAnalysisForBranch: SonarAnalysisTask? = null,
+    val totalIssueCount: Int? = null,
+    val totalNewCodeIssueCount: Int? = null,
+    val totalCoverageFileCount: Int? = null,
+    val projectHealth: ProjectHealthMetrics = ProjectHealthMetrics()
 ) {
     /** Returns the active issues based on the current mode. */
     val activeIssues: List<MappedIssue>
@@ -40,6 +44,17 @@ data class SonarState(
     /** Returns the active issue counts based on the current mode. */
     val activeIssueCounts: IssueCounts
         get() = if (newCodeMode) newCodeIssueCounts else overallIssueCounts
+
+    /** Returns the total issue count from the server (null if unknown). */
+    val activeTotalIssueCount: Int?
+        get() = if (newCodeMode) totalNewCodeIssueCount else totalIssueCount
+
+    /** Whether the issue list is truncated (more issues exist than returned). */
+    val issuesTruncated: Boolean
+        get() {
+            val total = activeTotalIssueCount ?: return false
+            return total > activeIssues.size
+        }
 
     companion object {
         val EMPTY = SonarState(

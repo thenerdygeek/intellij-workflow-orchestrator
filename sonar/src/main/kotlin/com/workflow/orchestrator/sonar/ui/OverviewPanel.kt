@@ -26,13 +26,18 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
     }
 
+    // Project Health card components
+    private val healthRatingLabel = JBLabel("—")
+    private val healthDetailsPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+    }
+
     init {
         border = JBUI.Borders.empty(12)
 
-        val cardsPanel = JPanel(GridLayout(1, 3, 12, 0)).apply {
-            // Set a minimum width per card so they don't get squished
-            minimumSize = Dimension(JBUI.scale(450), JBUI.scale(100))
-            preferredSize = Dimension(JBUI.scale(600), JBUI.scale(100))
+        val cardsPanel = JPanel(GridLayout(2, 2, 12, 12)).apply {
+            minimumSize = Dimension(JBUI.scale(450), JBUI.scale(200))
+            preferredSize = Dimension(JBUI.scale(600), JBUI.scale(200))
         }
 
         // Quality Gate card
@@ -50,6 +55,10 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         // Issues card
         val issuesCard = createCard("ISSUES", issueCountLabel, issueBreakdownLabel)
         cardsPanel.add(issuesCard)
+
+        // Project Health card
+        val healthCard = createCard("PROJECT HEALTH", healthRatingLabel, healthDetailsPanel)
+        cardsPanel.add(healthCard)
 
         // Wrap in scroll pane for narrow tool windows
         val cardsScrollPane = JBScrollPane(
@@ -103,7 +112,17 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             val suffix = if (isCoverageMetric) "%" else ""
             val label = JBLabel("$icon $metricName: ${cond.actualValue}$suffix (threshold: ${cond.threshold}$suffix)")
             label.font = label.font.deriveFont(JBUI.scale(10).toFloat())
-            label.foreground = if (cond.passed) JBColor.GRAY else StatusColors.ERROR
+            // Determine condition color: green (passed), yellow (warning zone), red (failed)
+            label.foreground = when {
+                cond.passed -> {
+                    // Check if in warning zone (between warning threshold and error threshold)
+                    val inWarningZone = cond.warningThreshold?.let { wt ->
+                        isInWarningZone(cond.actualValue, wt, cond.threshold, cond.comparator)
+                    } ?: false
+                    if (inWarningZone) StatusColors.WARNING else JBColor.GRAY
+                }
+                else -> StatusColors.ERROR
+            }
             gateConditionsPanel.add(label)
         }
 
@@ -126,7 +145,11 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val vulns = state.activeIssues.count { it.type == IssueType.VULNERABILITY }
         val smells = state.activeIssues.count { it.type == IssueType.CODE_SMELL }
         val hotspots = state.activeIssues.count { it.type == IssueType.SECURITY_HOTSPOT }
-        issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H</html>"
+        // Calculate total effort from all active issues
+        val totalEffortMinutes = state.activeIssues.mapNotNull { it.effort?.let { e -> parseEffortToMinutes(e) } }.sum()
+        val effortText = formatEffortMinutes(totalEffortMinutes)
+
+        issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H<br/><font color='gray'>Total effort: $effortText</font></html>"
         issueBreakdownLabel.font = issueBreakdownLabel.font.deriveFont(JBUI.scale(10).toFloat())
 
         // Recent issues (top 5 by severity)
@@ -144,8 +167,64 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
                 recentIssuesPanel.add(label)
             }
 
+        // Project Health
+        val health = state.projectHealth
+        if (health.maintainabilityRating.isNotEmpty()) {
+            healthRatingLabel.text = health.maintainabilityRating
+            healthRatingLabel.font = healthRatingLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+            healthRatingLabel.foreground = ratingColor(health.maintainabilityRating)
+        } else {
+            healthRatingLabel.text = "—"
+            healthRatingLabel.foreground = JBColor.GRAY
+            healthRatingLabel.font = healthRatingLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+        }
+
+        healthDetailsPanel.removeAll()
+        if (health.technicalDebtMinutes > 0 || health.maintainabilityRating.isNotEmpty()) {
+            val debtLabel = JBLabel("Debt: ${health.formattedDebt}")
+            debtLabel.font = debtLabel.font.deriveFont(JBUI.scale(10).toFloat())
+            debtLabel.foreground = JBColor.GRAY
+            healthDetailsPanel.add(debtLabel)
+
+            val ratingsLabel = JBLabel("<html>" +
+                "Reliability: <font color='${htmlColor(ratingColor(health.reliabilityRating))}'>${health.reliabilityRating.ifEmpty { "—" }}</font> " +
+                "Security: <font color='${htmlColor(ratingColor(health.securityRating))}'>${health.securityRating.ifEmpty { "—" }}</font>" +
+                "</html>")
+            ratingsLabel.font = ratingsLabel.font.deriveFont(JBUI.scale(10).toFloat())
+            healthDetailsPanel.add(ratingsLabel)
+
+            val dupLabel = JBLabel("Duplication: %.1f%%".format(health.duplicatedLinesDensity))
+            dupLabel.font = dupLabel.font.deriveFont(JBUI.scale(10).toFloat())
+            dupLabel.foreground = JBColor.GRAY
+            healthDetailsPanel.add(dupLabel)
+        }
+
         revalidate()
         repaint()
+    }
+
+    /** Color for SonarQube A-E rating: A/B=green, C=yellow, D=orange, E=red. */
+    private fun ratingColor(rating: String): Color = when (rating) {
+        "A", "B" -> StatusColors.SUCCESS
+        "C" -> StatusColors.WARNING
+        "D" -> JBColor(Color(0xFF, 0x8C, 0x00), Color(0xFF, 0xA5, 0x00)) // orange
+        "E" -> StatusColors.ERROR
+        else -> JBColor.GRAY
+    }
+
+    /**
+     * Check if the actual value is in the warning zone: past the warning threshold
+     * but not yet past the error threshold. Handles LT (less than) and GT (greater than).
+     */
+    private fun isInWarningZone(actualStr: String, warningStr: String, errorStr: String, comparator: String): Boolean {
+        val actual = actualStr.toDoubleOrNull() ?: return false
+        val warning = warningStr.toDoubleOrNull() ?: return false
+        val error = errorStr.toDoubleOrNull() ?: return false
+        return when (comparator) {
+            "LT" -> actual < warning && actual >= error   // e.g., coverage: warn < 90, error < 80
+            "GT" -> actual > warning && actual <= error    // e.g., bugs: warn > 0, error > 5
+            else -> false
+        }
     }
 
     private fun createCard(title: String, mainContent: JComponent, subContent: JComponent): JPanel {
@@ -172,6 +251,35 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun htmlColor(c: Color) = "#%02x%02x%02x".format(c.red, c.green, c.blue)
+
+    /**
+     * Parse SonarQube effort string (e.g., "30min", "2h", "1h30min", "3d") to total minutes.
+     */
+    private fun parseEffortToMinutes(effort: String): Int {
+        var total = 0
+        val dayMatch = Regex("(\\d+)d").find(effort)
+        val hourMatch = Regex("(\\d+)h").find(effort)
+        val minMatch = Regex("(\\d+)min").find(effort)
+        dayMatch?.let { total += it.groupValues[1].toInt() * 8 * 60 } // 8h workday
+        hourMatch?.let { total += it.groupValues[1].toInt() * 60 }
+        minMatch?.let { total += it.groupValues[1].toInt() }
+        return total
+    }
+
+    /**
+     * Format total minutes as human-readable duration (e.g., "4h 30min", "2d 3h").
+     */
+    private fun formatEffortMinutes(totalMinutes: Int): String {
+        if (totalMinutes <= 0) return "0min"
+        val days = totalMinutes / (8 * 60)
+        val hours = (totalMinutes % (8 * 60)) / 60
+        val mins = totalMinutes % 60
+        return buildString {
+            if (days > 0) append("${days}d ")
+            if (hours > 0) append("${hours}h ")
+            if (mins > 0 && days == 0) append("${mins}min")
+        }.trim().ifEmpty { "0min" }
+    }
 }
 
 private class CoverageProgressBar : JPanel() {
