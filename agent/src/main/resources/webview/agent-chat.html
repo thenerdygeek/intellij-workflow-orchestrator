@@ -736,7 +736,7 @@ function scrollToBottom() {
 function esc(text) {
   const d = document.createElement('div');
   d.textContent = text;
-  return d.innerHTML;
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /* ── Markdown Rendering ── */
@@ -1380,7 +1380,7 @@ function showQuestion(index) {
     + '<div class="question-dots">' + dotsHtml + '</div>'
     + '<button class="question-cancel" onclick="questionCancel()">&#xd7;</button>'
     + '</div>'
-    + '<div class="question-body">' + esc(q.text) + '</div>'
+    + '<div class="question-body">' + esc(q.question) + '</div>'
     + '<div class="question-options">' + optionsHtml + '</div>'
     + '<div class="question-nav">' + navHtml + '</div>'
     + '</div>';
@@ -1441,7 +1441,7 @@ function questionNext() {
   var q = _questionData.questions[_questionIndex];
   var selections = getSelectedOptionIds();
 
-  if (selections.length === 0 && q.type !== 'multiple') {
+  if (selections.length === 0) {
     // No selection on single-select = skip
     if (window._questionSkipped) window._questionSkipped(q.id);
   } else {
@@ -1496,7 +1496,7 @@ function showQuestionSummaryFromState() {
 
     itemsHtml += '<div class="question-summary-item' + skippedClass + '">'
       + '<button class="question-summary-edit" data-qid="' + esc(q.id) + '">' + editLabel + '</button>'
-      + '<div class="question-summary-question">' + esc(q.text) + '</div>';
+      + '<div class="question-summary-question">' + esc(q.question) + '</div>';
 
     if (answers && answers.length > 0) {
       itemsHtml += '<div class="question-summary-answer">';
@@ -1548,28 +1548,30 @@ function showQuestionSummary(summaryJson) {
 
   removeQuestionElements();
 
-  var total = result.answers ? result.answers.length : 0;
+  var questions = _questionData ? _questionData.questions : [];
+  var total = questions.length;
   var itemsHtml = '';
 
-  (result.answers || []).forEach(function(a) {
-    var isSkipped = a.skipped || !a.selectedOptions || a.selectedOptions.length === 0;
+  questions.forEach(function(q) {
+    var answer = result.answers ? result.answers[q.id] : null;
+    var isSkipped = !answer || (result.skipped && result.skipped.indexOf(q.id) >= 0) || !answer.selectedOptions || answer.selectedOptions.length === 0;
     var editLabel = isSkipped ? '&#x270E; Answer' : '&#x270E; Edit';
     var skippedClass = isSkipped ? ' skipped' : '';
 
     itemsHtml += '<div class="question-summary-item' + skippedClass + '">'
-      + '<button class="question-summary-edit" data-qid="' + esc(a.questionId) + '">' + editLabel + '</button>'
-      + '<div class="question-summary-question">' + esc(a.questionText || a.questionId) + '</div>';
+      + '<button class="question-summary-edit" data-qid="' + esc(q.id) + '">' + editLabel + '</button>'
+      + '<div class="question-summary-question">' + esc(q.question || q.id) + '</div>';
 
-    if (a.selectedOptions && a.selectedOptions.length > 0) {
+    if (answer && answer.selectedOptions && answer.selectedOptions.length > 0) {
       itemsHtml += '<div class="question-summary-answer">';
-      a.selectedOptions.forEach(function(optLabel) {
+      answer.selectedOptions.forEach(function(optLabel) {
         itemsHtml += '<span class="pill">' + esc(optLabel) + '</span>';
       });
       itemsHtml += '</div>';
     }
 
-    if (a.chatNote) {
-      itemsHtml += '<div class="question-summary-note">' + esc(a.chatNote) + '</div>';
+    if (answer && answer.chatMessage) {
+      itemsHtml += '<div class="question-summary-note">' + esc(answer.chatMessage) + '</div>';
     }
 
     itemsHtml += '</div>';

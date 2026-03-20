@@ -56,6 +56,7 @@ class PlanManager {
         LOG.info("PlanManager: plan submitted with ${plan.steps.size} steps")
         onPlanCreated?.invoke(plan)
         sessionDir?.let { PlanPersistence.save(plan, it) }
+        onPlanAnchorUpdate?.invoke(plan)
         return approvalFuture!!
     }
 

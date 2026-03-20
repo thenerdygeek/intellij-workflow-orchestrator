@@ -184,83 +184,86 @@ class AgentController(
             agentSvc.currentQuestionManager = currentSession.questionManager
         } catch (_: Exception) {}
 
-        // Wire PlanManager UI callbacks
-        currentSession.planManager.onPlanCreated = { plan ->
-            val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
-            dashboard.renderPlan(json)
-            // Open full-screen plan in editor tab (don't steal focus from chat)
-            ApplicationManager.getApplication().invokeLater {
-                val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
-                FileEditorManager.getInstance(project).openFile(virtualFile, false)
-                currentPlanFile = virtualFile
-            }
-        }
-        currentSession.planManager.onStepUpdated = { stepId, status ->
-            dashboard.updatePlanStep(stepId, status)
-            // Update editor tab
-            ApplicationManager.getApplication().invokeLater {
-                currentPlanFile?.let { file ->
-                    currentSession.planManager.currentPlan?.let { file.currentPlan = it }
-                    FileEditorManager.getInstance(project)
-                        .getEditors(file)
-                        .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
-                        .forEach { editor -> editor.updatePlanStep(stepId, status) }
+        // Only wire callbacks once per session (not on every turn)
+        if (currentSession.planManager.onPlanCreated == null) {
+            // Wire PlanManager UI callbacks
+            currentSession.planManager.onPlanCreated = { plan ->
+                val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
+                dashboard.renderPlan(json)
+                // Open full-screen plan in editor tab (don't steal focus from chat)
+                ApplicationManager.getApplication().invokeLater {
+                    val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
+                    FileEditorManager.getInstance(project).openFile(virtualFile, false)
+                    currentPlanFile = virtualFile
                 }
             }
-        }
-
-        // Set session directory for plan persistence
-        currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
-
-        // Wire anchor update: sets/updates the <active_plan> system message
-        currentSession.planManager.onPlanAnchorUpdate = { plan ->
-            currentSession.contextManager.setPlanAnchor(
-                com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
-            )
-        }
-
-        // Wire QuestionManager UI callbacks
-        currentSession.questionManager.onQuestionsCreated = { questionSet ->
-            val json = QuestionManager.json.encodeToString(
-                QuestionSet.serializer(), questionSet
-            )
-            dashboard.showQuestions(json)
-        }
-        currentSession.questionManager.onShowQuestion = { index ->
-            dashboard.showQuestion(index)
-        }
-        currentSession.questionManager.onShowSummary = { result ->
-            val json = QuestionManager.json.encodeToString(
-                QuestionResult.serializer(), result
-            )
-            dashboard.showQuestionSummary(json)
-        }
-        currentSession.questionManager.onSubmitted = {
-            dashboard.enableChatInput()
-        }
-
-        // Wire JCEF → QuestionManager callbacks
-        dashboard.setCefQuestionCallbacks(
-            onAnswered = { questionId, optionsJson ->
-                val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
-                currentSession.questionManager.answerQuestion(questionId, options)
-            },
-            onSkipped = { questionId ->
-                currentSession.questionManager.skipQuestion(questionId)
-            },
-            onChatAbout = { questionId, optionLabel, message ->
-                currentSession.questionManager.setChatMessage(questionId, optionLabel, message)
-            },
-            onSubmitted = {
-                currentSession.questionManager.submitAnswers()
-            },
-            onCancelled = {
-                currentSession.questionManager.cancelQuestions()
-            },
-            onEdit = { questionId ->
-                currentSession.questionManager.editQuestion(questionId)
+            currentSession.planManager.onStepUpdated = { stepId, status ->
+                dashboard.updatePlanStep(stepId, status)
+                // Update editor tab
+                ApplicationManager.getApplication().invokeLater {
+                    currentPlanFile?.let { file ->
+                        currentSession.planManager.currentPlan?.let { file.currentPlan = it }
+                        FileEditorManager.getInstance(project)
+                            .getEditors(file)
+                            .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
+                            .forEach { editor -> editor.updatePlanStep(stepId, status) }
+                    }
+                }
             }
-        )
+
+            // Set session directory for plan persistence
+            currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
+
+            // Wire anchor update: sets/updates the <active_plan> system message
+            currentSession.planManager.onPlanAnchorUpdate = { plan ->
+                currentSession.contextManager.setPlanAnchor(
+                    com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
+                )
+            }
+
+            // Wire QuestionManager UI callbacks
+            currentSession.questionManager.onQuestionsCreated = { questionSet ->
+                val json = QuestionManager.json.encodeToString(
+                    QuestionSet.serializer(), questionSet
+                )
+                dashboard.showQuestions(json)
+            }
+            currentSession.questionManager.onShowQuestion = { index ->
+                dashboard.showQuestion(index)
+            }
+            currentSession.questionManager.onShowSummary = { result ->
+                val json = QuestionManager.json.encodeToString(
+                    QuestionResult.serializer(), result
+                )
+                dashboard.showQuestionSummary(json)
+            }
+            currentSession.questionManager.onSubmitted = {
+                dashboard.enableChatInput()
+            }
+
+            // Wire JCEF → QuestionManager callbacks
+            dashboard.setCefQuestionCallbacks(
+                onAnswered = { questionId, optionsJson ->
+                    val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
+                    currentSession.questionManager.answerQuestion(questionId, options)
+                },
+                onSkipped = { questionId ->
+                    currentSession.questionManager.skipQuestion(questionId)
+                },
+                onChatAbout = { questionId, optionLabel, message ->
+                    currentSession.questionManager.setChatMessage(questionId, optionLabel, message)
+                },
+                onSubmitted = {
+                    currentSession.questionManager.submitAnswers()
+                },
+                onCancelled = {
+                    currentSession.questionManager.cancelQuestions()
+                },
+                onEdit = { questionId ->
+                    currentSession.questionManager.editQuestion(questionId)
+                }
+            )
+        }
 
         dashboard.setBusy(true)
 

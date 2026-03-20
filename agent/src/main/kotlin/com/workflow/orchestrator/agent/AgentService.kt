@@ -35,10 +35,10 @@ class AgentService(
     var activeController: com.workflow.orchestrator.agent.ui.AgentController? = null
 
     /** Plan manager for the current agent session, set by SingleAgentSession. */
-    var currentPlanManager: PlanManager? = null
+    @Volatile var currentPlanManager: PlanManager? = null
 
     /** Question manager for the current agent session, set by AgentController. */
-    var currentQuestionManager: QuestionManager? = null
+    @Volatile var currentQuestionManager: QuestionManager? = null
 
     /** Tools requested by LLM via request_tools, expanded on next iteration. */
     val pendingToolActivations = java.util.concurrent.ConcurrentLinkedQueue<String>()

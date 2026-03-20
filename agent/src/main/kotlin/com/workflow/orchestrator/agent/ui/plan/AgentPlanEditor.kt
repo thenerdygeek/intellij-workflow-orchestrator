@@ -51,11 +51,12 @@ class AgentPlanEditor(
 
         fileClickQuery.addHandler { filePath ->
             try {
+                val basePath = project.basePath ?: return@addHandler null
+                // Try as absolute path first, then relative to project
                 val vf = LocalFileSystem.getInstance().findFileByPath(filePath)
-                    ?: project.basePath?.let { base ->
-                        LocalFileSystem.getInstance().findFileByPath("$base/$filePath")
-                    }
-                if (vf != null) {
+                    ?: LocalFileSystem.getInstance().findFileByPath("$basePath/$filePath")
+                // Security: ensure resolved path is within project directory
+                if (vf != null && vf.path.startsWith(basePath)) {
                     ApplicationManager.getApplication().invokeLater {
                         FileEditorManager.getInstance(project).openFile(vf, true)
                     }

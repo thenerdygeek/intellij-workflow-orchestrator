@@ -173,7 +173,8 @@ class DelegateTaskTool : AgentTool {
             """.trimMargin()
 
             // Execute with timeout
-            val workerSession = WorkerSession(maxIterations = 10)
+            val parentJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+            val workerSession = WorkerSession(maxIterations = 10, parentJob = parentJob)
             val workerResult: WorkerResult = withTimeout(WORKER_TIMEOUT_MS) {
                 workerSession.execute(
                     workerType = workerType,
