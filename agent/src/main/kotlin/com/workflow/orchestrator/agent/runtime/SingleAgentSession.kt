@@ -124,6 +124,8 @@ class SingleAgentSession(
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
         val editedFiles = mutableListOf<String>()
+        var nudgeEmitted = false
+        var strongNudgeEmitted = false
 
         // Track current tool definitions (may be reduced on context_length_exceeded)
         var activeToolDefs = toolDefinitions
@@ -174,19 +176,26 @@ class SingleAgentSession(
                     )
                 }
                 BudgetEnforcer.BudgetStatus.STRONG_NUDGE -> {
-                    LOG.warn("SingleAgentSession: strong nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
-                    // Note: addMessage() auto-triggers truncation compression if tokens exceed tMax
-                    contextManager.addMessage(ChatMessage(
-                        role = "system",
-                        content = "WARNING: You have used ${budgetEnforcer.utilizationPercent()}% of your context budget. You MUST use delegate_task for any remaining task touching 2+ files. Single-file edits are still allowed directly."
-                    ))
+                    if (!strongNudgeEmitted) {
+                        strongNudgeEmitted = true
+                        LOG.warn("SingleAgentSession: strong nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+                        contextManager.addMessage(ChatMessage(
+                            role = "system",
+                            content = "WARNING: You have used ${budgetEnforcer.utilizationPercent()}% of your context budget. You MUST use delegate_task for any remaining task touching 2+ files. Single-file edits are still allowed directly."
+                        ))
+                        // Compress to free space at high utilization
+                        contextManager.compressWithLlm(brain)
+                    }
                 }
                 BudgetEnforcer.BudgetStatus.NUDGE -> {
-                    LOG.info("SingleAgentSession: nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
-                    contextManager.addMessage(ChatMessage(
-                        role = "system",
-                        content = "Context at ${budgetEnforcer.utilizationPercent()}%. Prefer delegate_task for remaining multi-file work — each worker gets a fresh context window."
-                    ))
+                    if (!nudgeEmitted) {
+                        nudgeEmitted = true
+                        LOG.info("SingleAgentSession: nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+                        contextManager.addMessage(ChatMessage(
+                            role = "system",
+                            content = "Context at ${budgetEnforcer.utilizationPercent()}%. Prefer delegate_task for remaining multi-file work — each worker gets a fresh context window."
+                        ))
+                    }
                 }
                 BudgetEnforcer.BudgetStatus.COMPRESS -> {
                     LOG.info("SingleAgentSession: triggering LLM compression at iteration $iteration")
