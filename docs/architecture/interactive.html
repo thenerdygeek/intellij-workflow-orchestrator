@@ -320,8 +320,14 @@ svg text { font-family: inherit; }
     Modules never import each other. They communicate through a central
     <code>SharedFlow</code> event bus in <code>:core</code>. Press Play to watch events flow.
   </p>
-  <div style="margin-bottom:16px;">
+  <div style="margin-bottom:16px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
     <button id="eb-play-btn" class="btn">&#9654; Play</button>
+    <label style="color:var(--text-dim); font-size:13px; display:flex; align-items:center; gap:8px;">
+      Speed:
+      <input id="eb-speed" type="range" min="1" max="5" value="3" step="1"
+        style="width:120px; accent-color:var(--blue); cursor:pointer;">
+      <span id="eb-speed-label" style="min-width:24px;">1x</span>
+    </label>
   </div>
   <svg id="eventbus-svg"></svg>
   <div id="eb-tooltip" class="viz-tooltip"></div>
@@ -717,6 +723,27 @@ svg text { font-family: inherit; }
   let playing = false;
   let animTimers = [];
 
+  /* Speed: slider value 1-5 maps to multipliers 0.25x, 0.5x, 1x, 2x, 3x */
+  const speedMap = { 1: 0.25, 2: 0.5, 3: 1, 4: 2, 5: 3 };
+  const speedLabelMap = { 1: '0.25x', 2: '0.5x', 3: '1x', 4: '2x', 5: '3x' };
+  let speedMultiplier = 1;
+
+  const speedSlider = document.getElementById('eb-speed');
+  const speedLabel = document.getElementById('eb-speed-label');
+  speedLabel.textContent = '1x';
+  speedSlider.addEventListener('input', () => {
+    speedMultiplier = speedMap[speedSlider.value];
+    speedLabel.textContent = speedLabelMap[speedSlider.value];
+    /* Restart animation at new speed if playing */
+    if (playing) {
+      animTimers.forEach(clearTimeout);
+      animTimers = [];
+      g.selectAll('.event-dot').remove();
+      g.selectAll('.event-label').remove();
+      runSequence();
+    }
+  });
+
   const playBtn = document.getElementById('eb-play-btn');
   playBtn.addEventListener('click', () => {
     if (playing) {
@@ -741,6 +768,8 @@ svg text { font-family: inherit; }
     return m ? { x: m.x, y: m.y } : { x: cx, y: cy };
   }
 
+  function dur(ms) { return ms / speedMultiplier; }
+
   function animateEvent(ev, delay) {
     const from = getModPos(ev.from);
     const fromIsCore = ev.from === ':core';
@@ -762,21 +791,21 @@ svg text { font-family: inherit; }
         .text(ev.event).attr('opacity', 0.9);
 
       if (!fromIsCore) {
-        dot.transition().duration(600).attr('cx', cx).attr('cy', cy)
+        dot.transition().duration(dur(600)).attr('cx', cx).attr('cy', cy)
           .on('end', () => fanOut(ev, dot, lbl));
-        lbl.transition().duration(600).attr('x', cx).attr('y', cy - 14);
+        lbl.transition().duration(dur(600)).attr('x', cx).attr('y', cy - 14);
       } else {
         fanOut(ev, dot, lbl);
       }
-    }, delay);
+    }, dur(delay));
     animTimers.push(t1);
   }
 
   function fanOut(ev, mainDot, mainLbl) {
     if (!playing) { mainDot.remove(); mainLbl.remove(); return; }
     /* Remove main dot/label */
-    mainDot.transition().duration(200).attr('opacity', 0).remove();
-    mainLbl.transition().duration(200).attr('opacity', 0).remove();
+    mainDot.transition().duration(dur(200)).attr('opacity', 0).remove();
+    mainLbl.transition().duration(dur(200)).attr('opacity', 0).remove();
 
     /* Phase 2: fan out to targets */
     ev.targets.forEach((tId, i) => {
@@ -785,18 +814,19 @@ svg text { font-family: inherit; }
         .attr('cx', cx).attr('cy', cy).attr('r', 5)
         .attr('fill', ev.color).attr('opacity', 0.8);
 
-      d.transition().delay(i * 80).duration(500)
+      d.transition().delay(dur(i * 80)).duration(dur(500))
         .attr('cx', target.x).attr('cy', target.y)
-        .transition().duration(300).attr('r', 12).attr('opacity', 0)
+        .transition().duration(dur(300)).attr('r', 12).attr('opacity', 0)
         .remove();
     });
   }
 
   function runSequence() {
     if (!playing) return;
-    events.forEach((ev, i) => animateEvent(ev, i * 2200));
+    const gap = dur(2200);
+    events.forEach((ev, i) => animateEvent(ev, i * gap));
     /* Loop */
-    const loopT = setTimeout(() => { if (playing) runSequence(); }, events.length * 2200 + 1000);
+    const loopT = setTimeout(() => { if (playing) runSequence(); }, events.length * gap + dur(1000));
     animTimers.push(loopT);
   }
 })();
