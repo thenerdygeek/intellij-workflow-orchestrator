@@ -165,7 +165,7 @@ class SingleAgentSession(
                     }
                     LOG.info("SingleAgentSession: expanded tool set with ${pending.size} tools from request_tools: $pending")
                 }
-            } catch (_: Exception) { /* AgentService not available */ }
+            } catch (e: Exception) { LOG.warn("Failed to expand pending tool activations", e) }
 
             // Budget check before each LLM call
             when (budgetEnforcer.check()) {

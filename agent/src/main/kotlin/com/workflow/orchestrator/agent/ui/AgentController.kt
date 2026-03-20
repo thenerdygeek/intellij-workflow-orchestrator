@@ -121,7 +121,7 @@ class AgentController(
 
                 mapOf(
                     "name" to toolName,
-                    "description" to tool.description.take(80),
+                    "description" to tool.description,
                     "enabled" to (prefs?.isToolEnabled(toolName) ?: true),
                     "active" to false,
                     "badge" to cat.badgePrefix,
