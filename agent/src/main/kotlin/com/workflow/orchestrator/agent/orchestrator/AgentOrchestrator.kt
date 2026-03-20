@@ -141,7 +141,9 @@ class AgentOrchestrator(
                 "$taskDescription\n$recentUserMsgs"
             }
             // Dynamic tool injection: filter tools based on conversation context
-            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext)
+            val prefs = try { com.workflow.orchestrator.agent.settings.ToolPreferences.getInstance(project) } catch (_: Exception) { null }
+            val disabledTools = prefs?.getDisabledTools() ?: emptySet()
+            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext, disabledTools = disabledTools)
             allTools = selectedTools.associateBy { it.name }
             allToolDefs = selectedTools.map { it.toToolDefinition() }
             contextManager = session.contextManager
@@ -155,7 +157,9 @@ class AgentOrchestrator(
 
             // Dynamic tool injection: filter tools based on task description
             val registeredTools = toolRegistry.allTools()
-            val selectedTools = DynamicToolSelector.selectTools(registeredTools, taskDescription)
+            val prefs = try { com.workflow.orchestrator.agent.settings.ToolPreferences.getInstance(project) } catch (_: Exception) { null }
+            val disabledTools = prefs?.getDisabledTools() ?: emptySet()
+            val selectedTools = DynamicToolSelector.selectTools(registeredTools, taskDescription, disabledTools = disabledTools)
             allTools = selectedTools.associateBy { it.name }
             allToolDefs = selectedTools.map { it.toToolDefinition() }
             val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)

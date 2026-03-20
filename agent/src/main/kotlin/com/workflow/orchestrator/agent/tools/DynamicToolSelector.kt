@@ -115,7 +115,9 @@ object DynamicToolSelector {
      */
     fun selectTools(
         allTools: Collection<AgentTool>,
-        conversationContext: String
+        conversationContext: String,
+        disabledTools: Set<String> = emptySet(),
+        activatedTools: Set<String> = emptySet()
     ): List<AgentTool> {
         val lowerContext = conversationContext.lowercase()
 
@@ -128,6 +130,15 @@ object DynamicToolSelector {
                 selectedNames.addAll(toolNames)
             }
         }
+
+        // Add LLM-activated tools from request_tools
+        selectedNames.addAll(activatedTools)
+
+        // Always include request_tools meta-tool
+        selectedNames.add("request_tools")
+
+        // Remove user-disabled tools
+        selectedNames.removeAll(disabledTools)
 
         return allTools.filter { it.name in selectedNames }
     }
