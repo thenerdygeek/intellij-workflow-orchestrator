@@ -238,6 +238,40 @@ class AgentDashboardPanel(
         cefPanel?.updatePlanStep(stepId, status)
     }
 
+    // ── Question wizard delegation ──
+
+    fun showQuestions(questionsJson: String) {
+        cefPanel?.showQuestions(questionsJson)
+    }
+
+    fun showQuestion(index: Int) {
+        cefPanel?.showQuestion(index)
+    }
+
+    fun showQuestionSummary(summaryJson: String) {
+        cefPanel?.showQuestionSummary(summaryJson)
+    }
+
+    fun enableChatInput() {
+        cefPanel?.enableChatInput()
+    }
+
+    fun setCefQuestionCallbacks(
+        onAnswered: (String, String) -> Unit,
+        onSkipped: (String) -> Unit,
+        onChatAbout: (String, String, String) -> Unit,
+        onSubmitted: () -> Unit,
+        onCancelled: () -> Unit,
+        onEdit: (String) -> Unit
+    ) {
+        cefPanel?.onQuestionAnswered = onAnswered
+        cefPanel?.onQuestionSkipped = onSkipped
+        cefPanel?.onChatAboutOption = onChatAbout
+        cefPanel?.onQuestionsSubmitted = onSubmitted
+        cefPanel?.onQuestionsCancelled = onCancelled
+        cefPanel?.onEditQuestion = onEdit
+    }
+
     // ═══════════════════════════════════════════════════
     //  Delegate API — routes to JCEF or fallback
     // ═══════════════════════════════════════════════════
