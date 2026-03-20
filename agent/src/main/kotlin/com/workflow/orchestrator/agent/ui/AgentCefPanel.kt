@@ -50,6 +50,7 @@ class AgentCefPanel(
     private var questionsSubmittedQuery: JBCefJSQuery? = null
     private var questionsCancelledQuery: JBCefJSQuery? = null
     private var editQuestionQuery: JBCefJSQuery? = null
+    private var deactivateSkillQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -84,6 +85,9 @@ class AgentCefPanel(
     var onQuestionsCancelled: (() -> Unit)? = null
     /** Callback when user edits a previously answered question. Param: questionId. */
     var onEditQuestion: ((String) -> Unit)? = null
+
+    /** Callback when user dismisses the skill banner. */
+    var onSkillDismissed: (() -> Unit)? = null
 
     init {
         try {
@@ -170,6 +174,9 @@ class AgentCefPanel(
         editQuestionQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { data -> onEditQuestion?.invoke(data); JBCefJSQuery.Response("ok") }
         }
+        deactivateSkillQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onSkillDismissed?.invoke(); JBCefJSQuery.Response("ok") }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -229,6 +236,10 @@ class AgentCefPanel(
                     editQuestionQuery?.let { q ->
                         val eqJs = q.inject("qid")
                         js("window._editQuestion = function(qid) { $eqJs }")
+                    }
+                    deactivateSkillQuery?.let { q ->
+                        val dsJs = q.inject("'dismiss'")
+                        js("window._deactivateSkill = function() { $dsJs }")
                     }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
@@ -345,11 +356,11 @@ class AgentCefPanel(
     // ── Skill banner rendering ──
 
     fun showSkillBanner(name: String) {
-        callJs("if(typeof showSkillBanner==='function')showSkillBanner(${jsonStr(name)})")
+        callJs("showSkillBanner(${jsonStr(name)})")
     }
 
     fun hideSkillBanner() {
-        callJs("if(typeof hideSkillBanner==='function')hideSkillBanner()")
+        callJs("hideSkillBanner()")
     }
 
     // Backward compat
@@ -459,6 +470,7 @@ class AgentCefPanel(
         questionsSubmittedQuery?.dispose()
         questionsCancelledQuery?.dispose()
         editQuestionQuery?.dispose()
+        deactivateSkillQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -472,6 +484,7 @@ class AgentCefPanel(
         questionsSubmittedQuery = null
         questionsCancelledQuery = null
         editQuestionQuery = null
+        deactivateSkillQuery = null
         browser = null
     }
 }

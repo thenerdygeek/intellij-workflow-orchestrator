@@ -674,6 +674,30 @@ code {
   pointer-events: none;
 }
 
+/* Skill Banner */
+.skill-banner {
+    background: rgba(249, 226, 175, 0.1);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #f9e2af;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.skill-banner-dismiss {
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+.skill-banner-dismiss:hover {
+    background: rgba(255,255,255,0.1);
+}
+
 /* Tools Panel Overlay */
 .tools-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; }
 .tools-overlay.visible { display: flex; justify-content: center; align-items: center; }
@@ -1711,6 +1735,33 @@ function enableChatInput() {
 function removeQuestionElements() {
   var els = container.querySelectorAll('.question-wizard-wrapper');
   els.forEach(function(el) { el.remove(); });
+}
+
+/* ═══════════════════════════════════════════════════
+   Skill Banner
+   ═══════════════════════════════════════════════════ */
+
+function showSkillBanner(name) {
+    hideSkillBanner();
+    var banner = document.createElement('div');
+    banner.className = 'skill-banner';
+    banner.id = 'skill-banner';
+    banner.innerHTML = '<span>\uD83D\uDD27 Skill active: <strong>' + esc(name) + '</strong></span>'
+        + '<span class="skill-banner-dismiss" onclick="dismissSkill()">\u00D7</span>';
+    // Insert before the chat container
+    if (container && container.parentElement) {
+        container.parentElement.insertBefore(banner, container);
+    }
+}
+
+function hideSkillBanner() {
+    var b = document.getElementById('skill-banner');
+    if (b) b.remove();
+}
+
+function dismissSkill() {
+    if (window._deactivateSkill) window._deactivateSkill();
+    hideSkillBanner();
 }
 </script>
 </body>
