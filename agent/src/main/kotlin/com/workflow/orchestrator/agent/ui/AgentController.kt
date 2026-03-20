@@ -227,6 +227,7 @@ class AgentController(
                     QuestionSet.serializer(), questionSet
                 )
                 dashboard.showQuestions(json)
+                dashboard.disableChatInput()  // Disable Swing input while wizard is active
             }
             currentSession.questionManager.onShowQuestion = { index ->
                 dashboard.showQuestion(index)
@@ -239,6 +240,7 @@ class AgentController(
             }
             currentSession.questionManager.onSubmitted = {
                 dashboard.enableChatInput()
+                dashboard.enableSwingChatInput()  // Re-enable Swing input
             }
 
             // Wire JCEF → QuestionManager callbacks
