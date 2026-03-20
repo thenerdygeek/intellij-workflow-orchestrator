@@ -23,16 +23,21 @@ class SkillManager(val registry: SkillRegistry) {
             deactivateSkill()
         }
 
-        val content = if (arguments != null) {
-            var substituted = rawContent.replace("\$ARGUMENTS", arguments)
+        val substituted = if (arguments != null) {
+            var s = rawContent.replace("\$ARGUMENTS", arguments)
             val positionalArgs = arguments.split(" ")
             for ((index, arg) in positionalArgs.withIndex()) {
-                substituted = substituted.replace("\$${index + 1}", arg)
+                s = s.replace("\$${index + 1}", arg)
             }
-            substituted
+            s
         } else {
             rawContent
         }
+
+        val MAX_SKILL_CHARS = 20_000  // ~5000 tokens at 4 chars/token
+        val content = if (substituted.length > MAX_SKILL_CHARS) {
+            substituted.take(MAX_SKILL_CHARS) + "\n\n[Skill content truncated at ~5000 tokens. Keep SKILL.md files concise.]"
+        } else substituted
 
         val skill = ActiveSkill(
             entry = entry,

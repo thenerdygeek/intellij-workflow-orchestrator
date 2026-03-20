@@ -289,6 +289,11 @@ class ConversationSession private constructor(
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
             val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
 
+            // Rebuild SkillRegistry and SkillManager just like create() does
+            val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
+            skillRegistry.scan()
+            val skillManager = SkillManager(skillRegistry)
+
             val loaded = ConversationSession(
                 sessionId = sessionId,
                 contextManager = ContextManager(
@@ -304,7 +309,8 @@ class ConversationSession private constructor(
                 title = metadata.title,
                 lastMessageAt = metadata.lastMessageAt,
                 messageCount = metadata.messageCount,
-                status = metadata.status
+                status = metadata.status,
+                skillManager = skillManager
             )
 
             // Replay messages into context manager
