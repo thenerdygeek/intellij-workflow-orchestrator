@@ -24,6 +24,7 @@ class PromptAssembler(
         previousStepResults: List<String>? = null,
         repoMapContext: String? = null,
         memoryContext: String? = null,
+        skillDescriptions: String? = null,
         planMode: Boolean = false
     ): String {
         val sections = mutableListOf<String>()
@@ -51,22 +52,27 @@ class PromptAssembler(
             sections.add("<agent_memory>\n$memoryContext\n</agent_memory>")
         }
 
-        // 6. Previous Step Results (orchestrated mode only)
+        // 6. Available Skills (only if discovered)
+        if (!skillDescriptions.isNullOrBlank()) {
+            sections.add("<available_skills>\n$skillDescriptions\n\nTo activate a skill, call activate_skill(name). Users can also type /skill-name in chat.\n</available_skills>")
+        }
+
+        // 7. Previous Step Results (orchestrated mode only)
         if (!previousStepResults.isNullOrEmpty()) {
             val prev = previousStepResults.joinToString("\n\n") { "- $it" }
             sections.add("<previous_results>\nContext from previous steps:\n$prev\n</previous_results>")
         }
 
-        // 7. Planning instructions
+        // 8. Planning instructions
         sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
 
-        // 8. Delegation instructions
+        // 9. Delegation instructions
         sections.add(DELEGATION_RULES)
 
-        // 9. Memory instructions
+        // 10. Memory instructions
         sections.add(MEMORY_RULES)
 
-        // 10. Rules and Constraints (including anti-loop)
+        // 11. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
