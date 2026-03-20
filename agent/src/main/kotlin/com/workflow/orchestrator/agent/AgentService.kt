@@ -36,6 +36,9 @@ class AgentService(
     /** Plan manager for the current agent session, set by SingleAgentSession. */
     var currentPlanManager: PlanManager? = null
 
+    /** Tools requested by LLM via request_tools, expanded on next iteration. */
+    val pendingToolActivations = java.util.concurrent.ConcurrentLinkedQueue<String>()
+
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry().apply {
             // Builtin tools
@@ -83,6 +86,9 @@ class AgentService(
             // Planning tools
             register(CreatePlanTool())
             register(UpdatePlanStepTool())
+
+            // Meta-tools
+            register(RequestToolsTool())
 
             // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
             register(SemanticDiagnosticsTool()) // name = "diagnostics"
