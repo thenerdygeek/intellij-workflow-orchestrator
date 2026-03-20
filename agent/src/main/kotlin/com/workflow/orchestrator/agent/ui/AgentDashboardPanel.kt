@@ -98,6 +98,14 @@ class AgentDashboardPanel(
         putClientProperty("JButton.buttonType", "roundRect")
         toolTipText = "Open debug traces for recent agent sessions"
     }
+    val skillsButton = JButton("Skills").apply {
+        icon = AllIcons.Nodes.Tag
+        putClientProperty("JButton.buttonType", "roundRect")
+        toolTipText = "Available workflow skills"
+        font = font.deriveFont(12f)
+        addActionListener { showSkillsPopup(this) }
+        isVisible = false  // shown when skills are available
+    }
     val settingsLink = JBLabel("<html><a href=''>Settings</a></html>").apply {
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         font = JBUI.Fonts.smallFont()
@@ -121,6 +129,7 @@ class AgentDashboardPanel(
             left.add(newChatButton)
             left.add(planModeToggle)
             left.add(toolsButton)
+            left.add(skillsButton)
             add(left, BorderLayout.WEST)
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
             right.add(tracesButton)
@@ -271,6 +280,34 @@ class AgentDashboardPanel(
 
     fun hideSkillBanner() {
         cefPanel?.hideSkillBanner()
+    }
+
+    // ── Skills toolbar ──
+
+    private var availableSkills: List<Pair<String, String>> = emptyList()
+    private var availableSkillScopes: List<String> = emptyList()
+    private var onSkillSelected: ((String) -> Unit)? = null
+
+    fun updateSkillsList(skills: List<Pair<String, String>>, scope: List<String>) {
+        skillsButton.isVisible = skills.isNotEmpty()
+        this.availableSkills = skills
+        this.availableSkillScopes = scope
+    }
+
+    private fun showSkillsPopup(anchor: JComponent) {
+        if (availableSkills.isEmpty()) return
+        val menu = javax.swing.JPopupMenu()
+        availableSkills.forEachIndexed { i, (name, desc) ->
+            menu.add(javax.swing.JMenuItem("/$name \u2014 $desc").apply {
+                addActionListener { onSkillSelected?.invoke(name) }
+            })
+        }
+        menu.show(anchor, 0, anchor.height)
+    }
+
+    fun setCefSkillCallbacks(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+        cefPanel?.onSkillDismissed = onDismiss
+        onSkillSelected = onSelect
     }
 
     /** Re-enable the Swing chat input after the question wizard completes. */

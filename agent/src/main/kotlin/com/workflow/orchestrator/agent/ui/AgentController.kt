@@ -310,6 +310,20 @@ class AgentController(
                     try { dashboard.hideSkillBanner() } catch (_: Exception) {}
                 }
             }
+
+            // Skills toolbar
+            val userSkills = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
+                it.name to it.description
+            } ?: emptyList()
+            val scopes = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
+                it.scope.name
+            } ?: emptyList()
+            dashboard.updateSkillsList(userSkills, scopes)
+
+            dashboard.setCefSkillCallbacks(
+                onDismiss = { currentSession.skillManager?.deactivateSkill() },
+                onSelect = { name -> executeTask("/$name") }
+            )
         }
 
         dashboard.setBusy(true)
