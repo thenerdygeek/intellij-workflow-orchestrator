@@ -299,6 +299,21 @@ class AgentController(
                     dashboard.appendToolCall(toolInfo.toolName, toolInfo.args, status)
                     dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs)
                 }
+
+                // Track files in working set
+                if (!toolInfo.isError) {
+                    val filePath = toolInfo.editFilePath ?: run {
+                        val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolInfo.args)
+                        pathMatch?.groupValues?.get(1)
+                    }
+                    if (filePath != null) {
+                        when {
+                            toolInfo.toolName.contains("edit") -> session?.workingSet?.recordEdit(filePath)
+                            toolInfo.toolName.contains("read") || toolInfo.toolName.contains("file_structure") ||
+                            toolInfo.toolName.contains("diagnostics") -> session?.workingSet?.recordRead(filePath, 0)
+                        }
+                    }
+                }
             }
             progress.step.startsWith("Used tool:") -> {
                 dashboard.appendToolCall(progress.step.removePrefix("Used tool:").trim(), status = RichStreamingPanel.ToolCallStatus.SUCCESS)
@@ -365,20 +380,77 @@ class AgentController(
                 dialog.show()
                 result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
             } else if (riskLevel >= RiskLevel.MEDIUM && !description.contains("run_command")) {
-                // File edit approval — enhanced with "Allow All (This Session)" option
-                val answer = Messages.showYesNoCancelDialog(
-                    project,
-                    "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
-                    "Agent File Edit",
-                    "Allow",
-                    "Block",
-                    "Allow All (This Session)",
-                    Messages.getQuestionIcon()
-                )
-                result = when (answer) {
-                    Messages.YES -> ApprovalResult.Approved
-                    Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
-                    else -> ApprovalResult.Rejected
+                // File edit approval — try to show diff via EditApprovalDialog
+                if (description.contains("edit_file")) {
+                    try {
+                        val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(description)
+                        val oldMatch = Regex(""""old_string"\s*:\s*"([^"]*?)"""").find(description)
+                        val newMatch = Regex(""""new_string"\s*:\s*"([^"]*?)"""").find(description)
+
+                        val filePath = pathMatch?.groupValues?.get(1)
+                        val oldString = oldMatch?.groupValues?.get(1)
+                        val newString = newMatch?.groupValues?.get(1)
+
+                        if (filePath != null && oldString != null && newString != null) {
+                            val basePath = project.basePath ?: ""
+                            val fullPath = if (filePath.startsWith("/")) filePath else "$basePath/$filePath"
+                            val file = File(fullPath)
+                            val originalContent = if (file.exists()) file.readText() else ""
+                            val proposedContent = originalContent.replace(oldString, newString)
+
+                            val dialog = EditApprovalDialog(
+                                project = project,
+                                filePath = filePath,
+                                originalContent = originalContent,
+                                proposedContent = proposedContent,
+                                editDescription = "Agent wants to edit: $filePath"
+                            )
+                            dialog.show()
+                            result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
+                        } else {
+                            // Fallback: parsing failed — use plain dialog with session auto-approve
+                            val answer = Messages.showYesNoCancelDialog(
+                                project,
+                                "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                                "Agent File Edit",
+                                "Allow", "Block", "Allow All (This Session)",
+                                Messages.getQuestionIcon()
+                            )
+                            result = when (answer) {
+                                Messages.YES -> ApprovalResult.Approved
+                                Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
+                                else -> ApprovalResult.Rejected
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Fallback on any error — use plain dialog
+                        val answer = Messages.showYesNoCancelDialog(
+                            project,
+                            "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                            "Agent File Edit",
+                            "Allow", "Block", "Allow All (This Session)",
+                            Messages.getQuestionIcon()
+                        )
+                        result = when (answer) {
+                            Messages.YES -> ApprovalResult.Approved
+                            Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
+                            else -> ApprovalResult.Rejected
+                        }
+                    }
+                } else {
+                    // Non-edit_file medium+ risk — plain dialog with session auto-approve
+                    val answer = Messages.showYesNoCancelDialog(
+                        project,
+                        "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                        "Agent File Edit",
+                        "Allow", "Block", "Allow All (This Session)",
+                        Messages.getQuestionIcon()
+                    )
+                    result = when (answer) {
+                        Messages.YES -> ApprovalResult.Approved
+                        Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
+                        else -> ApprovalResult.Rejected
+                    }
                 }
             } else {
                 val answer = Messages.showYesNoDialog(project,

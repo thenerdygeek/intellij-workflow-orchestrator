@@ -37,6 +37,9 @@ class AgentTabProvider : WorkflowTabProvider {
         val dashboard = AgentDashboardPanel(parentDisposable = project as? Disposable)
         val controller = AgentController(project, dashboard)
 
+        // Register controller on AgentService for session resume from History tab
+        try { com.workflow.orchestrator.agent.AgentService.getInstance(project).activeController = controller } catch (_: Exception) {}
+
         // Register controller for disposal
         (project as? Disposable)?.let {
             Disposer.register(it, Disposable { controller.dispose() })
