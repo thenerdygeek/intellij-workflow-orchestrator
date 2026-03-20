@@ -185,7 +185,8 @@ body {
 .tool-status-icon { font-size: 13px; flex-shrink: 0; }
 .tool-status-icon.ok { color: var(--success); }
 .tool-status-icon.fail { color: var(--error); }
-.tool-status-icon.running { color: var(--fg-muted); animation: spin 1s linear infinite; }
+.tool-status-icon.running { color: var(--fg-muted); display: inline-block; width: 13px; height: 13px; border: 2px solid var(--fg-muted); border-top-color: var(--link); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.tool-duration { font-size: 10px; color: var(--fg-muted); margin-left: auto; padding: 1px 6px; background: var(--code-bg); border-radius: 4px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .tool-detail {
@@ -229,10 +230,15 @@ body {
   font-size: 12px;
   padding: 10px 14px;
   overflow-x: auto;
-  white-space: pre;
+  white-space: pre-wrap;
+  word-wrap: break-word;
   line-height: 1.5;
   tab-size: 4;
 }
+.md-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.md-table th { background: var(--code-bg); font-weight: 600; color: var(--fg); }
+.md-table td { color: var(--fg-secondary); }
 .code-copy {
   position: absolute;
   top: 6px;
@@ -784,13 +790,16 @@ function esc(text) {
 /* ── Markdown Rendering ── */
 
 function renderMarkdown(text) {
-  var html = esc(text);
-
-  // Code blocks: ```lang\ncode\n```
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
-    var langLabel = lang ? '<div class="code-lang">' + lang + '</div>' : '';
-    return langLabel + '<div class="code-wrapper"><button class="code-copy">Copy</button><div class="code-block">' + code.trimEnd() + '</div></div>';
+  // First, extract and protect code blocks from other processing
+  var codeBlocks = [];
+  var protected = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+    var idx = codeBlocks.length;
+    codeBlocks.push({ lang: lang, code: code.trimEnd() });
+    return '%%CODEBLOCK_' + idx + '%%';
   });
+
+  // Escape HTML
+  var html = esc(protected);
 
   // Inline code: `text`
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -798,16 +807,59 @@ function renderMarkdown(text) {
   // Bold: **text**
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
-  // Headers: # text (only at start of line)
-  html = html.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;">$1</h4>');
-  html = html.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 4px;font-size:14px;">$1</h3>');
-  html = html.replace(/^# (.+)$/gm, '<h2 style="margin:12px 0 6px;font-size:15px;">$1</h2>');
+  // Italic: *text* (but not inside **)
+  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
 
-  // Lists: - item or * item
+  // Headers: # text (only at start of line)
+  html = html.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;color:var(--fg);">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 4px;font-size:14px;color:var(--fg);">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h2 style="margin:12px 0 6px;font-size:15px;color:var(--fg);">$1</h2>');
+
+  // Tables: | col | col | format
+  html = html.replace(/((?:^\|.+\|$\n?)+)/gm, function(tableBlock) {
+    var rows = tableBlock.trim().split('\n').filter(function(r) { return r.trim(); });
+    if (rows.length < 2) return tableBlock;
+
+    var tableHtml = '<table class="md-table">';
+    rows.forEach(function(row, i) {
+      // Skip separator row (|---|---|)
+      if (/^\|[\s\-:|]+\|$/.test(row)) return;
+
+      var cells = row.split('|').filter(function(c, idx, arr) {
+        return idx > 0 && idx < arr.length - 1; // trim empty first/last from |...|
+      });
+
+      var tag = (i === 0) ? 'th' : 'td';
+      tableHtml += '<tr>';
+      cells.forEach(function(cell) {
+        tableHtml += '<' + tag + '>' + cell.trim() + '</' + tag + '>';
+      });
+      tableHtml += '</tr>';
+    });
+    tableHtml += '</table>';
+    return tableHtml;
+  });
+
+  // Numbered lists: 1. item
+  html = html.replace(/^(\d+)\. (.+)$/gm, '<li style="margin-left:16px;list-style:decimal;" value="$1">$2</li>');
+
+  // Bullet lists: - item or * item
   html = html.replace(/^[*-] (.+)$/gm, '<li style="margin-left:16px;list-style:disc;">$1</li>');
 
-  // Newlines to <br> (but not inside code blocks — they use <pre> which handles newlines)
+  // Horizontal rule: --- or ***
+  html = html.replace(/^[-*]{3,}$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:8px 0;">');
+
+  // Newlines: convert to <br> (preserving paragraph spacing)
+  html = html.replace(/\n\n/g, '<br><br>');
   html = html.replace(/\n/g, '<br>');
+
+  // Restore code blocks
+  for (var i = 0; i < codeBlocks.length; i++) {
+    var block = codeBlocks[i];
+    var langLabel = block.lang ? '<div class="code-lang">' + block.lang + '</div>' : '';
+    var codeHtml = langLabel + '<div class="code-wrapper"><button class="code-copy">Copy</button><pre class="code-block">' + esc(block.code) + '</pre></div>';
+    html = html.replace('%%CODEBLOCK_' + i + '%%', codeHtml);
+  }
 
   return html;
 }
@@ -898,7 +950,7 @@ function appendToolCall(toolName, args, statusStr) {
   const target = extractTarget(toolName, args);
   const statusIcon = statusStr === 'SUCCESS' ? '<span class="tool-status-icon ok">✓</span>'
     : statusStr === 'FAILED' ? '<span class="tool-status-icon fail">✗</span>'
-    : '<span class="tool-status-icon running">◌</span>';
+    : '<span class="tool-status-icon running"></span>';
 
   const argsHtml = args && args.length > 2
     ? '<div class="tool-detail collapsed">' + esc(args.substring(0, 300)) + '</div>' : '';
@@ -918,24 +970,43 @@ function appendToolCall(toolName, args, statusStr) {
 }
 
 function updateToolResult(result, durationMs) {
-  // Append result to the last tool card
-  const cards = container.querySelectorAll('.tool-card');
-  const last = cards[cards.length - 1];
-  if (!last) return;
-  if (result) {
-    const res = document.createElement('div');
-    res.className = 'tool-result collapsed';
-    res.textContent = result.substring(0, 300);
-    last.appendChild(res);
+  // Find the last tool card and update its status from running to success
+  var toolCards = container.querySelectorAll('.tool-card');
+  if (toolCards.length === 0) return;
+  var lastCard = toolCards[toolCards.length - 1];
+
+  // Update status icon
+  var icon = lastCard.querySelector('.tool-status-icon');
+  if (icon) {
+    icon.className = 'tool-status-icon ok';
+    icon.textContent = '\u2713';
+    icon.style.animation = 'none';
+    icon.style.border = 'none';
+    icon.style.width = 'auto';
+    icon.style.height = 'auto';
   }
-  if (durationMs > 0) {
-    const header = last.querySelector('.tool-header');
-    if (header) {
-      const timing = document.createElement('span');
-      timing.className = 'tool-timing';
-      timing.textContent = formatDuration(durationMs);
-      header.appendChild(timing);
+
+  // Add result text if present
+  if (result && result.length > 0) {
+    var resultEl = lastCard.querySelector('.tool-result');
+    if (!resultEl) {
+      resultEl = document.createElement('div');
+      resultEl.className = 'tool-result collapsed';
+      lastCard.appendChild(resultEl);
     }
+    resultEl.textContent = result;
+  }
+
+  // Add duration badge
+  if (durationMs > 0) {
+    var durationEl = lastCard.querySelector('.tool-duration');
+    if (!durationEl) {
+      durationEl = document.createElement('span');
+      durationEl.className = 'tool-duration';
+      var header = lastCard.querySelector('.tool-header');
+      if (header) header.appendChild(durationEl);
+    }
+    durationEl.textContent = durationMs < 1000 ? durationMs + 'ms' : (durationMs / 1000).toFixed(1) + 's';
   }
   scrollToBottom();
 }
