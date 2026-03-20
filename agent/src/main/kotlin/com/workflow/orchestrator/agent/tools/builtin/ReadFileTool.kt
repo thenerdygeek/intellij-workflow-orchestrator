@@ -28,10 +28,10 @@ class ReadFileTool : AgentTool {
         val rawPath = params["path"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val path = if (rawPath.startsWith("/")) rawPath
-            else "${project.basePath}/$rawPath"
+        val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
+        if (pathError != null) return pathError
 
-        val file = java.io.File(path)
+        val file = java.io.File(path!!)
         if (!file.exists() || !file.isFile) {
             return ToolResult("Error: File not found: $path", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }

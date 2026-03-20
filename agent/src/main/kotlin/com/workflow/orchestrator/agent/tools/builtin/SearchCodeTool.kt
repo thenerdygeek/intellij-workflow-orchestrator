@@ -47,8 +47,9 @@ class SearchCodeTool : AgentTool {
             ?: return ToolResult("Error: Project base path not available", "Error: no project path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val searchRoot = if (scope != null) {
-            val scopePath = if (scope.startsWith("/")) scope else "$basePath/$scope"
-            File(scopePath)
+            val (validatedScope, scopeError) = PathValidator.resolveAndValidate(scope, basePath)
+            if (scopeError != null) return scopeError
+            File(validatedScope!!)
         } else {
             File(basePath)
         }
