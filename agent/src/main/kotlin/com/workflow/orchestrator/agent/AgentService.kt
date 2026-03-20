@@ -99,6 +99,7 @@ class AgentService(
             // Planning tools
             register(CreatePlanTool())
             register(UpdatePlanStepTool())
+            register(AskQuestionsTool())
 
             // Meta-tools
             register(RequestToolsTool())

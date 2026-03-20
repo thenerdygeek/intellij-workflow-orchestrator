@@ -95,7 +95,7 @@ object ToolCategoryRegistry {
             color = "#F59E0B",
             badgePrefix = "PLAN",
             description = "Create and update implementation plans",
-            tools = listOf("create_plan", "update_plan_step")
+            tools = listOf("create_plan", "update_plan_step", "ask_questions")
         )
     )
 
