@@ -38,6 +38,8 @@ class ContextManager(
 ) {
     private val messages = mutableListOf<ChatMessage>()
     private val anchoredSummaries = mutableListOf<String>()
+    /** Dedicated plan anchor — survives compression, updated in-place. */
+    private var planAnchor: ChatMessage? = null
     private var totalTokens = 0
 
     /** Effective budget after subtracting reserved tokens (tool defs, system prompt overhead, buffer). */
@@ -52,6 +54,15 @@ class ContextManager(
     /** Current message count. */
     val messageCount: Int get() = messages.size
 
+    /**
+     * Set or update the anchored plan summary. Dedicated slot separate from
+     * the messages list — always included in getMessages(), never dropped by compress().
+     */
+    fun setPlanAnchor(message: ChatMessage?) {
+        planAnchor = message
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
     /** Get all messages including any summary prefixes. */
     fun getMessages(): List<ChatMessage> {
         val result = mutableListOf<ChatMessage>()
@@ -63,6 +74,8 @@ class ContextManager(
                 content = anchoredSummaries.joinToString("\n\n")
             ))
         }
+
+        planAnchor?.let { result.add(it) }
 
         result.addAll(messages)
         return result
@@ -236,6 +249,7 @@ class ContextManager(
     fun reset() {
         messages.clear()
         anchoredSummaries.clear()
+        planAnchor = null
         totalTokens = 0
     }
 
