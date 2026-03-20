@@ -20,7 +20,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var sourcegraphChatModel by string("anthropic::2024-10-22::claude-sonnet-4-20250514")
         /** Tracks whether the user has manually selected a model (prevents auto-upgrade). */
         var userManuallySelectedModel by property(false)
-        var maxInputTokens by property(150000)
+        var maxInputTokens by property(190000)
         /** Max output tokens per LLM response. Sourcegraph API caps at 4000. */
         var maxOutputTokens by property(4000)
         var enableFastPath by property(true)

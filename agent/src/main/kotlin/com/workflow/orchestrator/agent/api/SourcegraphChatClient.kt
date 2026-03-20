@@ -55,7 +55,13 @@ class SourcegraphChatClient(
         /** Sourcegraph API path for listing available models. */
         const val MODELS_PATH = "/.api/llm/models"
 
-        /** Maximum output tokens allowed by the Sourcegraph API. */
+        /**
+         * Maximum output tokens — no longer hardcoded.
+         * The actual limit varies per model and Sourcegraph instance configuration.
+         * We pass through whatever maxOutputTokens the user configures in settings.
+         * If omitted, the API uses its own default.
+         */
+        @Deprecated("Output limit varies per model. Use AgentSettings.maxOutputTokens instead.")
         const val MAX_OUTPUT_TOKENS = 4000
     }
 
@@ -116,12 +122,11 @@ class SourcegraphChatClient(
     }
 
     /**
-     * Clamp max_tokens to the API maximum (4000).
-     * Values above 4000 are silently capped to prevent API rejections.
+     * Pass through max_tokens from settings. No clamping — the actual limit
+     * varies per model and Sourcegraph instance. Let the API reject if too high.
      */
     private fun clampMaxTokens(maxTokens: Int?): Int? {
-        if (maxTokens == null) return null
-        return maxTokens.coerceAtMost(MAX_OUTPUT_TOKENS)
+        return maxTokens
     }
 
     /**

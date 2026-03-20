@@ -107,7 +107,7 @@ class AgentSettingsConfigurable(
                 row("Max input tokens:") {
                     intTextField(1000..1000000, 1000)
                         .bindIntText(::maxInputTokens)
-                        .comment("Maximum tokens for LLM input context (Sourcegraph default: 150,000)")
+                        .comment("Maximum tokens for LLM input context (probe your instance with tools/probe-model-limits.py)")
                 }
                 row("Max output tokens:") {
                     intTextField(1000..10000, 500)
