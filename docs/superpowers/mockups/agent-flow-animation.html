@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Agent Flow — Step-by-Step Animation</title>
+<style>
+:root {
+  --bg: #0F172A;
+  --card: #1E293B;
+  --border: #334155;
+  --fg: #E2E8F0;
+  --muted: #64748B;
+  --blue: #3B82F6;
+  --green: #22C55E;
+  --amber: #F59E0B;
+  --red: #EF4444;
+  --cyan: #06B6D4;
+  --purple: #A855F7;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); overflow-x: hidden; }
+
+/* Header */
+.header { text-align: center; padding: 30px 20px 10px; }
+.header h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+.header p { color: var(--muted); font-size: 14px; }
+
+/* Controls */
+.controls { display: flex; justify-content: center; gap: 12px; padding: 16px; position: sticky; top: 0; background: var(--bg); z-index: 100; border-bottom: 1px solid var(--border); }
+.btn { padding: 8px 20px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font-size: 13px; cursor: pointer; transition: all 0.15s; }
+.btn:hover { border-color: var(--blue); }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: white; }
+.btn.primary:hover { background: #2563EB; }
+.step-counter { font-size: 14px; color: var(--muted); line-height: 38px; font-family: monospace; }
+
+/* Timeline */
+.timeline { max-width: 900px; margin: 0 auto; padding: 20px 20px 100px; }
+
+/* Step */
+.step { opacity: 0; transform: translateY(20px); transition: opacity 0.5s ease, transform 0.5s ease; margin-bottom: 24px; }
+.step.visible { opacity: 1; transform: translateY(0); }
+.step.active { }
+.step.past { opacity: 0.6; }
+
+.step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.step-number { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.step-number.ui { background: var(--blue); color: white; }
+.step-number.controller { background: var(--purple); color: white; }
+.step-number.orchestrator { background: var(--amber); color: black; }
+.step-number.session { background: var(--green); color: black; }
+.step-number.llm { background: var(--red); color: white; }
+.step-number.tool { background: var(--cyan); color: black; }
+
+.step-layer { font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
+.step-layer.ui { background: rgba(59,130,246,0.15); color: var(--blue); }
+.step-layer.controller { background: rgba(168,85,247,0.15); color: var(--purple); }
+.step-layer.orchestrator { background: rgba(245,158,11,0.15); color: var(--amber); }
+.step-layer.session { background: rgba(34,197,94,0.15); color: var(--green); }
+.step-layer.llm { background: rgba(239,68,68,0.15); color: var(--red); }
+.step-layer.tool { background: rgba(6,182,212,0.15); color: var(--cyan); }
+
+.step-title { font-size: 15px; font-weight: 600; }
+
+.step-body { margin-left: 38px; }
+.step-desc { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; }
+
+.code-box { background: #0D1117; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-family: 'JetBrains Mono', Menlo, monospace; font-size: 12px; line-height: 1.6; overflow-x: auto; margin-bottom: 8px; }
+.code-box .comment { color: var(--muted); }
+.code-box .keyword { color: var(--purple); }
+.code-box .string { color: var(--green); }
+.code-box .fn { color: var(--blue); }
+.code-box .cls { color: var(--amber); }
+.code-box .arrow { color: var(--red); font-weight: bold; }
+
+.data-flow { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 12px; }
+.data-flow .from { color: var(--muted); min-width: 120px; }
+.data-flow .arrow-icon { color: var(--amber); font-size: 16px; }
+.data-flow .to { color: var(--fg); }
+.data-flow .data { color: var(--cyan); font-family: monospace; font-size: 11px; }
+
+/* Connector line */
+.connector { width: 2px; height: 20px; background: var(--border); margin: 0 0 0 13px; opacity: 0; transition: opacity 0.3s; }
+.connector.visible { opacity: 1; }
+
+/* Pulse animation for active step */
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(59,130,246,0.4); } 50% { box-shadow: 0 0 0 8px rgba(59,130,246,0); } }
+.step.active .step-number { animation: pulse 1.5s infinite; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>What Happens When You Send a Message</h1>
+  <p>Step-by-step flow through the Workflow Orchestrator AI Agent</p>
+</div>
+
+<div class="controls">
+  <button class="btn" onclick="reset()">⟲ Reset</button>
+  <button class="btn primary" onclick="nextStep()">Next Step →</button>
+  <button class="btn" onclick="autoPlay()">▶ Auto Play</button>
+  <span class="step-counter" id="counter">Step 0 / 24</span>
+</div>
+
+<div class="timeline" id="timeline">
+
+<!-- STEP 1 -->
+<div class="step" data-step="1">
+  <div class="step-header">
+    <div class="step-number ui">1</div>
+    <span class="step-layer ui">UI Layer</span>
+    <span class="step-title">User types message and presses Enter</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">The user types "Fix the null pointer in UserService.getUser()" in the chat input and presses Enter. The JBTextArea captures the keypress.</div>
+    <div class="code-box">
+      <span class="comment">// AgentDashboardPanel.kt — chatInput KeyListener</span><br>
+      <span class="keyword">if</span> (e.keyCode == KeyEvent.<span class="cls">VK_ENTER</span> && !e.isShiftDown) {<br>
+      &nbsp;&nbsp;<span class="fn">submitMessage</span>() <span class="comment">// → calls onSendMessage callback</span><br>
+      }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 2 -->
+<div class="step" data-step="2">
+  <div class="step-header">
+    <div class="step-number ui">2</div>
+    <span class="step-layer ui">UI Layer</span>
+    <span class="step-title">Message displayed in chat + input cleared</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">The message appears as a user bubble in the JCEF browser. The input field is cleared and the cursor returns to it.</div>
+    <div class="data-flow">
+      <span class="from">Dashboard</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">JCEF Browser</span>
+      <span class="data">appendUserMessage("Fix the null pointer...")</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 3 -->
+<div class="step" data-step="3">
+  <div class="step-header">
+    <div class="step-number controller">3</div>
+    <span class="step-layer controller">Controller</span>
+    <span class="step-title">AgentController.executeTask() called</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">The onSendMessage callback fires. Controller checks: is there an active session? If not, creates one.</div>
+    <div class="code-box">
+      <span class="keyword">if</span> (session == <span class="keyword">null</span>) {<br>
+      &nbsp;&nbsp;session = <span class="cls">ConversationSession</span>.<span class="fn">create</span>(project, agentService)<br>
+      &nbsp;&nbsp;<span class="comment">// Creates: ContextManager, brain, tools, systemPrompt, repo map</span><br>
+      }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 4 -->
+<div class="step" data-step="4">
+  <div class="step-header">
+    <div class="step-number controller">4</div>
+    <span class="step-layer controller">Controller</span>
+    <span class="step-title">ConversationSession initialized (first message only)</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">On first message, the session builds the full context: system prompt, tool definitions, PSI repo map, token budget.</div>
+    <div class="data-flow">
+      <span class="from">PromptAssembler</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">System Prompt</span>
+      <span class="data">~1,200 tokens (identity + rules + tools + repo map)</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">DynamicToolSelector</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Tool Definitions</span>
+      <span class="data">10-15 tools selected by keywords (~2-5K tokens)</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">RepoMapGenerator</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">PSI Repo Map</span>
+      <span class="data">Classes, methods, Spring annotations (~1,500 tokens)</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 5 -->
+<div class="step" data-step="5">
+  <div class="step-header">
+    <div class="step-number controller">5</div>
+    <span class="step-layer controller">Controller</span>
+    <span class="step-title">UI set to busy + coroutine launched</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Send button disabled, cancel button enabled. A coroutine is launched on Dispatchers.IO for background execution.</div>
+    <div class="code-box">
+      dashboard.<span class="fn">setBusy</span>(<span class="keyword">true</span>)<br>
+      scope.<span class="fn">launch</span> { <span class="comment">// Dispatchers.IO</span><br>
+      &nbsp;&nbsp;<span class="keyword">val</span> result = orchestrator.<span class="fn">executeTask</span>(<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;task, session = currentSession,<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;onProgress = { <span class="fn">handleProgress</span>(it) },<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;onStreamChunk = { dashboard.<span class="fn">appendStreamToken</span>(it) }<br>
+      &nbsp;&nbsp;)<br>
+      }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 6 -->
+<div class="step" data-step="6">
+  <div class="step-header">
+    <div class="step-number orchestrator">6</div>
+    <span class="step-layer orchestrator">Orchestrator</span>
+    <span class="step-title">AgentOrchestrator.executeTask() — setup</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Creates LocalHistory checkpoint (for rollback), event log, session trace. Initializes the session if first message (adds system prompt to ContextManager).</div>
+    <div class="data-flow">
+      <span class="from">LocalHistory</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Checkpoint Label</span>
+      <span class="data">putSystemLabel("Agent: Fix the null pointer...")</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">SessionTrace</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">JSONL File</span>
+      <span class="data">.workflow/agent/traces/{sessionId}.trace.jsonl</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 7 -->
+<div class="step" data-step="7">
+  <div class="step-header">
+    <div class="step-number session">7</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">SingleAgentSession.execute() — ReAct loop begins</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">The ReAct loop starts. First, the user's message is added to ContextManager. Max 50 iterations.</div>
+    <div class="code-box">
+      contextManager.<span class="fn">addMessage</span>(<span class="cls">ChatMessage</span>(role=<span class="string">"user"</span>, content=task))<br><br>
+      <span class="keyword">for</span> (iteration <span class="keyword">in</span> 1..50) {<br>
+      &nbsp;&nbsp;<span class="comment">// 1. Check budget</span><br>
+      &nbsp;&nbsp;<span class="comment">// 2. Call LLM</span><br>
+      &nbsp;&nbsp;<span class="comment">// 3. Execute tools</span><br>
+      &nbsp;&nbsp;<span class="comment">// 4. LoopGuard check</span><br>
+      &nbsp;&nbsp;<span class="comment">// 5. Continue or return</span><br>
+      }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 8 -->
+<div class="step" data-step="8">
+  <div class="step-header">
+    <div class="step-number session">8</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Iteration 1 — BudgetEnforcer check</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Before each LLM call, BudgetEnforcer checks token usage. At 40% → compress. At 60% → escalate. Currently at ~3% (first message).</div>
+    <div class="data-flow">
+      <span class="from">BudgetEnforcer</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Status: OK</span>
+      <span class="data">4,500 / 145,100 tokens (3%) — proceed normally</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 9 -->
+<div class="step" data-step="9">
+  <div class="step-header">
+    <div class="step-number session">9</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Messages assembled for API call</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">ContextManager.getMessages() returns all messages. sanitizeMessages() in SourcegraphChatClient converts system→user with XML tags, merges consecutive roles.</div>
+    <div class="code-box">
+      <span class="comment">// What gets sent to the API:</span><br>
+      [<br>
+      &nbsp;&nbsp;{ role: <span class="string">"user"</span>, content: <span class="string">"&lt;system_instructions&gt;...&lt;/system_instructions&gt;\n&lt;user_message&gt;Fix the null pointer...&lt;/user_message&gt;"</span> }<br>
+      ]<br><br>
+      <span class="comment">// + 12 tool definitions (filtered by DynamicToolSelector)</span><br>
+      <span class="comment">// + max_tokens: 4000 (Sourcegraph API cap)</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 10 -->
+<div class="step" data-step="10">
+  <div class="step-header">
+    <div class="step-number llm">10</div>
+    <span class="step-layer llm">LLM API</span>
+    <span class="step-title">HTTP POST to Sourcegraph → Anthropic Claude</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Non-streaming request (tools present). POST to /.api/llm/chat/completions with token auth. Waits 2-30 seconds for response.</div>
+    <div class="data-flow">
+      <span class="from">Plugin</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Sourcegraph</span>
+      <span class="data">POST /.api/llm/chat/completions (auth: token sgp_...)</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">Sourcegraph</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Anthropic</span>
+      <span class="data">Proxied to Claude with tool definitions</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 11 -->
+<div class="step" data-step="11">
+  <div class="step-header">
+    <div class="step-number llm">11</div>
+    <span class="step-layer llm">LLM API</span>
+    <span class="step-title">Claude responds with tool_calls</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Claude decides to read the file first. Returns content ("I'll look at the file...") + a tool_call for read_file.</div>
+    <div class="code-box">
+      {<br>
+      &nbsp;&nbsp;<span class="string">"content"</span>: <span class="string">"I'll analyze the file to find the null pointer issue."</span>,<br>
+      &nbsp;&nbsp;<span class="string">"tool_calls"</span>: [{<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"id"</span>: <span class="string">"call_1"</span>,<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"function"</span>: { <span class="string">"name"</span>: <span class="string">"read_file"</span>, <span class="string">"arguments"</span>: <span class="string">"{\"path\":\"src/.../UserService.kt\"}"</span> }<br>
+      &nbsp;&nbsp;}]<br>
+      }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 12 -->
+<div class="step" data-step="12">
+  <div class="step-header">
+    <div class="step-number session">12</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Response parsed — text shown in chat</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">The assistant's text content is pushed to the UI via onStreamChunk. Tool calls are filtered (empty names removed). Assistant message added to ContextManager.</div>
+    <div class="data-flow">
+      <span class="from">onStreamChunk</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">JCEF Browser</span>
+      <span class="data">"I'll analyze the file to find the null pointer issue."</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 13 -->
+<div class="step" data-step="13">
+  <div class="step-header">
+    <div class="step-number session">13</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">ApprovalGate check — is read_file safe?</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">read_file has risk level NONE (read-only). Auto-approved. No dialog shown to user.</div>
+    <div class="data-flow">
+      <span class="from">ApprovalGate</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">NONE risk</span>
+      <span class="data">Auto-approved — proceed to execution</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 14 -->
+<div class="step" data-step="14">
+  <div class="step-header">
+    <div class="step-number tool">14</div>
+    <span class="step-layer tool">Tool Execution</span>
+    <span class="step-title">read_file tool executes</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">ReadFileTool reads the file from disk. Returns content with line numbers. Tool card shown in UI as "READ UserService.kt ✓".</div>
+    <div class="data-flow">
+      <span class="from">ReadFileTool</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">ToolResult</span>
+      <span class="data">45 lines, 1.2K tokens (compressed to 500 max)</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">onProgress</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">JCEF Browser</span>
+      <span class="data">appendToolCall("read_file", args, SUCCESS) → blue READ badge</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 15 -->
+<div class="step" data-step="15">
+  <div class="step-header">
+    <div class="step-number session">15</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Tool result added to context + LoopGuard check</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">ToolResultCompressor caps the result at 500 tokens. Added to ContextManager. LoopGuard checks for loops (no duplicates yet). WorkingSet records the file read.</div>
+    <div class="code-box">
+      contextManager.<span class="fn">addToolResult</span>(callId, compressedContent, summary)<br>
+      loopGuard.<span class="fn">afterIteration</span>(toolCalls, toolResults, editedFiles)<br>
+      <span class="comment">// No loop detected, no error nudge, no fade reminder (iteration 1)</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 16 -->
+<div class="step" data-step="16">
+  <div class="step-header">
+    <div class="step-number session">16</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Iteration 2 — LLM called again with tool result</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">The full conversation (system + user + assistant + tool_result) is sent again. Claude now has the file content and can decide to edit.</div>
+    <div class="data-flow">
+      <span class="from">ContextManager</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Messages</span>
+      <span class="data">4 messages, ~6,200 tokens total</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 17 -->
+<div class="step" data-step="17">
+  <div class="step-header">
+    <div class="step-number llm">17</div>
+    <span class="step-layer llm">LLM API</span>
+    <span class="step-title">Claude responds with edit_file tool call</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Claude identifies the issue on line 23 and calls edit_file with the fix.</div>
+    <div class="code-box">
+      {<br>
+      &nbsp;&nbsp;<span class="string">"content"</span>: <span class="string">"Found the issue on line 23. The repo field needs null-safe access."</span>,<br>
+      &nbsp;&nbsp;<span class="string">"tool_calls"</span>: [{<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"name"</span>: <span class="string">"edit_file"</span>,<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span class="string">"arguments"</span>: { <span class="string">"path"</span>: <span class="string">"UserService.kt"</span>, <span class="string">"old_string"</span>: <span class="string">"repo.findById(id)"</span>, <span class="string">"new_string"</span>: <span class="string">"repo?.findById(id)"</span> }<br>
+      &nbsp;&nbsp;}]<br>
+      }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 18 -->
+<div class="step" data-step="18">
+  <div class="step-header">
+    <div class="step-number session">18</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">ApprovalGate check — is edit_file safe?</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">edit_file has risk level MEDIUM. If approvalRequiredForEdits is on AND sessionAutoApprove is false → show dialog. If user previously clicked "Allow All" → auto-approved.</div>
+    <div class="data-flow">
+      <span class="from">ApprovalGate</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">MEDIUM risk</span>
+      <span class="data">Check sessionAutoApprove flag → if true, proceed; else show dialog</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 19 -->
+<div class="step" data-step="19">
+  <div class="step-header">
+    <div class="step-number tool">19</div>
+    <span class="step-layer tool">Tool Execution</span>
+    <span class="step-title">edit_file executes — file modified on disk</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">EditFileTool finds the exact match, replaces it, writes the file. SyntaxValidator checks for errors (warning mode — doesn't block). Inline diff shown in chat.</div>
+    <div class="data-flow">
+      <span class="from">EditFileTool</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">File written</span>
+      <span class="data">repo.findById(id) → repo?.findById(id)</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">SyntaxValidator</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">0 errors</span>
+      <span class="data">PSI parse check passed — no warnings</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">onProgress</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">JCEF Browser</span>
+      <span class="data">appendEditDiff("UserService.kt", old, new, accepted=true) → amber EDIT badge + diff</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 20 -->
+<div class="step" data-step="20">
+  <div class="step-header">
+    <div class="step-number session">20</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Iteration 3 — LLM called, returns final text (no tools)</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Claude sees the edit was successful and provides a summary. No more tool calls → this is the final response.</div>
+    <div class="code-box">
+      { <span class="string">"content"</span>: <span class="string">"Fixed the NPE. The repo field was null during early init..."</span>, <span class="string">"tool_calls"</span>: <span class="keyword">null</span> }
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 21 -->
+<div class="step" data-step="21">
+  <div class="step-header">
+    <div class="step-number session">21</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">LoopGuard.beforeCompletion() — verify edits</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">LoopGuard sees files were edited. Fires ONE verification: injects "run diagnostics on modified files" into context. Loop continues for one more iteration.</div>
+    <div class="data-flow">
+      <span class="from">LoopGuard</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Verification</span>
+      <span class="data">"Before completing, verify: run diagnostics on UserService.kt"</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 22 -->
+<div class="step" data-step="22">
+  <div class="step-header">
+    <div class="step-number session">22</div>
+    <span class="step-layer session">Session</span>
+    <span class="step-title">Iteration 4 — diagnostics pass, task complete</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">LLM runs diagnostics (0 errors), returns final text. No tool calls, LoopGuard already fired (verificationRequested=true). Session returns Completed.</div>
+    <div class="code-box">
+      <span class="keyword">return</span> <span class="cls">SingleAgentResult</span>.<span class="fn">Completed</span>(<br>
+      &nbsp;&nbsp;content = <span class="string">"Fixed. No compilation errors."</span>,<br>
+      &nbsp;&nbsp;tokensUsed = 3200,<br>
+      &nbsp;&nbsp;artifacts = [<span class="string">"UserService.kt"</span>]<br>
+      )
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 23 -->
+<div class="step" data-step="23">
+  <div class="step-header">
+    <div class="step-number controller">23</div>
+    <span class="step-layer controller">Controller</span>
+    <span class="step-title">handleResult() — session footer + persistence</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Controller receives AgentResult.Completed. Shows session footer with metrics and Undo button. Persists conversation to JSONL. Updates GlobalSessionIndex.</div>
+    <div class="data-flow">
+      <span class="from">JCEF Browser</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">Session Footer</span>
+      <span class="data">✓ Completed · 3,200 tokens · 8.2s · 4 iterations · [Undo All] [View Trace]</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">ConversationStore</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">JSONL</span>
+      <span class="data">Messages persisted to workflow-agent/sessions/{id}/messages.jsonl</span>
+    </div>
+    <div class="data-flow">
+      <span class="from">GlobalSessionIndex</span>
+      <span class="arrow-icon">→</span>
+      <span class="to">XML</span>
+      <span class="data">Status updated to "completed" in workflowAgentSessions.xml</span>
+    </div>
+  </div>
+</div>
+<div class="connector"></div>
+
+<!-- STEP 24 -->
+<div class="step" data-step="24">
+  <div class="step-header">
+    <div class="step-number ui">24</div>
+    <span class="step-layer ui">UI Layer</span>
+    <span class="step-title">Ready for follow-up — conversation preserved</span>
+  </div>
+  <div class="step-body">
+    <div class="step-desc">Input re-enabled. The user can type a follow-up message — the ConversationSession keeps the full context. Typing a new message continues the same session (multi-turn). Clicking "New Chat" starts fresh.</div>
+    <div class="code-box">
+      <span class="comment">// User types: "Also add a unit test for that fix"</span><br>
+      <span class="comment">// → Same session, same ContextManager</span><br>
+      <span class="comment">// → LLM sees the full conversation: original ask + file read + edit + diagnostics</span><br>
+      <span class="comment">// → Knows exactly what was changed and where</span>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const steps = document.querySelectorAll('.step');
+const connectors = document.querySelectorAll('.connector');
+const counter = document.getElementById('counter');
+let currentStep = 0;
+const totalSteps = steps.length;
+let autoPlayInterval = null;
+
+function updateCounter() {
+  counter.textContent = `Step ${currentStep} / ${totalSteps}`;
+}
+
+function nextStep() {
+  if (currentStep >= totalSteps) return;
+
+  // Mark previous steps as past
+  steps.forEach((s, i) => {
+    if (i < currentStep) { s.classList.add('past'); s.classList.remove('active'); }
+  });
+
+  // Show current step
+  const step = steps[currentStep];
+  step.classList.add('visible', 'active');
+  step.classList.remove('past');
+
+  // Show connector
+  if (currentStep < connectors.length) {
+    connectors[currentStep].classList.add('visible');
+  }
+
+  // Scroll into view
+  step.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  currentStep++;
+  updateCounter();
+}
+
+function reset() {
+  clearInterval(autoPlayInterval);
+  autoPlayInterval = null;
+  currentStep = 0;
+  steps.forEach(s => { s.classList.remove('visible', 'active', 'past'); });
+  connectors.forEach(c => { c.classList.remove('visible'); });
+  updateCounter();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function autoPlay() {
+  if (autoPlayInterval) { clearInterval(autoPlayInterval); autoPlayInterval = null; return; }
+  autoPlayInterval = setInterval(() => {
+    if (currentStep >= totalSteps) { clearInterval(autoPlayInterval); autoPlayInterval = null; return; }
+    nextStep();
+  }, 2000);
+}
+
+updateCounter();
+</script>
+</body>
+</html>

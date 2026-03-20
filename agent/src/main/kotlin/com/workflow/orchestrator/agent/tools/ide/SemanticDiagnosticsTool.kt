@@ -18,8 +18,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class SemanticDiagnosticsTool : AgentTool {
-    override val name = "semantic_diagnostics"
-    override val description = "Get semantic errors for a file: unresolved references, type mismatches, missing imports, and syntax errors. More thorough than basic diagnostics — catches compilation errors that syntax checking misses."
+    override val name = "diagnostics"
+    override val description = "Check a file for errors: syntax errors, unresolved references, missing imports, type mismatches. Use AFTER editing files to verify no errors were introduced."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "File path to check (e.g., 'src/main/kotlin/UserService.kt')")

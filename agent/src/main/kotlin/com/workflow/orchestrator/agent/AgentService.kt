@@ -43,7 +43,6 @@ class AgentService(
             register(EditFileTool())
             register(SearchCodeTool())
             register(RunCommandTool())
-            register(DiagnosticsTool())
 
             // PSI tools
             register(FileStructureTool())
@@ -85,8 +84,8 @@ class AgentService(
             register(CreatePlanTool())
             register(UpdatePlanStepTool())
 
-            // IDE tools
-            register(SemanticDiagnosticsTool())
+            // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
+            register(SemanticDiagnosticsTool()) // name = "diagnostics"
             register(FormatCodeTool())
             register(OptimizeImportsTool())
             register(RunInspectionsTool())
