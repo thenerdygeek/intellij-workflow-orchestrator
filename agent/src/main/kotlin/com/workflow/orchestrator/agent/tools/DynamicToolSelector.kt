@@ -2,7 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves tokens by not sending all 50 tools when only a subset is needed.
+ * Saves tokens by not sending all 52 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
@@ -118,7 +118,11 @@ object DynamicToolSelector {
         // Memory tools
         "remember" to setOf("save_memory"),
         "memory" to setOf("save_memory"),
-        "learn" to setOf("save_memory")
+        "learn" to setOf("save_memory"),
+
+        // Skill tools
+        "skill" to setOf("activate_skill", "deactivate_skill"),
+        "workflow" to setOf("activate_skill")
     )
 
     /**

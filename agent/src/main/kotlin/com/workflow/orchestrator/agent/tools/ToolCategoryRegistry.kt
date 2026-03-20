@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 /**
- * Central registry mapping all 50 agent tools to logical categories.
+ * Central registry mapping all 52 agent tools to logical categories.
  * Used by: DynamicToolSelector (tool filtering), Tools panel UI (categorization),
  * RequestToolsTool (category activation), ToolPreferences (grouping).
  */
@@ -96,7 +96,7 @@ object ToolCategoryRegistry {
             color = "#F59E0B",
             badgePrefix = "PLAN",
             description = "Create and update implementation plans",
-            tools = listOf("create_plan", "update_plan_step", "ask_questions", "save_memory")
+            tools = listOf("create_plan", "update_plan_step", "ask_questions", "save_memory", "activate_skill", "deactivate_skill")
         )
     )
 

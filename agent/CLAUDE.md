@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 46 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 52 tools.
 
 ## LLM API
 
@@ -31,7 +31,7 @@ AgentController (UI entry point)
 - **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (50 total, 9 categories)
+## Tools (52 total, 9 categories)
 
 | Category | Tools |
 |----------|-------|
@@ -43,7 +43,7 @@ AgentController (UI entry point)
 | CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results |
 | Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_project_health |
 | Pull Requests — Bitbucket | bitbucket_create_pr |
-| Planning | create_plan, update_plan_step, ask_questions, save_memory |
+| Planning | create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill |
 
 ## Tool Selection (Hybrid)
 
@@ -82,6 +82,17 @@ Three layers:
 - LLM saves via `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
 - Injected into system prompt as `<agent_memory>` section
 - `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
+
+## User-Extensible Skills
+
+- Format: SKILL.md with YAML frontmatter (Agent Skills standard)
+- Project: `{projectBasePath}/.workflow/skills/{name}/SKILL.md`
+- User: `~/.workflow-orchestrator/skills/{name}/SKILL.md`
+- Project overrides user if same name
+- Discovery: descriptions loaded at session start, full content on activation
+- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `activate_skill`
+- `preferred-tools` field provides soft tool preference (not hard restriction)
+- Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
 
 ## Security
 
