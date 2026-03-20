@@ -102,6 +102,12 @@ def generate_filler_text(approx_tokens: int) -> str:
     return " ".join(result)
 
 
+def is_thinking_model(model_id: str) -> bool:
+    """Check if a model is a thinking/extended-thinking model."""
+    lower = model_id.lower()
+    return any(kw in lower for kw in ["thinking", "o1", "o3", "reasoner", "opus"])
+
+
 def call_api(
     base_url: str,
     token: str,
@@ -113,6 +119,12 @@ def call_api(
     """
     Call the Sourcegraph chat completions API.
 
+    Follows Sourcegraph OpenAPI spec constraints:
+    - No "system" role (use "user" instead)
+    - Messages must alternate user/assistant
+    - For thinking models: max_tokens must be >= thinking budget (typically 1024+)
+    - Auth: "token <value>" scheme
+
     Returns: (success, error_message_or_content, full_response)
     """
     url = f"{base_url}/.api/llm/chat/completions"
@@ -120,10 +132,26 @@ def call_api(
         "Authorization": f"token {token}",
         "Content-Type": "application/json"
     }
+
+    # Sanitize messages: no "system" role allowed by Sourcegraph
+    sanitized = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        if role == "system":
+            role = "user"  # Convert system to user
+        sanitized.append({"role": role, "content": msg.get("content", "")})
+
+    # For thinking models, max_tokens must be >= thinking budget
+    # Anthropic requires max_tokens to cover both thinking + response
+    effective_max_tokens = max_tokens
+    if is_thinking_model(model):
+        effective_max_tokens = max(max_tokens, 16000)  # Minimum for thinking models
+
     payload = {
         "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
+        "messages": sanitized,
+        "max_tokens": effective_max_tokens,
+        "temperature": 0,
         "stream": False
     }
 
@@ -181,11 +209,12 @@ def probe_input_limit(
     print()
 
     # First, verify the model works at all with a minimal request
-    print("Step 0: Verifying model responds...")
+    verify_max_tokens = 16000 if is_thinking_model(model) else 50
+    print(f"Step 0: Verifying model responds (max_tokens={verify_max_tokens})...")
     success, msg, resp = call_api(
         base_url, token, model,
         [{"role": "user", "content": "Say hello."}],
-        max_tokens=50
+        max_tokens=verify_max_tokens
     )
     if not success:
         print(f"  ✗ Model doesn't respond: {msg[:200]}")
@@ -212,7 +241,8 @@ def probe_input_limit(
         if verbose:
             print(f"  Iteration {iteration}: trying ~{mid:,} tokens... ", end="", flush=True)
 
-        success, msg, resp = call_api(base_url, token, model, messages, max_tokens=50, timeout=120)
+        probe_max_tokens = 16000 if is_thinking_model(model) else 50
+        success, msg, resp = call_api(base_url, token, model, messages, max_tokens=probe_max_tokens, timeout=120)
 
         if success:
             usage = resp.get("usage", {})
@@ -268,7 +298,12 @@ def probe_output_limit(
     print(f"PROBING OUTPUT LIMIT for {format_model_name(model)}")
     print(f"{'='*60}")
 
-    test_values = [100, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000]
+    # For thinking models, start higher (thinking budget requires >= 1024)
+    if is_thinking_model(model):
+        test_values = [16000, 32000, 64000, 128000, 256000]
+        print(f"  (Thinking model detected — starting at 16K)\n")
+    else:
+        test_values = [100, 500, 1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000]
     last_accepted = 0
 
     for max_tokens in test_values:
