@@ -1,10 +1,6 @@
 package com.workflow.orchestrator.agent.context
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
-import com.workflow.orchestrator.agent.brain.LlmBrain
-import com.workflow.orchestrator.core.model.ApiResult
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 
 /**
  * Manages the conversation history for a worker session.
@@ -16,12 +12,15 @@ import kotlinx.coroutines.runBlocking
  * Anchored summaries: Only newly dropped messages are summarized.
  * Already-summarized spans are preserved as-is.
  *
- * When [brain] is provided, compression uses LLM-powered summarization for
- * higher-quality context retention. Otherwise, falls back to simple truncation.
+ * The [brain] parameter is deprecated and unused — LLM-powered summarization was
+ * removed because brain was never passed in production (always null), and the
+ * implementation used runBlocking which is an anti-pattern inside coroutine contexts.
+ * The parameter is retained for backward compatibility with tests.
  */
 class ContextManager(
     private val maxInputTokens: Int = 150_000,
-    private val brain: LlmBrain? = null,
+    @Deprecated("LLM summarization removed — brain was never passed in production. Kept for backward compat.")
+    private val brain: Any? = null,
     private val tMaxRatio: Double = 0.70,
     private val tRetainedRatio: Double = 0.40,
     private val toolResultMaxTokens: Int = 500,
@@ -140,44 +139,14 @@ class ContextManager(
     }
 
     /**
-     * Summarize messages using LLM when available, falling back to truncation.
+     * Summarize messages using the truncation summarizer.
      *
-     * NOTE: Uses runBlocking on Dispatchers.IO because this is called from compress(),
-     * which is called synchronously from addMessage(). Compression runs infrequently
-     * (only when approaching budget threshold) so the blocking call is acceptable.
-     * The IO dispatcher ensures we don't block the EDT.
+     * Note: LLM-powered summarization via brain was removed because brain
+     * is never passed to ContextManager in production (always null).
+     * The default truncation summarizer is sufficient and avoids runBlocking.
      */
     private fun summarizeMessages(messagesToSummarize: List<ChatMessage>): String {
-        if (brain == null) {
-            return summarizer(messagesToSummarize)
-        }
-
-        return runBlocking(Dispatchers.IO) {
-            try {
-                val content = messagesToSummarize.mapNotNull { it.content }.joinToString("\n").take(4000)
-                val result = brain.chat(
-                    listOf(
-                        ChatMessage(
-                            "system",
-                            "Summarize the key findings, decisions, and file changes from this conversation in under 200 tokens. Focus on what matters for continuing the task."
-                        ),
-                        ChatMessage("user", content)
-                    )
-                )
-                when (result) {
-                    is ApiResult.Success -> result.data.choices.firstOrNull()?.message?.content
-                        ?: summarizer(messagesToSummarize)
-                    is ApiResult.Error -> {
-                        // Fallback to truncation if LLM fails
-                        val fallbackContent = messagesToSummarize.mapNotNull { it.content }.joinToString("\n")
-                        "Previous context: ${fallbackContent.take(500)}..."
-                    }
-                }
-            } catch (_: Exception) {
-                // Fallback to truncation if LLM call throws
-                summarizer(messagesToSummarize)
-            }
-        }
+        return summarizer(messagesToSummarize)
     }
 
     /** Reset the context (for a new worker session). */
