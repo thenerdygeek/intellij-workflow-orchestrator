@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.runtime.PlanManager
+import com.workflow.orchestrator.agent.runtime.QuestionManager
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.*
 import com.workflow.orchestrator.agent.tools.framework.*
@@ -35,6 +36,9 @@ class AgentService(
 
     /** Plan manager for the current agent session, set by SingleAgentSession. */
     var currentPlanManager: PlanManager? = null
+
+    /** Question manager for the current agent session, set by AgentController. */
+    var currentQuestionManager: QuestionManager? = null
 
     /** Tools requested by LLM via request_tools, expanded on next iteration. */
     val pendingToolActivations = java.util.concurrent.ConcurrentLinkedQueue<String>()
