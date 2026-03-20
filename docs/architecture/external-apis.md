@@ -181,9 +181,10 @@ The `:agent` module communicates directly with the Sourcegraph Enterprise LLM AP
 **Auth:** `Authorization: token <sourcegraph-access-token>`
 
 **Constraints:**
-- 150K input tokens, 4K output tokens max per response
+- 190K input tokens (probed), output limit varies per model and instance — not hardcoded
 - No `system` role -- converted to user messages with `<system_instructions>` tags
 - No `tool_choice` parameter
 - Strict user/assistant message alternation required
 - Message sanitization performed in `SourcegraphChatClient.sanitizeMessages()`
+- Token reconciliation: agent calibrates heuristic estimates with API's actual `usage.prompt_tokens`
 - Used by: `:agent` module for ReAct loop and LLM-powered compression

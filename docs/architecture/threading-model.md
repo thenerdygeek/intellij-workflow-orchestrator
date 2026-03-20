@@ -223,6 +223,10 @@ val approved = suspendCancellableCoroutine<Boolean> { cont ->
 }
 ```
 
+### Token Reconciliation
+
+Token reconciliation (ContextManager calibrating heuristic estimates with the API's actual `usage.prompt_tokens`) happens synchronously after each LLM response within the same IO coroutine. No additional threading concern.
+
 ### LLM-Powered Compression
 
 `compressWithLlm()` is a suspend function that calls the Sourcegraph LLM API to summarize large tool results. Triggered by `BudgetEnforcer` when token usage exceeds the COMPRESS threshold.

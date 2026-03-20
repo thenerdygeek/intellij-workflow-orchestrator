@@ -299,6 +299,13 @@ sequenceDiagram
             SA->>TR: execute(toolName, args)
             TR-->>SA: ToolResult (data + summary)
             Note over SA: Feed result back into conversation
+        else Truncated tool call (finishReason=length)
+            SA->>SA: Validate JSON of tool call
+            alt Invalid JSON
+                SA->>LLM: Retry with smaller operation request
+            else Valid JSON
+                SA->>TR: execute(toolName, args)
+            end
         else No tool call (final answer)
             SA-->>CS: AgentResult(response)
         end
