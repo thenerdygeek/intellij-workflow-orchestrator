@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow Orchestrator — Interactive Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #1e1e1e;
+  --bg-card:   #252526;
+  --bg-hover:  #2d2d2d;
+  --border:    #3c3c3c;
+  --text:      #d4d4d4;
+  --text-dim:  #808080;
+  --blue:      #569cd6;
+  --teal:      #4ec9b0;
+  --yellow:    #dcdcaa;
+  --green:     #6a9955;
+  --red:       #f44747;
+  --orange:    #ce9178;
+  --purple:    #c586c0;
+  --radius:    8px;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ============================================================
+   NAVIGATION BAR
+   ============================================================ */
+nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(30, 30, 30, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 24px;
+  padding: 0 32px; height: 48px;
+}
+nav .brand {
+  font-weight: 700; color: var(--blue); white-space: nowrap;
+  font-size: 14px;
+}
+nav a {
+  color: var(--text-dim); text-decoration: none; font-size: 13px;
+  transition: color .2s;
+}
+nav a:hover { color: var(--text); }
+nav .spacer { flex: 1; }
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+main { padding-top: 64px; max-width: 1200px; margin: 0 auto; padding-bottom: 80px; }
+
+section {
+  margin: 48px 24px;
+  background: linear-gradient(135deg, var(--bg-card) 0%, #1a1a2e 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  position: relative;
+  overflow: hidden;
+}
+section::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--blue), var(--teal), var(--purple));
+}
+
+h2 {
+  font-size: 22px; margin-bottom: 8px; color: var(--blue);
+}
+.section-desc {
+  color: var(--text-dim); font-size: 14px; margin-bottom: 24px;
+}
+
+/* ============================================================
+   SVG COMMON
+   ============================================================ */
+svg text { font-family: inherit; }
+
+/* Tooltip shared styles */
+.viz-tooltip {
+  position: absolute; pointer-events: none;
+  background: #1a1a2e; border: 1px solid var(--blue);
+  border-radius: var(--radius); padding: 12px 16px;
+  font-size: 13px; color: var(--text);
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  opacity: 0; transition: opacity .2s;
+  z-index: 50; max-width: 280px;
+}
+.viz-tooltip.visible { opacity: 1; }
+.viz-tooltip h4 { color: var(--teal); margin-bottom: 4px; font-size: 14px; }
+.viz-tooltip .label { color: var(--text-dim); font-size: 12px; }
+
+/* ============================================================
+   SECTION 1: FORCE-DIRECTED GRAPH
+   ============================================================ */
+#dep-graph-svg { width: 100%; height: 500px; cursor: grab; }
+#dep-graph-svg:active { cursor: grabbing; }
+#dep-graph-svg .link { stroke: var(--border); stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+#dep-graph-svg .link.dashed { stroke-dasharray: 6 4; stroke: var(--orange); marker-end: url(#arrowhead-orange); }
+#dep-graph-svg .link.dimmed { opacity: 0.1; }
+#dep-graph-svg .node-circle { cursor: pointer; transition: opacity .3s; }
+#dep-graph-svg .node-circle.dimmed { opacity: 0.15; }
+#dep-graph-svg .node-label { fill: var(--text); font-size: 12px; font-weight: 600;
+  text-anchor: middle; pointer-events: none; }
+#dep-graph-svg .node-label.dimmed { opacity: 0.15; }
+#dep-graph-svg .edge-label { fill: var(--orange); font-size: 10px;
+  text-anchor: middle; font-style: italic; }
+
+/* ============================================================
+   SECTION 2: DATA FLOW PIPELINE
+   ============================================================ */
+#pipeline-container { position: relative; }
+#pipeline-svg { width: 100%; height: 160px; }
+
+.pipeline-node {
+  cursor: pointer; transition: transform .2s;
+}
+.pipeline-node:hover { transform: scale(1.08); }
+
+/* Flowing dots along pipeline arrows */
+@keyframes flowDot {
+  0%   { offset-distance: 0%;   opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
+/* Pulsing glow for active nodes */
+@keyframes pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px var(--blue)); }
+  50%      { filter: drop-shadow(0 0 12px var(--blue)); }
+}
+@keyframes pulseGreen {
+  0%, 100% { filter: drop-shadow(0 0 4px var(--green)); }
+  50%      { filter: drop-shadow(0 0 12px var(--green)); }
+}
+
+.expand-panel {
+  margin-top: 16px; padding: 16px 20px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 0; overflow: hidden;
+  transition: max-height .4s ease, padding .4s ease, opacity .3s;
+  opacity: 0;
+}
+.expand-panel.open {
+  max-height: 200px; opacity: 1; padding: 16px 20px;
+}
+.expand-panel h4 { color: var(--teal); margin-bottom: 6px; }
+.expand-panel p  { color: var(--text-dim); font-size: 13px; }
+
+/* ============================================================
+   SECTION 3: EVENT BUS
+   ============================================================ */
+#eventbus-svg { width: 100%; height: 460px; }
+
+.eb-module { cursor: default; }
+.eb-hub { cursor: default; }
+
+.eb-dot {
+  position: absolute; width: 10px; height: 10px;
+  border-radius: 50%; pointer-events: none;
+  opacity: 0;
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 18px; border-radius: var(--radius);
+  border: 1px solid var(--blue); background: transparent;
+  color: var(--blue); font-size: 13px; cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.btn:hover { background: var(--blue); color: #fff; }
+.btn.active { background: var(--blue); color: #fff; }
+
+/* ============================================================
+   SECTION 4: STEP-THROUGH WORKFLOW
+   ============================================================ */
+#workflow-steps {
+  display: flex; gap: 0; overflow-x: auto;
+  padding: 16px 0; position: relative;
+}
+.step-card {
+  flex: 0 0 130px; text-align: center; position: relative;
+  padding: 12px 8px; cursor: pointer;
+  transition: transform .3s;
+}
+.step-card .step-circle {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 8px; font-size: 16px; font-weight: 700;
+  color: var(--text-dim); transition: all .3s;
+}
+.step-card.active .step-circle {
+  border-color: var(--blue); color: var(--blue);
+  box-shadow: 0 0 16px rgba(86, 156, 214, .4);
+}
+.step-card.done .step-circle {
+  border-color: var(--green); color: var(--green);
+  background: rgba(106, 153, 85, .1);
+}
+.step-card .step-title {
+  font-size: 11px; color: var(--text-dim);
+  transition: color .3s;
+}
+.step-card.active .step-title { color: var(--text); font-weight: 600; }
+.step-card.done .step-title   { color: var(--green); }
+
+/* Arrow connector between step cards */
+.step-arrow {
+  flex: 0 0 24px; display: flex; align-items: center;
+  justify-content: center; color: var(--border); font-size: 18px;
+  padding-bottom: 24px;
+}
+.step-arrow.active { color: var(--blue); }
+.step-arrow.done   { color: var(--green); }
+
+.step-detail {
+  margin-top: 16px; padding: 20px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 100px;
+  transition: opacity .3s;
+}
+.step-detail h4 { color: var(--teal); margin-bottom: 8px; }
+.step-detail .meta { display: flex; gap: 16px; margin-bottom: 8px; }
+.step-detail .meta span {
+  font-size: 12px; padding: 2px 8px;
+  border-radius: 4px; background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+.step-detail .meta .mod  { color: var(--purple); border-color: var(--purple); }
+.step-detail .meta .svc  { color: var(--teal);   border-color: var(--teal); }
+.step-detail p { color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+
+.step-nav {
+  display: flex; gap: 12px; margin-top: 16px;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+  nav { padding: 0 12px; gap: 12px; font-size: 12px; }
+  section { margin: 24px 12px; padding: 20px; }
+  #dep-graph-svg { height: 380px; }
+  #eventbus-svg  { height: 380px; }
+  .step-card { flex: 0 0 100px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     NAVIGATION
+     ============================================================ -->
+<nav>
+  <span class="brand">Workflow Orchestrator</span>
+  <a href="#sec-deps">Module Graph</a>
+  <a href="#sec-pipeline">Data Flow</a>
+  <a href="#sec-eventbus">Event Bus</a>
+  <a href="#sec-workflow">Step-Through</a>
+  <span class="spacer"></span>
+  <a href="index.html">View Static Diagrams</a>
+</nav>
+
+<main>
+
+<!-- ============================================================
+     SECTION 1: MODULE DEPENDENCY GRAPH
+     ============================================================ -->
+<section id="sec-deps">
+  <h2>Module Dependency Graph</h2>
+  <p class="section-desc">
+    Force-directed graph of Gradle modules. All feature modules depend on <code>:core</code>.
+    Drag nodes to rearrange. Hover to highlight connections. Click for details. Scroll to zoom.
+  </p>
+  <svg id="dep-graph-svg"></svg>
+  <div id="dep-tooltip" class="viz-tooltip"></div>
+</section>
+
+<!-- ============================================================
+     SECTION 2: DATA FLOW PIPELINE
+     ============================================================ -->
+<section id="sec-pipeline">
+  <h2>Developer Workflow Pipeline</h2>
+  <p class="section-desc">
+    A work item flows through 8 stages from ticket to handover.
+    Click any stage to see what happens. Green dots show the success path.
+  </p>
+  <div id="pipeline-container">
+    <svg id="pipeline-svg"></svg>
+  </div>
+  <div id="pipeline-expand" class="expand-panel"></div>
+</section>
+
+<!-- ============================================================
+     SECTION 3: EVENT BUS ANIMATION
+     ============================================================ -->
+<section id="sec-eventbus">
+  <h2>Event Bus Communication</h2>
+  <p class="section-desc">
+    Modules never import each other. They communicate through a central
+    <code>SharedFlow</code> event bus in <code>:core</code>. Press Play to watch events flow.
+  </p>
+  <div style="margin-bottom:16px;">
+    <button id="eb-play-btn" class="btn">&#9654; Play</button>
+  </div>
+  <svg id="eventbus-svg"></svg>
+  <div id="eb-tooltip" class="viz-tooltip"></div>
+</section>
+
+<!-- ============================================================
+     SECTION 4: STEP-THROUGH WORKFLOW
+     ============================================================ -->
+<section id="sec-workflow">
+  <h2>Create PR — Step-Through</h2>
+  <p class="section-desc">
+    Walk through the complete "Create PR" workflow step by step.
+    Use the buttons or click a step directly.
+  </p>
+  <div id="workflow-steps"></div>
+  <div id="step-detail" class="step-detail"></div>
+  <div class="step-nav">
+    <button id="step-prev" class="btn">&#8592; Previous</button>
+    <button id="step-next" class="btn">Next &#8594;</button>
+  </div>
+</section>
+
+</main>
+
+<script>
+/* ============================================================
+   SECTION 1: FORCE-DIRECTED MODULE DEPENDENCY GRAPH
+   ============================================================ */
+(function() {
+  const nodes = [
+    { id: ':core',        label: 'core',        group: 'core',    r: 32, color: '#569cd6',
+      desc: 'Foundation', services: 'Auth, HTTP, Settings, AI, Events, Caching', tab: 'All tabs' },
+    { id: ':jira',        label: 'jira',        group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'Sprint & Tickets', services: 'JiraClient, SprintService, BranchService', tab: 'Sprint' },
+    { id: ':bamboo',      label: 'bamboo',      group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'Build & CI', services: 'BambooClient, BuildPoller, LogParser', tab: 'Build' },
+    { id: ':sonar',       label: 'sonar',       group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'Quality & Coverage', services: 'SonarClient, CoverageService, GutterMarkers', tab: 'Quality' },
+    { id: ':cody',        label: 'cody',        group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'AI Assistant', services: 'CodyAgent, JsonRpcTransport, FixService', tab: 'Inline' },
+    { id: ':pullrequest', label: 'pullrequest', group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'Pull Requests', services: 'BitbucketClient, PrService, ReviewPanel', tab: 'Handover' },
+    { id: ':automation',  label: 'automation',  group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'Docker & Deploy', services: 'TagStager, DriftDetector, QueueManager', tab: 'Automation' },
+    { id: ':handover',    label: 'handover',    group: 'feature', r: 24, color: '#4ec9b0',
+      desc: 'PR & Handover', services: 'PrCreator, JiraClosure, QaClipboard', tab: 'Handover' },
+  ];
+
+  const links = [
+    { source: ':jira',        target: ':core' },
+    { source: ':bamboo',      target: ':core' },
+    { source: ':sonar',       target: ':core' },
+    { source: ':cody',        target: ':core' },
+    { source: ':pullrequest', target: ':core' },
+    { source: ':automation',  target: ':core' },
+    { source: ':automation',  target: ':bamboo', dashed: true, label: 'exception' },
+    { source: ':handover',    target: ':core' },
+  ];
+
+  const svg = d3.select('#dep-graph-svg');
+  const container = svg.node().parentElement;
+  const width  = container.clientWidth - 64;
+  const height = 500;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+
+  /* Arrowhead markers */
+  const defs = svg.append('defs');
+  [['arrowhead', '#3c3c3c'], ['arrowhead-orange', '#ce9178']].forEach(([id, col]) => {
+    defs.append('marker').attr('id', id)
+      .attr('viewBox', '0 -5 10 10').attr('refX', 28).attr('refY', 0)
+      .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', col);
+  });
+
+  /* Glow filter */
+  const glow = defs.append('filter').attr('id', 'glow');
+  glow.append('feGaussianBlur').attr('stdDeviation', 4).attr('result', 'blur');
+  const feMerge = glow.append('feMerge');
+  feMerge.append('feMergeNode').attr('in', 'blur');
+  feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+  const g = svg.append('g');
+
+  /* Zoom */
+  const zoom = d3.zoom().scaleExtent([0.4, 3])
+    .on('zoom', e => g.attr('transform', e.transform));
+  svg.call(zoom);
+
+  /* Links */
+  const linkGroup = g.append('g');
+  const linkEls = linkGroup.selectAll('line')
+    .data(links).join('line')
+    .attr('class', d => 'link' + (d.dashed ? ' dashed' : ''));
+
+  /* Edge labels */
+  const edgeLabels = linkGroup.selectAll('text')
+    .data(links.filter(d => d.label)).join('text')
+    .attr('class', 'edge-label').text(d => d.label);
+
+  /* Nodes */
+  const nodeGroup = g.append('g');
+  const nodeEls = nodeGroup.selectAll('g')
+    .data(nodes).join('g')
+    .attr('class', 'pipeline-node');
+
+  nodeEls.append('circle')
+    .attr('class', 'node-circle')
+    .attr('r', d => d.r)
+    .attr('fill', d => d.color)
+    .attr('fill-opacity', 0.2)
+    .attr('stroke', d => d.color)
+    .attr('stroke-width', 2);
+
+  nodeEls.append('text')
+    .attr('class', 'node-label')
+    .attr('dy', 4)
+    .text(d => ':' + d.label);
+
+  /* Tooltip */
+  const tooltip = d3.select('#dep-tooltip');
+
+  nodeEls.on('mouseover', function(event, d) {
+    /* Highlight connected */
+    const connected = new Set();
+    connected.add(d.id);
+    links.forEach(l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      if (s === d.id) connected.add(t);
+      if (t === d.id) connected.add(s);
+    });
+    nodeEls.select('circle').classed('dimmed', n => !connected.has(n.id));
+    nodeEls.select('text').classed('dimmed', n => !connected.has(n.id));
+    linkEls.classed('dimmed', l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const t = typeof l.target === 'object' ? l.target.id : l.target;
+      return !connected.has(s) || !connected.has(t);
+    });
+  }).on('mouseout', function() {
+    nodeEls.select('circle').classed('dimmed', false);
+    nodeEls.select('text').classed('dimmed', false);
+    linkEls.classed('dimmed', false);
+    tooltip.classed('visible', false);
+  }).on('click', function(event, d) {
+    tooltip.html(`<h4>${d.id}</h4><div class="label">${d.desc}</div>
+      <div style="margin-top:6px;"><strong>Services:</strong> ${d.services}</div>
+      <div><strong>Tab:</strong> ${d.tab}</div>`);
+    tooltip.classed('visible', true)
+      .style('left', (event.pageX + 12) + 'px')
+      .style('top',  (event.pageY - 20) + 'px');
+  });
+
+  /* Drag */
+  nodeEls.call(d3.drag()
+    .on('start', (event, d) => {
+      if (!event.active) sim.alphaTarget(0.3).restart();
+      d.fx = d.x; d.fy = d.y;
+    })
+    .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+    .on('end', (event, d) => {
+      if (!event.active) sim.alphaTarget(0);
+      d.fx = null; d.fy = null;
+    })
+  );
+
+  /* Simulation */
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(140))
+    .force('charge', d3.forceManyBody().strength(-400))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(d => d.r + 20))
+    .on('tick', () => {
+      linkEls
+        .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+      edgeLabels
+        .attr('x', d => (d.source.x + d.target.x) / 2)
+        .attr('y', d => (d.source.y + d.target.y) / 2 - 8);
+      nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+  /* Animated entrance — start nodes off-screen */
+  nodes.forEach(n => {
+    const angle = Math.random() * Math.PI * 2;
+    n.x = width / 2 + Math.cos(angle) * 600;
+    n.y = height / 2 + Math.sin(angle) * 600;
+  });
+  sim.alpha(1.5).restart();
+})();
+
+
+/* ============================================================
+   SECTION 2: DATA FLOW PIPELINE
+   ============================================================ */
+(function() {
+  const stages = [
+    { id: 'start',  label: 'Start Work',
+      detail: 'Create branch from Jira ticket, transition to In Progress.' },
+    { id: 'code',   label: 'Code',
+      detail: 'Write code, see coverage gutter markers, fix Sonar issues with Cody.' },
+    { id: 'commit', label: 'Commit',
+      detail: 'Health check (Maven compile + test + copyright + Sonar gate), AI commit message.' },
+    { id: 'build',  label: 'Build',
+      detail: 'Bamboo polling detects build, shows stages + logs.' },
+    { id: 'sonar',  label: 'Sonar',
+      detail: 'Quality gate check, branch analysis, new code coverage.' },
+    { id: 'pr',     label: 'PR',
+      detail: 'Create PR, Cody description, merge preconditions, approve/merge.' },
+    { id: 'auto',   label: 'Automation',
+      detail: 'Docker tag staging, queue management, suite triggers.' },
+    { id: 'hand',   label: 'Handover',
+      detail: 'Jira closure comment, time tracking, QA clipboard.' },
+  ];
+
+  const svg = d3.select('#pipeline-svg');
+  const container = svg.node().parentElement;
+  const w = container.clientWidth;
+  const h = 160;
+  svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+  const padX = 60;
+  const spacing = (w - padX * 2) / (stages.length - 1);
+  const cy = 70;
+  const nodeR = 26;
+
+  /* Defs for gradient and glow */
+  const defs = svg.append('defs');
+  const grad = defs.append('linearGradient').attr('id', 'pipeGrad')
+    .attr('x1', '0%').attr('y1', '0%').attr('x2', '100%').attr('y2', '0%');
+  grad.append('stop').attr('offset', '0%').attr('stop-color', '#4ec9b0');
+  grad.append('stop').attr('offset', '100%').attr('stop-color', '#569cd6');
+
+  /* Connector lines + animated dots */
+  const connG = svg.append('g');
+  for (let i = 0; i < stages.length - 1; i++) {
+    const x1 = padX + i * spacing + nodeR + 4;
+    const x2 = padX + (i + 1) * spacing - nodeR - 4;
+    /* Line */
+    connG.append('line')
+      .attr('x1', x1).attr('y1', cy).attr('x2', x2).attr('y2', cy)
+      .attr('stroke', '#3c3c3c').attr('stroke-width', 2)
+      .attr('marker-end', 'url(#arrowhead)');
+
+    /* Animated dot (green, success path) */
+    const dot = connG.append('circle').attr('r', 4).attr('fill', '#4ec9b0');
+    animateDot(dot, x1, x2, cy, 2500 + i * 400, i * 350);
+  }
+
+  function animateDot(dot, x1, x2, y, duration, delay) {
+    function loop() {
+      dot.attr('cx', x1).attr('cy', y).attr('opacity', 0)
+        .transition().delay(delay).duration(200).attr('opacity', 1)
+        .transition().duration(duration).ease(d3.easeLinear).attr('cx', x2)
+        .transition().duration(200).attr('opacity', 0)
+        .on('end', loop);
+    }
+    loop();
+  }
+
+  /* Stage nodes */
+  const nodeG = svg.append('g');
+  stages.forEach((s, i) => {
+    const cx = padX + i * spacing;
+    const gNode = nodeG.append('g')
+      .attr('transform', `translate(${cx},${cy})`)
+      .style('cursor', 'pointer');
+
+    gNode.append('circle')
+      .attr('r', nodeR)
+      .attr('fill', 'rgba(78, 201, 176, 0.1)')
+      .attr('stroke', '#4ec9b0').attr('stroke-width', 2);
+
+    gNode.append('text')
+      .attr('text-anchor', 'middle').attr('dy', 4)
+      .attr('fill', '#d4d4d4').attr('font-size', 11).attr('font-weight', 600)
+      .text(i + 1);
+
+    gNode.append('text')
+      .attr('text-anchor', 'middle').attr('y', nodeR + 18)
+      .attr('fill', '#808080').attr('font-size', 11)
+      .text(s.label);
+
+    gNode.on('click', () => toggleExpand(s));
+  });
+
+  /* Expand panel */
+  const panel = document.getElementById('pipeline-expand');
+  let openId = null;
+
+  function toggleExpand(stage) {
+    if (openId === stage.id) {
+      panel.classList.remove('open');
+      openId = null;
+      return;
+    }
+    panel.innerHTML = `<h4>${stage.label}</h4><p>${stage.detail}</p>`;
+    panel.classList.add('open');
+    openId = stage.id;
+  }
+})();
+
+
+/* ============================================================
+   SECTION 3: EVENT BUS ANIMATION
+   ============================================================ */
+(function() {
+  const modules = [
+    { id: ':core',        angle: null, color: '#569cd6' },
+    { id: ':jira',        angle: 0,    color: '#4ec9b0' },
+    { id: ':bamboo',      angle: 45,   color: '#4ec9b0' },
+    { id: ':sonar',       angle: 90,   color: '#4ec9b0' },
+    { id: ':cody',        angle: 135,  color: '#4ec9b0' },
+    { id: ':pullrequest', angle: 180,  color: '#4ec9b0' },
+    { id: ':automation',  angle: 225,  color: '#4ec9b0' },
+    { id: ':handover',    angle: 270,  color: '#4ec9b0' },
+  ];
+
+  /* Events to animate */
+  const events = [
+    { from: ':jira',        event: 'TicketChanged',   color: '#4ec9b0',
+      targets: [':bamboo', ':sonar', ':cody', ':pullrequest', ':automation', ':handover'] },
+    { from: ':bamboo',      event: 'BuildFinished',   color: '#dcdcaa',
+      targets: [':sonar', ':automation'] },
+    { from: ':pullrequest', event: 'PrSelected',      color: '#c586c0',
+      targets: [':sonar'] },
+    { from: ':core',        event: 'BranchChanged',   color: '#569cd6',
+      targets: [':sonar', ':jira'] },
+  ];
+
+  const svg = d3.select('#eventbus-svg');
+  const container = svg.node().parentElement;
+  const w = container.clientWidth - 64;
+  const h = 460;
+  svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+  const cx = w / 2, cy = h / 2;
+  const hubR = 44;
+  const orbitR = 170;
+  const modR = 28;
+
+  /* Compute positions */
+  const outerModules = modules.filter(m => m.angle !== null);
+  outerModules.forEach(m => {
+    const rad = (m.angle * Math.PI) / 180;
+    m.x = cx + orbitR * Math.cos(rad);
+    m.y = cy + orbitR * Math.sin(rad);
+  });
+  /* Core is center */
+  modules[0].x = cx;
+  modules[0].y = cy;
+
+  const g = svg.append('g');
+
+  /* Connector lines (spokes) */
+  outerModules.forEach(m => {
+    g.append('line')
+      .attr('x1', cx).attr('y1', cy).attr('x2', m.x).attr('y2', m.y)
+      .attr('stroke', '#2d2d2d').attr('stroke-width', 1).attr('stroke-dasharray', '4 4');
+  });
+
+  /* Hub */
+  g.append('circle').attr('cx', cx).attr('cy', cy).attr('r', hubR)
+    .attr('fill', 'rgba(86, 156, 214, 0.1)').attr('stroke', '#569cd6').attr('stroke-width', 2);
+  g.append('text').attr('x', cx).attr('y', cy - 6)
+    .attr('text-anchor', 'middle').attr('fill', '#569cd6').attr('font-size', 11).attr('font-weight', 700)
+    .text('EventBus');
+  g.append('text').attr('x', cx).attr('y', cy + 10)
+    .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 9)
+    .text('SharedFlow');
+
+  /* Module nodes */
+  outerModules.forEach(m => {
+    const ng = g.append('g').attr('class', 'eb-module')
+      .attr('transform', `translate(${m.x},${m.y})`);
+    ng.append('circle').attr('r', modR)
+      .attr('fill', 'rgba(78, 201, 176, 0.1)').attr('stroke', m.color).attr('stroke-width', 2);
+    ng.append('text').attr('text-anchor', 'middle').attr('dy', 4)
+      .attr('fill', '#d4d4d4').attr('font-size', 10).attr('font-weight', 600)
+      .text(m.id.replace(':', ''));
+  });
+
+  /* Tooltip */
+  const tooltip = d3.select('#eb-tooltip');
+
+  /* Animation control */
+  let playing = false;
+  let animTimers = [];
+
+  const playBtn = document.getElementById('eb-play-btn');
+  playBtn.addEventListener('click', () => {
+    if (playing) {
+      playing = false;
+      playBtn.innerHTML = '&#9654; Play';
+      playBtn.classList.remove('active');
+      animTimers.forEach(clearTimeout);
+      animTimers = [];
+      /* Remove all dots */
+      g.selectAll('.event-dot').remove();
+      g.selectAll('.event-label').remove();
+    } else {
+      playing = true;
+      playBtn.innerHTML = '&#9724; Pause';
+      playBtn.classList.add('active');
+      runSequence();
+    }
+  });
+
+  function getModPos(id) {
+    const m = modules.find(mod => mod.id === id);
+    return m ? { x: m.x, y: m.y } : { x: cx, y: cy };
+  }
+
+  function animateEvent(ev, delay) {
+    const from = getModPos(ev.from);
+    const fromIsCore = ev.from === ':core';
+
+    /* Phase 1: dot from source to hub */
+    const t1 = setTimeout(() => {
+      if (!playing) return;
+      const startX = fromIsCore ? cx : from.x;
+      const startY = fromIsCore ? cy : from.y;
+
+      const dot = g.append('circle').attr('class', 'event-dot')
+        .attr('cx', startX).attr('cy', startY).attr('r', 6)
+        .attr('fill', ev.color).attr('opacity', 0.9);
+
+      const lbl = g.append('text').attr('class', 'event-label')
+        .attr('x', startX).attr('y', startY - 14)
+        .attr('text-anchor', 'middle').attr('fill', ev.color)
+        .attr('font-size', 10).attr('font-weight', 600)
+        .text(ev.event).attr('opacity', 0.9);
+
+      if (!fromIsCore) {
+        dot.transition().duration(600).attr('cx', cx).attr('cy', cy)
+          .on('end', () => fanOut(ev, dot, lbl));
+        lbl.transition().duration(600).attr('x', cx).attr('y', cy - 14);
+      } else {
+        fanOut(ev, dot, lbl);
+      }
+    }, delay);
+    animTimers.push(t1);
+  }
+
+  function fanOut(ev, mainDot, mainLbl) {
+    if (!playing) { mainDot.remove(); mainLbl.remove(); return; }
+    /* Remove main dot/label */
+    mainDot.transition().duration(200).attr('opacity', 0).remove();
+    mainLbl.transition().duration(200).attr('opacity', 0).remove();
+
+    /* Phase 2: fan out to targets */
+    ev.targets.forEach((tId, i) => {
+      const target = getModPos(tId);
+      const d = g.append('circle').attr('class', 'event-dot')
+        .attr('cx', cx).attr('cy', cy).attr('r', 5)
+        .attr('fill', ev.color).attr('opacity', 0.8);
+
+      d.transition().delay(i * 80).duration(500)
+        .attr('cx', target.x).attr('cy', target.y)
+        .transition().duration(300).attr('r', 12).attr('opacity', 0)
+        .remove();
+    });
+  }
+
+  function runSequence() {
+    if (!playing) return;
+    events.forEach((ev, i) => animateEvent(ev, i * 2200));
+    /* Loop */
+    const loopT = setTimeout(() => { if (playing) runSequence(); }, events.length * 2200 + 1000);
+    animTimers.push(loopT);
+  }
+})();
+
+
+/* ============================================================
+   SECTION 4: STEP-THROUGH WORKFLOW
+   ============================================================ */
+(function() {
+  const steps = [
+    { title: 'Create PR',
+      module: ':handover', service: 'PrCreator',
+      desc: 'User clicks "Create PR" in the Handover tab. The plugin reads the active Jira ticket and determines source/target branches.' },
+    { title: 'Read Git Diff',
+      module: ':core', service: 'GitService',
+      desc: 'Plugin uses IntelliJ Git4Idea to compute the diff between the feature branch and the target branch (develop).' },
+    { title: 'Generate Description',
+      module: ':cody', service: 'CodyAgent',
+      desc: 'The diff is sent to Cody Enterprise via JSON-RPC. A single-pass prompt generates a structured PR description with summary, changes, and test plan.' },
+    { title: 'Create on Bitbucket',
+      module: ':pullrequest', service: 'BitbucketClient',
+      desc: 'BitbucketBranchClient.createPullRequest() sends the PR payload to the Bitbucket Server REST API. Reviewers are auto-assigned from settings.' },
+    { title: 'Emit Event',
+      module: ':core', service: 'EventBus',
+      desc: 'A PullRequestCreated event is emitted on the SharedFlow event bus. Any subscribing module reacts accordingly.' },
+    { title: 'Refresh PR Tab',
+      module: ':pullrequest', service: 'PrPanel',
+      desc: 'The PR tab in the Workflow tool window refreshes automatically, showing the newly created pull request with its status and reviewers.' },
+    { title: 'Cody Pre-Review',
+      module: ':cody', service: 'ReviewService',
+      desc: 'Cody analyses the full diff and provides an automated pre-review: potential issues, missing tests, complexity warnings, and style suggestions.' },
+    { title: 'Review & Merge',
+      module: ':pullrequest', service: 'MergeService',
+      desc: 'The developer reviews Cody feedback, addresses comments, and merges the PR. Build and quality gates must pass before merge is enabled.' },
+  ];
+
+  let currentStep = 0;
+  const stepsContainer = document.getElementById('workflow-steps');
+  const detailPanel    = document.getElementById('step-detail');
+  const prevBtn        = document.getElementById('step-prev');
+  const nextBtn        = document.getElementById('step-next');
+
+  /* Build step cards and arrows */
+  steps.forEach((s, i) => {
+    if (i > 0) {
+      const arrow = document.createElement('div');
+      arrow.className = 'step-arrow';
+      arrow.id = `arrow-${i}`;
+      arrow.innerHTML = '&#8594;';
+      stepsContainer.appendChild(arrow);
+    }
+    const card = document.createElement('div');
+    card.className = 'step-card';
+    card.id = `step-card-${i}`;
+    card.innerHTML = `<div class="step-circle">${i + 1}</div>
+      <div class="step-title">${s.title}</div>`;
+    card.addEventListener('click', () => goToStep(i));
+    stepsContainer.appendChild(card);
+  });
+
+  function goToStep(idx) {
+    currentStep = Math.max(0, Math.min(steps.length - 1, idx));
+    /* Update cards */
+    steps.forEach((_, i) => {
+      const card = document.getElementById(`step-card-${i}`);
+      card.classList.remove('active', 'done');
+      if (i < currentStep) card.classList.add('done');
+      if (i === currentStep) card.classList.add('active');
+    });
+    /* Update arrows */
+    for (let i = 1; i < steps.length; i++) {
+      const arrow = document.getElementById(`arrow-${i}`);
+      arrow.classList.remove('active', 'done');
+      if (i <= currentStep) arrow.classList.add('done');
+      if (i === currentStep) arrow.classList.add('active');
+    }
+    /* Update detail */
+    const s = steps[currentStep];
+    detailPanel.innerHTML = `<h4>Step ${currentStep + 1}: ${s.title}</h4>
+      <div class="meta">
+        <span class="mod">${s.module}</span>
+        <span class="svc">${s.service}</span>
+      </div>
+      <p>${s.desc}</p>`;
+
+    /* Update button state */
+    prevBtn.style.opacity = currentStep === 0 ? '0.4' : '1';
+    nextBtn.style.opacity = currentStep === steps.length - 1 ? '0.4' : '1';
+  }
+
+  prevBtn.addEventListener('click', () => goToStep(currentStep - 1));
+  nextBtn.addEventListener('click', () => goToStep(currentStep + 1));
+
+  /* Initialize */
+  goToStep(0);
+})();
+</script>
+</body>
+</html>
