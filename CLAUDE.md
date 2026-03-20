@@ -20,7 +20,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 
 ## Architecture
 
-10 Gradle submodules (8 feature modules + core + mock-server):
+11 Gradle submodules (9 feature modules + core + mock-server):
 
 | Module | Purpose |
 |---|---|
@@ -33,6 +33,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, Cody pre-review, QA clipboard, time logging |
 | `:git-integration` | Git branch operations and VCS integration |
+| `:agent` | AI coding agent — ReAct loop, 46 tools, delegate_task, plan persistence, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
