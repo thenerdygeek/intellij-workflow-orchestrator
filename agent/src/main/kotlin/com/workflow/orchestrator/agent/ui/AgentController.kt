@@ -105,44 +105,51 @@ class AgentController(
         val prefs = try { ToolPreferences.getInstance(project) } catch (_: Exception) { null }
         val allRegisteredTools = agentService.toolRegistry.allTools()
 
-        val categories = ToolCategoryRegistry.CATEGORIES.map { cat ->
-            val toolsInCat = cat.tools.mapNotNull { toolName ->
-                val tool = allRegisteredTools.find { it.name == toolName } ?: return@mapNotNull null
-                val params = tool.parameters.properties.map { (pname, prop) ->
-                    mapOf(
-                        "name" to pname,
-                        "type" to prop.type,
-                        "description" to prop.description,
-                        "required" to (pname in tool.parameters.required)
-                    )
-                }
-                val schema = try {
-                    prettyJson.encodeToString(com.workflow.orchestrator.agent.api.dto.ToolDefinition.serializer(), tool.toToolDefinition())
-                } catch (_: Exception) { "" }
+        // Build JSON using JsonObject/JsonArray builders with explicit JsonPrimitive wrapping
+        // (kotlinx.serialization can't serialize Map<String, Any?> — no serializer for Any)
+        val categoriesArray = kotlinx.serialization.json.buildJsonArray {
+            for (cat in ToolCategoryRegistry.CATEGORIES) {
+                val toolsArray = kotlinx.serialization.json.buildJsonArray {
+                    for (toolName in cat.tools) {
+                        val tool = allRegisteredTools.find { it.name == toolName } ?: continue
+                        val paramsArray = kotlinx.serialization.json.buildJsonArray {
+                            for ((pname, prop) in tool.parameters.properties) {
+                                add(kotlinx.serialization.json.buildJsonObject {
+                                    put("name", kotlinx.serialization.json.JsonPrimitive(pname))
+                                    put("type", kotlinx.serialization.json.JsonPrimitive(prop.type))
+                                    put("description", kotlinx.serialization.json.JsonPrimitive(prop.description))
+                                    put("required", kotlinx.serialization.json.JsonPrimitive(pname in tool.parameters.required))
+                                })
+                            }
+                        }
+                        val schema = try {
+                            prettyJson.encodeToString(com.workflow.orchestrator.agent.api.dto.ToolDefinition.serializer(), tool.toToolDefinition())
+                        } catch (_: Exception) { "" }
 
-                mapOf(
-                    "name" to toolName,
-                    "description" to tool.description,
-                    "enabled" to (prefs?.isToolEnabled(toolName) ?: true),
-                    "active" to false,
-                    "badge" to cat.badgePrefix,
-                    "categoryColor" to cat.color,
-                    "parameters" to params,
-                    "schema" to schema
-                )
+                        add(kotlinx.serialization.json.buildJsonObject {
+                            put("name", kotlinx.serialization.json.JsonPrimitive(toolName))
+                            put("description", kotlinx.serialization.json.JsonPrimitive(tool.description))
+                            put("enabled", kotlinx.serialization.json.JsonPrimitive(prefs?.isToolEnabled(toolName) ?: true))
+                            put("active", kotlinx.serialization.json.JsonPrimitive(false))
+                            put("badge", kotlinx.serialization.json.JsonPrimitive(cat.badgePrefix))
+                            put("categoryColor", kotlinx.serialization.json.JsonPrimitive(cat.color))
+                            put("parameters", paramsArray)
+                            put("schema", kotlinx.serialization.json.JsonPrimitive(schema))
+                        })
+                    }
+                }
+                add(kotlinx.serialization.json.buildJsonObject {
+                    put("displayName", kotlinx.serialization.json.JsonPrimitive(cat.displayName))
+                    put("color", kotlinx.serialization.json.JsonPrimitive(cat.color))
+                    put("badgePrefix", kotlinx.serialization.json.JsonPrimitive(cat.badgePrefix))
+                    put("tools", toolsArray)
+                })
             }
-            mapOf(
-                "displayName" to cat.displayName,
-                "color" to cat.color,
-                "badgePrefix" to cat.badgePrefix,
-                "tools" to toolsInCat
-            )
         }
 
-        val json = kotlinx.serialization.json.Json.encodeToString(
-            kotlinx.serialization.serializer<Map<String, Any?>>(),
-            mapOf("categories" to categories)
-        )
+        val json = kotlinx.serialization.json.buildJsonObject {
+            put("categories", categoriesArray)
+        }.toString()
         dashboard.showToolsPanel(json)
     }
 
