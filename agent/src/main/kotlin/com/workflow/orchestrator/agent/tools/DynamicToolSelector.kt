@@ -17,7 +17,8 @@ object DynamicToolSelector {
         "read_file", "edit_file", "search_code", "run_command",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "diagnostics", "format_code", "optimize_imports",
-        "delegate_task"
+        "delegate_task",
+        "think"
     )
 
     /** Keyword patterns that trigger tool group injection. */
@@ -112,7 +113,12 @@ object DynamicToolSelector {
         "module" to setOf("project_modules"),
         "dependency" to setOf("project_modules"),
         "dependencies" to setOf("project_modules"),
-        "pom" to setOf("project_modules")
+        "pom" to setOf("project_modules"),
+
+        // Memory tools
+        "remember" to setOf("save_memory"),
+        "memory" to setOf("save_memory"),
+        "learn" to setOf("save_memory")
     )
 
     /**
