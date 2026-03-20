@@ -83,8 +83,18 @@ All credentials stored in PasswordSafe. Never in XML.
 - Settings: 4 pages under Tools > Workflow Orchestrator: General, Workflow, CI/CD, AI & Advanced
 - Onboarding: GotItTooltip on first encounter, collapsible setup dialog (no modal at startup)
 
+## Documentation Maintenance
+
+When making changes that affect architecture, modules, events, services, APIs, or UI structure:
+- Update the relevant module-level `CLAUDE.md` file
+- Update `docs/architecture/` diagrams and docs (including `index.html`)
+- Update this root `CLAUDE.md` if it affects build commands, module list, threading rules, or UX constraints
+
+Do this immediately as part of the same commit — never defer documentation updates.
+
 ## Key References
 
+- Architecture diagrams: `docs/architecture/` (open `index.html` in browser for interactive view)
 - Design spec: `docs/superpowers/specs/2026-03-11-workflow-orchestrator-plugin-design.md`
 - UX guide: `ux-design-guide.md`
 - Requirements: `requirement.md`
