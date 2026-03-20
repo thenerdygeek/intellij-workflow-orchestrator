@@ -164,6 +164,9 @@ class AgentController(
                     // (userMessage does NOT start with "/" so no infinite recursion)
                     executeTask(userMessage)
                     return
+                } else if (skill != null && !skill.userInvocable) {
+                    dashboard.appendStatus("Skill '${skillName}' cannot be invoked directly. It's auto-triggered by the agent.", RichStreamingPanel.StatusType.WARNING)
+                    return
                 } else if (skill == null) {
                     dashboard.appendStatus(
                         "Skill '${skillName}' not found. Available: ${skillMgr.registry.getUserInvocableSkills().joinToString { "/${it.name}" }}",

@@ -1,8 +1,13 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 
 class SkillRegistry(private val projectBasePath: String?, private val userHome: String) {
+
+    companion object {
+        private val LOG = Logger.getInstance(SkillRegistry::class.java)
+    }
 
     data class SkillEntry(
         val name: String,
@@ -64,11 +69,20 @@ class SkillRegistry(private val projectBasePath: String?, private val userHome: 
                 if (!skillDir.isDirectory) continue
                 val skillFile = File(skillDir, "SKILL.md")
                 if (!skillFile.isFile) continue
+                // Validate skill file is within the skills directory (prevent symlink escape)
+                if (!skillFile.canonicalPath.startsWith(dir.canonicalPath)) {
+                    LOG.warn("SkillRegistry: path traversal blocked for skill at ${skillFile.path}")
+                    continue
+                }
                 try {
                     val content = skillFile.readText()
                     val frontmatter = parseFrontmatter(content) ?: continue
                     val name = frontmatter["name"] ?: skillDir.name
-                    val description = frontmatter["description"] ?: ""
+                    val description = frontmatter["description"]?.trim()
+                    if (description.isNullOrBlank()) {
+                        LOG.warn("SkillRegistry: skipping skill at ${skillFile.path} — missing 'description' field")
+                        continue
+                    }
                     val entry = SkillEntry(
                         name = name,
                         description = description,

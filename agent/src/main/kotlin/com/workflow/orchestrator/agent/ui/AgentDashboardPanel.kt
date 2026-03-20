@@ -297,11 +297,28 @@ class AgentDashboardPanel(
     private fun showSkillsPopup(anchor: JComponent) {
         if (availableSkills.isEmpty()) return
         val menu = javax.swing.JPopupMenu()
-        availableSkills.forEachIndexed { i, (name, desc) ->
-            menu.add(javax.swing.JMenuItem("/$name \u2014 $desc").apply {
-                addActionListener { onSkillSelected?.invoke(name) }
-            })
+
+        val projectSkills = availableSkills.filterIndexed { i, _ -> availableSkillScopes.getOrNull(i) == "PROJECT" }
+        val userSkills = availableSkills.filterIndexed { i, _ -> availableSkillScopes.getOrNull(i) == "USER" }
+
+        if (projectSkills.isNotEmpty()) {
+            menu.add(javax.swing.JMenuItem("— Project Skills —").apply { isEnabled = false; font = font.deriveFont(java.awt.Font.BOLD) })
+            projectSkills.forEach { (name, desc) ->
+                menu.add(javax.swing.JMenuItem("/$name — $desc").apply {
+                    addActionListener { onSkillSelected?.invoke(name) }
+                })
+            }
         }
+        if (userSkills.isNotEmpty()) {
+            if (projectSkills.isNotEmpty()) menu.addSeparator()
+            menu.add(javax.swing.JMenuItem("— Personal Skills —").apply { isEnabled = false; font = font.deriveFont(java.awt.Font.BOLD) })
+            userSkills.forEach { (name, desc) ->
+                menu.add(javax.swing.JMenuItem("/$name — $desc").apply {
+                    addActionListener { onSkillSelected?.invoke(name) }
+                })
+            }
+        }
+
         menu.show(anchor, 0, anchor.height)
     }
 
