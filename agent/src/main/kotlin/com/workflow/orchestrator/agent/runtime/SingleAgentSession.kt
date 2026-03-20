@@ -38,13 +38,6 @@ sealed class SingleAgentResult {
         val snapshotRef: String? = null
     ) : SingleAgentResult()
 
-    /** @deprecated Replaced by nudge injection + TERMINATE. TODO: Task 5 removes this and AgentOrchestrator references. */
-    @Deprecated("Replaced by nudge injection + TERMINATE — Task 5 removes this")
-    data class EscalateToOrchestrated(
-        val reason: String,
-        val partialContext: String,
-        val tokensUsed: Int
-    ) : SingleAgentResult()
 }
 
 /**
