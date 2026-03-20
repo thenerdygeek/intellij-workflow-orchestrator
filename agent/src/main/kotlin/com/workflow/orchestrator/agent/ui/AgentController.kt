@@ -191,6 +191,16 @@ class AgentController(
             dashboard.updatePlanStep(stepId, status)
         }
 
+        // Set session directory for plan persistence
+        currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
+
+        // Wire anchor update: sets/updates the <active_plan> system message
+        currentSession.planManager.onPlanAnchorUpdate = { plan ->
+            currentSession.contextManager.setPlanAnchor(
+                com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
+            )
+        }
+
         dashboard.setBusy(true)
 
         // Create orchestrator (lightweight — just brain + registry + project)

@@ -44,18 +44,26 @@ class PlanManager {
     var onPlanCreated: ((AgentPlan) -> Unit)? = null
     var onStepUpdated: ((String, String) -> Unit)? = null
 
+    /** Session directory for plan.json persistence. Set by AgentController. */
+    var sessionDir: java.io.File? = null
+
+    /** Callback to update the anchored plan summary in context. */
+    var onPlanAnchorUpdate: ((AgentPlan) -> Unit)? = null
+
     fun submitPlan(plan: AgentPlan): CompletableFuture<PlanApprovalResult> {
         currentPlan = plan
         approvalFuture = CompletableFuture()
         LOG.info("PlanManager: plan submitted with ${plan.steps.size} steps")
         onPlanCreated?.invoke(plan)
+        sessionDir?.let { PlanPersistence.save(plan, it) }
         return approvalFuture!!
     }
 
     fun approvePlan() {
         currentPlan?.approved = true
-        LOG.info("PlanManager: plan approved")
         approvalFuture?.complete(PlanApprovalResult.Approved)
+        approvalFuture = null
+        currentPlan?.let { onPlanAnchorUpdate?.invoke(it) }
     }
 
     fun revisePlan(comments: Map<String, String>) {
@@ -69,6 +77,8 @@ class PlanManager {
     fun updateStepStatus(stepId: String, status: String) {
         currentPlan?.steps?.find { it.id == stepId }?.status = status
         onStepUpdated?.invoke(stepId, status)
+        sessionDir?.let { dir -> currentPlan?.let { PlanPersistence.save(it, dir) } }
+        currentPlan?.let { onPlanAnchorUpdate?.invoke(it) }
     }
 
     fun hasPlan(): Boolean = currentPlan != null
