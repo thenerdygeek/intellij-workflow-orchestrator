@@ -304,6 +304,8 @@
             serviceImplementation="com.workflow.orchestrator.agent.settings.AgentSettings"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.AgentService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.settings.ToolPreferences"/>
         <projectConfigurable
             parentId="workflow.orchestrator"
             instance="com.workflow.orchestrator.agent.settings.AgentSettingsConfigurable"
