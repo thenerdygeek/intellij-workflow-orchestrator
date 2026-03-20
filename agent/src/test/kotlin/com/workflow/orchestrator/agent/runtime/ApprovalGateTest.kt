@@ -147,11 +147,11 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `HIGH risk auto-approves when no callback provided in headless mode`() {
+    fun `HIGH risk rejects when no callback provided - safer default`() {
         val gate = ApprovalGate(approvalRequired = true, onApprovalNeeded = null)
 
         val result = gate.check("run_command", "Run shell command", RiskLevel.HIGH)
-        assertSame(ApprovalResult.Approved, result)
+        assertSame(ApprovalResult.Rejected, result)
     }
 
     @Test

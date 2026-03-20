@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.core.model.ApiResult
@@ -342,13 +343,14 @@ class SingleAgentSession(
 
             val content = message.content ?: ""
 
-            // Validate output for sensitive data
+            // Validate output for sensitive data and redact if needed
             val securityIssues = OutputValidator.validate(content)
-            if (securityIssues.isNotEmpty()) {
+            val sanitizedContent = if (securityIssues.isNotEmpty()) {
                 LOG.warn("SingleAgentSession: output validation flagged: ${securityIssues.joinToString()}")
-            }
+                CredentialRedactor.redact(content)
+            } else content
 
-            val summary = if (content.length > 200) content.take(200) + "..." else content
+            val summary = if (sanitizedContent.length > 200) sanitizedContent.take(200) + "..." else sanitizedContent
             LOG.info("SingleAgentSession: completed after $iteration iterations, $totalTokensUsed tokens")
 
             onProgress(AgentProgress(
@@ -361,7 +363,7 @@ class SingleAgentSession(
             sessionTrace?.sessionCompleted(totalTokensUsed, iteration, allArtifacts)
 
             return SingleAgentResult.Completed(
-                content = content,
+                content = sanitizedContent,
                 summary = summary,
                 tokensUsed = totalTokensUsed,
                 artifacts = allArtifacts

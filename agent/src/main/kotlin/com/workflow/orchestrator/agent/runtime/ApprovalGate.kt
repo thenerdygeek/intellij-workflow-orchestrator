@@ -47,7 +47,7 @@ class ApprovalGate(
         // HIGH and DESTRUCTIVE always require approval regardless of settings
         if (riskLevel >= RiskLevel.HIGH || (approvalRequired && riskLevel >= RiskLevel.MEDIUM)) {
             return onApprovalNeeded?.invoke(description, riskLevel)
-                ?: ApprovalResult.Approved  // auto-approve if no callback (testing/headless)
+                ?: ApprovalResult.Rejected  // BLOCK if no callback — safer default
         }
 
         return ApprovalResult.Approved

@@ -68,7 +68,7 @@ class AgentController(
                     val comments = kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(commentsJson)
                     session?.planManager?.revisePlan(comments)
                 } catch (e: Exception) {
-                    session?.planManager?.approvePlan() // fallback: just approve if parsing fails
+                    dashboard.appendError("Failed to parse plan comments. Please try again.")
                 }
             }
         )

@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.runtime
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -58,11 +59,12 @@ class AgentEventLog(
      * Log an event. Appends to both in-memory list and disk file.
      */
     fun log(type: AgentEventType, detail: String = "") {
+        val sanitizedDetail = CredentialRedactor.redact(detail)
         val event = AgentEvent(
             timestamp = System.currentTimeMillis(),
             sessionId = sessionId,
             type = type,
-            detail = detail
+            detail = sanitizedDetail
         )
         events.add(event)
 
