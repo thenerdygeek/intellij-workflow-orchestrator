@@ -199,12 +199,21 @@ class ConversationSession private constructor(
                 RepoMapGenerator.generate(project, maxTokens = 1500)
             } catch (_: Exception) { "" }
 
+            // Load cross-session memories
+            val memoryContext = try {
+                val basePath = project.basePath
+                if (basePath != null) {
+                    AgentMemoryStore(java.io.File(basePath)).loadMemories(maxLines = 200)
+                } else null
+            } catch (_: Exception) { null }
+
             // Build system prompt
             val promptAssembler = PromptAssembler(agentService.toolRegistry)
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
                 projectName = project.name,
                 projectPath = project.basePath,
                 repoMapContext = repoMap.ifBlank { null },
+                memoryContext = memoryContext,
                 planMode = planMode
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)

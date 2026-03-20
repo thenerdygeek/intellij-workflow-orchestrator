@@ -23,6 +23,7 @@ class PromptAssembler(
         frameworkInfo: String? = null,
         previousStepResults: List<String>? = null,
         repoMapContext: String? = null,
+        memoryContext: String? = null,
         planMode: Boolean = false
     ): String {
         val sections = mutableListOf<String>()
@@ -45,19 +46,24 @@ class PromptAssembler(
             sections.add("<repo_map>\n$repoMapContext\n</repo_map>")
         }
 
-        // 5. Previous Step Results (orchestrated mode only)
+        // 5. Cross-session Memory (only if available)
+        if (!memoryContext.isNullOrBlank()) {
+            sections.add("<agent_memory>\n$memoryContext\n</agent_memory>")
+        }
+
+        // 6. Previous Step Results (orchestrated mode only)
         if (!previousStepResults.isNullOrEmpty()) {
             val prev = previousStepResults.joinToString("\n\n") { "- $it" }
             sections.add("<previous_results>\nContext from previous steps:\n$prev\n</previous_results>")
         }
 
-        // 6. Planning instructions
+        // 7. Planning instructions
         sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
 
-        // 7. Delegation instructions
+        // 8. Delegation instructions
         sections.add(DELEGATION_RULES)
 
-        // 8. Rules and Constraints (including anti-loop)
+        // 9. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
