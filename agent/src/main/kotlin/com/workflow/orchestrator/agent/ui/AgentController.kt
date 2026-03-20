@@ -181,6 +181,7 @@ class AgentController(
         try {
             val agentSvc = AgentService.getInstance(project)
             agentSvc.currentPlanManager = currentSession.planManager
+            agentSvc.currentQuestionManager = currentSession.questionManager
         } catch (_: Exception) {}
 
         // Wire PlanManager UI callbacks
@@ -217,6 +218,49 @@ class AgentController(
                 com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
             )
         }
+
+        // Wire QuestionManager UI callbacks
+        currentSession.questionManager.onQuestionsCreated = { questionSet ->
+            val json = QuestionManager.json.encodeToString(
+                QuestionSet.serializer(), questionSet
+            )
+            dashboard.showQuestions(json)
+        }
+        currentSession.questionManager.onShowQuestion = { index ->
+            dashboard.showQuestion(index)
+        }
+        currentSession.questionManager.onShowSummary = { result ->
+            val json = QuestionManager.json.encodeToString(
+                QuestionResult.serializer(), result
+            )
+            dashboard.showQuestionSummary(json)
+        }
+        currentSession.questionManager.onSubmitted = {
+            dashboard.enableChatInput()
+        }
+
+        // Wire JCEF → QuestionManager callbacks
+        dashboard.setCefQuestionCallbacks(
+            onAnswered = { questionId, optionsJson ->
+                val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
+                currentSession.questionManager.answerQuestion(questionId, options)
+            },
+            onSkipped = { questionId ->
+                currentSession.questionManager.skipQuestion(questionId)
+            },
+            onChatAbout = { questionId, optionLabel, message ->
+                currentSession.questionManager.setChatMessage(questionId, optionLabel, message)
+            },
+            onSubmitted = {
+                currentSession.questionManager.submitAnswers()
+            },
+            onCancelled = {
+                currentSession.questionManager.cancelQuestions()
+            },
+            onEdit = { questionId ->
+                currentSession.questionManager.editQuestion(questionId)
+            }
+        )
 
         dashboard.setBusy(true)
 
@@ -288,6 +332,7 @@ class AgentController(
                 )
             } catch (_: Exception) { /* best effort */ }
         }
+        session?.questionManager?.clear()
         session = null
         currentPlanFile = null
         dashboard.reset()
