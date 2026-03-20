@@ -324,6 +324,12 @@ class SingleAgentSession(
         var totalTokensUsed = totalTokensUsedBefore
         if (usage != null) {
             totalTokensUsed += usage.totalTokens
+            // Reconcile heuristic token count with actual API-reported count.
+            // Our character-based estimator (length/3.5) can be 20-40% off.
+            // The API's prompt_tokens is authoritative — calibrate to it.
+            if (usage.promptTokens > 0) {
+                contextManager.reconcileWithActualTokens(usage.promptTokens)
+            }
         }
         // Store for caller
         (result as LlmCallResult.Success).totalTokensSoFar = totalTokensUsed

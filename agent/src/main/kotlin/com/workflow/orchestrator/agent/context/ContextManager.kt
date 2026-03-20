@@ -266,6 +266,22 @@ class ContextManager(
         totalTokens = 0
     }
 
+    /**
+     * Reconcile the heuristic token count with the actual count from the API.
+     *
+     * Called after each LLM response with the server-reported prompt_tokens.
+     * The API's tokenizer is authoritative — our character-based heuristic
+     * (text.length / 3.5) can be 20-40% off, especially for code and JSON.
+     *
+     * This calibration ensures compression thresholds and budget nudges
+     * fire at the right time.
+     */
+    fun reconcileWithActualTokens(actualPromptTokens: Int) {
+        if (actualPromptTokens > 0) {
+            totalTokens = actualPromptTokens
+        }
+    }
+
     /** Get remaining token budget (accounting for reserved tokens). */
     fun remainingBudget(): Int = effectiveBudget - totalTokens
 
