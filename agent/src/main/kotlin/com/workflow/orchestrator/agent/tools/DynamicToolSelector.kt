@@ -2,7 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves tokens by not sending all 44 tools when only a subset is needed.
+ * Saves tokens by not sending all 50 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
