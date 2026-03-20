@@ -17,7 +17,7 @@ class EventBus {
 }
 ```
 
-## All 21 WorkflowEvent Types
+## All 25 WorkflowEvent Types
 
 ```mermaid
 flowchart LR
@@ -67,6 +67,13 @@ flowchart LR
         JCP["JiraCommentPosted<br/><i>ticketId, commentId</i>"]
         PRF["PreReviewFinished<br/><i>findingsCount, highSeverity</i>"]
     end
+
+    subgraph "Agent Events"
+        ATS["AgentTaskStarted<br/><i>taskId, description</i>"]
+        ATC["AgentTaskCompleted<br/><i>taskId, summary</i>"]
+        ATF["AgentTaskFailed<br/><i>taskId, error</i>"]
+        AWP["AgentWorkerProgress<br/><i>taskId, step, tokensUsed</i>"]
+    end
 ```
 
 ## Event Flow: Emitters and Consumers
@@ -84,6 +91,7 @@ flowchart LR
         E_JIRA[":jira"]
         E_GIT[":git-integration"]
         E_HO[":handover"]
+        E_AGENT[":agent"]
     end
 
     EB(("EventBus<br/>SharedFlow"))
@@ -99,6 +107,7 @@ flowchart LR
         C_STATUS["Status Bar<br/>Widgets"]
         C_COMMIT["Commit Prefix<br/>Service"]
         C_TREE["Project Tree<br/>Badges"]
+        C_AGENT["Agent Tab<br/>(:agent)"]
     end
 
     E_BAMBOO -->|"BuildFinished<br/>BuildLogReady"| EB
@@ -110,6 +119,7 @@ flowchart LR
     E_JIRA -->|"TicketChanged"| EB
     E_GIT -->|"BranchChanged"| EB
     E_HO -->|"JiraCommentPosted<br/>PreReviewFinished"| EB
+    E_AGENT -->|"AgentTaskStarted<br/>AgentTaskCompleted<br/>AgentTaskFailed<br/>AgentWorkerProgress"| EB
 
     EB --> C_SPRINT
     EB --> C_BUILD
@@ -120,6 +130,7 @@ flowchart LR
     EB --> C_STATUS
     EB --> C_COMMIT
     EB --> C_TREE
+    EB --> C_AGENT
 
     style EB fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
 ```
@@ -148,3 +159,7 @@ flowchart LR
 | `BranchChanged` | `:git-integration` (BranchChangeListener) | ActiveTicketService, PR Tab, Build Tab |
 | `JiraCommentPosted` | `:handover` (closure comment) | Handover Tab (completion state) |
 | `PreReviewFinished` | `:handover` (Cody review) | Handover Tab (findings display) |
+| `AgentTaskStarted` | `:agent` (task delegation) | Agent Tab (progress UI), Status Bar |
+| `AgentTaskCompleted` | `:agent` (task completion) | Agent Tab (result display), Status Bar |
+| `AgentTaskFailed` | `:agent` (task failure) | Agent Tab (error display), Status Bar |
+| `AgentWorkerProgress` | `:agent` (worker step) | Agent Tab (step progress, token counter) |

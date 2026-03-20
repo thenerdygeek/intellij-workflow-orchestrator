@@ -271,3 +271,128 @@ flowchart LR
     style PRS fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style BF fill:#264f78,stroke:#569cd6,color:#d4d4d4
 ```
+
+## 7. Agent ReAct Loop Flow
+
+How the AI coding agent processes user messages through the ReAct (Reason + Act) loop.
+
+```mermaid
+sequenceDiagram
+    participant User as Developer
+    participant UI as Agent Tab (JCEF)
+    participant CS as ConversationSession
+    participant SA as SingleAgentSession
+    participant LLM as Sourcegraph LLM
+    participant TR as ToolRegistry
+    participant EB as EventBus
+
+    User->>UI: Type message
+    UI->>CS: submitMessage(text)
+    CS->>SA: execute(userMessage)
+    CS->>EB: emit(AgentTaskStarted)
+
+    loop ReAct Loop (max 50 iterations)
+        SA->>LLM: POST /.api/llm/chat/completions
+        LLM-->>SA: Response (text + optional tool call)
+
+        alt Tool call requested
+            SA->>TR: execute(toolName, args)
+            TR-->>SA: ToolResult (data + summary)
+            Note over SA: Feed result back into conversation
+        else No tool call (final answer)
+            SA-->>CS: AgentResult(response)
+        end
+    end
+
+    CS->>EB: emit(AgentTaskCompleted)
+    CS->>UI: Stream response to chat panel
+    UI->>User: Display formatted response
+```
+
+## 8. Agent Delegation Flow
+
+How the `delegate_task` tool spawns a scoped `WorkerSession` for subtask execution.
+
+```mermaid
+sequenceDiagram
+    participant SA as SingleAgentSession<br/>(Parent)
+    participant DT as delegate_task Tool
+    participant WS as WorkerSession<br/>(Child)
+    participant LLM as Sourcegraph LLM
+    participant TR as ToolRegistry
+    participant EB as EventBus
+
+    SA->>DT: execute(description, context)
+    DT->>WS: spawn(description, toolSubset)
+    EB->>EB: emit(AgentWorkerProgress)
+
+    loop Scoped ReAct Loop (max 10 iterations)
+        WS->>LLM: POST /.api/llm/chat/completions
+        LLM-->>WS: Response + tool call
+        WS->>TR: execute(tool, args)
+        TR-->>WS: ToolResult
+        EB->>EB: emit(AgentWorkerProgress)
+    end
+
+    WS-->>DT: WorkerResult(summary)
+    DT-->>SA: ToolResult(workerSummary)
+    Note over SA: Parent continues with worker result
+```
+
+## 9. Agent Plan Lifecycle Flow
+
+How plans are created, approved, persisted, and tracked through execution.
+
+```mermaid
+flowchart TD
+    A["LLM calls create_plan tool"] --> B["PlanManager creates plan.json"]
+    B --> C["planAnchor added to conversation context"]
+    B --> D["Plan editor tab opened (FileEditor + JBCefBrowser)"]
+    B --> E["Plan card shown in JCEF chat"]
+
+    E --> F{"User action"}
+    F -->|Approve| G["suspendCancellableCoroutine resumes"]
+    F -->|Revise| H["Edit instructions fed back to LLM"]
+    H --> A
+
+    G --> I["Agent executes plan steps"]
+
+    I --> J["LLM calls update_plan_step"]
+    J --> K["plan.json updated on disk"]
+    J --> L["Plan card UI updates (step status icons)"]
+    J --> M["Editor tab refreshes"]
+
+    style A fill:#4a2d6b,stroke:#b07ed6,color:#d4d4d4
+    style G fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style K fill:#264f78,stroke:#569cd6,color:#d4d4d4
+```
+
+## 10. Skill Activation Flow
+
+How skills are discovered, activated, and injected into the agent conversation context.
+
+```mermaid
+flowchart LR
+    subgraph Activation
+        A["/command or LLM auto-trigger"]
+    end
+
+    A --> B["SkillRegistry.lookup(name)"]
+    B --> C["SkillManager.activate(skill)"]
+    C --> D["Load SKILL.md file"]
+    D --> E["skillAnchor injected into conversation"]
+    E --> F["Skill banner shown in JCEF UI"]
+
+    subgraph "During Session"
+        F --> G["Agent sees skill instructions in context"]
+        G --> H["Agent follows skill-specific behavior"]
+    end
+
+    F --> I["User dismisses banner"]
+    I --> J["SkillManager.deactivate()"]
+    J --> K["skillAnchor removed from context"]
+
+    style A fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style E fill:#c47e1a,stroke:#dcdcaa,color:#1e1e1e
+    style F fill:#4a2d6b,stroke:#b07ed6,color:#d4d4d4
+```

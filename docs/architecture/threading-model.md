@@ -29,6 +29,8 @@ flowchart TD
         HEALTH["Health Check<br/><i>runBackgroundableTask</i>"]
         MAVEN_RUN["Maven Build<br/><i>MavenRunner.run()</i>"]
         CODY_AGENT["Cody CLI Process<br/><i>JSON-RPC stdio reader</i>"]
+        AGENT_LOOP["Agent ReAct Loop<br/><i>SingleAgentSession + WorkerSession</i>"]
+        AGENT_LLM["Agent LLM Calls<br/><i>SourcegraphChatClient</i>"]
     end
 
     ACTION -->|"launch on IO"| API_CALL
@@ -183,6 +185,60 @@ class SmartPoller(
     fun stop()
 }
 ```
+
+## Agent Threading Patterns
+
+The `:agent` module introduces additional threading considerations due to the ReAct loop, delegation, and JCEF browser integration.
+
+### Agent ReAct Loop
+
+The core agent loop runs entirely on `Dispatchers.IO` via a `CoroutineScope`. Each iteration makes an LLM call and optionally executes a tool.
+
+```kotlin
+// SingleAgentSession.execute() — suspend function, max 50 iterations
+suspend fun execute(userMessage: String): AgentResult = withContext(Dispatchers.IO) {
+    repeat(MAX_ITERATIONS) { iteration ->
+        val response = llmClient.chat(messages)  // suspend, IO
+        val toolCall = parseToolCall(response)
+        if (toolCall != null) {
+            val result = toolRegistry.execute(toolCall)  // suspend, IO
+            // result fed back into conversation
+        }
+    }
+}
+```
+
+### Worker Delegation
+
+`WorkerSession` is a scoped ReAct loop (max 10 iterations) spawned by the `delegate_task` tool. Workers run as child coroutines with parent Job cancellation support -- cancelling the parent `SingleAgentSession` cancels all workers.
+
+### Plan Approval (Non-Blocking)
+
+Plan approval uses `suspendCancellableCoroutine` to pause the agent loop without blocking any thread. The JCEF UI calls the continuation when the user approves or revises.
+
+```kotlin
+val approved = suspendCancellableCoroutine<Boolean> { cont ->
+    // JCEF bridge callback resumes the coroutine
+    showPlanApprovalUI(plan) { userApproved -> cont.resume(userApproved) }
+}
+```
+
+### LLM-Powered Compression
+
+`compressWithLlm()` is a suspend function that calls the Sourcegraph LLM API to summarize large tool results. Triggered by `BudgetEnforcer` when token usage exceeds the COMPRESS threshold.
+
+### Budget Enforcement Actions
+
+| Threshold | Action | Thread Impact |
+|---|---|---|
+| COMPRESS | Compress oldest tool results via LLM | Additional IO coroutine for LLM call |
+| NUDGE | Inject "wrap up" message into conversation | No thread impact (message append) |
+| STRONG_NUDGE | Inject stronger "must finish" message | No thread impact (message append) |
+| TERMINATE | Stop the ReAct loop | Coroutine cancellation |
+
+### JCEF Browser Thread
+
+The JCEF chat panel runs its JavaScript on the Chromium browser thread (CEF thread). Communication between Kotlin and JavaScript uses `JBCefJSQuery` callbacks which marshal data to the EDT. This is safe because JCEF handles the thread bridging internally.
 
 ## Common Anti-Patterns
 

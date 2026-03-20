@@ -13,6 +13,7 @@ flowchart TD
         AUTH_T["AuthInterceptor<br/>(Token)"]
         RETRY["RetryInterceptor"]
         CODY_PROC["Cody CLI Process<br/>(JSON-RPC stdio)"]
+        AGENT_LLM["Agent LLM Client<br/>(HTTP POST)"]
 
         HCF --> POOL
         HCF --> CACHE
@@ -37,6 +38,7 @@ flowchart TD
     RETRY -->|HTTPS| BB
     RETRY -->|HTTPS| NEXUS
     CODY_PROC -->|"stdio<br/>JSON-RPC"| SG
+    AGENT_LLM -->|"HTTPS<br/>LLM Chat Completions"| SG
 
     style JIRA fill:#6b2027,stroke:#f48771,color:#d4d4d4
     style BAMBOO fill:#6b2027,stroke:#f48771,color:#d4d4d4
@@ -167,3 +169,21 @@ All per-service clients are created via `OkHttpClient.newBuilder()` from the sha
 | Plugin to Agent | `shutdown` | Graceful shutdown |
 | Agent to Plugin | `workspace/edit` | Apply file edits |
 | Agent to Plugin | `secrets/get` | Request stored credentials |
+
+### Sourcegraph Enterprise (LLM Chat Completions)
+
+The `:agent` module communicates directly with the Sourcegraph Enterprise LLM API (not through the Cody CLI agent). This is an OpenAI-compatible chat completions endpoint.
+
+| Method | Endpoint | Used For |
+|---|---|---|
+| `POST` | `/.api/llm/chat/completions` | ReAct loop LLM calls, LLM-powered context compression |
+
+**Auth:** `Authorization: token <sourcegraph-access-token>`
+
+**Constraints:**
+- 150K input tokens, 4K output tokens max per response
+- No `system` role -- converted to user messages with `<system_instructions>` tags
+- No `tool_choice` parameter
+- Strict user/assistant message alternation required
+- Message sanitization performed in `SourcegraphChatClient.sanitizeMessages()`
+- Used by: `:agent` module for ReAct loop and LLM-powered compression
