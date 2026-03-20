@@ -31,6 +31,10 @@ class AgentMemoryStore(private val projectBasePath: File) {
             ensureDir()
             val filename = sanitizeTopic(topic)
             val file = File(memoryDir, "$filename.md")
+            if (!file.canonicalPath.startsWith(memoryDir.canonicalPath)) {
+                LOG.warn("AgentMemoryStore: path traversal blocked for topic '$topic'")
+                return
+            }
             file.writeText("# $topic\n\n$content\n")
             LOG.info("AgentMemoryStore: saved memory '$topic' -> ${file.name}")
             rebuildIndex()
@@ -46,6 +50,10 @@ class AgentMemoryStore(private val projectBasePath: File) {
         try {
             val filename = sanitizeTopic(topic)
             val file = File(memoryDir, "$filename.md")
+            if (!file.canonicalPath.startsWith(memoryDir.canonicalPath)) {
+                LOG.warn("AgentMemoryStore: path traversal blocked for topic '$topic'")
+                return
+            }
             if (file.exists()) {
                 file.delete()
                 LOG.info("AgentMemoryStore: deleted memory '$topic'")
