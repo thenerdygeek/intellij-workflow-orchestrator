@@ -140,7 +140,7 @@ class AgentOrchestrator(
             effectiveSystemPrompt = null  // already in context from initialize()
         } else {
             // Backward compat: create everything from scratch (tests, no-session mode)
-            val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
+            val maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
 
             // Dynamic tool injection: filter tools based on task description
             val registeredTools = toolRegistry.allTools()

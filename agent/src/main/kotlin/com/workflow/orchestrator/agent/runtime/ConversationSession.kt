@@ -188,7 +188,7 @@ class ConversationSession private constructor(
          */
         fun create(project: Project, agentService: AgentService, planMode: Boolean = false): ConversationSession {
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-            val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
+            val maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
 
             // Calculate tool definitions and their token overhead
             val allTools = agentService.toolRegistry.allTools().associateBy { it.name }
@@ -287,7 +287,7 @@ class ConversationSession private constructor(
             // with the original sessionId. Use the fresh session's infra but
             // build a new ConversationSession with the original ID.
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-            val maxInputTokens = settings?.state?.maxInputTokens ?: 150_000
+            val maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
 
             // Rebuild SkillRegistry and SkillManager just like create() does
             val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
