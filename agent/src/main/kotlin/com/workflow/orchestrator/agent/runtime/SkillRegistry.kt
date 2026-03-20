@@ -3,7 +3,11 @@ package com.workflow.orchestrator.agent.runtime
 import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 
-class SkillRegistry(private val projectBasePath: String?, private val userHome: String) {
+class SkillRegistry(
+    private val projectBasePath: String?,
+    private val userHome: String,
+    private val loadBuiltins: Boolean = true
+) {
 
     companion object {
         private val LOG = Logger.getInstance(SkillRegistry::class.java)
@@ -19,17 +23,20 @@ class SkillRegistry(private val projectBasePath: String?, private val userHome: 
         val scope: SkillScope
     )
 
-    enum class SkillScope { PROJECT, USER }
+    enum class SkillScope { BUILTIN, USER, PROJECT }
 
     private val skills = mutableMapOf<String, SkillEntry>()
 
     fun scan(): List<SkillEntry> {
         skills.clear()
 
-        // Scan user directory first (lower priority)
+        // 1. Load built-in skills from plugin resources (lowest priority)
+        if (loadBuiltins) loadBuiltinSkills()
+
+        // 2. Scan user directory (overwrites built-in with same name)
         scanDirectory(File(userHome, ".workflow-orchestrator/skills"), SkillScope.USER)
 
-        // Scan project directory second (higher priority — overwrites user skills with same name)
+        // 3. Scan project directory (highest priority — overwrites user + built-in)
         if (projectBasePath != null) {
             scanDirectory(File(projectBasePath, ".workflow/skills"), SkillScope.PROJECT)
         }
@@ -37,12 +44,50 @@ class SkillRegistry(private val projectBasePath: String?, private val userHome: 
         return skills.values.sortedBy { it.name }
     }
 
+    /**
+     * Load built-in skills bundled with the plugin from resources.
+     * These ship with the plugin and provide default workflows.
+     * Users can override them by creating a skill with the same name
+     * in their project or user directory.
+     */
+    private fun loadBuiltinSkills() {
+        val builtinSkillNames = listOf("systematic-debugging")
+        for (skillName in builtinSkillNames) {
+            try {
+                val resourcePath = "/skills/$skillName/SKILL.md"
+                val content = javaClass.getResourceAsStream(resourcePath)?.bufferedReader()?.readText() ?: continue
+                val frontmatter = parseFrontmatter(content) ?: continue
+                val name = frontmatter["name"] ?: skillName
+                val description = frontmatter["description"]?.trim()
+                if (description.isNullOrBlank()) continue
+
+                skills[name] = SkillEntry(
+                    name = name,
+                    description = description,
+                    disableModelInvocation = frontmatter["disable-model-invocation"]?.toBooleanStrictOrNull() ?: false,
+                    userInvocable = frontmatter["user-invocable"]?.toBooleanStrictOrNull() ?: true,
+                    preferredTools = parseList(frontmatter["preferred-tools"] ?: ""),
+                    filePath = "builtin:$resourcePath",
+                    scope = SkillScope.BUILTIN
+                )
+            } catch (e: Exception) {
+                LOG.warn("SkillRegistry: failed to load built-in skill '$skillName'", e)
+            }
+        }
+    }
+
     fun getSkill(name: String): SkillEntry? = skills[name]
 
     fun getSkillContent(name: String): String? {
         val entry = skills[name] ?: return null
         return try {
-            val content = File(entry.filePath).readText()
+            val content = if (entry.filePath.startsWith("builtin:")) {
+                // Load from plugin resources
+                javaClass.getResourceAsStream(entry.filePath.removePrefix("builtin:"))
+                    ?.bufferedReader()?.readText() ?: return null
+            } else {
+                File(entry.filePath).readText()
+            }
             extractBody(content)
         } catch (e: Exception) {
             null
