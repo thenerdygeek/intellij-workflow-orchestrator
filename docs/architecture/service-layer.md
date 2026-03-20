@@ -190,6 +190,7 @@ classDiagram
         +getCoverage(projectKey) ToolResult~CoverageData~
         +searchProjects(query) ToolResult~List~SonarProjectData~~
         +getAnalysisTasks(projectKey) ToolResult~List~SonarAnalysisTaskData~~
+        +getProjectHealth(projectKey) ToolResult~ProjectHealthData~
         +testConnection() ToolResult~Unit~
     }
 
@@ -252,3 +253,45 @@ These services are internal to their modules (not defined as interfaces in `:cor
 | `:handover` | `JiraClosureService` | Build rich-text Jira closure comment with docker tags and test results |
 | `:handover` | `TimeTrackingService` | Worklog dialog and time logging to Jira |
 | `:handover` | `QaClipboardService` | Format QA handover summary for clipboard copy |
+| `:agent` | `SingleAgentSession` | ReAct loop execution (max 50 iterations), LLM calls, tool dispatch |
+| `:agent` | `WorkerSession` | Scoped ReAct loop for delegated tasks (max 10 iterations), parent Job cancellation |
+| `:agent` | `SourcegraphChatClient` | Sourcegraph LLM API client (chat completions), message sanitization |
+| `:agent` | `ToolRegistry` | Registry of 52 tools across 9 categories, tool lookup and execution |
+| `:agent` | `PlanManager` | Three-layer plan persistence (disk + context anchor + editor tab) |
+| `:agent` | `SkillManager` | SKILL.md loading, activation, and context injection |
+| `:agent` | `BudgetEnforcer` | Token budget tracking, compression/nudge/terminate thresholds |
+| `:agent` | `ContextCompressor` | LLM-powered compression for tool results exceeding size limits |
+| `:agent` | `AutoMemoryManager` | Cross-session auto-memory (markdown files loaded at session start) |
+
+## New Data Models (Phase 3)
+
+### SonarAnalysisTaskData
+
+Represents a SonarQube Compute Engine analysis task.
+
+```kotlin
+data class SonarAnalysisTaskData(
+    val id: String,
+    val status: String,        // SUCCESS, FAILED, PENDING, IN_PROGRESS, CANCELED
+    val branch: String?,
+    val errorMessage: String?,
+    val executionTimeMs: Long?
+)
+```
+
+### ProjectHealthData
+
+Project-level health metrics from SonarQube.
+
+```kotlin
+data class ProjectHealthData(
+    val technicalDebtMinutes: Long,
+    val technicalDebtFormatted: String,
+    val maintainabilityRating: String,
+    val reliabilityRating: String,
+    val securityRating: String,
+    val duplicatedLinesDensity: Double,
+    val cognitiveComplexity: Long,
+    val lineCoverage: Double,
+    val branchCoverage: Double
+)

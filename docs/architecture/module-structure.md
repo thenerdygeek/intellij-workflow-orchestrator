@@ -14,6 +14,7 @@ graph TD
     auto["<b>:automation</b><br/>Test Automation<br/><i>tag staging, queue, drift detection</i>"]
     handover["<b>:handover</b><br/>Task Completion<br/><i>Jira closure, QA clipboard, copyright</i>"]
     git["<b>:git-integration</b><br/>Git Operations<br/><i>branch listeners, diff provider</i>"]
+    agent["<b>:agent</b><br/>AI Coding Agent<br/><i>ReAct loop, 52 tools, JCEF chat UI</i>"]
     mock["<b>:mock-server</b><br/>Test Support<br/><i>mock API responses for testing</i>"]
 
     root --> core
@@ -25,6 +26,7 @@ graph TD
     root --> auto
     root --> handover
     root --> git
+    root --> agent
 
     jira --> core
     bamboo --> core
@@ -35,6 +37,7 @@ graph TD
     auto -.->|"BambooApiClient<br/>(exception)"| bamboo
     handover --> core
     git --> core
+    agent --> core
 
     style core fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style jira fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
@@ -45,6 +48,7 @@ graph TD
     style auto fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
     style handover fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
     style git fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style agent fill:#4a2d6b,stroke:#b07ed6,color:#d4d4d4
     style root fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
     style mock fill:#3b3b3b,stroke:#808080,color:#d4d4d4
 ```
@@ -62,6 +66,7 @@ graph TD
 | `:automation` | Docker tag staging panel, tag validation via Nexus Registry API, drift detector, conflict detector, smart queue with auto-trigger, and config persistence |
 | `:handover` | Jira rich-text closure comment, Cody pre-review, copyright fix panel, time log dialog, and QA clipboard (formatted copy for email/Slack) |
 | `:git-integration` | Git branch change listeners, diff provider, and branch-to-ticket resolution |
+| `:agent` | AI coding agent with ReAct loop (50 max iterations), 52 tools across 9 categories, Sourcegraph Enterprise LLM API integration, LLM-controlled delegation (`delegate_task` spawning `WorkerSession`), interactive JCEF chat UI (chat, plan cards, question wizard, tools panel, skill banner), three-layer plan persistence, cross-session auto-memory, user-extensible SKILL.md system, and budget enforcement with LLM-powered context compression. First module using JCEF (embedded Chromium). |
 | `:mock-server` | Mock API server for integration testing |
 
 ## Dependency Rules
@@ -112,6 +117,7 @@ flowchart LR
         A[":automation"]
         H[":handover"]
         G[":git-integration"]
+        AG[":agent"]
     end
 
     EB["EventBus<br/>(SharedFlow)"]
@@ -134,6 +140,7 @@ flowchart LR
     A -->|AutomationTriggered<br/>QueuePositionChanged| EB
     H -->|JiraCommentPosted<br/>PreReviewFinished| EB
     G -->|BranchChanged| EB
+    AG -->|AgentTaskStarted<br/>AgentTaskCompleted<br/>AgentTaskFailed<br/>AgentWorkerProgress| EB
 
     EB --> J2
     EB --> B2

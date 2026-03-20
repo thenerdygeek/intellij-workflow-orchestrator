@@ -2,7 +2,7 @@
 
 ## Tool Window Structure
 
-One tool window named "Workflow", bottom-docked, with six tabs. Each tab is contributed by a `WorkflowTabProvider` extension point from its respective module.
+One tool window named "Workflow", bottom-docked, with seven tabs. Each tab is contributed by a `WorkflowTabProvider` extension point from its respective module. The Agent tab is the first to use JCEF (embedded Chromium) for its UI.
 
 ```mermaid
 graph TD
@@ -14,6 +14,7 @@ graph TD
     TW --> T4["Quality Tab<br/>(:sonar / QualityTabProvider)"]
     TW --> T5["Automation Tab<br/>(:automation / AutomationTabProvider)"]
     TW --> T6["Handover Tab<br/>(:handover / HandoverTabProvider)"]
+    TW --> T7["Agent Tab<br/>(:agent / AgentTabProvider)<br/><i>JCEF chat panel</i>"]
 
     subgraph "Title Bar Actions"
         A1["Refresh"]
@@ -41,6 +42,7 @@ graph TD
     style T4 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
     style T5 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
     style T6 fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style T7 fill:#4a2d6b,stroke:#b07ed6,color:#d4d4d4
 ```
 
 ## Tab Panel Hierarchies
@@ -124,6 +126,35 @@ graph TD
     style HP fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
 ```
 
+### Agent Tab (JCEF)
+
+The Agent tab uses a JCEF-based (embedded Chromium) chat panel -- the first module to use JCEF in the plugin. All other tabs use standard Swing/JB components.
+
+```mermaid
+graph TD
+    AT["AgentPanel<br/>(JCEF JBCefBrowser)"]
+    AT --> CP["Chat Panel<br/>(streaming responses, tool call badges)"]
+    AT --> TB["Toolbar<br/>(Skills dropdown, history panel)"]
+    AT --> PC["Plan Card<br/>(step status, per-step comments, approve/revise)"]
+    AT --> QW["Question Wizard<br/>(single/multi-select, back/skip/next)"]
+    AT --> TP["Tools Panel<br/>(categorized checkboxes, 4-tab detail view)"]
+    AT --> SB["Skill Banner<br/>(active skill indicator with dismiss)"]
+
+    CP --> TCB["Tool Call Badges<br/>(READ/EDIT/CMD/PLAN)"]
+    CP --> CD["Collapsible Details<br/>(tool output, file changes)"]
+
+    PC --> SS["Step Status Icons<br/>(pending/active/done/failed)"]
+    PC --> SC["Per-Step Comments"]
+    PC --> PA["Approve / Revise Buttons"]
+
+    QW --> QT["Chat About This<br/>(textarea)"]
+    QW --> QS["Summary Page"]
+
+    style AT fill:#4a2d6b,stroke:#b07ed6,color:#d4d4d4
+```
+
+**Plan Editor Tab:** Full-screen `FileEditor` with `JBCefBrowser` for reviewing and editing plans. Opened as an editor tab (not part of the tool window) via three-layer persistence: disk (`plan.json`), context anchor (planAnchor in conversation), and editor tab.
+
 ## Settings Pages
 
 ```mermaid
@@ -199,6 +230,7 @@ Every tab implements an empty state using `EmptyStatePanel` with a descriptive m
 | Quality | "No quality data available. Connect to SonarQube in Settings." |
 | Automation | "Automation suite not configured. Set up Bamboo in Settings." |
 | Handover | "No active task to hand over. Start work on a ticket first." |
+| Agent | "No agent session active. Type a message to start a coding task." |
 
 ## UI Component Rules
 
