@@ -12,8 +12,14 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
 
     class State : BaseState() {
         var agentEnabled by property(false)
-        /** Model name in Sourcegraph format: provider::apiVersion::modelId */
+        /**
+         * Model name in Sourcegraph format: provider::apiVersion::modelId
+         * Default is Sonnet 4, but auto-upgraded to latest Opus when models are loaded
+         * (if user hasn't manually changed the model).
+         */
         var sourcegraphChatModel by string("anthropic::2024-10-22::claude-sonnet-4-20250514")
+        /** Tracks whether the user has manually selected a model (prevents auto-upgrade). */
+        var userManuallySelectedModel by property(false)
         var maxInputTokens by property(150000)
         /** Max output tokens per LLM response. Sourcegraph API caps at 4000. */
         var maxOutputTokens by property(4000)

@@ -82,10 +82,13 @@ class AgentSettingsConfigurable(
 
                     combo.addActionListener {
                         val selected = combo.selectedItem
-                        if (selected is ModelItem) {
+                        if (selected is ModelItem && !selected.isSeparator) {
                             sourcegraphChatModel = selected.model.id
+                            // Mark as manually selected so auto-upgrade doesn't override
+                            settings.state.userManuallySelectedModel = true
                         } else if (selected is String) {
                             sourcegraphChatModel = selected
+                            settings.state.userManuallySelectedModel = true
                         }
                     }
 
@@ -178,11 +181,7 @@ class AgentSettingsConfigurable(
                 SwingUtilities.invokeLater {
                     when (result) {
                         is ApiResult.Success -> {
-                            cachedModels = result.data.data.sortedWith(
-                                compareBy<ModelInfo> { it.provider }
-                                    .thenBy { if (it.isThinkingModel) 0 else 1 }
-                                    .thenBy { it.modelName }
-                            )
+                            cachedModels = result.data.data
                             populateModelDropdown(cachedModels)
                             modelStatusLabel?.icon = AllIcons.General.InspectionsOK
                             modelStatusLabel?.text = "${cachedModels.size} models loaded"
@@ -212,25 +211,92 @@ class AgentSettingsConfigurable(
         val combo = modelComboBox ?: return
         val comboModel = DefaultComboBoxModel<ModelItem>()
 
-        for (model in models) {
-            comboModel.addElement(ModelItem(model))
+        // Group by provider, sorted: Anthropic first, then alphabetical
+        val grouped = models.groupBy { it.displayProvider }.toSortedMap(compareBy {
+            when (it) {
+                "Anthropic" -> "0"
+                "OpenAI" -> "1"
+                "Google" -> "2"
+                else -> "9$it"
+            }
+        })
+
+        // Within each provider, sort by tier (opus > sonnet > haiku) then thinking first
+        for ((provider, providerModels) in grouped) {
+            comboModel.addElement(ModelItem.separator("— $provider —"))
+            val sorted = providerModels.sortedWith(
+                compareBy<ModelInfo> { it.tier }
+                    .thenBy { if (it.isThinkingModel) 0 else 1 }
+                    .thenBy { it.displayName }
+            )
+            for (model in sorted) {
+                comboModel.addElement(ModelItem(model))
+            }
         }
 
         combo.model = comboModel
 
-        // Select the currently configured model if it's in the list
+        // Auto-select logic:
+        // 1. If user has a configured model that's in the list, select it
+        // 2. If user has the default model (never changed), auto-upgrade to best available
+        // 3. Otherwise select the best Opus/thinking model available
         val currentId = sourcegraphChatModel
-        if (currentId.isNotBlank()) {
-            val match = models.indexOfFirst { it.id == currentId }
-            if (match >= 0) {
-                combo.selectedIndex = match
-            } else {
-                // Current model not in list — add it as manual entry
-                val manualItem = ModelItem(ModelInfo(id = currentId), isManualEntry = true)
-                comboModel.insertElementAt(manualItem, 0)
-                combo.selectedIndex = 0
+        val userManuallySelected = settings.state.userManuallySelectedModel
+
+        if (userManuallySelected && currentId.isNotBlank()) {
+            // User manually set a model — respect their choice
+            selectModelInDropdown(combo, comboModel, currentId)
+        } else {
+            // User hasn't manually selected — auto-upgrade to best available
+            val bestModel = findBestModel(models)
+            if (bestModel != null) {
+                selectModelInDropdown(combo, comboModel, bestModel.id)
+                sourcegraphChatModel = bestModel.id
             }
         }
+    }
+
+    /**
+     * Find the best available model: prefer latest Opus thinking > Opus > latest Sonnet.
+     */
+    private fun findBestModel(models: List<ModelInfo>): ModelInfo? {
+        // Priority: Anthropic Opus thinking > Anthropic Opus > Anthropic Sonnet > other Opus > other
+        val anthropicModels = models.filter { it.provider == "anthropic" }
+
+        // 1. Latest Opus (thinking models are Opus-class)
+        val opusThinking = anthropicModels
+            .filter { it.isOpusClass && it.isThinkingModel }
+            .maxByOrNull { it.modelName }
+        if (opusThinking != null) return opusThinking
+
+        // 2. Latest Opus (any)
+        val opus = anthropicModels
+            .filter { it.isOpusClass }
+            .maxByOrNull { it.modelName }
+        if (opus != null) return opus
+
+        // 3. Latest Sonnet
+        val sonnet = anthropicModels
+            .filter { it.modelName.lowercase().contains("sonnet") }
+            .maxByOrNull { it.modelName }
+        if (sonnet != null) return sonnet
+
+        // 4. Any Anthropic model
+        return anthropicModels.maxByOrNull { it.modelName } ?: models.firstOrNull()
+    }
+
+    private fun selectModelInDropdown(combo: JComboBox<ModelItem>, comboModel: DefaultComboBoxModel<ModelItem>, modelId: String) {
+        for (i in 0 until comboModel.size) {
+            val item = comboModel.getElementAt(i)
+            if (!item.isSeparator && item.model.id == modelId) {
+                combo.selectedIndex = i
+                return
+            }
+        }
+        // Not found — add as manual entry at top
+        val manualItem = ModelItem(ModelInfo(id = modelId), isManualEntry = true)
+        comboModel.insertElementAt(manualItem, 0)
+        combo.selectedIndex = 0
     }
 
     override fun isModified(): Boolean {
@@ -297,9 +363,19 @@ class AgentSettingsConfigurable(
      */
     data class ModelItem(
         val model: ModelInfo,
-        val isManualEntry: Boolean = false
+        val isManualEntry: Boolean = false,
+        val isSeparator: Boolean = false,
+        val separatorText: String = ""
     ) {
-        override fun toString(): String = model.id
+        override fun toString(): String = if (isSeparator) separatorText else model.displayName
+
+        companion object {
+            fun separator(text: String) = ModelItem(
+                model = ModelInfo(id = ""),
+                isSeparator = true,
+                separatorText = text
+            )
+        }
     }
 
     /**
@@ -331,13 +407,15 @@ class AgentSettingsConfigurable(
                 AllIcons.Nodes.Plugin // Standard model icon
             }
 
-            // Text: provider + model name
-            val provider = model.provider.replaceFirstChar { it.uppercase() }
-            val name = model.modelName
-            label.text = if (value.isManualEntry) {
-                model.id
+            // Text: formatted model name + provider
+            val displayName = model.displayName
+            val provider = model.displayProvider
+            label.text = if (value.isManualEntry && !value.isSeparator) {
+                "<html><b>${model.displayName}</b> <span style='color:gray;font-size:11px;'>${model.displayProvider}</span></html>"
+            } else if (value.isSeparator) {
+                "<html><b style='color:gray;font-size:11px;'>${value.separatorText}</b></html>"
             } else {
-                "<html><b>$name</b> <span style='color:gray;font-size:11px;'>$provider</span></html>"
+                "<html><b>$displayName</b> <span style='color:gray;font-size:11px;'>$provider</span></html>"
             }
 
             // Selection styling

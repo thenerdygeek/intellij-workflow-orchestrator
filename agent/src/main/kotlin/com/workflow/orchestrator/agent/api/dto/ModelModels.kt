@@ -29,22 +29,77 @@ data class ModelInfo(
     /** Extract the model name (e.g., "claude-sonnet-4" from "anthropic::2024-10-22::claude-sonnet-4"). */
     val modelName: String get() = id.substringAfterLast("::", id)
 
-    /** Human-readable display name. */
-    val displayName: String get() {
-        val name = modelName
-            .replace("-", " ")
-            .replaceFirstChar { it.uppercase() }
-        return "$name (${provider})"
+    /** Extract the API version date from the model ID (e.g., "2024-10-22"). */
+    val apiVersion: String get() {
+        val parts = id.split("::")
+        return if (parts.size >= 3) parts[1] else ""
     }
 
-    /** Whether this is a thinking/reasoning model (extended thinking, o1, o3, etc). */
+    /** Human-readable display name with proper formatting. */
+    val displayName: String get() = formatModelName(modelName)
+
+    /** Provider name with proper capitalization. */
+    val displayProvider: String get() = when (provider.lowercase()) {
+        "anthropic" -> "Anthropic"
+        "openai" -> "OpenAI"
+        "google" -> "Google"
+        "fireworks" -> "Fireworks"
+        "amazon-bedrock" -> "Amazon Bedrock"
+        "azure-openai" -> "Azure OpenAI"
+        else -> provider.replaceFirstChar { it.uppercase() }
+    }
+
+    /** Whether this is a thinking/reasoning model. */
     val isThinkingModel: Boolean get() {
         val lower = id.lowercase()
         return lower.contains("thinking") ||
             lower.contains("o1") ||
             lower.contains("o3") ||
             lower.contains("reasoner") ||
-            lower.contains("deep-think") ||
-            lower.contains("claude-opus") // Opus models are typically used for deep reasoning
+            lower.contains("deep-think")
+    }
+
+    /** Whether this is an Opus-class model (highest capability). */
+    val isOpusClass: Boolean get() = modelName.lowercase().contains("opus")
+
+    /** Model tier for sorting: opus > sonnet > haiku > other. */
+    val tier: Int get() = when {
+        modelName.lowercase().contains("opus") -> 0
+        modelName.lowercase().contains("sonnet") -> 1
+        modelName.lowercase().contains("haiku") -> 2
+        modelName.lowercase().contains("gpt-4") -> 1
+        modelName.lowercase().contains("gpt-3") -> 2
+        modelName.lowercase().contains("gemini-pro") -> 1
+        else -> 3
+    }
+
+    companion object {
+        /**
+         * Format a raw model name like "claude-sonnet-4-20250514" into
+         * a human-readable name like "Claude Sonnet 4".
+         */
+        fun formatModelName(raw: String): String {
+            // Remove date suffix (e.g., -20250514, -20241022)
+            val withoutDate = raw.replace(Regex("-\\d{8}$"), "")
+
+            // Split on hyphens and capitalize
+            val parts = withoutDate.split("-").map { part ->
+                when (part.lowercase()) {
+                    "claude" -> "Claude"
+                    "gpt" -> "GPT"
+                    "o1", "o3" -> part.uppercase()
+                    "pro" -> "Pro"
+                    "mini" -> "Mini"
+                    "gemini" -> "Gemini"
+                    "flash" -> "Flash"
+                    "opus" -> "Opus"
+                    "sonnet" -> "Sonnet"
+                    "haiku" -> "Haiku"
+                    else -> part.replaceFirstChar { it.uppercase() }
+                }
+            }
+
+            return parts.joinToString(" ")
+        }
     }
 }
