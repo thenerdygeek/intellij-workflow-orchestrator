@@ -68,7 +68,7 @@ class SingleAgentSession(
         private val RATE_LIMIT_BACKOFF_MS = longArrayOf(2000, 4000, 8000)
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
-        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task")
+        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think")
     }
 
     /**

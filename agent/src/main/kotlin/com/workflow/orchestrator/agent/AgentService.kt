@@ -106,6 +106,8 @@ class AgentService(
             // Meta-tools
             register(RequestToolsTool())
             register(DelegateTaskTool())
+            register(ThinkTool())
+            register(SaveMemoryTool())
 
             // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
             register(SemanticDiagnosticsTool()) // name = "diagnostics"

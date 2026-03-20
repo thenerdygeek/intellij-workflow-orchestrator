@@ -30,7 +30,8 @@ object ToolCategoryRegistry {
                 "diagnostics", "format_code", "optimize_imports",
                 "file_structure", "find_definition", "find_references",
                 "type_hierarchy", "call_hierarchy",
-                "delegate_task"
+                "delegate_task",
+                "think"
             )
         ),
         ToolCategory(
@@ -95,7 +96,7 @@ object ToolCategoryRegistry {
             color = "#F59E0B",
             badgePrefix = "PLAN",
             description = "Create and update implementation plans",
-            tools = listOf("create_plan", "update_plan_step", "ask_questions")
+            tools = listOf("create_plan", "update_plan_step", "ask_questions", "save_memory")
         )
     )
 
