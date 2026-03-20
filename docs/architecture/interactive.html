@@ -474,16 +474,18 @@ svg text { font-family: inherit; }
       .style('top',  (event.pageY - 20) + 'px');
   });
 
-  /* Drag */
+  /* Drag — unfix all nodes to let simulation rebalance, then re-fix on end */
   nodeEls.call(d3.drag()
     .on('start', (event, d) => {
+      nodes.forEach(n => { n.fx = null; n.fy = null; }); /* Unfix all for rebalancing */
       if (!event.active) sim.alphaTarget(0.3).restart();
       d.fx = d.x; d.fy = d.y;
     })
     .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
     .on('end', (event, d) => {
       if (!event.active) sim.alphaTarget(0);
-      d.fx = null; d.fy = null;
+      /* Re-fix all nodes after drag settles */
+      setTimeout(() => { nodes.forEach(n => { n.fx = n.x; n.fy = n.y; }); }, 2000);
     })
   );
 
@@ -493,6 +495,7 @@ svg text { font-family: inherit; }
     .force('charge', d3.forceManyBody().strength(-400))
     .force('center', d3.forceCenter(width / 2, height / 2))
     .force('collision', d3.forceCollide().radius(d => d.r + 20))
+    .alphaDecay(0.03)
     .on('tick', () => {
       linkEls
         .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
@@ -501,6 +504,10 @@ svg text { font-family: inherit; }
         .attr('x', d => (d.source.x + d.target.x) / 2)
         .attr('y', d => (d.source.y + d.target.y) / 2 - 8);
       nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+    })
+    .on('end', () => {
+      /* Fix all nodes in place once simulation settles — prevents hover jitter */
+      nodes.forEach(n => { n.fx = n.x; n.fy = n.y; });
     });
 
   /* Animated entrance — start nodes off-screen */
