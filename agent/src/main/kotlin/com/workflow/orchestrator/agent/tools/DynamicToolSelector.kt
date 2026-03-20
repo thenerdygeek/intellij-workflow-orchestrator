@@ -134,11 +134,12 @@ object DynamicToolSelector {
         // Add LLM-activated tools from request_tools
         selectedNames.addAll(activatedTools)
 
-        // Always include request_tools meta-tool
-        selectedNames.add("request_tools")
-
         // Remove user-disabled tools
         selectedNames.removeAll(disabledTools)
+
+        // Always include request_tools meta-tool AFTER removing disabled tools
+        // — this is the LLM's escape hatch; disabling it breaks the hybrid system
+        selectedNames.add("request_tools")
 
         return allTools.filter { it.name in selectedNames }
     }
