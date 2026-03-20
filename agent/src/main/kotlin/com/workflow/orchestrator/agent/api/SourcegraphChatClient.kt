@@ -205,9 +205,22 @@ class SourcegraphChatClient(
             }
         }
 
-        // Phase 3: drop messages with empty/null content (Anthropic rejects these)
+        // Phase 3: handle empty/null content (Anthropic rejects "message content cannot be empty")
+        // Case 1: Messages with no content AND no tool calls → drop entirely
         merged.removeAll { msg ->
             msg.content.isNullOrBlank() && msg.toolCalls.isNullOrEmpty()
+        }
+        // Case 2: Assistant messages with tool calls but null/empty content → set placeholder
+        // (LLM often returns content=null when making tool calls — this is normal)
+        for (i in merged.indices) {
+            val msg = merged[i]
+            if (msg.role == "assistant" && msg.content.isNullOrBlank() && !msg.toolCalls.isNullOrEmpty()) {
+                merged[i] = ChatMessage(
+                    role = "assistant",
+                    content = "Using tools.",
+                    toolCalls = msg.toolCalls
+                )
+            }
         }
 
         // Phase 4: ensure conversation starts with "user"

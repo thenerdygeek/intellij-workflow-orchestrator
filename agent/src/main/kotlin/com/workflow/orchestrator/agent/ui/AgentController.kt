@@ -487,12 +487,11 @@ class AgentController(
                 dashboard.appendToolCall(toolInfo.toolName, toolInfo.args, RichStreamingPanel.ToolCallStatus.RUNNING)
             }
             progress.step.startsWith("Used tool:") && toolInfo != null -> {
-                // Post-execution: update with result
+                // Post-execution: update the existing RUNNING entry (don't append a new one)
                 if (toolInfo.editFilePath != null && toolInfo.editOldText != null && toolInfo.editNewText != null) {
                     dashboard.appendEditDiff(toolInfo.editFilePath, toolInfo.editOldText, toolInfo.editNewText, !toolInfo.isError)
                 } else {
                     val status = if (toolInfo.isError) RichStreamingPanel.ToolCallStatus.FAILED else RichStreamingPanel.ToolCallStatus.SUCCESS
-                    dashboard.appendToolCall(toolInfo.toolName, toolInfo.args, status)
                     dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs)
                 }
 
