@@ -43,6 +43,7 @@ class AgentCefPanel(
     private var promptQuery: JBCefJSQuery? = null
     private var planApproveQuery: JBCefJSQuery? = null
     private var planReviseQuery: JBCefJSQuery? = null
+    private var toolToggleQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -60,6 +61,9 @@ class AgentCefPanel(
 
     /** Callback when user clicks "Revise with Comments" on a plan card. JSON string of {stepId: comment}. */
     var onPlanRevised: ((String) -> Unit)? = null
+
+    /** Callback when user toggles a tool checkbox in the Tools panel. */
+    var onToolToggled: ((String, Boolean) -> Unit)? = null
 
     init {
         try {
@@ -104,6 +108,18 @@ class AgentCefPanel(
         planReviseQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { commentsJson -> onPlanRevised?.invoke(commentsJson); JBCefJSQuery.Response("ok") }
         }
+        toolToggleQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                // data format: "tool_name:1" or "tool_name:0"
+                val colonIdx = data.lastIndexOf(':')
+                if (colonIdx > 0) {
+                    val toolName = data.substring(0, colonIdx)
+                    val enabled = data.substring(colonIdx + 1) == "1"
+                    onToolToggled?.invoke(toolName, enabled)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -134,6 +150,10 @@ class AgentCefPanel(
                     planReviseQuery?.let { q ->
                         val planReviseJs = q.inject("comments")
                         js("window._revisePlan = function(comments) { $planReviseJs }")
+                    }
+                    toolToggleQuery?.let { q ->
+                        val toolToggleJs = q.inject("data")
+                        js("window._toggleTool = function(data) { $toolToggleJs }")
                     }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
@@ -211,6 +231,14 @@ class AgentCefPanel(
 
     fun clear() {
         callJs("clearChat()")
+    }
+
+    fun showToolsPanel(toolsJson: String) {
+        callJs("showToolsPanel(${jsonStr(toolsJson)})")
+    }
+
+    fun hideToolsPanel() {
+        callJs("closeToolsPanel()")
     }
 
     fun renderPlan(planJson: String) {
@@ -321,12 +349,14 @@ class AgentCefPanel(
         promptQuery?.dispose()
         planApproveQuery?.dispose()
         planReviseQuery?.dispose()
+        toolToggleQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
         promptQuery = null
         planApproveQuery = null
         planReviseQuery = null
+        toolToggleQuery = null
         browser = null
     }
 }
