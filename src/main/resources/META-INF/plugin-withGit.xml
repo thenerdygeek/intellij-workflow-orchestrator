@@ -16,5 +16,7 @@
     <projectListeners>
         <listener class="com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector"
                   topic="com.intellij.openapi.vcs.BranchChangeListener"/>
+        <listener class="com.workflow.orchestrator.core.events.BranchChangedEventEmitter"
+                  topic="com.intellij.openapi.vcs.BranchChangeListener"/>
     </projectListeners>
 </idea-plugin>

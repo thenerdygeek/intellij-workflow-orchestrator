@@ -12,6 +12,8 @@ import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import kotlinx.coroutines.*
 import com.workflow.orchestrator.core.ui.TimeFormatter
@@ -143,6 +145,15 @@ class PrDashboardPanel(
                 ?: currentReviewingPrs.find { it.id == prId }
             if (prDetail != null) {
                 detailPanel.showPrDetail(prDetail)
+                // Emit PrSelected event so other tabs (Quality) can update branch context
+                val fromBranch = prDetail.fromRef?.displayId ?: ""
+                val toBranch = prDetail.toRef?.displayId ?: ""
+                if (fromBranch.isNotBlank()) {
+                    scope.launch {
+                        project.getService(EventBus::class.java)
+                            .emit(WorkflowEvent.PrSelected(prId, fromBranch, toBranch))
+                    }
+                }
             } else {
                 detailPanel.showPr(prId)
             }

@@ -121,5 +121,17 @@ sealed class WorkflowEvent {
         val byUser: String
     ) : WorkflowEvent()
 
+    /** Emitted when the git branch changes (via BranchChangeListener). */
+    data class BranchChanged(
+        val branchName: String
+    ) : WorkflowEvent()
+
+    /** Emitted when a PR is selected in the PR dashboard. */
+    data class PrSelected(
+        val prId: Int,
+        val fromBranch: String,
+        val toBranch: String
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

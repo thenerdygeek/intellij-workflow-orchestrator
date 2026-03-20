@@ -5,6 +5,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
@@ -52,6 +54,50 @@ class SonarDataService(private val project: Project) : Disposable {
     private val currentBranch: String get() {
         val repos = GitRepositoryManager.getInstance(project).repositories
         return repos.firstOrNull()?.currentBranchName ?: (settings.state.defaultTargetBranch ?: "develop")
+    }
+
+    init {
+        subscribeToEvents()
+    }
+
+    /**
+     * Subscribe to cross-module events that affect the Quality tab's branch context:
+     * - [WorkflowEvent.PrSelected]: refresh with the PR's source branch
+     * - [WorkflowEvent.BranchChanged]: refresh with the newly checked-out branch
+     * - [WorkflowEvent.BuildFinished]: refresh with current branch (build may trigger new Sonar analysis)
+     */
+    private fun subscribeToEvents() {
+        val eventBus = project.getService(EventBus::class.java) ?: return
+        scope.launch {
+            eventBus.events.collect { event ->
+                when (event) {
+                    is WorkflowEvent.PrSelected -> {
+                        log.info("[Sonar:Events] PR selected (id=${event.prId}), refreshing for branch '${event.fromBranch}'")
+                        refreshForBranch(event.fromBranch)
+                    }
+                    is WorkflowEvent.BranchChanged -> {
+                        log.info("[Sonar:Events] Branch changed to '${event.branchName}', refreshing quality data")
+                        refreshForBranch(event.branchName)
+                    }
+                    is WorkflowEvent.BuildFinished -> {
+                        log.info("[Sonar:Events] Build finished (${event.planKey}#${event.buildNumber}), refreshing quality data for current branch")
+                        refreshForBranch(currentBranch)
+                    }
+                    else -> { /* not relevant to sonar */ }
+                }
+            }
+        }
+    }
+
+    /**
+     * Refresh Sonar data for a specific branch. Called when cross-module events
+     * indicate the branch context has changed (PR selected, git branch switch, build finished).
+     */
+    fun refreshForBranch(branch: String) {
+        val client = apiClient ?: return
+        val projectKey = settings.state.sonarProjectKey.orEmpty()
+        if (projectKey.isBlank()) return
+        scope.launch { refreshWith(client, projectKey, branch) }
     }
 
     fun refresh() {
