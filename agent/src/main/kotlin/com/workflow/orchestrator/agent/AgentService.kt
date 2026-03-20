@@ -10,9 +10,11 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.*
+import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.psi.*
+import com.workflow.orchestrator.agent.tools.vcs.*
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -92,6 +94,16 @@ class AgentService(
             register(ListQuickFixesTool())
             register(CompileModuleTool())
             register(RunTestsTool())
+
+            // VCS / navigation tools
+            register(GitStatusTool())
+            register(GitBlameTool())
+            register(FindImplementationsTool())
+
+            // Framework tools
+            register(SpringConfigTool())
+            register(JpaEntitiesTool())
+            register(ProjectModulesTool())
         }
     }
 
