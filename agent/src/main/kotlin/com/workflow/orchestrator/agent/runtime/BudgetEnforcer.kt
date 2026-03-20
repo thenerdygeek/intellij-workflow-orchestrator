@@ -16,7 +16,7 @@ import com.workflow.orchestrator.agent.context.ContextManager
  */
 class BudgetEnforcer(
     private val contextManager: ContextManager,
-    private val effectiveBudget: Int = 150_000
+    private val effectiveBudget: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens
 ) {
     companion object {
         private val LOG = Logger.getInstance(BudgetEnforcer::class.java)

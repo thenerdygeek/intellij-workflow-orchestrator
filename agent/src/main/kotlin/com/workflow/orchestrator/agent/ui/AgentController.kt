@@ -469,7 +469,7 @@ class AgentController(
     }
 
     private fun handleProgress(progress: AgentProgress) {
-        val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { 150_000 }
+        val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { AgentSettings.DEFAULTS.maxInputTokens }
         SwingUtilities.invokeLater { dashboard.updateProgress(progress.step, progress.tokensUsed, maxTokens) }
 
         val toolInfo = progress.toolCallInfo

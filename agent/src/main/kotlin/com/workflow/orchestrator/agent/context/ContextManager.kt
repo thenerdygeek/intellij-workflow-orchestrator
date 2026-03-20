@@ -20,7 +20,7 @@ import com.workflow.orchestrator.core.model.ApiResult
  * truncation summarizer.
  */
 class ContextManager(
-    private val maxInputTokens: Int = 150_000,
+    private val maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
     private val brain: LlmBrain? = null,
     private val tMaxRatio: Double = 0.70,
     private val tRetainedRatio: Double = 0.40,
