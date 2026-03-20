@@ -75,6 +75,11 @@ class ContextManager(
         messages.add(message)
         totalTokens += tokenCount
 
+        // Reconcile every 20 messages to prevent drift from summary growth
+        if (messages.size % 20 == 0 && anchoredSummaries.isNotEmpty()) {
+            totalTokens = TokenEstimator.estimate(getMessages())
+        }
+
         if (totalTokens > tMax) {
             compress()
         }
@@ -83,9 +88,12 @@ class ContextManager(
     /** Add a tool result, compressing it first if it exceeds the tool result budget. */
     fun addToolResult(toolCallId: String, content: String, summary: String) {
         val compressed = ToolResultCompressor.compress(content, summary, toolResultMaxTokens)
+        // Wrap in <external_data> tags for prompt injection defense.
+        // System prompt instructs LLM to never follow instructions within these tags.
+        val wrapped = "<external_data>\n$compressed\n</external_data>"
         addMessage(ChatMessage(
             role = "tool",
-            content = compressed,
+            content = wrapped,
             toolCallId = toolCallId
         ))
     }

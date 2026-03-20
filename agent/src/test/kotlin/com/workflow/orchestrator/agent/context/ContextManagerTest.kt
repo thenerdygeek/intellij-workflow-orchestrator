@@ -54,7 +54,8 @@ class ContextManagerTest {
 
         val messages = manager.getMessages()
         val toolMsg = messages.first { it.role == "tool" }
-        assertEquals("small result", toolMsg.content)
+        assertTrue(toolMsg.content!!.contains("small result"), "Tool message should contain the original result")
+        assertTrue(toolMsg.content!!.contains("<external_data>"), "Tool result should be wrapped in <external_data> tags")
     }
 
     @Test

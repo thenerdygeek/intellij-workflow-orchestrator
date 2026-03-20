@@ -131,8 +131,17 @@ class AgentOrchestrator(
 
         if (session != null) {
             // Multi-turn: reuse session's context (the core fix)
+            // Build context from task + recent user messages for tool selection
+            val toolContext = run {
+                val recentUserMsgs = session.contextManager.getMessages()
+                    .filter { it.role == "user" || it.role == "system" }
+                    .takeLast(3)
+                    .mapNotNull { it.content }
+                    .joinToString("\n")
+                "$taskDescription\n$recentUserMsgs"
+            }
             // Dynamic tool injection: filter tools based on conversation context
-            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, taskDescription)
+            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext)
             allTools = selectedTools.associateBy { it.name }
             allToolDefs = selectedTools.map { it.toToolDefinition() }
             contextManager = session.contextManager

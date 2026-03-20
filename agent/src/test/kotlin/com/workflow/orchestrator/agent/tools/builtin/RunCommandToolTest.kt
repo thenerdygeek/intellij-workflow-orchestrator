@@ -113,15 +113,19 @@ class RunCommandToolTest {
     @Test
     fun `execute uses custom working directory`() = runTest {
         val tool = RunCommandTool()
+        // Use a subdirectory relative to the project basePath so PathValidator accepts it
+        val subDir = tempDir.resolve("sub")
+        subDir.toFile().mkdirs()
+        val projectForTest = mockk<Project> { every { basePath } returns tempDir.toFile().absolutePath }
         val params = buildJsonObject {
             put("command", "pwd")
-            put("working_dir", tempDir.toFile().absolutePath)
+            put("working_dir", subDir.toFile().absolutePath)
         }
 
-        val result = tool.execute(params, project)
+        val result = tool.execute(params, projectForTest)
 
         assertFalse(result.isError)
-        assertTrue(result.content.contains(tempDir.toFile().absolutePath))
+        assertTrue(result.content.contains(subDir.toFile().canonicalPath))
     }
 
     @Test
@@ -146,7 +150,9 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("not found"))
+        // PathValidator rejects paths outside the project directory
+        assertTrue(result.content.contains("outside the project directory") || result.content.contains("not found"),
+            "Expected path validation error, got: ${result.content}")
     }
 
     @Test
