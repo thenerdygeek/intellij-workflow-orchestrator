@@ -31,11 +31,11 @@ AgentController (UI entry point)
 - **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (46 total, 9 categories)
+## Tools (50 total, 9 categories)
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task |
+| Core (always active) | read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task, think |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests |
 | VCS & Navigation | git_status, git_blame, find_implementations |
 | Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules |
@@ -43,7 +43,7 @@ AgentController (UI entry point)
 | CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results |
 | Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_project_health |
 | Pull Requests — Bitbucket | bitbucket_create_pr |
-| Planning | create_plan, update_plan_step, ask_questions |
+| Planning | create_plan, update_plan_step, ask_questions, save_memory |
 
 ## Tool Selection (Hybrid)
 
@@ -73,6 +73,15 @@ Three layers:
 - Plan: `{sessionId}/plan.json`
 - Checkpoints: `{sessionId}/checkpoint.json`
 - Global index: `GlobalSessionIndex` (app-level `PersistentStateComponent`)
+
+## Cross-Session Memory
+
+- Location: `{projectBasePath}/.workflow/agent/memory/`
+- Index: `MEMORY.md` (first 200 lines loaded at session start)
+- Topic files: `{topic}.md` (loaded inline after index, most recent first)
+- LLM saves via `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
+- Injected into system prompt as `<agent_memory>` section
+- `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
 ## Security
 
