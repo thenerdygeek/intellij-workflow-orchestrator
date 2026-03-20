@@ -24,7 +24,7 @@ object PathValidator {
             )
         }
 
-        val resolved = if (rawPath.startsWith("/")) rawPath else "$projectBasePath/$rawPath"
+        val resolved = if (File(rawPath).isAbsolute) rawPath else File(projectBasePath, rawPath).path
 
         val canonical = try {
             File(resolved).canonicalPath

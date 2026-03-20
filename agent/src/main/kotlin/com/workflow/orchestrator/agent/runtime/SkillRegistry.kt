@@ -115,7 +115,7 @@ class SkillRegistry(
                 val skillFile = File(skillDir, "SKILL.md")
                 if (!skillFile.isFile) continue
                 // Validate skill file is within the skills directory (prevent symlink escape)
-                if (!skillFile.canonicalPath.startsWith(dir.canonicalPath)) {
+                if (!skillFile.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
                     LOG.warn("SkillRegistry: path traversal blocked for skill at ${skillFile.path}")
                     continue
                 }
