@@ -55,6 +55,9 @@ class ConversationSession private constructor(
     /** Plan manager for Antigravity-style planning. Persists across turns within a session. */
     val planManager: PlanManager = PlanManager()
 
+    /** Question manager for ask_questions tool. Persists across turns within a session. */
+    val questionManager: QuestionManager = QuestionManager()
+
     /** Tracks files the agent has recently read or edited. LRU cache with 10 file limit. */
     val workingSet: WorkingSet = WorkingSet()
 
