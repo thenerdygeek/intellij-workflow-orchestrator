@@ -60,25 +60,9 @@ class EditFileTool : AgentTool {
             )
         }
 
-        // Check if approval is required before editing
-        try {
-            val settings = com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project)
-            if (settings.state.approvalRequiredForEdits) {
-                // Return the proposed diff instead of applying — the UI will show approval dialog
-                val diff = "--- $rawPath\n+++ $rawPath\n@@ edit @@\n-${oldString.take(200)}\n+${newString.take(200)}"
-                return ToolResult(
-                    content = "APPROVAL_REQUIRED: Edit NOT applied — pending user approval.\n$diff",
-                    summary = "Edit pending approval for $rawPath",
-                    tokenEstimate = TokenEstimator.estimate(diff),
-                    artifacts = listOf(path),
-                    isError = true // Signal to LLM that the edit was NOT applied
-                )
-            }
-        } catch (_: Exception) {
-            // Settings not available (e.g., testing) — proceed without approval
-        }
-
         // Apply the edit
+        // NOTE: Approval is handled by ApprovalGate in SingleAgentSession BEFORE
+        // this tool executes. No need for tool-level approval check.
         val newContent = content.replace(oldString, newString)
 
         // Syntax validation gate: reject edits that introduce syntax errors

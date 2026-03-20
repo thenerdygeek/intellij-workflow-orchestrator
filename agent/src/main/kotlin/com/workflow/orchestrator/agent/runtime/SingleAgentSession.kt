@@ -117,11 +117,11 @@ class SingleAgentSession(
 
         sessionTrace?.sessionStarted(task, tools.size, effectiveBudget - contextManager.remainingBudget(), effectiveBudget)
 
-        // Use provided system prompt (from PromptAssembler) or fall back to basic prompt
-        val resolvedSystemPrompt = systemPrompt ?: buildFallbackSystemPrompt()
-
-        // Initialize context
-        contextManager.addMessage(ChatMessage(role = "system", content = resolvedSystemPrompt))
+        // Only add system prompt if explicitly provided (first message).
+        // On multi-turn, systemPrompt is null — already in context from session.initialize().
+        if (systemPrompt != null) {
+            contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+        }
         contextManager.addMessage(ChatMessage(role = "user", content = task))
 
         // Initialize LoopGuard for loop detection and auto-verification

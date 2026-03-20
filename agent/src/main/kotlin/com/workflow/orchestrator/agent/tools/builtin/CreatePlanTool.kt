@@ -11,6 +11,11 @@ import com.workflow.orchestrator.agent.runtime.PlanStep
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -62,9 +67,32 @@ class CreatePlanTool : AgentTool {
 
         val plan = AgentPlan(goal = goal, approach = approach, steps = steps, testing = testing)
 
-        // Submit plan and BLOCK until user approves or revises
-        // This runs on Dispatchers.IO so blocking is acceptable
-        val result = planManager.submitPlan(plan).get()
+        // Submit plan and suspend until user approves or revises.
+        // Uses suspendCancellableCoroutine instead of CompletableFuture.get() to avoid
+        // permanently blocking the IO thread if the user never responds.
+        val result = try {
+            withTimeoutOrNull(600_000L) { // 10 minute timeout
+                suspendCancellableCoroutine<PlanApprovalResult> { cont ->
+                    val future = planManager.submitPlan(plan)
+                    cont.invokeOnCancellation { future.cancel(true) }
+                    future.whenComplete { value, error ->
+                        if (error != null) {
+                            if (!cont.isCompleted) cont.resumeWithException(error)
+                        } else {
+                            if (!cont.isCompleted) cont.resume(value)
+                        }
+                    }
+                }
+            } ?: return ToolResult(
+                "Plan approval timed out after 10 minutes. Please try again.",
+                "Plan timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            )
+        } catch (e: CancellationException) {
+            return ToolResult(
+                "Plan approval was cancelled.",
+                "Plan cancelled", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            )
+        }
 
         return when (result) {
             is PlanApprovalResult.Approved -> {
