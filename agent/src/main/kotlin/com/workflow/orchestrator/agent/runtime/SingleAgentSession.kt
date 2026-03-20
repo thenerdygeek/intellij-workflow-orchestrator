@@ -144,6 +144,29 @@ class SingleAgentSession(
                 tokensUsed = totalTokensUsed
             ))
 
+            // Check for pending tool activations from request_tools
+            try {
+                val agentService = com.workflow.orchestrator.agent.AgentService.getInstance(project)
+                val pending = mutableSetOf<String>()
+                while (agentService.pendingToolActivations.isNotEmpty()) {
+                    agentService.pendingToolActivations.poll()?.let { pending.add(it) }
+                }
+                if (pending.isNotEmpty()) {
+                    // Expand active tools with the requested ones
+                    val allRegisteredTools = agentService.toolRegistry.allTools().associateBy { it.name }
+                    for (name in pending) {
+                        if (name !in activeTools) {
+                            val tool = allRegisteredTools[name]
+                            if (tool != null) {
+                                activeTools = activeTools + (name to tool)
+                                activeToolDefs = activeToolDefs + tool.toToolDefinition()
+                            }
+                        }
+                    }
+                    LOG.info("SingleAgentSession: expanded tool set with ${pending.size} tools from request_tools: $pending")
+                }
+            } catch (_: Exception) { /* AgentService not available */ }
+
             // Budget check before each LLM call
             when (budgetEnforcer.check()) {
                 BudgetEnforcer.BudgetStatus.ESCALATE -> {
