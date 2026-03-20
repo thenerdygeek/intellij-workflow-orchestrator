@@ -90,6 +90,8 @@ class AgentService(
             register(RunInspectionsTool())
             register(RefactorRenameTool())
             register(ListQuickFixesTool())
+            register(CompileModuleTool())
+            register(RunTestsTool())
         }
     }
 
