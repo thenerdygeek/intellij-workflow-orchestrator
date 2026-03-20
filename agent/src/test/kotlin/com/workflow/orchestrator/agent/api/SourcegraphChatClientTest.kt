@@ -87,7 +87,7 @@ class SourcegraphChatClientTest {
     }
 
     @Test
-    fun `sendMessage clamps maxTokens to 4000`() = runTest {
+    fun `sendMessage passes through maxTokens without clamping`() = runTest {
         server.enqueue(MockResponse().setBody("""
             {"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}
         """.trimIndent()))
@@ -95,13 +95,12 @@ class SourcegraphChatClientTest {
         client.sendMessage(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
             tools = null,
-            maxTokens = 64000 // Above Sourcegraph's 4000 limit
+            maxTokens = 64000 // Passed through — limit varies per model and instance
         )
 
         val request = server.takeRequest()
         val body = request.body.readUtf8()
-        assertTrue(body.contains("\"max_tokens\":4000"), "max_tokens should be clamped to 4000. Body: $body")
-        assertFalse(body.contains("64000"), "Should not contain original unclamped value")
+        assertTrue(body.contains("\"max_tokens\":64000"), "max_tokens should be passed through. Body: $body")
     }
 
     @Test

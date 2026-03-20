@@ -354,17 +354,51 @@ class SingleAgentSession(
         }
 
         // Handle truncated responses (output token limit hit).
-        // With Sourcegraph's 4K output cap, truncation is common for longer answers.
-        // Instead of returning an incomplete answer, ask the LLM to continue.
-        if (choice.finishReason == "length" && toolCalls.isNullOrEmpty()) {
-            LOG.info("SingleAgentSession: response truncated (finishReason=length), requesting continuation")
-            contextManager.addMessage(ChatMessage(
-                role = "user",
-                content = "Your response was truncated due to the output token limit. " +
-                    "If you were about to use a tool, please do so now. " +
-                    "If you were providing a final answer, please provide a concise summary instead."
-            ))
-            return null // continue loop to get complete response
+        // finishReason="length" means the model hit max_tokens before completing.
+        // Two cases: (1) truncated text response, (2) truncated tool call (invalid JSON).
+        if (choice.finishReason == "length") {
+            if (toolCalls.isNullOrEmpty()) {
+                // Case 1: Text response truncated — ask to continue or summarize
+                LOG.info("SingleAgentSession: text response truncated (finishReason=length), requesting continuation")
+                contextManager.addMessage(ChatMessage(
+                    role = "user",
+                    content = "Your response was truncated due to the output token limit. " +
+                        "If you were about to use a tool, please do so now. " +
+                        "If you were providing a final answer, please provide a concise summary instead."
+                ))
+                return null // continue loop
+            } else {
+                // Case 2: Tool call likely truncated (JSON may be invalid).
+                // Don't try to parse — the arguments are probably incomplete.
+                // Ask the LLM to retry with a smaller operation.
+                LOG.warn("SingleAgentSession: tool call truncated (finishReason=length with ${toolCalls.size} tool calls)")
+                eventLog?.log(AgentEventType.TOOL_FAILED, "Tool call truncated at output limit")
+
+                // Check if the tool call JSON is actually valid before giving up
+                val firstCall = toolCalls.firstOrNull()
+                val jsonValid = if (firstCall != null) {
+                    try { json.decodeFromString<kotlinx.serialization.json.JsonObject>(firstCall.function.arguments); true }
+                    catch (_: Exception) { false }
+                } else false
+
+                if (jsonValid) {
+                    // JSON is valid despite length finish — proceed normally (model finished the tool call just in time)
+                    LOG.info("SingleAgentSession: tool call JSON is valid despite finishReason=length, proceeding")
+                } else {
+                    // JSON is truncated — ask LLM to retry with smaller scope
+                    LOG.warn("SingleAgentSession: tool call JSON is invalid/truncated, requesting smaller operation")
+                    val truncatedToolName = firstCall?.function?.name ?: "unknown"
+                    contextManager.addAssistantMessage(message) // preserve what was generated
+                    contextManager.addMessage(ChatMessage(
+                        role = "user",
+                        content = "Your previous tool call to '$truncatedToolName' was truncated because " +
+                            "it exceeded the output token limit. The arguments were incomplete and could not be parsed. " +
+                            "Please retry with a SMALLER operation — for example, edit one function at a time " +
+                            "instead of an entire file, or break the task into multiple tool calls."
+                    ))
+                    return null // continue loop with retry guidance
+                }
+            }
         }
 
         if (toolCalls.isNullOrEmpty()) {
