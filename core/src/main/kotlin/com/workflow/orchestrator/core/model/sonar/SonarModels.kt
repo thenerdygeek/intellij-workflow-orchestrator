@@ -56,3 +56,15 @@ data class SonarProjectData(
     val key: String,
     val name: String
 )
+
+/**
+ * SonarQube Compute Engine analysis task data for build correlation.
+ */
+@Serializable
+data class SonarAnalysisTaskData(
+    val id: String,
+    val status: String,        // SUCCESS, FAILED, PENDING, IN_PROGRESS, CANCELED
+    val branch: String?,
+    val errorMessage: String?,
+    val executionTimeMs: Long?
+)

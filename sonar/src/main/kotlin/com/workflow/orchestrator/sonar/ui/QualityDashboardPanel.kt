@@ -44,6 +44,17 @@ class QualityDashboardPanel(
         border = JBUI.Borders.empty(0, 8, 4, 8)
         isVisible = false
     }
+    private val analysisStatusLabel = JBLabel("").apply {
+        font = font.deriveFont(Font.PLAIN, 10f)
+        border = JBUI.Borders.empty(0, 8, 2, 8)
+        isVisible = false
+    }
+    private val newCodePeriodLabel = JBLabel("").apply {
+        font = font.deriveFont(Font.PLAIN, 10f)
+        foreground = JBColor(Color(0x60, 0x60, 0x60), Color(0xA0, 0xA0, 0xA0))
+        border = JBUI.Borders.empty(0, 8, 4, 8)
+        isVisible = false
+    }
     private val overviewPanel = OverviewPanel(project)
     private val issueListPanel = IssueListPanel(project)
     private val coverageTablePanel = CoverageTablePanel(project)
@@ -80,6 +91,8 @@ class QualityDashboardPanel(
             isOpaque = false
             add(branchInfoLabel)
             add(branchWarningLabel)
+            add(analysisStatusLabel)
+            add(newCodePeriodLabel)
         }
 
         // Top section: toolbar + branch info
@@ -199,6 +212,57 @@ class QualityDashboardPanel(
             branchInfoLabel.foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
             branchWarningLabel.text = "\u26A0 This branch has not been analyzed by SonarQube. Data shown is from the last available analysis."
             branchWarningLabel.isVisible = true
+        }
+
+        // Show CE analysis status for the current branch
+        val lastAnalysis = state.lastAnalysisForBranch
+        if (lastAnalysis != null) {
+            when (lastAnalysis.status) {
+                "FAILED" -> {
+                    val errorMsg = lastAnalysis.errorMessage ?: "Unknown error"
+                    analysisStatusLabel.text = "\u2717 Last analysis failed: $errorMsg"
+                    analysisStatusLabel.foreground = JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x66, 0x66))
+                    analysisStatusLabel.isVisible = true
+                }
+                "PENDING", "IN_PROGRESS" -> {
+                    analysisStatusLabel.text = "\u23F3 Analysis in progress..."
+                    analysisStatusLabel.foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+                    analysisStatusLabel.isVisible = true
+                }
+                "SUCCESS" -> {
+                    val timeStr = lastAnalysis.executionTimeMs?.let { "${it / 1000}s" } ?: "N/A"
+                    analysisStatusLabel.text = "\u2713 Last analysis: $timeStr"
+                    analysisStatusLabel.foreground = JBColor(Color(0x00, 0x80, 0x00), Color(0x66, 0xCC, 0x66))
+                    analysisStatusLabel.isVisible = true
+                }
+                "CANCELED" -> {
+                    analysisStatusLabel.text = "\u2014 Last analysis was canceled"
+                    analysisStatusLabel.foreground = JBColor(Color(0x80, 0x80, 0x80), Color(0xA0, 0xA0, 0xA0))
+                    analysisStatusLabel.isVisible = true
+                }
+                else -> {
+                    analysisStatusLabel.isVisible = false
+                }
+            }
+        } else {
+            analysisStatusLabel.isVisible = false
+        }
+
+        // Show new code period info
+        val ncp = state.newCodePeriod
+        if (ncp != null) {
+            val periodDesc = when (ncp.type) {
+                "REFERENCE_BRANCH" -> "compared to ${ncp.value}"
+                "NUMBER_OF_DAYS" -> "last ${ncp.value} days"
+                "PREVIOUS_VERSION" -> "since version ${ncp.value}"
+                "SPECIFIC_ANALYSIS" -> "since specific analysis"
+                else -> ncp.type.lowercase().replace('_', ' ')
+            }
+            val inheritedSuffix = if (ncp.inherited) " (inherited)" else ""
+            newCodePeriodLabel.text = "New code: $periodDesc$inheritedSuffix"
+            newCodePeriodLabel.isVisible = true
+        } else {
+            newCodePeriodLabel.isVisible = false
         }
 
         // Show analyzed branches summary

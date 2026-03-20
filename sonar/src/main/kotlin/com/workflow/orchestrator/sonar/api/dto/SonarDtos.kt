@@ -146,6 +146,42 @@ data class SonarComponentSearchResult(
     val components: List<SonarProjectDto> = emptyList()
 )
 
+// --- Compute Engine (CE) Activity ---
+
+@Serializable
+data class SonarCeActivityResponse(
+    val tasks: List<SonarCeTaskDto> = emptyList()
+)
+
+@Serializable
+data class SonarCeTaskDto(
+    val id: String = "",
+    val type: String = "",
+    val componentKey: String = "",
+    val status: String = "",           // PENDING, IN_PROGRESS, SUCCESS, FAILED, CANCELED
+    val branch: String? = null,
+    val branchType: String? = null,
+    val submittedAt: String? = null,
+    val startedAt: String? = null,
+    val executedAt: String? = null,
+    val executionTimeMs: Long? = null,
+    val errorMessage: String? = null,
+    val hasScannerContext: Boolean = false,
+    val hasErrorStacktrace: Boolean = false
+)
+
+// --- New Code Period ---
+
+@Serializable
+data class SonarNewCodePeriodDto(
+    val projectKey: String = "",
+    val branchKey: String = "",
+    val type: String = "",             // PREVIOUS_VERSION, NUMBER_OF_DAYS, REFERENCE_BRANCH, SPECIFIC_ANALYSIS
+    val value: String = "",
+    val effectiveValue: String = "",
+    val inherited: Boolean = false
+)
+
 // --- Source Lines (per-line coverage) ---
 
 @Serializable

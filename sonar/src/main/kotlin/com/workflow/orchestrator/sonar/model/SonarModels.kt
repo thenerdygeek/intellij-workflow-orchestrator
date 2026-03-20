@@ -60,6 +60,22 @@ data class IssueCounts(
     val securityHotspots: Int = 0
 )
 
+data class SonarAnalysisTask(
+    val id: String,
+    val status: String,        // SUCCESS, FAILED, PENDING, IN_PROGRESS, CANCELED
+    val branch: String?,
+    val submittedAt: String?,
+    val executedAt: String?,
+    val executionTimeMs: Long?,
+    val errorMessage: String?
+)
+
+data class NewCodePeriod(
+    val type: String,          // REFERENCE_BRANCH, NUMBER_OF_DAYS, PREVIOUS_VERSION
+    val value: String,         // branch name, number of days, or version
+    val inherited: Boolean
+)
+
 data class SonarBranch(
     val name: String,
     val isMain: Boolean,

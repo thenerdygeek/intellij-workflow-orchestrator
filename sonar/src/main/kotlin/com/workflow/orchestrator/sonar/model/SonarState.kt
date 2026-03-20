@@ -20,7 +20,10 @@ data class SonarState(
     val overallIssueCounts: IssueCounts = IssueCounts(),
     val branches: List<SonarBranch> = emptyList(),
     val currentBranchAnalyzed: Boolean = false,
-    val currentBranchAnalysisDate: String? = null
+    val currentBranchAnalysisDate: String? = null,
+    val recentAnalyses: List<SonarAnalysisTask> = emptyList(),
+    val newCodePeriod: NewCodePeriod? = null,
+    val lastAnalysisForBranch: SonarAnalysisTask? = null
 ) {
     /** Returns the active issues based on the current mode. */
     val activeIssues: List<MappedIssue>

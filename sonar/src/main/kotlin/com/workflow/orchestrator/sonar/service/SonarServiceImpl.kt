@@ -9,6 +9,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.sonar.CoverageData
 import com.workflow.orchestrator.core.model.sonar.QualityCondition
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
+import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
 import com.workflow.orchestrator.core.services.SonarService
@@ -257,6 +258,57 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     summary = "Error searching SonarQube projects: ${result.message}",
                     isError = true,
                     hint = "Check SonarQube connection and token."
+                )
+            }
+        }
+    }
+
+    override suspend fun getAnalysisTasks(projectKey: String): ToolResult<List<SonarAnalysisTaskData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "SonarQube not configured. Cannot fetch analysis tasks.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getAnalysisTasks(projectKey)) {
+            is ApiResult.Success -> {
+                val tasks = result.data.map { dto ->
+                    SonarAnalysisTaskData(
+                        id = dto.id,
+                        status = dto.status,
+                        branch = dto.branch,
+                        errorMessage = dto.errorMessage,
+                        executionTimeMs = dto.executionTimeMs
+                    )
+                }
+
+                val summary = buildString {
+                    append("${tasks.size} recent analysis tasks for $projectKey")
+                    val byStatus = tasks.groupBy { it.status }
+                    if (byStatus.isNotEmpty()) {
+                        append("\n")
+                        append(byStatus.entries.joinToString(" | ") { "${it.key}: ${it.value.size}" })
+                    }
+                    val failed = tasks.filter { it.status == "FAILED" }
+                    if (failed.isNotEmpty()) {
+                        append("\nFailed analyses:")
+                        failed.take(3).forEach { t ->
+                            val branchInfo = t.branch?.let { " ($it)" } ?: ""
+                            append("\n  ${t.id}$branchInfo: ${t.errorMessage ?: "No error message"}")
+                        }
+                    }
+                }
+
+                ToolResult.success(data = tasks, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch analysis tasks for $projectKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching analysis tasks for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and project key."
                 )
             }
         }

@@ -117,10 +117,18 @@ class SonarDataService(private val project: Project) : Disposable {
 
     /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */
     internal suspend fun refreshWith(client: SonarApiClient, projectKey: String, branch: String) {
-        // Fetch overall + new code issues + branches in parallel
+        // Fetch overall + new code issues + branches + CE tasks in parallel
         val overallIssuesDeferred = scope.async { client.getIssues(projectKey, branch) }
         val newCodeIssuesDeferred = scope.async { client.getIssues(projectKey, branch, inNewCodePeriod = true) }
         val branchesDeferred = scope.async { client.getBranches(projectKey) }
+        val ceTasksDeferred = scope.async { client.getAnalysisTasks(projectKey) }
+        val newCodePeriodDeferred = scope.async {
+            try { client.getNewCodePeriod(projectKey, branch) }
+            catch (e: Exception) {
+                log.warn("[Sonar:CE] Failed to fetch new code period: ${e.message}")
+                null
+            }
+        }
 
         val gateResult = client.getQualityGateStatus(projectKey, branch)
         val metricKeys = settings.state.sonarMetricKeys.orEmpty()
@@ -129,6 +137,8 @@ class SonarDataService(private val project: Project) : Disposable {
         val overallIssuesResult = overallIssuesDeferred.await()
         val newCodeIssuesResult = newCodeIssuesDeferred.await()
         val branchesResult = branchesDeferred.await()
+        val ceTasksResult = ceTasksDeferred.await()
+        val newCodePeriodResult = newCodePeriodDeferred.await()
 
         val qualityGate = when (gateResult) {
             is ApiResult.Success -> mapQualityGate(gateResult.data)
@@ -190,6 +200,51 @@ class SonarDataService(private val project: Project) : Disposable {
         val currentBranchAnalyzed = currentBranchInfo != null && currentBranchInfo.analysisDate != null
         val currentBranchAnalysisDate = currentBranchInfo?.analysisDate
 
+        // Map CE analysis tasks
+        val recentAnalyses = when (ceTasksResult) {
+            is ApiResult.Success -> ceTasksResult.data.map { dto ->
+                SonarAnalysisTask(
+                    id = dto.id,
+                    status = dto.status,
+                    branch = dto.branch,
+                    submittedAt = dto.submittedAt,
+                    executedAt = dto.executedAt,
+                    executionTimeMs = dto.executionTimeMs,
+                    errorMessage = dto.errorMessage
+                )
+            }.also { tasks ->
+                log.info("[Sonar:CE] ${tasks.size} recent analysis tasks fetched")
+                tasks.firstOrNull()?.let { t ->
+                    log.info("[Sonar:CE] Latest: status=${t.status}, branch=${t.branch ?: "N/A"}, time=${t.executionTimeMs ?: 0}ms")
+                }
+            }
+            is ApiResult.Error -> {
+                log.warn("[Sonar:CE] Failed to fetch analysis tasks: ${ceTasksResult.message}")
+                emptyList()
+            }
+        }
+
+        val lastAnalysisForBranch = recentAnalyses.firstOrNull { it.branch == branch }
+
+        // Map new code period
+        val newCodePeriod = when (newCodePeriodResult) {
+            is ApiResult.Success -> {
+                val dto = newCodePeriodResult.data
+                NewCodePeriod(
+                    type = dto.type,
+                    value = dto.value.ifBlank { dto.effectiveValue },
+                    inherited = dto.inherited
+                ).also { ncp ->
+                    log.info("[Sonar:CE] New code period: type=${ncp.type}, value=${ncp.value}, inherited=${ncp.inherited}")
+                }
+            }
+            is ApiResult.Error -> {
+                log.info("[Sonar:CE] New code period not available: ${newCodePeriodResult.message}")
+                null
+            }
+            null -> null
+        }
+
         val newState = SonarState(
             projectKey = projectKey,
             branch = branch,
@@ -206,7 +261,10 @@ class SonarDataService(private val project: Project) : Disposable {
             overallIssueCounts = overallCounts,
             branches = mappedBranches,
             currentBranchAnalyzed = currentBranchAnalyzed,
-            currentBranchAnalysisDate = currentBranchAnalysisDate
+            currentBranchAnalysisDate = currentBranchAnalysisDate,
+            recentAnalyses = recentAnalyses,
+            newCodePeriod = newCodePeriod,
+            lastAnalysisForBranch = lastAnalysisForBranch
         )
 
         _stateFlow.value = newState

@@ -137,6 +137,23 @@ class SonarApiClient(
         ).map { it.components }
     }
 
+    suspend fun getAnalysisTasks(projectKey: String): ApiResult<List<SonarCeTaskDto>> {
+        log.info("[Sonar:API] GET /api/ce/activity for project '$projectKey'")
+        val encoded = URLEncoder.encode(projectKey, "UTF-8")
+        return get<SonarCeActivityResponse>("/api/ce/activity?component=$encoded&ps=10")
+            .map { it.tasks }
+    }
+
+    suspend fun getNewCodePeriod(projectKey: String, branch: String? = null): ApiResult<SonarNewCodePeriodDto> {
+        log.info("[Sonar:API] GET /api/new_code_periods/show for project '$projectKey' branch='${branch ?: "default"}'")
+        val params = buildString {
+            append("/api/new_code_periods/show?project=")
+            append(URLEncoder.encode(projectKey, "UTF-8"))
+            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+        }
+        return get<SonarNewCodePeriodDto>(params)
+    }
+
     suspend fun getSourceLines(
         componentKey: String,
         from: Int? = null,

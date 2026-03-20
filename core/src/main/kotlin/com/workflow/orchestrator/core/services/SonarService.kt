@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.services
 
 import com.workflow.orchestrator.core.model.sonar.CoverageData
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
+import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
 
@@ -21,6 +22,9 @@ interface SonarService {
 
     /** Search for SonarQube projects by name or key. */
     suspend fun searchProjects(query: String): ToolResult<List<SonarProjectData>>
+
+    /** Get recent analysis tasks for a project. */
+    suspend fun getAnalysisTasks(projectKey: String): ToolResult<List<SonarAnalysisTaskData>>
 
     /** Test the SonarQube connection. */
     suspend fun testConnection(): ToolResult<Unit>
