@@ -87,6 +87,9 @@ class AgentService(
             register(SemanticDiagnosticsTool())
             register(FormatCodeTool())
             register(OptimizeImportsTool())
+            register(RunInspectionsTool())
+            register(RefactorRenameTool())
+            register(ListQuickFixesTool())
         }
     }
 
