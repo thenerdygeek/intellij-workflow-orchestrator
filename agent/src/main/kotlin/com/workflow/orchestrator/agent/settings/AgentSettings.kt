@@ -21,7 +21,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** Tracks whether the user has manually selected a model (prevents auto-upgrade). */
         var userManuallySelectedModel by property(false)
         var maxInputTokens by property(190000)
-        /** Max output tokens per LLM response. Sourcegraph API caps at 4000. */
+        /** Max output tokens per LLM response. Limit varies per model — no hardcoded cap. */
         var maxOutputTokens by property(4000)
         var enableFastPath by property(true)
         var approvalRequiredForEdits by property(true)

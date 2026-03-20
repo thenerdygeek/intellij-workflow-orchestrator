@@ -18,6 +18,9 @@ import com.workflow.orchestrator.core.model.ApiResult
  * for tool results (which contain high-information content like file paths, line
  * numbers, and code changes). The synchronous [compress] method always uses the
  * truncation summarizer.
+ *
+ * THREAD SAFETY: Not thread-safe. Must be accessed from a single coroutine context
+ * (the ReAct loop runs sequentially). Do not call addMessage/compress/reconcile concurrently.
  */
 class ContextManager(
     private val maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
@@ -278,7 +281,10 @@ class ContextManager(
      */
     fun reconcileWithActualTokens(actualPromptTokens: Int) {
         if (actualPromptTokens > 0) {
-            totalTokens = actualPromptTokens
+            // API's prompt_tokens includes tool definitions and overhead that
+            // are already accounted for in reservedTokens. Subtract to avoid
+            // double-counting, which would make the budget appear smaller.
+            totalTokens = (actualPromptTokens - reservedTokens).coerceAtLeast(0)
         }
     }
 

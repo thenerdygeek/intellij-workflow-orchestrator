@@ -27,7 +27,7 @@ AgentController (UI entry point)
 
 - **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Two-threshold compression (T_max=70%, T_retained=40%). `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call.
+- **ContextManager** — Two-threshold compression (T_max=70%, T_retained=40%). `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call (subtracts `reservedTokens` to avoid double-counting tool definition overhead). Not thread-safe — must be accessed from a single coroutine context.
 - **BudgetEnforcer** — Four-status budget monitoring: OK, COMPRESS, NUDGE, STRONG_NUDGE, TERMINATE.
 - **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.

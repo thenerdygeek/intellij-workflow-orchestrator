@@ -394,7 +394,6 @@ class SingleAgentSession(
                     // JSON is truncated — ask LLM to retry with smaller scope
                     LOG.warn("SingleAgentSession: tool call JSON is invalid/truncated, requesting smaller operation")
                     val truncatedToolName = firstCall?.function?.name ?: "unknown"
-                    contextManager.addAssistantMessage(message) // preserve what was generated
                     contextManager.addMessage(ChatMessage(
                         role = "user",
                         content = "Your previous tool call to '$truncatedToolName' was truncated because " +
