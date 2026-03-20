@@ -263,6 +263,16 @@ class AgentDashboardPanel(
         chatInput.text = ""
     }
 
+    // ── Skill banner delegation ──
+
+    fun showSkillBanner(name: String) {
+        cefPanel?.showSkillBanner(name)
+    }
+
+    fun hideSkillBanner() {
+        cefPanel?.hideSkillBanner()
+    }
+
     /** Re-enable the Swing chat input after the question wizard completes. */
     fun enableSwingChatInput() = runOnEdt {
         chatInput.isEnabled = true

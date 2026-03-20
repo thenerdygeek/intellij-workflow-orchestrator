@@ -342,6 +342,16 @@ class AgentCefPanel(
         callJs("enableChatInput()")
     }
 
+    // ── Skill banner rendering ──
+
+    fun showSkillBanner(name: String) {
+        callJs("if(typeof showSkillBanner==='function')showSkillBanner(${jsonStr(name)})")
+    }
+
+    fun hideSkillBanner() {
+        callJs("if(typeof hideSkillBanner==='function')hideSkillBanner()")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {

@@ -147,6 +147,33 @@ class AgentController(
     }
 
     fun executeTask(task: String) {
+        // Check for skill /command invocation
+        if (task.startsWith("/") && session != null) {
+            val parts = task.removePrefix("/").split(" ", limit = 2)
+            val skillName = parts[0]
+            val args = parts.getOrNull(1)
+            val skillMgr = session?.skillManager
+            if (skillMgr != null) {
+                val skill = skillMgr.registry.getSkill(skillName)
+                if (skill != null && skill.userInvocable) {
+                    skillMgr.activateSkill(skillName, args)
+                    // The onSkillActivated callback handles context injection + banner
+                    // Now send a message to the LLM with the skill context
+                    val userMessage = args ?: "I've activated the ${skill.name} skill. Please follow the skill instructions."
+                    // Fall through to normal executeTask with the modified message
+                    // (userMessage does NOT start with "/" so no infinite recursion)
+                    executeTask(userMessage)
+                    return
+                } else if (skill == null) {
+                    dashboard.appendStatus(
+                        "Skill '${skillName}' not found. Available: ${skillMgr.registry.getUserInvocableSkills().joinToString { "/${it.name}" }}",
+                        RichStreamingPanel.StatusType.WARNING
+                    )
+                    return
+                }
+            }
+        }
+
         // If agent is already running, queue the message as intervention
         if (currentOrchestrator != null && session != null && dashboard.cancelButton.isEnabled) {
             pendingUserMessages.add(task)
@@ -177,11 +204,12 @@ class AgentController(
         val currentSession = session!!
         currentSession.recordUserMessage(task)
 
-        // Set PlanManager on AgentService so tools can find it
+        // Set PlanManager and SkillManager on AgentService so tools can find it
         try {
             val agentSvc = AgentService.getInstance(project)
             agentSvc.currentPlanManager = currentSession.planManager
             agentSvc.currentQuestionManager = currentSession.questionManager
+            agentSvc.currentSkillManager = currentSession.skillManager
         } catch (_: Exception) {}
 
         // Only wire callbacks once per session (not on every turn)
@@ -265,6 +293,23 @@ class AgentController(
                     currentSession.questionManager.editQuestion(questionId)
                 }
             )
+
+            // Wire SkillManager callbacks
+            currentSession.skillManager?.let { sm ->
+                sm.onSkillActivated = { skill ->
+                    currentSession.contextManager.setSkillAnchor(
+                        com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                            role = "system",
+                            content = "<active_skill name=\"${skill.entry.name}\">\n${skill.content}\n</active_skill>"
+                        )
+                    )
+                    try { dashboard.showSkillBanner(skill.entry.name) } catch (_: Exception) {}
+                }
+                sm.onSkillDeactivated = {
+                    currentSession.contextManager.setSkillAnchor(null)
+                    try { dashboard.hideSkillBanner() } catch (_: Exception) {}
+                }
+            }
         }
 
         dashboard.setBusy(true)
@@ -337,6 +382,7 @@ class AgentController(
                 )
             } catch (_: Exception) { /* best effort */ }
         }
+        session?.skillManager?.deactivateSkill()
         session?.questionManager?.clear()
         session = null
         currentPlanFile = null
