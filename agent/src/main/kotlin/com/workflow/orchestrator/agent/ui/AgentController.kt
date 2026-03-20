@@ -403,9 +403,6 @@ class AgentController(
                     dashboard.appendStatus("Debug trace saved. View via notification or at: $tracesPath", RichStreamingPanel.StatusType.INFO)
                 }
             }
-            is AgentResult.PlanReady -> {
-                dashboard.showOrchestrationPlan(result.plan.getAllTasks())
-            }
             is AgentResult.Cancelled -> {
                 dashboard.appendStatus("Cancelled after ${result.completedSteps} steps.", RichStreamingPanel.StatusType.WARNING)
                 dashboard.completeSession(0, result.completedSteps, emptyList(), durationMs, RichStreamingPanel.SessionStatus.CANCELLED)

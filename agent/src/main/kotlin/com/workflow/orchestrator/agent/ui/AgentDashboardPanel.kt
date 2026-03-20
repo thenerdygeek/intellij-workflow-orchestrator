@@ -7,7 +7,6 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.agent.runtime.AgentTask
 import java.awt.*
 import java.awt.event.KeyEvent
 import java.awt.event.KeyListener
@@ -312,10 +311,6 @@ class AgentDashboardPanel(
         sendButton.isEnabled = true
         chatInput.isEnabled = true
         chatInput.text = ""
-    }
-
-    fun showOrchestrationPlan(tasks: List<AgentTask>) = runOnEdt {
-        appendStatus("Plan with ${tasks.size} tasks created. Executing...", RichStreamingPanel.StatusType.INFO)
     }
 
     fun setBusy(busy: Boolean) = runOnEdt {
