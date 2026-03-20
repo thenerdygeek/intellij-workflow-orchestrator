@@ -2,11 +2,12 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves 10-15K tokens by not sending all 28 tools when only 5 are needed.
+ * Saves tokens by not sending all 44 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
  * - PSI tools (file_structure, find_definition, etc.) always included — they're small and useful
+ * - Post-edit tools (format, imports, semantic diagnostics) always included
  * - Integration tools injected when user message mentions relevant keywords
  */
 object DynamicToolSelector {
@@ -14,7 +15,8 @@ object DynamicToolSelector {
     /** Core tools always available (small, essential for any coding task). */
     private val ALWAYS_INCLUDE = setOf(
         "read_file", "edit_file", "search_code", "run_command", "diagnostics",
-        "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy"
+        "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
+        "semantic_diagnostics", "format_code", "optimize_imports"
     )
 
     /** Keyword patterns that trigger tool group injection. */
@@ -30,7 +32,8 @@ object DynamicToolSelector {
 
         // Bamboo tools triggered by build/ci/deploy keywords
         "bamboo" to setOf("bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build", "bamboo_get_build_log", "bamboo_get_test_results"),
-        "build" to setOf("bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build"),
+        "build" to setOf("compile_module", "bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build"),
+        "compile" to setOf("compile_module", "semantic_diagnostics"),
         "ci" to setOf("bamboo_build_status", "bamboo_trigger_build"),
         "pipeline" to setOf("bamboo_build_status", "bamboo_trigger_build"),
         "test results" to setOf("bamboo_get_test_results"),
@@ -52,14 +55,56 @@ object DynamicToolSelector {
         "merge" to setOf("bitbucket_create_pr"),
 
         // Spring tools triggered by spring/bean/endpoint keywords
-        "spring" to setOf("spring_context", "spring_endpoints", "spring_bean_graph"),
+        "spring" to setOf("spring_context", "spring_endpoints", "spring_bean_graph", "spring_config"),
         "bean" to setOf("spring_context", "spring_bean_graph"),
         "endpoint" to setOf("spring_endpoints"),
         "controller" to setOf("spring_endpoints"),
         "service" to setOf("spring_context"),
         "repository" to setOf("spring_context"),
         "injection" to setOf("spring_bean_graph"),
-        "autowired" to setOf("spring_bean_graph")
+        "autowired" to setOf("spring_bean_graph"),
+
+        // IDE tools — triggered by code quality keywords
+        "format" to setOf("format_code"),
+        "reformat" to setOf("format_code"),
+        "import" to setOf("optimize_imports"),
+        "imports" to setOf("optimize_imports"),
+        "inspection" to setOf("run_inspections"),
+        "inspect" to setOf("run_inspections"),
+        "lint" to setOf("run_inspections"),
+        "rename" to setOf("refactor_rename"),
+        "refactor" to setOf("refactor_rename"),
+        "quick fix" to setOf("list_quickfixes"),
+        "intention" to setOf("list_quickfixes"),
+        "test" to setOf("run_tests", "bamboo_get_test_results"),
+        "tests" to setOf("run_tests"),
+        "run test" to setOf("run_tests"),
+
+        // VCS tools — triggered by git keywords
+        "git" to setOf("git_status", "git_blame"),
+        "blame" to setOf("git_blame"),
+        "who changed" to setOf("git_blame"),
+        "branch" to setOf("git_status"),
+        "commit" to setOf("git_status"),
+        "diff" to setOf("git_status"),
+        "changed files" to setOf("git_status"),
+        "implement" to setOf("find_implementations"),
+        "implementation" to setOf("find_implementations"),
+        "override" to setOf("find_implementations"),
+
+        // Framework tools
+        "config" to setOf("spring_config"),
+        "properties" to setOf("spring_config"),
+        "application.properties" to setOf("spring_config"),
+        "application.yml" to setOf("spring_config"),
+        "entity" to setOf("jpa_entities"),
+        "table" to setOf("jpa_entities"),
+        "jpa" to setOf("jpa_entities"),
+        "hibernate" to setOf("jpa_entities"),
+        "module" to setOf("project_modules"),
+        "dependency" to setOf("project_modules"),
+        "dependencies" to setOf("project_modules"),
+        "pom" to setOf("project_modules")
     )
 
     /**
