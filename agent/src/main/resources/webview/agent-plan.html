@@ -111,7 +111,7 @@
         border-color: var(--fg-muted);
     }
 
-    .step-card.status-completed {
+    .step-card.status-done, .step-card.status-completed {
         border-left: 3px solid var(--success);
     }
 
@@ -144,7 +144,7 @@
 
     .step-status-icon.pending { color: var(--pending); }
     .step-status-icon.running { color: var(--running); }
-    .step-status-icon.completed { color: var(--success); }
+    .step-status-icon.done, .step-status-icon.completed { color: var(--success); }
     .step-status-icon.failed { color: var(--error); }
 
     .step-title-area {
@@ -296,7 +296,7 @@
 
     function statusIcon(status) {
         switch (status) {
-            case 'completed': return '<span class="step-status-icon completed">&#10003;</span>';
+            case 'done': case 'completed': return '<span class="step-status-icon done">&#10003;</span>';
             case 'running':   return '<span class="step-status-icon running">&#9673;</span>';
             case 'failed':    return '<span class="step-status-icon failed">&#10007;</span>';
             default:          return '<span class="step-status-icon pending">&#9675;</span>';
