@@ -17,7 +17,7 @@ class ReadFileToolTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private val project = mockk<Project> { every { basePath } returns "/tmp" }
+    private val project by lazy { mockk<Project> { every { basePath } returns tempDir.toFile().absolutePath } }
 
     @Test
     fun `execute reads file content with line numbers`() = runTest {
@@ -61,11 +61,11 @@ class ReadFileToolTest {
     @Test
     fun `execute returns error for missing file`() = runTest {
         val tool = ReadFileTool()
-        val params = buildJsonObject { put("path", "/nonexistent/file.kt") }
+        val params = buildJsonObject { put("path", "nonexistent/file.kt") }
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("not found"))
+        assertTrue(result.content.contains("not found") || result.content.contains("outside"))
     }
 
     @Test

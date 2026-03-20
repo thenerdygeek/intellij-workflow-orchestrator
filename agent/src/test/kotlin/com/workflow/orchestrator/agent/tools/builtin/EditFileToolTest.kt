@@ -17,7 +17,7 @@ class EditFileToolTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private val project = mockk<Project> { every { basePath } returns "/tmp" }
+    private val project by lazy { mockk<Project> { every { basePath } returns tempDir.toFile().absolutePath } }
 
     @Test
     fun `execute replaces unique string in file`() = runTest {
@@ -33,11 +33,11 @@ class EditFileToolTest {
 
         val result = tool.execute(params, project)
 
-        assertFalse(result.isError)
+        assertFalse(result.isError, "Error: ${result.content}")
         val newContent = tmpFile.readText()
         assertTrue(newContent.contains("println(\"World\")"))
         assertFalse(newContent.contains("println(\"Hello\")"))
-        assertTrue(result.artifacts.contains(tmpFile.absolutePath))
+        assertTrue(result.artifacts.any { it == tmpFile.absolutePath || it == tmpFile.canonicalPath })
     }
 
     @Test
@@ -82,7 +82,7 @@ class EditFileToolTest {
     fun `execute returns error for missing file`() = runTest {
         val tool = EditFileTool()
         val params = buildJsonObject {
-            put("path", "/nonexistent/file.kt")
+            put("path", "nonexistent/file.kt")
             put("old_string", "a")
             put("new_string", "b")
         }

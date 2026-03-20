@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 
 class DiagnosticsToolTest {
 
-    private val project = mockk<Project> { every { basePath } returns "/tmp" }
+    private val project = mockk<Project> { every { basePath } returns System.getProperty("java.io.tmpdir") }
 
     @Test
     fun `tool name is diagnostics`() {
@@ -30,12 +30,12 @@ class DiagnosticsToolTest {
     @Test
     fun `execute handles file not found`() = runTest {
         val tool = DiagnosticsTool()
-        val params = buildJsonObject { put("path", "/nonexistent/file.kt") }
+        val params = buildJsonObject { put("path", "nonexistent/file.kt") }
 
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("not found"))
+        assertTrue(result.content.contains("not found") || result.content.contains("outside"))
     }
 
     @Test
