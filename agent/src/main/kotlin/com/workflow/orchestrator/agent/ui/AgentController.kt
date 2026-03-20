@@ -18,6 +18,8 @@ import com.workflow.orchestrator.agent.runtime.AgentPlan
 import com.workflow.orchestrator.agent.runtime.ConversationSession
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.settings.ToolPreferences
+import com.workflow.orchestrator.agent.tools.ToolCategoryRegistry
 import kotlinx.coroutines.*
 import java.io.File
 import javax.swing.SwingUtilities
@@ -82,22 +84,65 @@ class AgentController(
             dashboard.setModelName(model)
         } catch (_: Exception) {}
 
-        // Wire tools button
-        dashboard.toolsButton.addActionListener { showToolsPopup() }
+        // Wire tools button — opens JCEF categorized tools panel
+        dashboard.toolsButton.addActionListener { showToolsPanel() }
+
+        // Wire JCEF tool toggle callback — persists enable/disable to ToolPreferences
+        dashboard.setCefToolToggleCallback { toolName, enabled ->
+            try {
+                ToolPreferences.getInstance(project).setToolEnabled(toolName, enabled)
+            } catch (_: Exception) {}
+        }
 
         dashboard.focusInput()
     }
 
-    private fun showToolsPopup() {
-        val agentService = try { AgentService.getInstance(project) } catch (_: Exception) { return }
-        val tools = agentService.toolRegistry.allTools()
+    private val prettyJson = kotlinx.serialization.json.Json { prettyPrint = true }
 
-        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(tools.sortedBy { it.name }.map { "${it.name}: ${it.description.take(80)}" })
-            .setTitle("Agent Tools (${tools.size})")
-            .setNamerForFiltering { it }
-            .createPopup()
-        popup.showUnderneathOf(dashboard.toolsButton)
+    private fun showToolsPanel() {
+        val agentService = try { AgentService.getInstance(project) } catch (_: Exception) { return }
+        val prefs = try { ToolPreferences.getInstance(project) } catch (_: Exception) { null }
+        val allRegisteredTools = agentService.toolRegistry.allTools()
+
+        val categories = ToolCategoryRegistry.CATEGORIES.map { cat ->
+            val toolsInCat = cat.tools.mapNotNull { toolName ->
+                val tool = allRegisteredTools.find { it.name == toolName } ?: return@mapNotNull null
+                val params = tool.parameters.properties.map { (pname, prop) ->
+                    mapOf(
+                        "name" to pname,
+                        "type" to prop.type,
+                        "description" to prop.description,
+                        "required" to (pname in tool.parameters.required)
+                    )
+                }
+                val schema = try {
+                    prettyJson.encodeToString(com.workflow.orchestrator.agent.api.dto.ToolDefinition.serializer(), tool.toToolDefinition())
+                } catch (_: Exception) { "" }
+
+                mapOf(
+                    "name" to toolName,
+                    "description" to tool.description.take(80),
+                    "enabled" to (prefs?.isToolEnabled(toolName) ?: true),
+                    "active" to false,
+                    "badge" to cat.badgePrefix,
+                    "categoryColor" to cat.color,
+                    "parameters" to params,
+                    "schema" to schema
+                )
+            }
+            mapOf(
+                "displayName" to cat.displayName,
+                "color" to cat.color,
+                "badgePrefix" to cat.badgePrefix,
+                "tools" to toolsInCat
+            )
+        }
+
+        val json = kotlinx.serialization.json.Json.encodeToString(
+            kotlinx.serialization.serializer<Map<String, Any?>>(),
+            mapOf("categories" to categories)
+        )
+        dashboard.showToolsPanel(json)
     }
 
     fun executeTask(task: String) {

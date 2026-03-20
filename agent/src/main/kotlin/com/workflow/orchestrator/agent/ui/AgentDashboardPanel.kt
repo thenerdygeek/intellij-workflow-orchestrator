@@ -222,6 +222,14 @@ class AgentDashboardPanel(
         cefPanel?.onPlanRevised = onRevise
     }
 
+    fun showToolsPanel(toolsJson: String) {
+        cefPanel?.showToolsPanel(toolsJson)
+    }
+
+    fun setCefToolToggleCallback(onToggle: (String, Boolean) -> Unit) {
+        cefPanel?.onToolToggled = onToggle
+    }
+
     fun renderPlan(planJson: String) {
         cefPanel?.renderPlan(planJson)
             ?: fallbackPanel?.appendStatus("Plan created — approve in the chat panel", RichStreamingPanel.StatusType.INFO)

@@ -374,6 +374,51 @@ code {
 .plan-btn.approve:hover { opacity: 0.85; }
 .plan-btn.revise { background: transparent; border: 1px solid var(--border); color: var(--fg-secondary); }
 .plan-btn.revise:hover { border-color: var(--link); color: var(--fg); }
+
+/* Tools Panel Overlay */
+.tools-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; }
+.tools-overlay.visible { display: flex; justify-content: center; align-items: center; }
+.tools-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; width: 520px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
+.tools-panel-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.tools-panel-header .title { font-size: 15px; font-weight: 600; }
+.tools-panel-header .stats { font-size: 11px; color: var(--fg-muted); font-family: var(--font-mono); }
+.tools-panel-header .close-btn { background: none; border: none; color: var(--fg-muted); font-size: 18px; cursor: pointer; padding: 4px; }
+.tools-panel-header .close-btn:hover { color: var(--fg); }
+.tools-search { padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.tools-search input { width: 100%; padding: 7px 10px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; }
+.tools-search input:focus { border-color: var(--link); }
+.tools-list { overflow-y: auto; flex: 1; }
+.tools-category { padding: 8px 18px 4px; font-size: 10px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.tools-category .cat-dot { width: 7px; height: 7px; border-radius: 50%; }
+.tools-category .cat-count { margin-left: auto; font-family: var(--font-mono); }
+.tool-row { display: flex; align-items: center; gap: 8px; padding: 5px 18px; cursor: pointer; transition: background 0.1s; }
+.tool-row:hover { background: rgba(255,255,255,0.04); }
+.tool-row .cb { width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: transparent; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+.tool-row .cb.on { background: var(--link); border-color: var(--link); color: white; }
+.tool-row .cb:hover { border-color: var(--link); }
+.tool-row .tbadge { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.3px; min-width: 30px; text-align: center; flex-shrink: 0; }
+.tool-row .tname { font-size: 12px; font-family: var(--font-mono); color: var(--fg); min-width: 120px; }
+.tool-row .tdesc { font-size: 11px; color: var(--fg-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-row .tactive { width: 6px; height: 6px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+
+/* Tool Detail Overlay */
+.tool-detail-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1100; }
+.tool-detail-overlay.visible { display: flex; justify-content: center; align-items: center; }
+.tool-detail-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; width: 540px; max-height: 80vh; overflow-y: auto; box-shadow: 0 12px 40px rgba(0,0,0,0.6); }
+.td-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+.td-header .td-name { font-size: 16px; font-weight: 600; font-family: var(--font-mono); }
+.td-header .td-close { margin-left: auto; background: none; border: none; color: var(--fg-muted); font-size: 18px; cursor: pointer; }
+.td-tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 18px; }
+.td-tab { padding: 8px 14px; font-size: 12px; color: var(--fg-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.td-tab:hover { color: var(--fg); }
+.td-tab.active { color: var(--link); border-bottom-color: var(--link); }
+.td-content { padding: 14px 18px; }
+.td-section-title { font-size: 10px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.td-param { display: flex; gap: 8px; padding: 4px 0; align-items: baseline; font-size: 12px; }
+.td-param .pname { font-family: var(--font-mono); color: var(--fg); min-width: 100px; }
+.td-param .ptype { color: var(--link); font-family: var(--font-mono); min-width: 50px; }
+.td-param .preq { color: var(--error); font-size: 9px; font-weight: 600; }
+.td-param .pdesc { color: var(--fg-muted); flex: 1; }
 </style>
 </head>
 <body>
@@ -800,6 +845,166 @@ document.addEventListener('click', function(e) {
     }
   }
 });
+
+/* ── Tools Panel ── */
+
+var _toolsData = null;
+
+function showToolsPanel(toolsJson) {
+  _toolsData = typeof toolsJson === 'string' ? JSON.parse(toolsJson) : toolsJson;
+  var overlay = document.getElementById('tools-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'tools-overlay';
+    overlay.className = 'tools-overlay';
+    overlay.onclick = function(e) { if (e.target === overlay) closeToolsPanel(); };
+    document.body.appendChild(overlay);
+  }
+  renderToolsList(_toolsData, '');
+  overlay.classList.add('visible');
+}
+
+function closeToolsPanel() {
+  var overlay = document.getElementById('tools-overlay');
+  if (overlay) overlay.classList.remove('visible');
+}
+
+function renderToolsList(data, filter) {
+  var overlay = document.getElementById('tools-overlay');
+  var enabledCount = 0;
+  var totalCount = 0;
+
+  var html = '<div class="tools-panel">';
+  html += '<div class="tools-panel-header"><span class="title">Agent Tools</span><span class="stats" id="tools-stats"></span><button class="close-btn" onclick="closeToolsPanel()">x</button></div>';
+  html += '<div class="tools-search"><input id="tools-filter" placeholder="Search tools..." oninput="filterTools(this.value)" value="' + esc(filter) + '"/></div>';
+  html += '<div class="tools-list">';
+
+  data.categories.forEach(function(cat) {
+    var visibleTools = cat.tools.filter(function(t) {
+      return !filter || t.name.includes(filter.toLowerCase()) || t.description.toLowerCase().includes(filter.toLowerCase());
+    });
+    if (visibleTools.length === 0) return;
+    totalCount += visibleTools.length;
+
+    html += '<div class="tools-category"><span class="cat-dot" style="background:' + cat.color + '"></span>' + esc(cat.displayName) + '<span class="cat-count">' + visibleTools.length + '</span></div>';
+
+    visibleTools.forEach(function(tool) {
+      var checked = tool.enabled;
+      if (checked) enabledCount++;
+      var badgeStyle = 'background:' + cat.color + '20;color:' + cat.color;
+      var activeHtml = tool.active ? '<span class="tactive"></span>' : '';
+
+      html += '<div class="tool-row" onclick="showToolDetail(\'' + esc(tool.name) + '\')">';
+      html += '<div class="cb ' + (checked ? 'on' : '') + '" onclick="event.stopPropagation();toggleTool(\'' + esc(tool.name) + '\',' + !checked + ')">' + (checked ? '&#10003;' : '') + '</div>';
+      html += '<span class="tbadge" style="' + badgeStyle + '">' + esc(cat.badgePrefix || tool.badge || '') + '</span>';
+      html += '<span class="tname">' + esc(tool.name) + '</span>';
+      html += '<span class="tdesc">' + esc(tool.description) + '</span>';
+      html += activeHtml;
+      html += '</div>';
+    });
+  });
+
+  html += '</div></div>';
+  overlay.innerHTML = html;
+  document.getElementById('tools-stats').textContent = enabledCount + ' enabled / ' + totalCount + ' total';
+}
+
+function filterTools(query) {
+  if (_toolsData) renderToolsList(_toolsData, query);
+}
+
+function toggleTool(name, enabled) {
+  if (_toolsData) {
+    _toolsData.categories.forEach(function(cat) {
+      cat.tools.forEach(function(t) { if (t.name === name) t.enabled = enabled; });
+    });
+    renderToolsList(_toolsData, document.getElementById('tools-filter') ? document.getElementById('tools-filter').value : '');
+  }
+  if (window._toggleTool) window._toggleTool(name + ':' + (enabled ? '1' : '0'));
+}
+
+/* ── Tool Detail ── */
+
+function showToolDetail(toolName) {
+  var tool = null;
+  var toolCatColor = null;
+  var toolBadge = null;
+  if (_toolsData) {
+    _toolsData.categories.forEach(function(cat) {
+      cat.tools.forEach(function(t) {
+        if (t.name === toolName) {
+          tool = t;
+          toolCatColor = cat.color;
+          toolBadge = cat.badgePrefix || t.badge || '';
+        }
+      });
+    });
+  }
+  if (!tool) return;
+
+  var overlay = document.getElementById('tool-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'tool-detail-overlay';
+    overlay.className = 'tool-detail-overlay';
+    overlay.onclick = function(e) { if (e.target === overlay) closeToolDetail(); };
+    document.body.appendChild(overlay);
+  }
+
+  var paramsHtml = (tool.parameters || []).map(function(p) {
+    return '<div class="td-param"><span class="pname">' + esc(p.name) + '</span><span class="ptype">' + esc(p.type) + '</span>' +
+      (p.required ? '<span class="preq">REQUIRED</span>' : '') +
+      '<span class="pdesc">' + esc(p.description) + '</span></div>';
+  }).join('');
+
+  var schemaHtml = tool.schema ? '<div class="code-wrapper"><button class="code-copy" style="opacity:1">Copy</button><div class="code-block">' + esc(tool.schema) + '</div></div>' : '';
+
+  var exampleHtml = '';
+  if (tool.exampleRequest) {
+    exampleHtml = '<div style="font-size:11px;color:var(--fg-muted);margin-bottom:4px;">LLM sends:</div>' +
+      '<div class="code-wrapper"><div class="code-block">' + esc(tool.exampleRequest) + '</div></div>' +
+      '<div style="font-size:11px;color:var(--fg-muted);margin:8px 0 4px;">Agent returns:</div>' +
+      '<div class="code-wrapper"><div class="code-block">' + esc(tool.exampleResponse || 'Success message') + '</div></div>';
+  }
+
+  var badgeColor = tool.categoryColor || toolCatColor || 'var(--border)';
+  var badgeFg = tool.categoryColor || toolCatColor || 'var(--fg-muted)';
+
+  overlay.innerHTML = '<div class="tool-detail-panel">' +
+    '<div class="td-header"><span class="tbadge" style="background:' + badgeColor + '20;color:' + badgeFg + ';font-size:11px;padding:2px 8px;">' + esc(toolBadge) + '</span>' +
+    '<span class="td-name">' + esc(tool.name) + '</span>' +
+    '<button class="td-close" onclick="closeToolDetail()">x</button></div>' +
+    '<div class="td-tabs"><div class="td-tab active" onclick="switchDetailTab(this,0)">Description</div><div class="td-tab" onclick="switchDetailTab(this,1)">Parameters</div><div class="td-tab" onclick="switchDetailTab(this,2)">JSON Schema</div><div class="td-tab" onclick="switchDetailTab(this,3)">Example</div></div>' +
+    '<div class="td-content" id="td-content-area">' +
+    '<div class="td-section-title">Description</div><div style="font-size:13px;line-height:1.6;color:var(--fg-secondary);">' + esc(tool.description) + '</div>' +
+    '</div></div>';
+
+  // Store tab content for switching
+  overlay._tabContent = [
+    '<div class="td-section-title">Description</div><div style="font-size:13px;line-height:1.6;color:var(--fg-secondary);">' + esc(tool.description) + '</div>',
+    '<div class="td-section-title">Parameters</div>' + (paramsHtml || '<div style="color:var(--fg-muted);font-size:12px;">No parameters</div>'),
+    '<div class="td-section-title">JSON Schema (sent to LLM)</div>' + schemaHtml,
+    '<div class="td-section-title">Example Request / Response</div>' + (exampleHtml || '<div style="color:var(--fg-muted);font-size:12px;">No example available</div>')
+  ];
+
+  overlay.classList.add('visible');
+}
+
+function closeToolDetail() {
+  var overlay = document.getElementById('tool-detail-overlay');
+  if (overlay) overlay.classList.remove('visible');
+}
+
+function switchDetailTab(tabEl, index) {
+  var tabs = tabEl.parentElement.querySelectorAll('.td-tab');
+  tabs.forEach(function(t) { t.classList.remove('active'); });
+  tabEl.classList.add('active');
+  var overlay = document.getElementById('tool-detail-overlay');
+  var content = document.getElementById('td-content-area');
+  if (overlay && overlay._tabContent && content) {
+    content.innerHTML = overlay._tabContent[index] || '';
+  }
+}
 </script>
 </body>
 </html>
