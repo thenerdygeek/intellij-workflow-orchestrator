@@ -63,7 +63,10 @@ class PromptAssembler(
         // 8. Delegation instructions
         sections.add(DELEGATION_RULES)
 
-        // 9. Rules and Constraints (including anti-loop)
+        // 9. Memory instructions
+        sections.add(MEMORY_RULES)
+
+        // 10. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -166,6 +169,26 @@ class PromptAssembler(
               from your conversation (the worker cannot see your history)
             - If a delegated task fails twice, handle it yourself or skip it
             </delegation>
+        """.trimIndent()
+
+        val MEMORY_RULES = """
+            <memory>
+            You have access to save_memory to persist project-specific learnings across sessions.
+
+            Save a memory when you discover:
+            - Build configuration quirks (e.g., "tests require Redis on port 6379")
+            - API behaviors or workarounds (e.g., "Bamboo returns XML for build logs")
+            - Project conventions not obvious from code (e.g., "all DTOs use kotlinx.serialization")
+            - Debugging insights that would save time later
+            - User preferences expressed during conversation
+
+            Do NOT save:
+            - Information already in code or configuration files
+            - Temporary task-specific context (use the plan for that)
+            - Obvious patterns discoverable by reading the code
+
+            Keep memories concise and actionable. Use descriptive topic names.
+            </memory>
         """.trimIndent()
 
         val FORCED_PLANNING_RULES = """
