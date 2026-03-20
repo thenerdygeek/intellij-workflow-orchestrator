@@ -62,13 +62,15 @@ sequenceDiagram
     rect rgb(40, 60, 40)
     Note over Dev,SG: Fix with Cody (gutter action)
     Dev->>IDE: Click "Fix with Cody" on Sonar issue
-    IDE->>Cody: editCommands/code(instruction, file)
+    IDE->>IDE: CodyEditService builds fix instruction
+    IDE->>Cody: chat/submitMessage(fix instruction + file context)
     Cody->>SG: LLM request with file context
-    SG-->>Cody: Generated fix
-    Cody->>IDE: workspace/edit(edits)
+    SG-->>Cody: Generated fix (code in response)
+    Cody-->>IDE: Chat response with fixed code
+    IDE->>IDE: Parse code from response
+    IDE->>IDE: WriteCommandAction.runWriteCommandAction(apply fix)
     IDE->>Dev: Show diff preview
-    Dev->>IDE: Accept edit
-    IDE->>Cody: editTask/accept(taskId)
+    Dev->>IDE: Accept/reject change
     IDE->>IDE: EventBus.emit(CodyEditReady)
     end
 

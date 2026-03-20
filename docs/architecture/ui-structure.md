@@ -130,13 +130,15 @@ graph TD
 graph TD
     ROOT["Tools > Workflow Orchestrator<br/>(WorkflowSettingsConfigurable)<br/><i>Connection status overview</i>"]
 
-    ROOT --> GEN["General<br/>(GeneralConfigurable)<br/><i>Board config, module toggles,<br/>branch patterns, plan keys</i>"]
-    ROOT --> CONN["Connections<br/>(ConnectionSettings)<br/><i>URLs + PATs for all 6 services</i>"]
-    ROOT --> AI["AI & Advanced<br/>(AiAdvancedConfigurable)<br/><i>Cody config, timeouts,<br/>polling intervals</i>"]
+    ROOT --> GEN["General<br/>(GeneralConfigurable)<br/><i>Board config, module toggles,<br/>URLs + PATs for all 6 services</i>"]
+    ROOT --> WF["Workflow<br/>(WorkflowConfigurable)<br/><i>Branch patterns, plan keys,<br/>commit prefix, time tracking</i>"]
+    ROOT --> CICD["CI/CD<br/>(CiCdConfigurable)<br/><i>Bamboo plans, automation suite,<br/>polling intervals, Nexus config</i>"]
+    ROOT --> AI["AI & Advanced<br/>(AiAdvancedConfigurable)<br/><i>Cody config, timeouts,<br/>health check toggles</i>"]
 
     style ROOT fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style GEN fill:#264f78,stroke:#569cd6,color:#d4d4d4
-    style CONN fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style WF fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style CICD fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style AI fill:#264f78,stroke:#569cd6,color:#d4d4d4
 ```
 
@@ -202,6 +204,16 @@ Every tab implements an empty state using `EmptyStatePanel` with a descriptive m
 
 - All components use JetBrains variants: `JBList`, `JBTable`, `JBSplitter`, `JBColor`, `JBUI.Borders`
 - All icons are SVG with light + dark variants; standard concepts reuse `AllIcons.*`
-- Notifications use 4 groups: `workflow.build`, `workflow.quality`, `workflow.queue`, `workflow.automation`
+- Notifications use 9 groups: `workflow.build`, `workflow.quality`, `workflow.queue`, `workflow.automation`, `workflow.healthcheck`, `workflow.cody`, `workflow.pr`, `workflow.handover`, `workflow.automation.queue`
 - Maximum 2 action buttons per notification
 - Context menu has maximum 5 items, hidden when irrelevant
+
+## Shared UI Utilities
+
+The following shared UI components are defined in `:core` and used across all feature modules:
+
+| Utility | Location | Purpose |
+|---|---|---|
+| `StatusColors` | `:core` ui/ | JBColor constants: SUCCESS, ERROR, WARNING, INFO, LINK, OPEN, MERGED, DECLINED, SECONDARY_TEXT |
+| `TimeFormatter` | `:core` ui/ | Relative time ("2h ago") and absolute time formatting for timestamps |
+| `EmptyStatePanel` | `:core` ui/ | Standardized empty state with message text and action link for all tabs |

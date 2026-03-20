@@ -21,10 +21,10 @@ Open **[index.html](index.html)** in a browser for an interactive, dark-themed v
 
 ## Architecture at a Glance
 
-The plugin is a **modular monolith** -- a single IntelliJ plugin composed of 9 Gradle submodules. Feature modules depend only on `:core` and communicate through an event bus backed by Kotlin `SharedFlow`. All external API calls are suspending functions on `Dispatchers.IO`, and all UI updates happen on the EDT.
+The plugin is a **modular monolith** -- a single IntelliJ plugin composed of 10 Gradle submodules. Feature modules depend only on `:core` and communicate through an event bus backed by Kotlin `SharedFlow`. All external API calls are suspending functions on `Dispatchers.IO`, and all UI updates happen on the EDT.
 
 ```
-:core  <--  :jira, :bamboo, :sonar, :cody, :pullrequest, :automation, :handover, :git-integration
+:core  <--  :jira, :bamboo, :sonar, :cody, :pullrequest, :automation, :handover, :git-integration, :mock-server
 ```
 
 The plugin consolidates six external services (Jira, Bamboo, SonarQube, Bitbucket, Nexus, Cody) into a single "Workflow" tool window with six tabs: Sprint, Build, PR, Quality, Automation, and Handover.

@@ -152,6 +152,38 @@ flowchart LR
     style UPD fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
 ```
 
+## SmartPoller
+
+The plugin uses `SmartPoller` (in `:core`) for all background polling (build status, queue position, quality data). It implements activity-aware polling with several optimizations:
+
+### Backoff Strategy
+- **Exponential backoff**: Interval multiplied by 1.5x (build polling) or 2x (queue polling) on consecutive unchanged responses
+- **Jitter**: +/-10% random jitter on each interval to prevent thundering herd across multiple pollers
+- **Maximum interval cap**: Backoff is capped at a configurable maximum (e.g., 60s for builds, 120s for queue)
+
+### Visibility Gating
+- **Hidden tab penalty**: When the tool window tab is not visible, polling interval is multiplied by 4x
+- **Reset on visibility**: When the tab becomes visible again, the interval resets to the base value and an immediate poll is triggered
+
+### Activity Awareness
+- Polls reset to base interval when the user interacts with the relevant tab
+- Polling stops entirely when the project is disposed or the IDE is in power-save mode
+
+```kotlin
+class SmartPoller(
+    private val baseIntervalMs: Long,
+    private val backoffMultiplier: Double = 1.5,
+    private val maxIntervalMs: Long = 60_000,
+    private val hiddenMultiplier: Int = 4,
+    private val jitterPercent: Double = 0.10
+) {
+    fun start(scope: CoroutineScope, poll: suspend () -> Boolean)
+    fun resetInterval()
+    fun setVisible(visible: Boolean)
+    fun stop()
+}
+```
+
 ## Common Anti-Patterns
 
 | Anti-Pattern | Problem | Fix |

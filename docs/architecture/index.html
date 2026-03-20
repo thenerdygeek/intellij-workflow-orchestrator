@@ -87,13 +87,14 @@
 <body>
 
 <h1>Workflow Orchestrator &mdash; Architecture</h1>
-<p class="subtitle">IntelliJ IDEA Plugin | Kotlin 2.1.10 | IntelliJ Platform 2025.1+ | 9 Gradle Submodules</p>
+<p class="subtitle">IntelliJ IDEA Plugin | Kotlin 2.1.10 | IntelliJ Platform 2025.1+ | 10 Gradle Submodules</p>
 
 <!-- ===== TABLE OF CONTENTS ===== -->
 <div class="toc">
     <h2>Table of Contents</h2>
     <ol>
         <li><a href="#module-structure">Module Structure &amp; Dependencies</a></li>
+        <li><a href="#extension-points">Extension Points</a></li>
         <li><a href="#cross-module">Cross-Module Communication</a></li>
         <li><a href="#data-flow-daily">Data Flow: Daily Developer Loop</a></li>
         <li><a href="#data-flow-cody">Data Flow: Cody AI Augmentation</a></li>
@@ -106,12 +107,14 @@
         <li><a href="#event-bus">Event Bus: All 21 Event Types</a></li>
         <li><a href="#event-matrix">Event Subscription Matrix</a></li>
         <li><a href="#threading">Threading Model</a></li>
+        <li><a href="#smart-poller">SmartPoller</a></li>
         <li><a href="#external-apis">External API Integration</a></li>
         <li><a href="#connection-pool">Connection Pooling</a></li>
         <li><a href="#ui-toolwindow">UI: Tool Window Tabs</a></li>
         <li><a href="#ui-panels">UI: Panel Hierarchies</a></li>
         <li><a href="#ui-settings">UI: Settings Pages</a></li>
         <li><a href="#ui-editor">UI: Editor Integration Points</a></li>
+        <li><a href="#ui-utilities">Shared UI Utilities</a></li>
     </ol>
 </div>
 
@@ -129,7 +132,7 @@
 <details open id="module-structure">
     <summary><span class="section-num">1.</span> Module Structure &amp; Dependencies</summary>
     <div class="content">
-        <p>The plugin is a modular monolith: 9 Gradle submodules with a strict dependency rule. Feature modules depend <strong>only on <code>:core</code></strong>, never on each other. The one exception is <code>:automation</code> &rarr; <code>:bamboo</code> (for BambooApiClient).</p>
+        <p>The plugin is a modular monolith: 10 Gradle submodules with a strict dependency rule. Feature modules depend <strong>only on <code>:core</code></strong>, never on each other. The one exception is <code>:automation</code> &rarr; <code>:bamboo</code> (for BambooApiClient).</p>
         <div class="mermaid">
 graph TD
     root["&lt;b&gt;:root&lt;/b&gt;&lt;br/&gt;Plugin Shell"]
@@ -186,6 +189,22 @@ graph TD
             <tr><td><code>:automation</code></td><td>Docker tag staging, Nexus validation, drift detector, conflict detector, smart queue, config persistence</td></tr>
             <tr><td><code>:handover</code></td><td>Jira closure comment, Cody pre-review, copyright fix panel, time log, QA clipboard</td></tr>
             <tr><td><code>:git-integration</code></td><td>Git branch change listeners, diff provider, branch-to-ticket resolution</td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 1b. EXTENSION POINTS ===== -->
+<details id="extension-points">
+    <summary><span class="section-num">1b.</span> Extension Points</summary>
+    <div class="content">
+        <p>The plugin defines 5 custom extension points in <code>:core</code> for modular tab and feature registration.</p>
+        <table>
+            <tr><th>Extension Point</th><th>Interface</th><th>Purpose</th></tr>
+            <tr><td><code>com.workflow.orchestrator.tabProvider</code></td><td>WorkflowTabProvider</td><td>Register tool window tabs from feature modules</td></tr>
+            <tr><td><code>com.workflow.orchestrator.connectionTester</code></td><td>ConnectionTester</td><td>Register per-service connection test implementations</td></tr>
+            <tr><td><code>com.workflow.orchestrator.healthCheck</code></td><td>HealthCheckContributor</td><td>Register health check steps (compile, tests, copyright, Sonar, CVE)</td></tr>
+            <tr><td><code>com.workflow.orchestrator.statusBarWidget</code></td><td>WorkflowWidgetProvider</td><td>Register status bar widgets (ticket, build, queue)</td></tr>
+            <tr><td><code>com.workflow.orchestrator.settingsContributor</code></td><td>SettingsContributor</td><td>Register settings sub-pages from feature modules</td></tr>
         </table>
     </div>
 </details>
@@ -303,12 +322,13 @@ sequenceDiagram
     rect rgb(40, 60, 40)
     Note over Dev,SG: Fix with Cody
     Dev->>IDE: Click gutter action
-    IDE->>Cody: editCommands/code
+    IDE->>IDE: CodyEditService builds fix instruction
+    IDE->>Cody: chat/submitMessage(fix instruction)
     Cody->>SG: LLM request
     SG-->>Cody: Generated fix
-    Cody->>IDE: workspace/edit
+    Cody-->>IDE: Chat response with fixed code
+    IDE->>IDE: WriteCommandAction(apply fix)
     Dev->>IDE: Accept/reject
-    IDE->>Cody: editTask/accept
     end
 
     rect rgb(40, 40, 60)
@@ -606,6 +626,24 @@ classDiagram
             <tr><td><code>:bamboo</code></td><td>BuildMonitorService</td><td>Background polling for build status changes</td></tr>
             <tr><td><code>:bamboo</code></td><td>PlanDetectionService</td><td>Auto-detect Bamboo plan key from project</td></tr>
             <tr><td><code>:bamboo</code></td><td>CveRemediationService</td><td>Scan pom.xml for CVEs, suggest version bumps</td></tr>
+            <tr><td><code>:pullrequest</code></td><td>PrListService</td><td>Fetch and filter user's pull requests</td></tr>
+            <tr><td><code>:pullrequest</code></td><td>PrDetailService</td><td>Fetch PR details, diff, activities, changed files</td></tr>
+            <tr><td><code>:pullrequest</code></td><td>PrActionService</td><td>Merge, approve, decline, and update PRs</td></tr>
+            <tr><td><code>:cody</code></td><td>CodyAgentManager</td><td>Manage Cody CLI process lifecycle</td></tr>
+            <tr><td><code>:cody</code></td><td>CodyContextService</td><td>Build context items (file ranges, Spring beans)</td></tr>
+            <tr><td><code>:cody</code></td><td>CodyChatService</td><td>Chat sessions, commit messages, PR descriptions</td></tr>
+            <tr><td><code>:cody</code></td><td>CodyEditService</td><td>Fix with Cody, test generation</td></tr>
+            <tr><td><code>:automation</code></td><td>QueueService</td><td>Smart queue management, auto-trigger</td></tr>
+            <tr><td><code>:automation</code></td><td>TagBuilderService</td><td>Build dockerTagsAsJson payload</td></tr>
+            <tr><td><code>:automation</code></td><td>DriftDetectorService</td><td>Detect tag version drift between services</td></tr>
+            <tr><td><code>:automation</code></td><td>ConflictDetectorService</td><td>Detect conflicting tag selections</td></tr>
+            <tr><td><code>:sonar</code></td><td>SonarDataService</td><td>Cache and refresh Sonar data</td></tr>
+            <tr><td><code>:handover</code></td><td>HandoverStateService</td><td>Aggregate handover context</td></tr>
+            <tr><td><code>:handover</code></td><td>CopyrightFixService</td><td>Detect and fix copyright violations</td></tr>
+            <tr><td><code>:handover</code></td><td>PreReviewService</td><td>Cody pre-review on diff</td></tr>
+            <tr><td><code>:handover</code></td><td>JiraClosureService</td><td>Build rich-text Jira closure comment</td></tr>
+            <tr><td><code>:handover</code></td><td>TimeTrackingService</td><td>Worklog dialog and time logging</td></tr>
+            <tr><td><code>:handover</code></td><td>QaClipboardService</td><td>Format QA summary for clipboard</td></tr>
         </table>
     </div>
 </details>
@@ -795,6 +833,39 @@ flowchart LR
     </div>
 </details>
 
+<!-- ===== 13b. SMART POLLER ===== -->
+<details id="smart-poller">
+    <summary><span class="section-num">13b.</span> SmartPoller</summary>
+    <div class="content">
+        <p><code>SmartPoller</code> (in <code>:core</code>) handles all background polling with activity-aware optimizations.</p>
+        <table>
+            <tr><th>Feature</th><th>Details</th></tr>
+            <tr><td>Exponential backoff</td><td>1.5x (build polling) or 2x (queue polling) on consecutive unchanged responses</td></tr>
+            <tr><td>Jitter</td><td>&plusmn;10% random jitter to prevent thundering herd</td></tr>
+            <tr><td>Visibility gating</td><td>4x interval when tab is hidden; immediate poll + reset on visibility</td></tr>
+            <tr><td>Activity reset</td><td>Returns to base interval on user interaction</td></tr>
+            <tr><td>Power-save</td><td>Stops polling when IDE is in power-save mode</td></tr>
+        </table>
+        <div class="mermaid">
+flowchart LR
+    BASE["Base Interval<br/>(e.g. 10s)"] --> POLL["Poll"]
+    POLL --> CHK{"Data changed?"}
+    CHK -->|Yes| BASE
+    CHK -->|No| BACK["Backoff<br/>(interval * 1.5x)"]
+    BACK --> JITTER["Add jitter &plusmn;10%"]
+    JITTER --> VIS{"Tab visible?"}
+    VIS -->|Yes| POLL
+    VIS -->|No| HIDDEN["interval * 4x"]
+    HIDDEN --> POLL
+
+    style BASE fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style POLL fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
+    style BACK fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+    style HIDDEN fill:#4e3a24,stroke:#ce9178,color:#d4d4d4
+        </div>
+    </div>
+</details>
+
 <!-- ===== 14. EXTERNAL APIs ===== -->
 <details id="external-apis">
     <summary><span class="section-num">14.</span> External API Integration</summary>
@@ -980,27 +1051,30 @@ graph TD
         <div class="mermaid">
 graph TD
     ROOT["Tools &gt; Workflow Orchestrator"] --> GEN["General"]
-    ROOT --> CONN["Connections"]
+    ROOT --> WF["Workflow"]
+    ROOT --> CICD["CI/CD"]
     ROOT --> AI["AI &amp; Advanced"]
 
     GEN --> G1["Board ID / Type / Name"]
-    GEN --> G2["Module toggles (Sprint, Build, Quality...)"]
-    GEN --> G3["Branch patterns, plan keys"]
+    GEN --> G2["Module toggles"]
+    GEN --> G3["Service URLs + PATs"]
 
-    CONN --> C1["Jira URL + PAT"]
-    CONN --> C2["Bamboo URL + PAT"]
-    CONN --> C3["Bitbucket URL + Token"]
-    CONN --> C4["SonarQube URL + Token"]
-    CONN --> C5["Sourcegraph URL + Token"]
-    CONN --> C6["Nexus URL + Token"]
+    WF --> W1["Branch patterns"]
+    WF --> W2["Commit prefix, plan keys"]
+    WF --> W3["Time tracking config"]
+
+    CICD --> CD1["Bamboo plans"]
+    CICD --> CD2["Automation suite, Nexus"]
+    CICD --> CD3["Polling intervals"]
 
     AI --> A1["Cody CLI path"]
     AI --> A2["HTTP timeouts"]
-    AI --> A3["Polling intervals"]
+    AI --> A3["Health check toggles"]
 
     style ROOT fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style GEN fill:#264f78,stroke:#569cd6,color:#d4d4d4
-    style CONN fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style WF fill:#264f78,stroke:#569cd6,color:#d4d4d4
+    style CICD fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style AI fill:#264f78,stroke:#569cd6,color:#d4d4d4
         </div>
     </div>
@@ -1057,6 +1131,20 @@ flowchart LR
             <tr><td>Sonar severity (red/yellow/grey)</td><td>12x12 Classic, 14x14 New UI</td><td>ExternalAnnotator result</td></tr>
             <tr><td>Fix with Cody</td><td>Standard icon size</td><td>Sonar issue present</td></tr>
             <tr><td>Generate Test</td><td>Standard icon size</td><td>Class/method context</td></tr>
+        </table>
+    </div>
+</details>
+
+<!-- ===== 20. SHARED UI UTILITIES ===== -->
+<details id="ui-utilities">
+    <summary><span class="section-num">20.</span> Shared UI Utilities</summary>
+    <div class="content">
+        <p>These shared components are defined in <code>:core</code> and used across all feature modules for consistent look and feel.</p>
+        <table>
+            <tr><th>Utility</th><th>Purpose</th></tr>
+            <tr><td><code>StatusColors</code></td><td>JBColor constants: SUCCESS, ERROR, WARNING, INFO, LINK, OPEN, MERGED, DECLINED, SECONDARY_TEXT</td></tr>
+            <tr><td><code>TimeFormatter</code></td><td>Relative time ("2h ago") and absolute time formatting for timestamps</td></tr>
+            <tr><td><code>EmptyStatePanel</code></td><td>Standardized empty state with message text and action link for all tabs</td></tr>
         </table>
     </div>
 </details>

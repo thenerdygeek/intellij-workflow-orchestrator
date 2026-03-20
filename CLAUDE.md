@@ -20,7 +20,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 
 ## Architecture
 
-9 Gradle modules (+ mock-server for testing):
+10 Gradle submodules (8 feature modules + core + mock-server):
 
 | Module | Purpose |
 |---|---|

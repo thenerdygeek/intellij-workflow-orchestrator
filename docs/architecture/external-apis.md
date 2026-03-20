@@ -116,8 +116,14 @@ All per-service clients are created via `OkHttpClient.newBuilder()` from the sha
 |---|---|---|
 | `GET` | `/api/authentication/validate` | Test connection |
 | `GET` | `/api/measures/component_tree?component={key}&metricKeys=...` | Coverage data |
+| `GET` | `/api/measures/component?component={key}&metricKeys=...` | Project-level health metrics |
 | `GET` | `/api/issues/search?componentKeys={key}&resolved=false` | Open issues |
 | `GET` | `/api/qualitygates/project_status?projectKey={key}` | Quality gate |
+| `GET` | `/api/components/search?qualifiers=TRK&q={query}` | Project search/picker |
+| `GET` | `/api/project_branches/list?project={key}` | Branch listing |
+| `GET` | `/api/ce/activity?component={key}` | Compute engine analysis tasks |
+| `GET` | `/api/new_code_periods/show?project={key}` | New code period definition |
+| `GET` | `/api/sources/lines?key={fileKey}&from={line}&to={line}` | Line-level coverage (on-demand) |
 
 ### Bitbucket Server (REST API v1)
 
@@ -125,6 +131,19 @@ All per-service clients are created via `OkHttpClient.newBuilder()` from the sha
 |---|---|---|
 | `GET` | `/rest/api/1.0/users` | Test connection |
 | `POST` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests` | Create PR |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests?role.1=AUTHOR&username.1={user}` | List user's PRs |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}` | PR detail |
+| `PUT` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}` | Update PR (preserves title/reviewers) |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/merge` | Merge preconditions |
+| `POST` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/merge` | Merge with strategy |
+| `POST` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/approve` | Approve PR |
+| `DELETE` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/approve` | Unapprove PR |
+| `POST` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/decline` | Decline PR |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/activities` | Activities/comments |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/diff` | PR diff |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/changes` | Changed files |
+| `GET` | `/rest/api/1.0/projects/{proj}/repos/{repo}/settings/pull-requests/git` | Merge strategies |
+| `GET` | `/plugins/servlet/applinks/whoami` | Current username |
 
 ### Nexus Docker Registry (Docker v2 API)
 

@@ -85,6 +85,20 @@ module/
   listeners/  -- IDE event listeners (lightweight, delegate to services)
 ```
 
+## Extension Points
+
+The plugin defines 5 custom extension points in `:core` for modular tab and feature registration:
+
+| Extension Point | Interface | Purpose |
+|---|---|---|
+| `com.workflow.orchestrator.tabProvider` | `WorkflowTabProvider` | Register tool window tabs from feature modules (Sprint, Build, PR, Quality, Automation, Handover) |
+| `com.workflow.orchestrator.connectionTester` | `ConnectionTester` | Register per-service connection test implementations (Jira, Bamboo, SonarQube, Bitbucket, Nexus, Cody) |
+| `com.workflow.orchestrator.healthCheck` | `HealthCheckContributor` | Register health check steps (Maven compile, tests, copyright, Sonar gate, CVE) |
+| `com.workflow.orchestrator.statusBarWidget` | `WorkflowWidgetProvider` | Register status bar widgets (ticket, build, queue) |
+| `com.workflow.orchestrator.settingsContributor` | `SettingsContributor` | Register settings sub-pages from feature modules |
+
+All extension points are declared in `:core`'s `plugin.xml` and implemented by feature modules in their respective `plugin-*.xml` configuration files.
+
 ## Cross-Module Communication
 
 ```mermaid

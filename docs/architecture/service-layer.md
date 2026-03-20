@@ -243,3 +243,21 @@ These services are internal to their modules (not defined as interfaces in `:cor
 | `:bamboo` | `BuildMonitorService` | Background polling for build status changes |
 | `:bamboo` | `PlanDetectionService` | Auto-detect Bamboo plan key from project structure |
 | `:bamboo` | `CveRemediationService` | Scan pom.xml for CVEs, suggest version bumps |
+| `:pullrequest` | `PrListService` | Fetch and filter user's pull requests |
+| `:pullrequest` | `PrDetailService` | Fetch PR details, diff, activities, and changed files |
+| `:pullrequest` | `PrActionService` | Merge, approve, decline, and update PRs |
+| `:cody` | `CodyAgentManager` | Manage Cody CLI process lifecycle (start, shutdown, reconnect) |
+| `:cody` | `CodyContextService` | Build context items (file ranges, Spring beans, endpoints) |
+| `:cody` | `CodyChatService` | Chat session management, commit message and PR description generation |
+| `:cody` | `CodyEditService` | "Fix with Cody" edits, test generation, code-to-chat fix flow |
+| `:automation` | `QueueService` | Smart queue management, position tracking, auto-trigger |
+| `:automation` | `TagBuilderService` | Build dockerTagsAsJson payload from tag selections |
+| `:automation` | `DriftDetectorService` | Detect tag version drift between services |
+| `:automation` | `ConflictDetectorService` | Detect conflicting tag selections |
+| `:sonar` | `SonarDataService` | Cache and refresh Sonar data (issues, coverage, quality gate) |
+| `:handover` | `HandoverStateService` | Aggregate handover context (ticket, branch, PR, build, quality) |
+| `:handover` | `CopyrightFixService` | Detect and fix copyright header violations |
+| `:handover` | `PreReviewService` | Run Cody pre-review on diff before PR |
+| `:handover` | `JiraClosureService` | Build rich-text Jira closure comment with docker tags and test results |
+| `:handover` | `TimeTrackingService` | Worklog dialog and time logging to Jira |
+| `:handover` | `QaClipboardService` | Format QA handover summary for clipboard copy |
