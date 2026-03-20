@@ -16,7 +16,8 @@ object DynamicToolSelector {
     private val ALWAYS_INCLUDE = setOf(
         "read_file", "edit_file", "search_code", "run_command",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
-        "diagnostics", "format_code", "optimize_imports"
+        "diagnostics", "format_code", "optimize_imports",
+        "delegate_task"
     )
 
     /** Keyword patterns that trigger tool group injection. */
@@ -140,6 +141,8 @@ object DynamicToolSelector {
         // Always include request_tools meta-tool AFTER removing disabled tools
         // — this is the LLM's escape hatch; disabling it breaks the hybrid system
         selectedNames.add("request_tools")
+        // delegate_task is always available — it's the LLM's delegation escape hatch
+        selectedNames.add("delegate_task")
 
         return allTools.filter { it.name in selectedNames }
     }
