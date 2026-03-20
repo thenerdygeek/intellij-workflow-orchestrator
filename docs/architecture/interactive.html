@@ -337,6 +337,7 @@ svg text { font-family: inherit; }
   <a href="#sec-service">Service Layer</a>
   <a href="#sec-threading">Threading</a>
   <a href="#sec-quality">Quality Flow</a>
+  <a href="#sec-agent">Agent</a>
   <span class="spacer"></span>
   <a href="index.html">View Static Diagrams</a>
 </nav>
@@ -349,7 +350,7 @@ svg text { font-family: inherit; }
 <section id="sec-deps">
   <h2>Module Dependency Graph</h2>
   <p class="section-desc">
-    Force-directed graph of Gradle modules. All feature modules depend on <code>:core</code>.
+    Force-directed graph of 11 Gradle modules. All feature modules depend on <code>:core</code>.
     Drag nodes to rearrange. Hover to highlight connections. Click for details. Scroll to zoom.
   </p>
   <svg id="dep-graph-svg"></svg>
@@ -492,6 +493,141 @@ svg text { font-family: inherit; }
   <div id="quality-narration" style="margin-top:12px; padding:12px 16px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); font-size:13px; color:var(--text-dim); min-height:40px;"></div>
 </section>
 
+<!-- ============================================================
+     SECTION 8: AGENT ARCHITECTURE
+     ============================================================ -->
+<section id="sec-agent">
+  <h2>Agent Architecture (Phase 3)</h2>
+  <p class="section-desc">
+    The <code>:agent</code> module adds an AI coding assistant powered by Sourcegraph Enterprise's LLM API.
+    It features a ReAct loop with 52 tools, LLM-controlled worker delegation, interactive planning,
+    cross-session memory, and user-extensible skills. The agent runs entirely within the IDE,
+    using PSI and IntelliJ APIs for code intelligence.
+  </p>
+
+  <h3 style="color:var(--teal); margin-top:24px;">ReAct Loop &amp; Budget Enforcement</h3>
+  <p style="color:var(--text-dim); font-size:14px; margin-bottom:16px;">
+    Each user message enters a ReAct (Reason + Act) loop. The LLM reasons about the task, selects tools,
+    observes results, and iterates until done. A <strong>BudgetEnforcer</strong> monitors token usage
+    across four thresholds to prevent runaway sessions.
+  </p>
+  <svg id="agent-react-svg" style="width:100%; height:420px;"></svg>
+
+  <h3 style="color:var(--teal); margin-top:32px;">Tool Categories (52 tools)</h3>
+  <p style="color:var(--text-dim); font-size:14px; margin-bottom:16px;">
+    Tools are organized into four categories. Core tools are always available. IDE Intelligence tools
+    leverage IntelliJ's PSI and inspection APIs. Enterprise Integration tools connect to Jira, Bamboo,
+    SonarQube, and Bitbucket. Planning &amp; Memory tools manage plans, questions, memory, and skills.
+  </p>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:16px 0;">
+    <div style="background:var(--bg); border:1px solid #22C55E; border-radius:var(--radius); padding:16px;">
+      <h4 style="color:#22C55E; margin-bottom:8px; font-size:14px;">Core (Always Active)</h4>
+      <div style="color:var(--text-dim); font-size:13px; line-height:1.8;">
+        <code>read_file</code> <code>edit_file</code> <code>search_code</code> <code>run_command</code>
+        <code>diagnostics</code> <code>delegate_task</code> <code>think</code>
+      </div>
+    </div>
+    <div style="background:var(--bg); border:1px solid #F59E0B; border-radius:var(--radius); padding:16px;">
+      <h4 style="color:#F59E0B; margin-bottom:8px; font-size:14px;">IDE Intelligence</h4>
+      <div style="color:var(--text-dim); font-size:13px; line-height:1.8;">
+        <code>run_inspections</code> <code>refactor_rename</code> <code>compile_module</code>
+        <code>run_tests</code> <code>find_usages</code> <code>go_to_definition</code>
+      </div>
+    </div>
+    <div style="background:var(--bg); border:1px solid #A855F7; border-radius:var(--radius); padding:16px;">
+      <h4 style="color:#A855F7; margin-bottom:8px; font-size:14px;">Enterprise Integration</h4>
+      <div style="color:var(--text-dim); font-size:13px; line-height:1.8;">
+        Jira (6 tools) &middot; Bamboo (5 tools) &middot; SonarQube (6 tools) &middot; Bitbucket (1 tool)
+      </div>
+    </div>
+    <div style="background:var(--bg); border:1px solid #89b4fa; border-radius:var(--radius); padding:16px;">
+      <h4 style="color:#89b4fa; margin-bottom:8px; font-size:14px;">Planning &amp; Memory</h4>
+      <div style="color:var(--text-dim); font-size:13px; line-height:1.8;">
+        <code>create_plan</code> <code>update_plan_step</code> <code>ask_questions</code>
+        <code>save_memory</code> <code>activate_skill</code>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="color:var(--teal); margin-top:32px;">Three-Layer Plan Persistence</h3>
+  <p style="color:var(--text-dim); font-size:14px; margin-bottom:16px;">
+    Plans survive context compression through a three-layer persistence strategy. The disk layer
+    (<code>plan.json</code>) provides crash recovery. The context anchor layer keeps the plan visible
+    to the LLM even after compression. The UI layer shows real-time progress in the chat panel
+    and a dedicated editor tab.
+  </p>
+  <svg id="agent-plan-svg" style="width:100%; height:280px;"></svg>
+
+  <h3 style="color:var(--teal); margin-top:32px;">Skill System</h3>
+  <p style="color:var(--text-dim); font-size:14px; margin-bottom:16px;">
+    Skills are user-extensible behavior presets defined in <code>SKILL.md</code> files.
+    They can be activated via slash commands (<code>/skill-name</code>), toolbar dropdown,
+    or by the LLM calling <code>activate_skill</code>. When active, a skill injects a
+    compression-proof anchor into the context and applies preferred tool filtering.
+  </p>
+  <div style="background:var(--bg); border:1px solid var(--purple); border-radius:var(--radius); padding:16px; margin:16px 0;">
+    <div style="display:flex; gap:24px; flex-wrap:wrap;">
+      <div>
+        <h4 style="color:var(--purple); font-size:14px; margin-bottom:8px;">Activation Sources</h4>
+        <ul style="color:var(--text-dim); font-size:13px; list-style:disc; padding-left:20px; line-height:1.8;">
+          <li><code>/skill-name</code> slash command in chat</li>
+          <li>Toolbar dropdown selection</li>
+          <li>LLM calls <code>activate_skill</code> tool</li>
+        </ul>
+      </div>
+      <div>
+        <h4 style="color:var(--purple); font-size:14px; margin-bottom:8px;">What a Skill Provides</h4>
+        <ul style="color:var(--text-dim); font-size:13px; list-style:disc; padding-left:20px; line-height:1.8;">
+          <li>System prompt instructions (compression-proof anchor)</li>
+          <li>Preferred tool list (subset filtering)</li>
+          <li>Banner in chat UI showing active skill</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="color:var(--teal); margin-top:32px;">Budget Enforcement Thresholds</h3>
+  <div style="display:flex; gap:4px; margin:16px 0; height:32px; border-radius:var(--radius); overflow:hidden;">
+    <div style="flex:50; background:#22C55E40; display:flex; align-items:center; justify-content:center; font-size:12px; color:#22C55E;">0-50% OK</div>
+    <div style="flex:20; background:#F59E0B40; display:flex; align-items:center; justify-content:center; font-size:12px; color:#F59E0B;">50-70% Nudge</div>
+    <div style="flex:15; background:#ce917840; display:flex; align-items:center; justify-content:center; font-size:12px; color:#ce9178;">70-85% Compress</div>
+    <div style="flex:10; background:#f4474740; display:flex; align-items:center; justify-content:center; font-size:12px; color:#f44747;">85-95% Strong</div>
+    <div style="flex:5; background:#f44747; display:flex; align-items:center; justify-content:center; font-size:11px; color:#fff;">95%+</div>
+  </div>
+  <table style="width:100%; border-collapse:collapse; margin-top:8px;">
+    <tr style="border-bottom:1px solid var(--border);">
+      <th style="text-align:left; padding:8px 12px; color:var(--blue); font-size:13px;">Threshold</th>
+      <th style="text-align:left; padding:8px 12px; color:var(--blue); font-size:13px;">Action</th>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:8px 12px; font-size:13px; color:#22C55E;">50%</td>
+      <td style="padding:8px 12px; font-size:13px; color:var(--text-dim);">Soft nudge injected — LLM encouraged to wrap up</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:8px 12px; font-size:13px; color:#F59E0B;">70%</td>
+      <td style="padding:8px 12px; font-size:13px; color:var(--text-dim);">Context compressed via LLM summarization; plan/skill anchors preserved</td>
+    </tr>
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:8px 12px; font-size:13px; color:#ce9178;">85%</td>
+      <td style="padding:8px 12px; font-size:13px; color:var(--text-dim);">Strong nudge + forced compression</td>
+    </tr>
+    <tr>
+      <td style="padding:8px 12px; font-size:13px; color:#f44747;">95%</td>
+      <td style="padding:8px 12px; font-size:13px; color:var(--text-dim);">Session terminated with budget-exhausted error</td>
+    </tr>
+  </table>
+
+  <h3 style="color:var(--teal); margin-top:32px;">Worker Delegation</h3>
+  <p style="color:var(--text-dim); font-size:14px; margin-bottom:16px;">
+    The <code>delegate_task</code> tool spawns a <strong>WorkerSession</strong> with fresh context,
+    a scoped tool subset, and its own budget. Workers cannot delegate further (single-depth).
+    Results are summarized and returned to the parent session. This enables parallel subtask
+    execution for large refactoring or multi-file operations.
+  </p>
+  <svg id="agent-worker-svg" style="width:100%; height:200px;"></svg>
+
+</section>
+
 </main>
 
 <script>
@@ -516,6 +652,8 @@ svg text { font-family: inherit; }
       desc: 'Docker & Deploy', services: 'TagStager, DriftDetector, QueueManager', tab: 'Automation' },
     { id: ':handover',    label: 'handover',    group: 'feature', r: 24, color: '#4ec9b0',
       desc: 'PR & Handover', services: 'PrCreator, JiraClosure, QaClipboard', tab: 'Handover' },
+    { id: ':agent',       label: 'agent',       group: 'feature', r: 26, color: '#c586c0',
+      desc: 'AI Coding Agent', services: 'AgentController, ReActLoop, ToolRegistry, PlanManager, SkillManager', tab: 'Chat' },
   ];
 
   const links = [
@@ -527,6 +665,7 @@ svg text { font-family: inherit; }
     { source: ':automation',  target: ':core' },
     { source: ':automation',  target: ':bamboo', dashed: true, label: 'exception' },
     { source: ':handover',    target: ':core' },
+    { source: ':agent',       target: ':core' },
   ];
 
   const svg = d3.select('#dep-graph-svg');
@@ -1899,6 +2038,184 @@ svg text { font-family: inherit; }
     }, totalDelay + sd(2000));
     animTimers.push(loopTimer);
   }
+})();
+
+/* ============================================================
+   SECTION 8: AGENT ARCHITECTURE DIAGRAMS
+   ============================================================ */
+
+/* --- ReAct Loop Diagram --- */
+(function() {
+  const svg = d3.select('#agent-react-svg');
+  if (!svg.node()) return;
+  const container = svg.node().parentElement;
+  const width = container.clientWidth - 64;
+  const height = 420;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  const g = svg.append('g').attr('transform', 'translate(32, 20)');
+  const w = width - 64, h = height - 40;
+
+  const boxes = [
+    { id: 'user',     label: 'User Message',              x: w*0.05,  y: 0,       w: 140, h: 36, color: '#4ec9b0' },
+    { id: 'session',  label: 'ConversationSession',        x: w*0.05,  y: 60,      w: 180, h: 36, color: '#569cd6' },
+    { id: 'budget',   label: 'BudgetEnforcer',             x: w*0.05,  y: 130,     w: 160, h: 36, color: '#dcdcaa' },
+    { id: 'llm',      label: 'LLM Call',                   x: w*0.45,  y: 60,      w: 120, h: 36, color: '#569cd6' },
+    { id: 'tools',    label: 'Execute Tools',              x: w*0.45,  y: 140,     w: 130, h: 36, color: '#6a9955' },
+    { id: 'worker',   label: 'WorkerSession',              x: w*0.75,  y: 140,     w: 140, h: 36, color: '#c586c0' },
+    { id: 'compress', label: 'Compress Context',           x: w*0.05,  y: 210,     w: 160, h: 36, color: '#ce9178' },
+    { id: 'response', label: 'Final Response',             x: w*0.45,  y: 240,     w: 140, h: 36, color: '#4ec9b0' },
+    { id: 'terminate',label: 'Budget Exhausted',           x: w*0.05,  y: 290,     w: 160, h: 36, color: '#f44747' },
+  ];
+
+  /* Draw boxes */
+  boxes.forEach(b => {
+    const grp = g.append('g');
+    grp.append('rect')
+      .attr('x', b.x).attr('y', b.y).attr('width', b.w).attr('height', b.h)
+      .attr('rx', 6).attr('fill', 'none').attr('stroke', b.color).attr('stroke-width', 1.5);
+    grp.append('text')
+      .attr('x', b.x + b.w/2).attr('y', b.y + b.h/2 + 5)
+      .attr('text-anchor', 'middle').attr('fill', b.color).attr('font-size', 13)
+      .text(b.label);
+  });
+
+  /* Draw arrows */
+  function arrow(x1, y1, x2, y2, color, dashed) {
+    g.append('line')
+      .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
+      .attr('stroke', color || '#3c3c3c').attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', dashed ? '5,4' : 'none')
+      .attr('marker-end', 'none');
+  }
+
+  const bx = (id) => boxes.find(b => b.id === id);
+  arrow(bx('user').x + 70, 36, bx('session').x + 90, 60, '#4ec9b0');
+  arrow(bx('session').x + 180, 78, bx('llm').x, 78, '#569cd6');
+  arrow(bx('session').x + 90, 96, bx('budget').x + 80, 130, '#dcdcaa');
+  arrow(bx('llm').x + 60, 96, bx('tools').x + 65, 140, '#6a9955');
+  arrow(bx('tools').x + 130, 158, bx('worker').x, 158, '#c586c0', true);
+  arrow(bx('llm').x + 60, 96, bx('response').x + 70, 240, '#4ec9b0', true);
+  arrow(bx('budget').x + 80, 166, bx('compress').x + 80, 210, '#ce9178', true);
+  arrow(bx('budget').x + 80, 166, bx('terminate').x + 80, 290, '#f44747', true);
+
+  /* Labels */
+  const labels = [
+    { text: 'tool_calls?', x: w*0.42, y: 120, color: '#808080' },
+    { text: 'delegate?', x: w*0.65, y: 150, color: '#808080' },
+    { text: 'no tools', x: w*0.50, y: 200, color: '#808080' },
+    { text: '95%+', x: w*0.02, y: 260, color: '#f44747' },
+    { text: '70%+', x: w*0.14, y: 195, color: '#ce9178' },
+  ];
+  labels.forEach(l => {
+    g.append('text').attr('x', l.x).attr('y', l.y)
+      .attr('fill', l.color).attr('font-size', 11).attr('font-style', 'italic')
+      .text(l.text);
+  });
+
+  /* Loop-back arrow (tools -> LLM) */
+  const loopPath = `M ${bx('tools').x + bx('tools').w} ${bx('tools').y + 18} C ${w*0.75} ${bx('tools').y - 30}, ${w*0.65} ${bx('llm').y - 20}, ${bx('llm').x + bx('llm').w} ${bx('llm').y + 18}`;
+  g.append('path').attr('d', loopPath)
+    .attr('fill', 'none').attr('stroke', '#6a9955').attr('stroke-width', 1.2)
+    .attr('stroke-dasharray', '4,3');
+  g.append('text').attr('x', w*0.72).attr('y', bx('tools').y - 10)
+    .attr('fill', '#6a9955').attr('font-size', 10).text('iterate');
+})();
+
+/* --- Plan Persistence Diagram --- */
+(function() {
+  const svg = d3.select('#agent-plan-svg');
+  if (!svg.node()) return;
+  const container = svg.node().parentElement;
+  const width = container.clientWidth - 64;
+  const height = 280;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  const g = svg.append('g').attr('transform', 'translate(32, 20)');
+  const w = width - 64;
+
+  const layers = [
+    { label: 'Layer 1: plan.json', desc: 'Disk persistence', x: w*0.1, y: 140, color: '#22C55E', w: 180, h: 50 },
+    { label: 'Layer 2: planAnchor', desc: 'Compression-proof context', x: w*0.4, y: 140, color: '#89b4fa', w: 200, h: 50 },
+    { label: 'Layer 3: JCEF UI', desc: 'Plan card + editor tab', x: w*0.72, y: 140, color: '#F59E0B', w: 180, h: 50 },
+  ];
+
+  /* Source box */
+  g.append('rect').attr('x', w*0.3).attr('y', 0).attr('width', 200).attr('height', 40)
+    .attr('rx', 6).attr('fill', 'none').attr('stroke', '#c586c0').attr('stroke-width', 1.5);
+  g.append('text').attr('x', w*0.3 + 100).attr('y', 25)
+    .attr('text-anchor', 'middle').attr('fill', '#c586c0').attr('font-size', 14)
+    .text('PlanManager.submitPlan');
+
+  /* Draw layers */
+  layers.forEach(l => {
+    g.append('rect').attr('x', l.x).attr('y', l.y).attr('width', l.w).attr('height', l.h)
+      .attr('rx', 6).attr('fill', l.color + '20').attr('stroke', l.color).attr('stroke-width', 1.5);
+    g.append('text').attr('x', l.x + l.w/2).attr('y', l.y + 20)
+      .attr('text-anchor', 'middle').attr('fill', l.color).attr('font-size', 13).attr('font-weight', 'bold')
+      .text(l.label);
+    g.append('text').attr('x', l.x + l.w/2).attr('y', l.y + 38)
+      .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 11)
+      .text(l.desc);
+
+    /* Arrow from source to layer */
+    g.append('line')
+      .attr('x1', w*0.3 + 100).attr('y1', 40)
+      .attr('x2', l.x + l.w/2).attr('y2', l.y)
+      .attr('stroke', l.color).attr('stroke-width', 1.2).attr('stroke-dasharray', '4,3');
+  });
+
+  /* Update box */
+  g.append('rect').attr('x', w*0.3).attr('y', 70).attr('width', 200).attr('height', 36)
+    .attr('rx', 6).attr('fill', 'none').attr('stroke', '#dcdcaa').attr('stroke-width', 1);
+  g.append('text').attr('x', w*0.3 + 100).attr('y', 92)
+    .attr('text-anchor', 'middle').attr('fill', '#dcdcaa').attr('font-size', 12)
+    .text('update_plan_step \u2192 all 3');
+})();
+
+/* --- Worker Delegation Diagram --- */
+(function() {
+  const svg = d3.select('#agent-worker-svg');
+  if (!svg.node()) return;
+  const container = svg.node().parentElement;
+  const width = container.clientWidth - 64;
+  const height = 200;
+  svg.attr('viewBox', `0 0 ${width} ${height}`);
+  const g = svg.append('g').attr('transform', 'translate(32, 20)');
+  const w = width - 64;
+
+  const boxes = [
+    { label: 'Main Session',    x: 0,      y: 60, w: 140, h: 40, color: '#569cd6' },
+    { label: 'delegate_task',   x: w*0.22, y: 60, w: 130, h: 40, color: '#dcdcaa' },
+    { label: 'Worker 1',        x: w*0.48, y: 10, w: 120, h: 36, color: '#c586c0' },
+    { label: 'Worker 2',        x: w*0.48, y: 60, w: 120, h: 36, color: '#c586c0' },
+    { label: 'Worker N',        x: w*0.48, y: 110, w: 120, h: 36, color: '#c586c0' },
+    { label: 'Summarize & Return', x: w*0.72, y: 60, w: 170, h: 40, color: '#4ec9b0' },
+  ];
+
+  boxes.forEach(b => {
+    g.append('rect').attr('x', b.x).attr('y', b.y).attr('width', b.w).attr('height', b.h)
+      .attr('rx', 6).attr('fill', 'none').attr('stroke', b.color).attr('stroke-width', 1.5);
+    g.append('text').attr('x', b.x + b.w/2).attr('y', b.y + b.h/2 + 5)
+      .attr('text-anchor', 'middle').attr('fill', b.color).attr('font-size', 12)
+      .text(b.label);
+  });
+
+  /* Arrows */
+  function arrow(x1, y1, x2, y2, color) {
+    g.append('line').attr('x1',x1).attr('y1',y1).attr('x2',x2).attr('y2',y2)
+      .attr('stroke', color).attr('stroke-width', 1.2);
+  }
+  arrow(140, 80, w*0.22, 80, '#569cd6');
+  arrow(w*0.22+130, 70, w*0.48, 28, '#dcdcaa');
+  arrow(w*0.22+130, 80, w*0.48, 78, '#dcdcaa');
+  arrow(w*0.22+130, 90, w*0.48, 128, '#dcdcaa');
+  arrow(w*0.48+120, 28, w*0.72, 70, '#c586c0');
+  arrow(w*0.48+120, 78, w*0.72, 80, '#c586c0');
+  arrow(w*0.48+120, 128, w*0.72, 90, '#c586c0');
+
+  /* Labels */
+  g.append('text').attr('x', w*0.35).attr('y', 155)
+    .attr('fill', '#808080').attr('font-size', 11).attr('font-style', 'italic')
+    .text('Workers: fresh context, scoped tools, own budget, no sub-delegation');
 })();
 </script>
 </body>
