@@ -265,8 +265,12 @@ class AgentDashboardPanel(
         cefPanel?.enableChatInput()
     }
 
+    /** Saved chat input text — restored when interactive UI (question wizard, etc.) completes. */
+    private var savedChatInputText: String = ""
+
     /** Disable the Swing chat input while JCEF question wizard is active. */
     fun disableChatInput() = runOnEdt {
+        savedChatInputText = chatInput.text ?: ""
         chatInput.isEnabled = false
         sendButton.isEnabled = false
         chatInput.text = ""
@@ -327,10 +331,14 @@ class AgentDashboardPanel(
         onSkillSelected = onSelect
     }
 
-    /** Re-enable the Swing chat input after the question wizard completes. */
+    /** Re-enable the Swing chat input after the question wizard completes. Restores any text the user had typed. */
     fun enableSwingChatInput() = runOnEdt {
         chatInput.isEnabled = true
         sendButton.isEnabled = true
+        if (savedChatInputText.isNotBlank()) {
+            chatInput.text = savedChatInputText
+            savedChatInputText = ""
+        }
         chatInput.requestFocusInWindow()
     }
 
