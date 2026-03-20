@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.*
+import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.psi.*
 import com.workflow.orchestrator.core.auth.CredentialStore
@@ -81,6 +82,11 @@ class AgentService(
             // Planning tools
             register(CreatePlanTool())
             register(UpdatePlanStepTool())
+
+            // IDE tools
+            register(SemanticDiagnosticsTool())
+            register(FormatCodeTool())
+            register(OptimizeImportsTool())
         }
     }
 
