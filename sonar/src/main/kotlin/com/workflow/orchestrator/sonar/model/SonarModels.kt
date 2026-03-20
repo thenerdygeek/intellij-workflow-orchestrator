@@ -48,7 +48,9 @@ data class FileCoverageData(
     val newCoverage: Double? = null,
     val newBranchCoverage: Double? = null,
     val newUncoveredLines: Int? = null,
-    val newLinesToCover: Int? = null
+    val newLinesToCover: Int? = null,
+    val complexity: Int = 0,
+    val cognitiveComplexity: Int = 0
 )
 
 data class CoverageMetrics(

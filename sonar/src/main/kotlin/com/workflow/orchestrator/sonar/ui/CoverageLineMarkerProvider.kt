@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInsight.daemon.LineMarkerInfo
 import com.intellij.codeInsight.daemon.LineMarkerProvider
 import com.intellij.openapi.editor.markup.GutterIconRenderer
@@ -10,8 +11,8 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
-import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
 
 class CoverageLineMarkerProvider : LineMarkerProvider {
@@ -29,12 +30,34 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
             file.path
         }
 
-        val state = getSonarState(project)
-        val fileCoverage = state.fileCoverage[relativePath] ?: return null
+        val service = getDataService(project) ?: return null
+
+        // Check the line coverage cache first
+        val lineStatuses = service.lineCoverageCache[relativePath]
+        if (lineStatuses == null) {
+            // Not yet fetched — trigger async fetch, then re-render when done
+            if (pendingFetches.putIfAbsent(relativePath, true) == null) {
+                val psiFile = element.containingFile
+                service.fetchLineCoverageAsync(relativePath) {
+                    pendingFetches.remove(relativePath)
+                    // Re-trigger gutter marker rendering on the EDT
+                    if (psiFile.isValid && !project.isDisposed) {
+                        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                            if (!project.isDisposed && psiFile.isValid) {
+                                DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
+                            }
+                        }
+                    }
+                }
+            }
+            return null
+        }
+
+        if (lineStatuses.isEmpty()) return null
 
         val doc = element.containingFile?.viewProvider?.document ?: return null
         val lineNumber = doc.getLineNumber(element.textRange.startOffset) + 1
-        val lineStatus = fileCoverage.lineStatuses[lineNumber] ?: return null
+        val lineStatus = lineStatuses[lineNumber] ?: return null
 
         // Spring-aware: highlight uncovered @RequestMapping endpoints more urgently
         val isEndpoint = if (lineStatus == LineCoverageStatus.UNCOVERED) {
@@ -65,11 +88,11 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         )
     }
 
-    private fun getSonarState(project: Project): SonarState {
+    private fun getDataService(project: Project): SonarDataService? {
         return try {
-            SonarDataService.getInstance(project).stateFlow.value
+            SonarDataService.getInstance(project)
         } catch (_: Exception) {
-            SonarState.EMPTY
+            null
         }
     }
 
@@ -87,5 +110,11 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
             "org.springframework.web.bind.annotation.DeleteMapping",
             "org.springframework.web.bind.annotation.PatchMapping"
         )
+
+        /**
+         * Tracks which files have an in-flight line coverage fetch to avoid duplicate requests.
+         * Entries are removed when the fetch completes.
+         */
+        private val pendingFetches = ConcurrentHashMap<String, Boolean>()
     }
 }

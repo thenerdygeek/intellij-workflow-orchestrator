@@ -31,7 +31,7 @@ class SonarApiClient(
             "new_coverage,new_branch_coverage,new_uncovered_lines,new_uncovered_conditions,new_lines_to_cover," +
             "bugs,vulnerabilities,code_smells," +
             "new_bugs,new_vulnerabilities,new_code_smells," +
-            "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
+            "sqale_index,sqale_rating,duplicated_lines_density,complexity,cognitive_complexity," +
             "reliability_rating,security_rating"
 
         /** Project-level health metrics (not file-level). */

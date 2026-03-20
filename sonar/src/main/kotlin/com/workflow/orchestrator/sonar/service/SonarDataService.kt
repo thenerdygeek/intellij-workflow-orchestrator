@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 @Service(Service.Level.PROJECT)
 class SonarDataService(private val project: Project) : Disposable {
@@ -35,6 +36,13 @@ class SonarDataService(private val project: Project) : Disposable {
     private val credentialStore = CredentialStore()
     @Volatile private var cachedApiClient: SonarApiClient? = null
     @Volatile private var cachedSonarUrl: String? = null
+
+    /**
+     * Cache of per-file line coverage data, keyed by relative file path.
+     * Populated on-demand when files are opened in the editor (via [getLineCoverage]).
+     * Cleared on branch change or build completion to force re-fetch.
+     */
+    val lineCoverageCache = ConcurrentHashMap<String, Map<Int, LineCoverageStatus>>()
 
     private val apiClient: SonarApiClient? get() {
         val url = settings.connections.sonarUrl.orEmpty().trimEnd('/')
@@ -77,10 +85,12 @@ class SonarDataService(private val project: Project) : Disposable {
                     }
                     is WorkflowEvent.BranchChanged -> {
                         log.info("[Sonar:Events] Branch changed to '${event.branchName}', refreshing quality data")
+                        clearLineCoverageCache()
                         refreshForBranch(event.branchName)
                     }
                     is WorkflowEvent.BuildFinished -> {
                         log.info("[Sonar:Events] Build finished (${event.planKey}#${event.buildNumber}), refreshing quality data for current branch")
+                        clearLineCoverageCache()
                         refreshForBranch(currentBranch)
                     }
                     else -> { /* not relevant to sonar */ }
@@ -113,6 +123,64 @@ class SonarDataService(private val project: Project) : Disposable {
      */
     fun setNewCodeMode(newCode: Boolean) {
         _stateFlow.value = _stateFlow.value.copy(newCodeMode = newCode)
+    }
+
+    /**
+     * Fetch line-level coverage for a specific file from SonarQube's source lines API.
+     * Converts the local file path to a SonarQube component key and calls getSourceLines().
+     *
+     * @param relativePath the file path relative to the project root (e.g., "src/main/kotlin/com/app/Service.kt")
+     * @return map of line number to coverage status, or empty map on failure
+     */
+    suspend fun getLineCoverage(relativePath: String): Map<Int, LineCoverageStatus> {
+        // Return from cache if available
+        lineCoverageCache[relativePath]?.let { return it }
+
+        val client = apiClient ?: return emptyMap()
+        val projectKey = settings.state.sonarProjectKey.orEmpty()
+        if (projectKey.isBlank()) return emptyMap()
+
+        // SonarQube component key = projectKey:relativePath
+        val componentKey = "$projectKey:$relativePath"
+        val branch = currentBranch
+
+        log.info("[Sonar:LineCoverage] Fetching line coverage for '$componentKey' branch='$branch'")
+
+        return when (val result = client.getSourceLines(componentKey)) {
+            is ApiResult.Success -> {
+                val statuses = CoverageMapper.mapLineStatuses(result.data)
+                lineCoverageCache[relativePath] = statuses
+                log.info("[Sonar:LineCoverage] Cached ${statuses.size} line statuses for '$relativePath'")
+                statuses
+            }
+            is ApiResult.Error -> {
+                log.warn("[Sonar:LineCoverage] Failed to fetch line coverage for '$componentKey': ${result.message}")
+                emptyMap()
+            }
+        }
+    }
+
+    /**
+     * Fetch line coverage asynchronously and trigger a re-render when done.
+     * Called from the EDT by [CoverageLineMarkerProvider] when line coverage is not yet cached.
+     */
+    fun fetchLineCoverageAsync(relativePath: String, onComplete: () -> Unit) {
+        scope.launch {
+            getLineCoverage(relativePath)
+            onComplete()
+        }
+    }
+
+    /**
+     * Clear the line coverage cache. Called when branch changes or build finishes
+     * to ensure stale coverage data is not displayed.
+     */
+    fun clearLineCoverageCache() {
+        val size = lineCoverageCache.size
+        lineCoverageCache.clear()
+        if (size > 0) {
+            log.info("[Sonar:LineCoverage] Cleared line coverage cache ($size entries)")
+        }
     }
 
     /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */

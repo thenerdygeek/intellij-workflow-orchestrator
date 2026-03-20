@@ -197,6 +197,13 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             dupLabel.font = dupLabel.font.deriveFont(JBUI.scale(10).toFloat())
             dupLabel.foreground = JBColor.GRAY
             healthDetailsPanel.add(dupLabel)
+
+            if (health.cognitiveComplexity > 0) {
+                val complexityLabel = JBLabel("Cognitive Complexity: ${health.cognitiveComplexity}")
+                complexityLabel.font = complexityLabel.font.deriveFont(JBUI.scale(10).toFloat())
+                complexityLabel.foreground = JBColor.GRAY
+                healthDetailsPanel.add(complexityLabel)
+            }
         }
 
         revalidate()

@@ -22,7 +22,9 @@ object CoverageMapper {
                     newCoverage = measures["new_coverage"]?.toDoubleOrNull(),
                     newBranchCoverage = measures["new_branch_coverage"]?.toDoubleOrNull(),
                     newUncoveredLines = measures["new_uncovered_lines"]?.toIntOrNull(),
-                    newLinesToCover = measures["new_lines_to_cover"]?.toIntOrNull()
+                    newLinesToCover = measures["new_lines_to_cover"]?.toIntOrNull(),
+                    complexity = measures["complexity"]?.toIntOrNull() ?: 0,
+                    cognitiveComplexity = measures["cognitive_complexity"]?.toIntOrNull() ?: 0
                 )
             }
     }

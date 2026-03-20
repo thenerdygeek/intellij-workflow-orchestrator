@@ -10,6 +10,7 @@ import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.sonar.model.FileCoverageData
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -43,6 +44,28 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
     private val scrollPane = JBScrollPane(table)
 
+    /** Cell renderer that color-codes complexity values: >threshold1 orange, >threshold2 red. */
+    private class ComplexityCellRenderer(
+        private val orangeThreshold: Int,
+        private val redThreshold: Int
+    ) : DefaultTableCellRenderer() {
+        override fun getTableCellRendererComponent(
+            table: JTable, value: Any?, isSelected: Boolean,
+            hasFocus: Boolean, row: Int, column: Int
+        ): Component {
+            val comp = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+            if (!isSelected) {
+                val intValue = (value as? Int) ?: 0
+                foreground = when {
+                    intValue > redThreshold -> JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x66, 0x66))
+                    intValue > orangeThreshold -> JBColor(Color(0xFF, 0x8C, 0x00), Color(0xFF, 0xA5, 0x00))
+                    else -> table.foreground
+                }
+            }
+            return comp
+        }
+    }
+
     init {
         border = JBUI.Borders.empty(8)
         add(scrollPane, BorderLayout.CENTER)
@@ -60,6 +83,9 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
             }
         }
 
+        // Complexity column renderers (cyclomatic: orange >20, red >50; cognitive: orange >15, red >25)
+        applyComplexityRenderers()
+
         table.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
@@ -74,6 +100,17 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         })
     }
 
+    /** Apply complexity cell renderers to the last two columns. Called after structure changes. */
+    private fun applyComplexityRenderers() {
+        val colCount = table.columnModel.columnCount
+        if (colCount >= 7) {
+            // Complexity column (cyclomatic): orange > 20, red > 50
+            table.columnModel.getColumn(colCount - 2).cellRenderer = ComplexityCellRenderer(20, 50)
+            // Cognitive column: orange > 15, red > 25
+            table.columnModel.getColumn(colCount - 1).cellRenderer = ComplexityCellRenderer(15, 25)
+        }
+    }
+
     fun update(fileCoverage: Map<String, FileCoverageData>, newCodeMode: Boolean = false, totalFileCount: Int? = null) {
         val data = fileCoverage.values.toList().sortedBy {
             if (newCodeMode) it.newCoverage ?: 0.0 else it.lineCoverage
@@ -85,7 +122,25 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
             tableModel.getFilePath(table.convertRowIndexToModel(selectedRow))
         } else null
 
+        val previousMode = tableModel.isNewCodeMode()
         tableModel.setData(data, newCodeMode)
+
+        // Re-apply renderers when table structure changes (mode switch or first load)
+        if (previousMode != newCodeMode) {
+            // Re-apply file name tooltip renderer after structure change
+            table.columnModel.getColumn(0).cellRenderer = object : DefaultTableCellRenderer() {
+                override fun getTableCellRendererComponent(
+                    table: JTable, value: Any?, isSelected: Boolean,
+                    hasFocus: Boolean, row: Int, column: Int
+                ): Component {
+                    val comp = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+                    val modelRow = table.convertRowIndexToModel(row)
+                    toolTipText = tableModel.getFilePath(modelRow)
+                    return comp
+                }
+            }
+            applyComplexityRenderers()
+        }
 
         // Show pagination warning when file count hits the page size limit
         if (data.size >= 500 && totalFileCount != null && totalFileCount >= 500) {
@@ -132,8 +187,8 @@ private class CoverageTableModel : AbstractTableModel() {
     private var data: List<FileCoverageData> = emptyList()
     private var newCodeMode: Boolean = false
 
-    private val overallColumns = arrayOf("File", "Line %", "Branch %", "Uncovered Lines", "Uncovered Conditions")
-    private val newCodeColumns = arrayOf("File", "New Coverage %", "New Branch %", "New Uncov. Lines", "New Lines")
+    private val overallColumns = arrayOf("File", "Line %", "Branch %", "Uncovered Lines", "Uncovered Cond.", "Complexity", "Cognitive")
+    private val newCodeColumns = arrayOf("File", "New Coverage %", "New Branch %", "New Uncov. Lines", "New Lines", "Complexity", "Cognitive")
 
     fun setData(newData: List<FileCoverageData>, isNewCode: Boolean) {
         val modeChanged = newCodeMode != isNewCode
@@ -147,6 +202,8 @@ private class CoverageTableModel : AbstractTableModel() {
             fireTableDataChanged()
         }
     }
+
+    fun isNewCodeMode(): Boolean = newCodeMode
 
     fun getFilePath(row: Int): String = data[row].filePath
 
@@ -163,6 +220,8 @@ private class CoverageTableModel : AbstractTableModel() {
                 2 -> "%.1f%%".format(file.newBranchCoverage ?: 0.0)
                 3 -> file.newUncoveredLines ?: 0
                 4 -> file.newLinesToCover ?: 0
+                5 -> file.complexity
+                6 -> file.cognitiveComplexity
                 else -> ""
             }
         } else {
@@ -172,13 +231,15 @@ private class CoverageTableModel : AbstractTableModel() {
                 2 -> "%.1f%%".format(file.branchCoverage)
                 3 -> file.uncoveredLines
                 4 -> file.uncoveredConditions
+                5 -> file.complexity
+                6 -> file.cognitiveComplexity
                 else -> ""
             }
         }
     }
 
     override fun getColumnClass(col: Int): Class<*> = when (col) {
-        3, 4 -> Int::class.java
+        3, 4, 5, 6 -> Int::class.java
         else -> String::class.java
     }
 }
