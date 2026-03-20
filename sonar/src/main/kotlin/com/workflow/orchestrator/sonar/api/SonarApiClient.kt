@@ -232,7 +232,7 @@ class SonarApiClient(
                             ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid SonarQube token")
                         }
                         403 -> {
-                            log.error("[Sonar:API] $path -> 403 Forbidden")
+                            log.warn("[Sonar:API] $path -> 403 Forbidden (insufficient permissions, may require admin)")
                             ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient SonarQube permissions")
                         }
                         404 -> {

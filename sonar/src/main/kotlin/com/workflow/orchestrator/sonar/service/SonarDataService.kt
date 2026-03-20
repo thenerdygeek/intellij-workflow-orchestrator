@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -195,7 +196,13 @@ class SonarDataService(private val project: Project) : Disposable {
         val overallIssuesDeferred = scope.async { client.getIssuesWithPaging(projectKey, branch) }
         val newCodeIssuesDeferred = scope.async { client.getIssuesWithPaging(projectKey, branch, inNewCodePeriod = true) }
         val branchesDeferred = scope.async { client.getBranches(projectKey) }
-        val ceTasksDeferred = scope.async { client.getAnalysisTasks(projectKey) }
+        val ceTasksDeferred = scope.async {
+            try { client.getAnalysisTasks(projectKey) }
+            catch (e: Exception) {
+                log.info("[Sonar:CE] CE activity not available (may require admin permission)")
+                null
+            }
+        }
         val newCodePeriodDeferred = scope.async {
             try { client.getNewCodePeriod(projectKey, branch) }
             catch (e: Exception) {
@@ -301,7 +308,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val currentBranchAnalyzed = currentBranchInfo != null && currentBranchInfo.analysisDate != null
         val currentBranchAnalysisDate = currentBranchInfo?.analysisDate
 
-        // Map CE analysis tasks
+        // Map CE analysis tasks (optional — requires admin permission, may return null/403)
         val recentAnalyses = when (ceTasksResult) {
             is ApiResult.Success -> ceTasksResult.data.map { dto ->
                 SonarAnalysisTask(
@@ -320,9 +327,12 @@ class SonarDataService(private val project: Project) : Disposable {
                 }
             }
             is ApiResult.Error -> {
-                log.warn("[Sonar:CE] Failed to fetch analysis tasks: ${ceTasksResult.message}")
+                if (ceTasksResult.type != ErrorType.FORBIDDEN) {
+                    log.warn("[Sonar:CE] Failed to fetch analysis tasks: ${ceTasksResult.message}")
+                }
                 emptyList()
             }
+            null -> emptyList()
         }
 
         val lastAnalysisForBranch = recentAnalyses.firstOrNull { it.branch == branch }
