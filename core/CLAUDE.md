@@ -18,7 +18,7 @@ Shared infrastructure for all feature modules. No feature module imports another
 
 ## ToolResult<T>
 
-Universal return type for service operations. `data: T` for UI, `summary: String` for AI agent, `isError: Boolean`, optional `hint: String`.
+Universal return type for service operations. `data: T` for UI, `summary: String` for logging/notifications, `isError: Boolean`, optional `hint: String`.
 
 ## HttpClientFactory
 

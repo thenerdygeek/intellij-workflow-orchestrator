@@ -432,9 +432,9 @@ svg text { font-family: inherit; }
 <section id="sec-service">
   <h2>Service Layer Architecture</h2>
   <p class="section-desc">
-    Every service returns <code>ToolResult&lt;T&gt;</code> — typed <code>.data</code> for UI panels,
-    plain-text <code>.summary</code> for the AI agent. Click <strong>Animate</strong> to trace a request
-    from consumer through the service layer to the external API and back.
+    Every service returns <code>ToolResult&lt;T&gt;</code> with typed <code>.data</code> for UI panels
+    and a text <code>.summary</code> for logging and notifications. Click <strong>Animate</strong> to trace
+    a request from UI through the service layer to the external API and back.
   </p>
   <div style="margin-bottom:16px;">
     <button id="svc-animate-btn" class="btn">&#9654; Animate</button>
@@ -1099,10 +1099,9 @@ svg text { font-family: inherit; }
     { id: 'bb-svc',     label: 'BitbucketServiceImpl',  y: rowStart + rowGap * 3, apiId: 'bb-api' },
   ];
 
-  /* Consumers (right) */
+  /* Consumers (right) — only UI Panels on main branch */
   const consumers = [
-    { id: 'ui-panel', label: 'UI Panels',  y: h / 2 - 60, color: '#6a9955', dataLabel: 'result.data' },
-    { id: 'ai-agent', label: 'AI Agent',   y: h / 2 + 60, color: '#c586c0', dataLabel: 'result.summary' },
+    { id: 'ui-panel', label: 'UI Panels',  y: h / 2, color: '#6a9955', dataLabel: 'result.data' },
   ];
 
   /* Draw external APIs */
@@ -1175,7 +1174,7 @@ svg text { font-family: inherit; }
     .text('Service Layer');
   g.append('text').attr('x', colRightTop).attr('y', 28)
     .attr('text-anchor', 'middle').attr('fill', '#6a9955').attr('font-size', 12).attr('font-weight', 700)
-    .text('Consumers');
+    .text('Consumer');
 
   /* Animate button */
   let animating = false;
@@ -1216,36 +1215,23 @@ svg text { font-family: inherit; }
         .attr('fill', '#569cd6')
       .on('end', function() {
         /* Show code snippet at service */
-        snippet1.innerHTML = '<span class="kw">ToolResult</span>(\n  <span class="prop">data</span> = <span class="kw">JiraTicketData</span>(<span class="str">...</span>),\n  <span class="prop">summary</span> = <span class="str">"PROJ-123: Add auth\\nStatus: In Progress"</span>\n)';
+        snippet1.innerHTML = '<span class="kw">ToolResult</span>(\n  <span class="prop">data</span> = <span class="kw">JiraTicketData</span>(<span class="str">...</span>),\n  <span class="prop">summary</span> = <span class="str">"PROJ-123: Add auth..."</span>\n)';
         snippet1.style.left = (colCenter - 80) + 'px';
         snippet1.style.top = (svc.y + svcH / 2 + 30) + 'px';
         snippet1.classList.add('visible');
 
-        /* Split: data dot to UI, summary dot to Agent */
+        /* Data dot to UI Panels */
         const dataDot = dotLayer.append('circle').attr('r', 7)
           .attr('cx', colCenter).attr('cy', svc.y)
           .attr('fill', '#6a9955').attr('opacity', 0.9);
-        const summaryDot = dotLayer.append('circle').attr('r', 7)
-          .attr('cx', colCenter).attr('cy', svc.y)
-          .attr('fill', '#c586c0').attr('opacity', 0.9);
 
         dataDot.transition().duration(700).ease(d3.easeQuadInOut)
           .attr('cx', colRightTop - 62).attr('cy', consumers[0].y)
           .on('end', function() {
-            snippet2.innerHTML = '<span class="prop">result.data.status</span> → renders badge';
+            snippet2.innerHTML = '<span class="prop">result.data.status</span> → renders badge\n<span class="prop">result.data.assignee</span> → shows name';
             snippet2.style.left = (colRightTop - 100) + 'px';
-            snippet2.style.top = (consumers[0].y - 50) + 'px';
+            snippet2.style.top = (consumers[0].y - 60) + 'px';
             snippet2.classList.add('visible');
-          })
-          .transition().duration(500).attr('opacity', 0).remove();
-
-        summaryDot.transition().delay(200).duration(700).ease(d3.easeQuadInOut)
-          .attr('cx', colRightTop - 62).attr('cy', consumers[1].y)
-          .on('end', function() {
-            snippet3.innerHTML = '<span class="prop">result.summary</span> → <span class="num">45 tokens</span>';
-            snippet3.style.left = (colRightTop - 100) + 'px';
-            snippet3.style.top = (consumers[1].y + 40) + 'px';
-            snippet3.classList.add('visible');
           })
           .transition().duration(500).attr('opacity', 0).remove();
 
@@ -1257,10 +1243,9 @@ svg text { font-family: inherit; }
           dotLayer.remove();
           snippet1.classList.remove('visible');
           snippet2.classList.remove('visible');
-          snippet3.classList.remove('visible');
           animating = false;
           animBtn.classList.remove('active');
-        }, 3500);
+        }, 3000);
       });
   }
 })();

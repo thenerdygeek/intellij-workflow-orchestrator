@@ -492,7 +492,7 @@ flowchart LR
 <details id="service-layer">
     <summary><span class="section-num">9.</span> Service Layer &amp; ToolResult Pattern</summary>
     <div class="content">
-        <p>Every service method returns <code>ToolResult&lt;T&gt;</code> &mdash; a dual-purpose type serving both UI panels (via typed <code>data</code>) and the AI agent (via text <code>summary</code>).</p>
+        <p>Every service method returns <code>ToolResult&lt;T&gt;</code> with typed <code>data</code> for UI panels and a text <code>summary</code> for logging and notifications.</p>
         <div class="mermaid">
 classDiagram
     class ToolResultT {
@@ -510,21 +510,14 @@ classDiagram
         Renders structured content
     }
 
-    class AIAgent {
-        Uses summary String
-        Token-efficient text
-    }
-
     ToolResultT --> UIPanel : data
-    ToolResultT --> AIAgent : summary
         </div>
 
         <h3>Service Architecture Chain</h3>
         <div class="mermaid">
 flowchart TD
-    subgraph Consumers
+    subgraph Consumer
         UI["UI Panels"]
-        AI["Cody AI Agent"]
     end
 
     subgraph "Service Interfaces (in :core)"

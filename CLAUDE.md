@@ -42,7 +42,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 
 Service interfaces in `:core`: `JiraService`, `BambooService`, `SonarService`, `BitbucketService`.
 Implementations in feature modules (e.g., `JiraServiceImpl`, `BambooServiceImpl`).
-All return `ToolResult<T>` with typed `.data` for UI and `.summary` for AI agent context.
+All return `ToolResult<T>` with typed `.data` for UI and `.summary` for logging/notifications.
 
 ## Shared Utilities (in :core)
 

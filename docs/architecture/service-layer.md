@@ -2,7 +2,7 @@
 
 ## The ToolResult Pattern
 
-Every service method returns `ToolResult<T>` -- a dual-purpose result type that serves both UI panels and the AI agent from the same service call.
+Every service method returns `ToolResult<T>` -- a result type with typed structured data for UI panels and a text summary for logging and notifications.
 
 ```mermaid
 classDiagram
@@ -22,26 +22,17 @@ classDiagram
         +Renders structured content
     }
 
-    class AIAgent {
-        <<consumer>>
-        +Uses summary: String
-        +Token-efficient text
-        +Uses hint for next action
-    }
-
     ToolResult~T~ --> UIPanel : data field
-    ToolResult~T~ --> AIAgent : summary field
 ```
 
 ## Unified Service Architecture
 
-The same service interface is consumed by both the UI layer and the AI agent. This ensures consistency -- the AI agent and the human developer see the same data.
+The UI layer consumes service interfaces registered in `:core`. Each feature module provides an implementation.
 
 ```mermaid
 flowchart TD
-    subgraph Consumers
-        UI["UI Panels<br/>(Sprint, Build, Quality...)"]
-        AI["Cody AI Agent<br/>(JSON-RPC tools)"]
+    subgraph Consumer
+        UI["UI Panels<br/>(Sprint, Build, Quality, PR, Automation, Handover)"]
     end
 
     subgraph Service Interfaces
