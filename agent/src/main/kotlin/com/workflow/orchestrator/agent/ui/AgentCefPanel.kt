@@ -38,7 +38,6 @@ class AgentCefPanel(
     }
 
     private var browser: JBCefBrowser? = null
-    private var sendQuery: JBCefJSQuery? = null
     private var undoQuery: JBCefJSQuery? = null
     private var traceQuery: JBCefJSQuery? = null
     private var promptQuery: JBCefJSQuery? = null
@@ -46,9 +45,6 @@ class AgentCefPanel(
     private var planReviseQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
-
-    /** Callback when user sends a message from JS (not used yet — input is in Swing). */
-    var onUserMessage: ((String) -> Unit)? = null
 
     /** Callback when user clicks "Undo" in the JCEF footer. */
     var onUndoRequested: (() -> Unit)? = null
@@ -90,14 +86,6 @@ class AgentCefPanel(
         } else {
             LOG.error("AgentCefPanel: agent-chat.html not found in resources")
             return
-        }
-
-        // Create JS→Kotlin bridge for user messages
-        sendQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { message ->
-                onUserMessage?.invoke(message)
-                JBCefJSQuery.Response("ok")
-            }
         }
 
         // Create JS→Kotlin bridges for UI actions (undo, view-trace, example prompts)
@@ -328,14 +316,12 @@ class AgentCefPanel(
     }
 
     override fun dispose() {
-        sendQuery?.dispose()
         undoQuery?.dispose()
         traceQuery?.dispose()
         promptQuery?.dispose()
         planApproveQuery?.dispose()
         planReviseQuery?.dispose()
         browser?.dispose()
-        sendQuery = null
         undoQuery = null
         traceQuery = null
         promptQuery = null

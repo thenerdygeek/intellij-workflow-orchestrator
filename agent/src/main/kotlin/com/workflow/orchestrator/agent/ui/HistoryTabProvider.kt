@@ -21,16 +21,31 @@ class HistoryTabProvider : WorkflowTabProvider {
         panel.onResumeSession = { sessionId ->
             try {
                 val controller = com.workflow.orchestrator.agent.AgentService.getInstance(project).activeController
-                controller?.resumeSession(sessionId)
-                // Switch to Agent tab
-                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                    .getToolWindow("Workflow")?.let { tw ->
-                        tw.contentManager.contents
-                            .firstOrNull { it.displayName == "Agent" }
-                            ?.let { tw.contentManager.setSelectedContent(it) }
-                    }
-            } catch (_: Exception) {
-                // Controller not available
+                if (controller != null) {
+                    controller.resumeSession(sessionId)
+                    // Switch to Agent tab
+                    com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                        .getToolWindow("Workflow")?.let { tw ->
+                            tw.contentManager.contents
+                                .firstOrNull { it.displayName == "Agent" }
+                                ?.let { tw.contentManager.setSelectedContent(it) }
+                        }
+                } else {
+                    // Agent tab not opened yet — show notification
+                    com.intellij.notification.NotificationGroupManager.getInstance()
+                        .getNotificationGroup("workflow.agent")
+                        .createNotification(
+                            "Open the Agent tab first, then try Resume again.",
+                            com.intellij.notification.NotificationType.INFORMATION
+                        ).notify(project)
+                }
+            } catch (e: Exception) {
+                com.intellij.notification.NotificationGroupManager.getInstance()
+                    .getNotificationGroup("workflow.agent")
+                    .createNotification(
+                        "Failed to resume session: ${e.message}",
+                        com.intellij.notification.NotificationType.ERROR
+                    ).notify(project)
             }
         }
         return panel

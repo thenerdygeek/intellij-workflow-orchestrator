@@ -325,11 +325,6 @@ class AgentDashboardPanel(
 
     fun focusInput() = runOnEdt { chatInput.requestFocusInWindow() }
 
-    // Legacy compat
-    fun getRichPanel(): RichStreamingPanel = fallbackPanel ?: RichStreamingPanel()
-    fun getStreamingPanel(): StreamingOutputPanel = StreamingOutputPanel()
-    fun getPlanRenderer(): PlanMarkdownRenderer = PlanMarkdownRenderer()
-
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else SwingUtilities.invokeLater(action)
