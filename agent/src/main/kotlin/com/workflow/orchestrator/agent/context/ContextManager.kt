@@ -40,6 +40,8 @@ class ContextManager(
     private val anchoredSummaries = mutableListOf<String>()
     /** Dedicated plan anchor — survives compression, updated in-place. */
     private var planAnchor: ChatMessage? = null
+    /** Dedicated skill anchor — survives compression, updated on skill activation/deactivation. */
+    private var skillAnchor: ChatMessage? = null
     private var totalTokens = 0
 
     /** Effective budget after subtracting reserved tokens (tool defs, system prompt overhead, buffer). */
@@ -63,6 +65,15 @@ class ContextManager(
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 
+    /**
+     * Set or update the anchored skill summary. Dedicated slot separate from
+     * the messages list — always included in getMessages(), never dropped by compress().
+     */
+    fun setSkillAnchor(message: ChatMessage?) {
+        skillAnchor = message
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
     /** Get all messages including any summary prefixes. */
     fun getMessages(): List<ChatMessage> {
         val result = mutableListOf<ChatMessage>()
@@ -76,6 +87,7 @@ class ContextManager(
         }
 
         planAnchor?.let { result.add(it) }
+        skillAnchor?.let { result.add(it) }
 
         result.addAll(messages)
         return result
@@ -250,6 +262,7 @@ class ContextManager(
         messages.clear()
         anchoredSummaries.clear()
         planAnchor = null
+        skillAnchor = null
         totalTokens = 0
     }
 

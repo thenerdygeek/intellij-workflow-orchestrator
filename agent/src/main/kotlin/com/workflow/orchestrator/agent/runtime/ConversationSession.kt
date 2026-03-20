@@ -43,7 +43,8 @@ class ConversationSession private constructor(
     var title: String = "",
     var lastMessageAt: Long = createdAt,
     var messageCount: Int = 0,
-    var status: String = "active" // "active", "completed", "interrupted", "failed"
+    var status: String = "active", // "active", "completed", "interrupted", "failed"
+    val skillManager: SkillManager? = null
 ) {
     /** Whether the system prompt has been added to context yet. */
     var initialized: Boolean = false
@@ -207,6 +208,12 @@ class ConversationSession private constructor(
                 } else null
             } catch (_: Exception) { null }
 
+            // Discover skills
+            val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
+            skillRegistry.scan()
+            val skillManager = SkillManager(skillRegistry)
+            val skillDescriptions = skillRegistry.buildDescriptionIndex()
+
             // Build system prompt
             val promptAssembler = PromptAssembler(agentService.toolRegistry)
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
@@ -214,6 +221,7 @@ class ConversationSession private constructor(
                 projectPath = project.basePath,
                 repoMapContext = repoMap.ifBlank { null },
                 memoryContext = memoryContext,
+                skillDescriptions = skillDescriptions.ifBlank { null },
                 planMode = planMode
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
@@ -235,7 +243,8 @@ class ConversationSession private constructor(
                 tools = allTools,
                 systemPrompt = systemPrompt,
                 reservedTokens = reservedTokens,
-                createdAt = System.currentTimeMillis()
+                createdAt = System.currentTimeMillis(),
+                skillManager = skillManager
             )
 
             // Register in the global session index for cross-project history
