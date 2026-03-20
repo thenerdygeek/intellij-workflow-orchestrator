@@ -257,11 +257,84 @@ svg text { font-family: inherit; }
 /* ============================================================
    RESPONSIVE
    ============================================================ */
+/* ============================================================
+   SECTION 5: SERVICE LAYER ARCHITECTURE
+   ============================================================ */
+#service-svg { width: 100%; height: 420px; }
+
+.service-code-snippet {
+  position: absolute; pointer-events: none;
+  background: rgba(26, 26, 46, 0.95); border: 1px solid var(--blue);
+  border-radius: var(--radius); padding: 10px 14px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px; color: var(--teal); line-height: 1.5;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  opacity: 0; transition: opacity .4s;
+  z-index: 50; max-width: 440px; white-space: pre;
+}
+.service-code-snippet.visible { opacity: 1; }
+.service-code-snippet .kw { color: var(--purple); }
+.service-code-snippet .str { color: var(--orange); }
+.service-code-snippet .prop { color: var(--blue); }
+.service-code-snippet .num { color: var(--yellow); }
+
+/* ============================================================
+   SECTION 6: THREADING MODEL
+   ============================================================ */
+#threading-svg { width: 100%; height: 320px; }
+
+.scenario-btns {
+  display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.scenario-btns .btn.selected {
+  background: var(--blue); color: #fff;
+}
+
+.lane-label {
+  font-size: 12px; font-weight: 700;
+}
+.lane-sublabel {
+  font-size: 9px; fill: var(--text-dim);
+}
+
+@keyframes dotTrail {
+  0%   { opacity: 1; r: 8; }
+  100% { opacity: 0; r: 3; }
+}
+@keyframes dotPulse {
+  0%, 100% { r: 8; opacity: 0.8; }
+  50%      { r: 12; opacity: 1; }
+}
+
+/* ============================================================
+   SECTION 7: QUALITY TAB DATA FLOW
+   ============================================================ */
+#quality-svg { width: 100%; height: 520px; }
+
+.quality-source { cursor: pointer; transition: opacity .3s; }
+.quality-source.dimmed { opacity: 0.12; }
+.quality-arrow { transition: opacity .3s; }
+.quality-arrow.dimmed { opacity: 0.08; }
+.quality-arrow-label {
+  font-size: 9px; fill: var(--text-dim);
+  pointer-events: none;
+}
+.quality-arrow-label.dimmed { opacity: 0.08; }
+
+.debounce-area {
+  stroke: var(--orange); stroke-dasharray: 4 3;
+  fill: rgba(206, 145, 120, 0.05);
+  rx: 6;
+}
+
 @media (max-width: 768px) {
   nav { padding: 0 12px; gap: 12px; font-size: 12px; }
   section { margin: 24px 12px; padding: 20px; }
   #dep-graph-svg { height: 380px; }
   #eventbus-svg  { height: 380px; }
+  #service-svg   { height: 360px; }
+  #threading-svg { height: 280px; }
+  #quality-svg   { height: 440px; }
   .step-card { flex: 0 0 100px; }
 }
 </style>
@@ -277,6 +350,9 @@ svg text { font-family: inherit; }
   <a href="#sec-pipeline">Data Flow</a>
   <a href="#sec-eventbus">Event Bus</a>
   <a href="#sec-workflow">Step-Through</a>
+  <a href="#sec-service">Service Layer</a>
+  <a href="#sec-threading">Threading</a>
+  <a href="#sec-quality">Quality Flow</a>
   <span class="spacer"></span>
   <a href="index.html">View Static Diagrams</a>
 </nav>
@@ -348,6 +424,61 @@ svg text { font-family: inherit; }
     <button id="step-prev" class="btn">&#8592; Previous</button>
     <button id="step-next" class="btn">Next &#8594;</button>
   </div>
+</section>
+
+<!-- ============================================================
+     SECTION 5: SERVICE LAYER ARCHITECTURE
+     ============================================================ -->
+<section id="sec-service">
+  <h2>Service Layer Architecture</h2>
+  <p class="section-desc">
+    Every service returns <code>ToolResult&lt;T&gt;</code> — typed <code>.data</code> for UI panels,
+    plain-text <code>.summary</code> for the AI agent. Click <strong>Animate</strong> to trace a request
+    from consumer through the service layer to the external API and back.
+  </p>
+  <div style="margin-bottom:16px;">
+    <button id="svc-animate-btn" class="btn">&#9654; Animate</button>
+  </div>
+  <div style="position:relative;">
+    <svg id="service-svg"></svg>
+    <div id="svc-snippet-1" class="service-code-snippet"></div>
+    <div id="svc-snippet-2" class="service-code-snippet"></div>
+    <div id="svc-snippet-3" class="service-code-snippet"></div>
+  </div>
+</section>
+
+<!-- ============================================================
+     SECTION 6: THREADING MODEL
+     ============================================================ -->
+<section id="sec-threading">
+  <h2>Threading Model</h2>
+  <p class="section-desc">
+    Three thread domains: <strong>EDT</strong> (UI only, 16ms budget), <strong>IO</strong> (network/disk),
+    and <strong>Background</strong> (polling/tasks). Select a scenario to watch dots flow between lanes.
+  </p>
+  <div class="scenario-btns">
+    <button class="btn scenario-btn selected" data-scenario="0">API Call from Button</button>
+    <button class="btn scenario-btn" data-scenario="1">Background Polling</button>
+    <button class="btn scenario-btn" data-scenario="2">Write Action (File Edit)</button>
+    <button id="threading-play-btn" class="btn" style="margin-left:auto;">&#9654; Play</button>
+  </div>
+  <svg id="threading-svg"></svg>
+</section>
+
+<!-- ============================================================
+     SECTION 7: QUALITY TAB DATA FLOW
+     ============================================================ -->
+<section id="sec-quality">
+  <h2>Quality Tab Data Flow</h2>
+  <p class="section-desc">
+    The Quality dashboard aggregates 6 SonarQube endpoints plus events, Git context, and settings.
+    Click a data source to highlight its flow. Watch the debounce mechanism coalesce rapid events.
+  </p>
+  <div style="margin-bottom:16px; display:flex; gap:12px; flex-wrap:wrap;">
+    <button id="quality-animate-btn" class="btn">&#9654; Animate Debounce</button>
+    <button id="quality-reset-btn" class="btn">Reset</button>
+  </div>
+  <svg id="quality-svg"></svg>
 </section>
 
 </main>
@@ -922,6 +1053,677 @@ svg text { font-family: inherit; }
 
   /* Initialize */
   goToStep(0);
+})();
+
+
+/* ============================================================
+   SECTION 5: SERVICE LAYER ARCHITECTURE (ToolResult<T> Flow)
+   ============================================================ */
+(function() {
+  const svg = d3.select('#service-svg');
+  const container = svg.node().parentElement;
+  const w = container.clientWidth;
+  const h = 420;
+  svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+  const defs = svg.append('defs');
+  /* Glow filters */
+  ['svc-glow-red','svc-glow-blue','svc-glow-green','svc-glow-purple'].forEach((id, i) => {
+    const colors = ['#f44747','#569cd6','#6a9955','#c586c0'];
+    const f = defs.append('filter').attr('id', id);
+    f.append('feGaussianBlur').attr('stdDeviation', 4).attr('result', 'b');
+    const m = f.append('feMerge');
+    m.append('feMergeNode').attr('in', 'b');
+    m.append('feMergeNode').attr('in', 'SourceGraphic');
+  });
+
+  const g = svg.append('g');
+
+  /* Layout columns */
+  const colLeft = 100, colCenter = w / 2, colRightTop = w - 160, colRightBot = w - 160;
+  const rowStart = 60, rowGap = 85;
+
+  /* External APIs (left) */
+  const apis = [
+    { id: 'jira-api',   label: 'Jira Server',      y: rowStart },
+    { id: 'bamboo-api', label: 'Bamboo Server',     y: rowStart + rowGap },
+    { id: 'sonar-api',  label: 'SonarQube Server',  y: rowStart + rowGap * 2 },
+    { id: 'bb-api',     label: 'Bitbucket Server',  y: rowStart + rowGap * 3 },
+  ];
+
+  /* Services (center) */
+  const services = [
+    { id: 'jira-svc',   label: 'JiraServiceImpl',      y: rowStart,             apiId: 'jira-api' },
+    { id: 'bamboo-svc', label: 'BambooServiceImpl',     y: rowStart + rowGap,    apiId: 'bamboo-api' },
+    { id: 'sonar-svc',  label: 'SonarServiceImpl',      y: rowStart + rowGap * 2, apiId: 'sonar-api' },
+    { id: 'bb-svc',     label: 'BitbucketServiceImpl',  y: rowStart + rowGap * 3, apiId: 'bb-api' },
+  ];
+
+  /* Consumers (right) */
+  const consumers = [
+    { id: 'ui-panel', label: 'UI Panels',  y: h / 2 - 60, color: '#6a9955', dataLabel: 'result.data' },
+    { id: 'ai-agent', label: 'AI Agent',   y: h / 2 + 60, color: '#c586c0', dataLabel: 'result.summary' },
+  ];
+
+  /* Draw external APIs */
+  apis.forEach(a => {
+    g.append('circle').attr('cx', colLeft).attr('cy', a.y).attr('r', 28)
+      .attr('fill', 'rgba(244, 71, 71, 0.12)').attr('stroke', '#f44747').attr('stroke-width', 2);
+    g.append('text').attr('x', colLeft).attr('y', a.y + 4)
+      .attr('text-anchor', 'middle').attr('fill', '#f44747').attr('font-size', 9).attr('font-weight', 600)
+      .text(a.label.split(' ')[0]);
+    g.append('text').attr('x', colLeft).attr('y', a.y + 16)
+      .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 8)
+      .text(a.label.split(' ').slice(1).join(' ') || '');
+  });
+
+  /* Draw services */
+  const svcW = 150, svcH = 40;
+  services.forEach(s => {
+    g.append('rect')
+      .attr('x', colCenter - svcW / 2).attr('y', s.y - svcH / 2)
+      .attr('width', svcW).attr('height', svcH).attr('rx', 6)
+      .attr('fill', 'rgba(86, 156, 214, 0.1)').attr('stroke', '#569cd6').attr('stroke-width', 2);
+    g.append('text').attr('x', colCenter).attr('y', s.y + 4)
+      .attr('text-anchor', 'middle').attr('fill', '#569cd6').attr('font-size', 10).attr('font-weight', 600)
+      .text(s.label);
+    /* ToolResult label */
+    g.append('text').attr('x', colCenter).attr('y', s.y + svcH / 2 + 14)
+      .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 9).attr('font-style', 'italic')
+      .text('ToolResult<T>');
+  });
+
+  /* Draw consumers */
+  consumers.forEach(c => {
+    g.append('rect')
+      .attr('x', colRightTop - 60).attr('y', c.y - 22)
+      .attr('width', 120).attr('height', 44).attr('rx', 6)
+      .attr('fill', `${c.color}1a`).attr('stroke', c.color).attr('stroke-width', 2);
+    g.append('text').attr('x', colRightTop).attr('y', c.y + 4)
+      .attr('text-anchor', 'middle').attr('fill', c.color).attr('font-size', 11).attr('font-weight', 600)
+      .text(c.label);
+    g.append('text').attr('x', colRightTop).attr('y', c.y + 22 + 14)
+      .attr('text-anchor', 'middle').attr('fill', c.color).attr('font-size', 9).attr('font-style', 'italic')
+      .text(c.dataLabel);
+  });
+
+  /* Connector lines: API <-> Service */
+  services.forEach(s => {
+    const api = apis.find(a => a.id === s.apiId);
+    g.append('line')
+      .attr('x1', colLeft + 30).attr('y1', api.y)
+      .attr('x2', colCenter - svcW / 2 - 4).attr('y2', s.y)
+      .attr('stroke', '#3c3c3c').attr('stroke-width', 1.5).attr('stroke-dasharray', '4 3');
+  });
+
+  /* Connector lines: Service -> Consumers */
+  services.forEach(s => {
+    consumers.forEach(c => {
+      g.append('line')
+        .attr('x1', colCenter + svcW / 2 + 4).attr('y1', s.y)
+        .attr('x2', colRightTop - 62).attr('y2', c.y)
+        .attr('stroke', '#2d2d2d').attr('stroke-width', 1).attr('stroke-dasharray', '3 3');
+    });
+  });
+
+  /* Column labels */
+  g.append('text').attr('x', colLeft).attr('y', 28)
+    .attr('text-anchor', 'middle').attr('fill', '#f44747').attr('font-size', 12).attr('font-weight', 700)
+    .text('External APIs');
+  g.append('text').attr('x', colCenter).attr('y', 28)
+    .attr('text-anchor', 'middle').attr('fill', '#569cd6').attr('font-size', 12).attr('font-weight', 700)
+    .text('Service Layer');
+  g.append('text').attr('x', colRightTop).attr('y', 28)
+    .attr('text-anchor', 'middle').attr('fill', '#6a9955').attr('font-size', 12).attr('font-weight', 700)
+    .text('Consumers');
+
+  /* Animate button */
+  let animating = false;
+  const animBtn = document.getElementById('svc-animate-btn');
+  const snippet1 = document.getElementById('svc-snippet-1');
+  const snippet2 = document.getElementById('svc-snippet-2');
+  const snippet3 = document.getElementById('svc-snippet-3');
+
+  animBtn.addEventListener('click', () => {
+    if (animating) return;
+    animating = true;
+    animBtn.classList.add('active');
+    runServiceAnimation();
+  });
+
+  function runServiceAnimation() {
+    const svc = services[0]; /* Jira as example */
+    const api = apis[0];
+    const dotLayer = g.append('g').attr('class', 'svc-anim-dots');
+
+    /* Phase 1: Request from UI Panel -> Service */
+    const reqDot = dotLayer.append('circle').attr('r', 7)
+      .attr('cx', colRightTop - 62).attr('cy', consumers[0].y)
+      .attr('fill', '#6a9955').attr('opacity', 0);
+
+    reqDot.transition().duration(200).attr('opacity', 1)
+      .transition().duration(800).ease(d3.easeQuadInOut)
+        .attr('cx', colCenter + svcW / 2).attr('cy', svc.y)
+      .transition().duration(600).ease(d3.easeQuadInOut)
+        .attr('cx', colCenter - svcW / 2).attr('cy', svc.y)
+      /* Phase 2: Service -> External API */
+      .transition().duration(800).ease(d3.easeQuadInOut)
+        .attr('cx', colLeft + 30).attr('cy', api.y)
+        .attr('fill', '#f44747')
+      /* Phase 3: Response back to Service */
+      .transition().delay(400).duration(800).ease(d3.easeQuadInOut)
+        .attr('cx', colCenter).attr('cy', svc.y)
+        .attr('fill', '#569cd6')
+      .on('end', function() {
+        /* Show code snippet at service */
+        snippet1.innerHTML = '<span class="kw">ToolResult</span>(\n  <span class="prop">data</span> = <span class="kw">JiraTicketData</span>(<span class="str">...</span>),\n  <span class="prop">summary</span> = <span class="str">"PROJ-123: Add auth\\nStatus: In Progress"</span>\n)';
+        snippet1.style.left = (colCenter - 80) + 'px';
+        snippet1.style.top = (svc.y + svcH / 2 + 30) + 'px';
+        snippet1.classList.add('visible');
+
+        /* Split: data dot to UI, summary dot to Agent */
+        const dataDot = dotLayer.append('circle').attr('r', 7)
+          .attr('cx', colCenter).attr('cy', svc.y)
+          .attr('fill', '#6a9955').attr('opacity', 0.9);
+        const summaryDot = dotLayer.append('circle').attr('r', 7)
+          .attr('cx', colCenter).attr('cy', svc.y)
+          .attr('fill', '#c586c0').attr('opacity', 0.9);
+
+        dataDot.transition().duration(700).ease(d3.easeQuadInOut)
+          .attr('cx', colRightTop - 62).attr('cy', consumers[0].y)
+          .on('end', function() {
+            snippet2.innerHTML = '<span class="prop">result.data.status</span> → renders badge';
+            snippet2.style.left = (colRightTop - 100) + 'px';
+            snippet2.style.top = (consumers[0].y - 50) + 'px';
+            snippet2.classList.add('visible');
+          })
+          .transition().duration(500).attr('opacity', 0).remove();
+
+        summaryDot.transition().delay(200).duration(700).ease(d3.easeQuadInOut)
+          .attr('cx', colRightTop - 62).attr('cy', consumers[1].y)
+          .on('end', function() {
+            snippet3.innerHTML = '<span class="prop">result.summary</span> → <span class="num">45 tokens</span>';
+            snippet3.style.left = (colRightTop - 100) + 'px';
+            snippet3.style.top = (consumers[1].y + 40) + 'px';
+            snippet3.classList.add('visible');
+          })
+          .transition().duration(500).attr('opacity', 0).remove();
+
+        /* Fade out original dot */
+        d3.select(this).transition().duration(300).attr('opacity', 0).remove();
+
+        /* Cleanup after animation */
+        setTimeout(() => {
+          dotLayer.remove();
+          snippet1.classList.remove('visible');
+          snippet2.classList.remove('visible');
+          snippet3.classList.remove('visible');
+          animating = false;
+          animBtn.classList.remove('active');
+        }, 3500);
+      });
+  }
+})();
+
+
+/* ============================================================
+   SECTION 6: THREADING MODEL (Animated Swimlanes)
+   ============================================================ */
+(function() {
+  const svg = d3.select('#threading-svg');
+  const container = svg.node().parentElement;
+  const w = container.clientWidth;
+  const h = 320;
+  svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+  const g = svg.append('g');
+
+  /* Lane layout */
+  const labelW = 140;
+  const laneH = 80;
+  const laneX = labelW;
+  const laneW = w - labelW - 20;
+  const lanes = [
+    { id: 'edt', label: 'EDT',        sublabel: 'Event Dispatch Thread — UI Only', y: 30,  color: '#ce9178', bg: 'rgba(206,145,120,0.06)' },
+    { id: 'io',  label: 'IO',         sublabel: 'Dispatchers.IO — Network/Disk',   y: 110, color: '#569cd6', bg: 'rgba(86,156,214,0.06)' },
+    { id: 'bg',  label: 'Background', sublabel: 'CoroutineScope — Polling/Tasks',  y: 190, color: '#6a9955', bg: 'rgba(106,153,85,0.06)' },
+  ];
+
+  /* Draw lanes */
+  lanes.forEach(l => {
+    g.append('rect')
+      .attr('x', laneX).attr('y', l.y).attr('width', laneW).attr('height', laneH)
+      .attr('fill', l.bg).attr('stroke', l.color).attr('stroke-width', 1)
+      .attr('stroke-dasharray', '6 4').attr('rx', 4);
+    g.append('text').attr('x', 12).attr('y', l.y + 28)
+      .attr('fill', l.color).attr('class', 'lane-label').text(l.label);
+    g.append('text').attr('x', 12).attr('y', l.y + 44)
+      .attr('class', 'lane-sublabel').text(l.sublabel);
+  });
+
+  /* Timing axis */
+  g.append('line')
+    .attr('x1', laneX).attr('y1', h - 20).attr('x2', laneX + laneW).attr('y2', h - 20)
+    .attr('stroke', '#3c3c3c').attr('stroke-width', 1);
+  g.append('text').attr('x', laneX + laneW / 2).attr('y', h - 4)
+    .attr('text-anchor', 'middle').attr('fill', '#808080').attr('font-size', 10).text('Time →');
+
+  const laneYCenter = id => lanes.find(l => l.id === id).y + laneH / 2;
+
+  /* Scenarios */
+  const scenarios = [
+    { name: 'API Call from Button Click', steps: [
+      { lane: 'edt', x: 0.08, label: 'click',    dur: 300 },
+      { lane: 'io',  x: 0.25, label: 'scope.launch', dur: 200, from: 'edt' },
+      { lane: 'io',  x: 0.45, label: 'HTTP GET',  dur: 600 },
+      { lane: 'edt', x: 0.72, label: 'invokeLater', dur: 200, from: 'io' },
+      { lane: 'edt', x: 0.88, label: 'render',    dur: 300, timing: '~16ms budget' },
+    ]},
+    { name: 'Background Polling', steps: [
+      { lane: 'bg',  x: 0.08, label: 'SmartPoller', dur: 300 },
+      { lane: 'io',  x: 0.28, label: 'API call',   dur: 400, from: 'bg' },
+      { lane: 'edt', x: 0.52, label: 'invokeLater', dur: 200, from: 'io' },
+      { lane: 'edt', x: 0.65, label: 'update UI',  dur: 200 },
+      { lane: 'bg',  x: 0.82, label: 'delay(30s)',  dur: 400, from: 'edt', timing: '~30s wait', pulse: true },
+    ]},
+    { name: 'Write Action (File Edit)', steps: [
+      { lane: 'io',  x: 0.10, label: 'Cody fix',    dur: 400 },
+      { lane: 'edt', x: 0.35, label: 'invokeLater', dur: 200, from: 'io' },
+      { lane: 'edt', x: 0.55, label: 'WriteCommandAction', dur: 500, timing: '~16ms budget' },
+      { lane: 'edt', x: 0.82, label: 'file saved',  dur: 300 },
+    ]},
+  ];
+
+  let currentScenario = 0;
+  let playing = false;
+  let animTimers = [];
+
+  /* Scenario buttons */
+  document.querySelectorAll('.scenario-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('selected'));
+      this.classList.add('selected');
+      currentScenario = parseInt(this.dataset.scenario);
+      stopAnimation();
+      if (playing) runThreadingAnimation();
+    });
+  });
+
+  const playBtn = document.getElementById('threading-play-btn');
+  playBtn.addEventListener('click', () => {
+    if (playing) {
+      stopAnimation();
+    } else {
+      playing = true;
+      playBtn.innerHTML = '&#9724; Pause';
+      playBtn.classList.add('active');
+      runThreadingAnimation();
+    }
+  });
+
+  function stopAnimation() {
+    playing = false;
+    playBtn.innerHTML = '&#9654; Play';
+    playBtn.classList.remove('active');
+    animTimers.forEach(clearTimeout);
+    animTimers = [];
+    g.selectAll('.thread-dot').remove();
+    g.selectAll('.thread-label').remove();
+    g.selectAll('.thread-line').remove();
+    g.selectAll('.timing-label').remove();
+  }
+
+  function runThreadingAnimation() {
+    if (!playing) return;
+    const sc = scenarios[currentScenario];
+    const dotLayer = g.append('g');
+    let totalDelay = 0;
+
+    sc.steps.forEach((step, i) => {
+      const cx = laneX + step.x * laneW;
+      const cy = laneYCenter(step.lane);
+      const stepDelay = totalDelay;
+
+      const t = setTimeout(() => {
+        if (!playing) return;
+
+        /* If crossing from another lane, draw connector line and animate */
+        if (step.from) {
+          const fromY = laneYCenter(step.from);
+          const prevStep = sc.steps[i - 1];
+          const fromX = prevStep ? laneX + prevStep.x * laneW : cx;
+
+          /* Connector line */
+          const line = dotLayer.append('line').attr('class', 'thread-line')
+            .attr('x1', fromX).attr('y1', fromY).attr('x2', cx).attr('y2', cy)
+            .attr('stroke', lanes.find(l => l.id === step.lane).color)
+            .attr('stroke-width', 1.5).attr('stroke-dasharray', '3 3')
+            .attr('opacity', 0);
+          line.transition().duration(200).attr('opacity', 0.5);
+
+          /* Moving dot from previous lane */
+          const moveDot = dotLayer.append('circle').attr('class', 'thread-dot')
+            .attr('cx', fromX).attr('cy', fromY).attr('r', 8)
+            .attr('fill', lanes.find(l => l.id === step.lane).color)
+            .attr('opacity', 0.9);
+          moveDot.transition().duration(400).ease(d3.easeQuadInOut)
+            .attr('cx', cx).attr('cy', cy)
+            .on('end', () => { moveDot.remove(); showDot(); });
+        } else {
+          showDot();
+        }
+
+        function showDot() {
+          if (!playing) return;
+          const laneColor = lanes.find(l => l.id === step.lane).color;
+          const dot = dotLayer.append('circle').attr('class', 'thread-dot')
+            .attr('cx', cx).attr('cy', cy).attr('r', 0)
+            .attr('fill', laneColor).attr('opacity', 0.9);
+
+          dot.transition().duration(200).attr('r', 8);
+
+          /* Pulse effect for waiting states */
+          if (step.pulse) {
+            (function pulseFn() {
+              if (!playing) return;
+              dot.transition().duration(600).attr('r', 12).attr('opacity', 1)
+                .transition().duration(600).attr('r', 8).attr('opacity', 0.7)
+                .on('end', pulseFn);
+            })();
+          }
+
+          /* Trail/glow */
+          dotLayer.append('circle').attr('class', 'thread-dot')
+            .attr('cx', cx).attr('cy', cy).attr('r', 8)
+            .attr('fill', 'none').attr('stroke', laneColor).attr('stroke-width', 2)
+            .attr('opacity', 0.6)
+            .transition().duration(800).attr('r', 18).attr('opacity', 0).remove();
+
+          /* Label */
+          const lbl = dotLayer.append('text').attr('class', 'thread-label')
+            .attr('x', cx).attr('y', cy - 16).attr('text-anchor', 'middle')
+            .attr('fill', laneColor).attr('font-size', 10).attr('font-weight', 600)
+            .text(step.label).attr('opacity', 0);
+          lbl.transition().duration(200).attr('opacity', 1);
+
+          /* Timing annotation */
+          if (step.timing) {
+            const tLbl = dotLayer.append('text').attr('class', 'timing-label')
+              .attr('x', cx).attr('y', cy + 24).attr('text-anchor', 'middle')
+              .attr('fill', '#808080').attr('font-size', 9).attr('font-style', 'italic')
+              .text(step.timing).attr('opacity', 0);
+            tLbl.transition().delay(300).duration(200).attr('opacity', 1);
+          }
+
+          /* Fade dot after duration (unless it's the last or pulsing) */
+          if (!step.pulse && i < sc.steps.length - 1) {
+            dot.transition().delay(step.dur + 200).duration(400).attr('opacity', 0.3);
+          }
+        }
+      }, stepDelay);
+      animTimers.push(t);
+
+      totalDelay += step.dur + (step.from ? 500 : 300);
+    });
+
+    /* Loop */
+    const loopTimer = setTimeout(() => {
+      g.selectAll('.thread-dot').remove();
+      g.selectAll('.thread-label').remove();
+      g.selectAll('.thread-line').remove();
+      g.selectAll('.timing-label').remove();
+      dotLayer.remove();
+      if (playing) runThreadingAnimation();
+    }, totalDelay + 2500);
+    animTimers.push(loopTimer);
+  }
+})();
+
+
+/* ============================================================
+   SECTION 7: QUALITY TAB DATA FLOW
+   ============================================================ */
+(function() {
+  const svg = d3.select('#quality-svg');
+  const container = svg.node().parentElement;
+  const w = container.clientWidth;
+  const h = 520;
+  svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+  const g = svg.append('g');
+
+  /* Central dashboard */
+  const dashX = w / 2, dashY = h / 2;
+  const dashW = 200, dashH = 120;
+
+  g.append('rect')
+    .attr('x', dashX - dashW / 2).attr('y', dashY - dashH / 2)
+    .attr('width', dashW).attr('height', dashH).attr('rx', 8)
+    .attr('fill', 'rgba(86, 156, 214, 0.08)').attr('stroke', '#569cd6').attr('stroke-width', 2);
+  g.append('text').attr('x', dashX).attr('y', dashY - dashH / 2 + 24)
+    .attr('text-anchor', 'middle').attr('fill', '#569cd6').attr('font-size', 13).attr('font-weight', 700)
+    .text('Quality Dashboard');
+
+  /* Sub-sections inside dashboard */
+  const subSections = ['Overview', 'Issues', 'Coverage'];
+  subSections.forEach((s, i) => {
+    const subW = 56, subH = 28;
+    const sx = dashX - 90 + i * 66;
+    const sy = dashY + 4;
+    g.append('rect')
+      .attr('x', sx).attr('y', sy).attr('width', subW).attr('height', subH).attr('rx', 4)
+      .attr('fill', 'rgba(78, 201, 176, 0.1)').attr('stroke', '#4ec9b0').attr('stroke-width', 1);
+    g.append('text').attr('x', sx + subW / 2).attr('y', sy + 18)
+      .attr('text-anchor', 'middle').attr('fill', '#4ec9b0').attr('font-size', 9).attr('font-weight', 600)
+      .text(s);
+  });
+
+  /* Data sources with their arrows */
+  const sources = [
+    { id: 'sonar', label: 'SonarQube API', x: 100, y: 80, color: '#f44747', r: 36,
+      arrows: [
+        { label: 'issues/search', target: 'Issues' },
+        { label: 'qualitygates/project_status', target: 'Overview' },
+        { label: 'measures/component_tree', target: 'Coverage' },
+        { label: 'sources/lines', target: 'Gutter markers' },
+        { label: 'ce/activity', target: 'Analysis status' },
+        { label: 'new_code_periods', target: 'New code label' },
+      ]},
+    { id: 'eventbus', label: 'EventBus', x: w - 100, y: 80, color: '#ce9178', r: 32,
+      arrows: [
+        { label: 'PrSelected', target: 'refresh branch' },
+        { label: 'BranchChanged', target: 'refresh branch' },
+        { label: 'BuildFinished', target: 'refresh data' },
+      ]},
+    { id: 'git', label: 'Git', x: 100, y: h - 80, color: '#4ec9b0', r: 28,
+      arrows: [
+        { label: 'currentBranchName', target: 'branch context' },
+      ]},
+    { id: 'settings', label: 'PluginSettings', x: w - 100, y: h - 80, color: '#808080', r: 32,
+      arrows: [
+        { label: 'sonarProjectKey', target: 'project context' },
+        { label: 'coverageThresholds', target: 'color coding' },
+      ]},
+  ];
+
+  /* Draw arrows first (below nodes) */
+  const arrowLayer = g.append('g');
+  const arrowElements = [];
+
+  sources.forEach(src => {
+    src.arrows.forEach((arrow, ai) => {
+      /* Calculate control points for curved arrows */
+      const dx = dashX - src.x;
+      const dy = dashY - src.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+
+      /* Start from edge of source circle */
+      const startX = src.x + Math.cos(angle) * (src.r + 4);
+      const startY = src.y + Math.sin(angle) * (src.r + 4);
+
+      /* End at edge of dashboard */
+      const endAngle = Math.atan2(src.y - dashY, src.x - dashX);
+      const endX = dashX + Math.cos(endAngle) * (dashW / 2 + 4);
+      const endY = dashY + Math.sin(endAngle) * (dashH / 2 + 4);
+
+      /* Offset for multiple arrows */
+      const spread = (ai - (src.arrows.length - 1) / 2) * 12;
+      const perpAngle = angle + Math.PI / 2;
+      const offsetX = Math.cos(perpAngle) * spread;
+      const offsetY = Math.sin(perpAngle) * spread;
+
+      const midX = (startX + endX) / 2 + offsetX;
+      const midY = (startY + endY) / 2 + offsetY;
+
+      const path = arrowLayer.append('path')
+        .attr('class', 'quality-arrow')
+        .attr('data-source', src.id)
+        .attr('d', `M${startX},${startY} Q${midX},${midY} ${endX},${endY}`)
+        .attr('fill', 'none').attr('stroke', src.color).attr('stroke-width', 1.5)
+        .attr('stroke-dasharray', '4 3').attr('opacity', 0.5);
+
+      /* Arrow label at midpoint */
+      const lblX = midX;
+      const lblY = midY - 8;
+      const lbl = arrowLayer.append('text')
+        .attr('class', 'quality-arrow-label')
+        .attr('data-source', src.id)
+        .attr('x', lblX).attr('y', lblY)
+        .attr('text-anchor', 'middle').attr('fill', src.color).attr('font-size', 9)
+        .text(arrow.label);
+
+      arrowElements.push({ path, lbl, sourceId: src.id });
+    });
+  });
+
+  /* Draw source nodes */
+  sources.forEach(src => {
+    const srcG = g.append('g').attr('class', 'quality-source')
+      .attr('data-source', src.id)
+      .attr('transform', `translate(${src.x},${src.y})`);
+
+    srcG.append('circle').attr('r', src.r)
+      .attr('fill', `${src.color}1a`).attr('stroke', src.color).attr('stroke-width', 2);
+
+    /* Split label if needed */
+    const words = src.label.split(/(?=[A-Z])/).join(' ').split(' ');
+    if (words.length <= 2) {
+      srcG.append('text').attr('text-anchor', 'middle').attr('dy', 4)
+        .attr('fill', src.color).attr('font-size', 10).attr('font-weight', 600)
+        .text(src.label);
+    } else {
+      srcG.append('text').attr('text-anchor', 'middle').attr('dy', -2)
+        .attr('fill', src.color).attr('font-size', 10).attr('font-weight', 600)
+        .text(words.slice(0, 2).join(' '));
+      srcG.append('text').attr('text-anchor', 'middle').attr('dy', 12)
+        .attr('fill', src.color).attr('font-size', 10).attr('font-weight', 600)
+        .text(words.slice(2).join(' '));
+    }
+
+    /* Click to highlight */
+    srcG.on('click', function() {
+      const id = src.id;
+      const allDimmed = d3.select(this).classed('highlighted');
+
+      /* Reset all */
+      g.selectAll('.quality-source').classed('dimmed', false).classed('highlighted', false);
+      g.selectAll('.quality-arrow').classed('dimmed', false);
+      g.selectAll('.quality-arrow-label').classed('dimmed', false);
+
+      if (!allDimmed) {
+        /* Dim everything except this source */
+        g.selectAll('.quality-source').each(function() {
+          if (d3.select(this).attr('data-source') !== id) {
+            d3.select(this).classed('dimmed', true);
+          }
+        });
+        g.selectAll('.quality-arrow').each(function() {
+          if (d3.select(this).attr('data-source') !== id) {
+            d3.select(this).classed('dimmed', true);
+          }
+        });
+        g.selectAll('.quality-arrow-label').each(function() {
+          if (d3.select(this).attr('data-source') !== id) {
+            d3.select(this).classed('dimmed', true);
+          }
+        });
+        d3.select(this).classed('highlighted', true);
+      }
+    });
+  });
+
+  /* Debounce visualization area (near EventBus) */
+  const dbX = w - 100, dbY = 140;
+  const debounceG = g.append('g').attr('class', 'debounce-group');
+  debounceG.append('rect').attr('class', 'debounce-area')
+    .attr('x', dbX - 50).attr('y', dbY).attr('width', 100).attr('height', 40);
+  debounceG.append('text')
+    .attr('x', dbX).attr('y', dbY + 24).attr('text-anchor', 'middle')
+    .attr('fill', '#ce9178').attr('font-size', 9).attr('font-style', 'italic')
+    .text('500ms debounce');
+
+  /* Animate debounce button */
+  let debounceAnimating = false;
+  document.getElementById('quality-animate-btn').addEventListener('click', () => {
+    if (debounceAnimating) return;
+    debounceAnimating = true;
+
+    const eventBusSrc = sources.find(s => s.id === 'eventbus');
+    const dotLayer = g.append('g');
+
+    /* 3 rapid events arrive at EventBus */
+    [0, 150, 300].forEach((delay, i) => {
+      setTimeout(() => {
+        const dot = dotLayer.append('circle')
+          .attr('cx', eventBusSrc.x + 40 - i * 10).attr('cy', eventBusSrc.y - 20)
+          .attr('r', 6).attr('fill', '#ce9178').attr('opacity', 0);
+
+        dot.transition().duration(150).attr('opacity', 0.9)
+          .transition().duration(300).ease(d3.easeQuadIn)
+            .attr('cx', dbX).attr('cy', dbY + 20)
+          .transition().duration(200).attr('r', 4).attr('opacity', 0.5);
+
+        /* After all 3 arrive, merge into 1 */
+        if (i === 2) {
+          setTimeout(() => {
+            dotLayer.selectAll('circle').transition().duration(300)
+              .attr('cx', dbX).attr('cy', dbY + 20).attr('r', 3).attr('opacity', 0).remove();
+
+            /* Single merged dot flows to dashboard */
+            const merged = dotLayer.append('circle')
+              .attr('cx', dbX).attr('cy', dbY + 20)
+              .attr('r', 10).attr('fill', '#ce9178').attr('opacity', 0);
+
+            merged.transition().duration(200).attr('opacity', 1).attr('r', 8)
+              .transition().duration(800).ease(d3.easeQuadInOut)
+                .attr('cx', dashX + dashW / 2 + 4).attr('cy', dashY)
+              .transition().duration(400).attr('r', 14).attr('opacity', 0)
+              .on('end', () => {
+                /* Flash dashboard border */
+                g.append('rect')
+                  .attr('x', dashX - dashW / 2).attr('y', dashY - dashH / 2)
+                  .attr('width', dashW).attr('height', dashH).attr('rx', 8)
+                  .attr('fill', 'none').attr('stroke', '#ce9178').attr('stroke-width', 3)
+                  .attr('opacity', 0.8)
+                  .transition().duration(600).attr('opacity', 0).remove();
+
+                dotLayer.remove();
+                debounceAnimating = false;
+              })
+              .remove();
+          }, 600);
+        }
+      }, delay);
+    });
+  });
+
+  /* Reset button */
+  document.getElementById('quality-reset-btn').addEventListener('click', () => {
+    g.selectAll('.quality-source').classed('dimmed', false).classed('highlighted', false);
+    g.selectAll('.quality-arrow').classed('dimmed', false);
+    g.selectAll('.quality-arrow-label').classed('dimmed', false);
+  });
 })();
 </script>
 </body>
