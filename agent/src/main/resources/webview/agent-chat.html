@@ -643,6 +643,24 @@ code {
 }
 .question-chat-banner .banner-close:hover { color: var(--fg); }
 
+/* Chat-about inline textarea */
+.chat-about-textarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  min-height: 60px;
+}
+.chat-about-textarea:focus {
+  border-color: var(--link);
+}
+
 /* Disabled overlay for chat input */
 .question-disabled-overlay {
   position: relative;
@@ -993,18 +1011,6 @@ function formatDuration(ms) {
 }
 
 function submitPrompt(text) {
-  // Intercept for chat-about mode
-  if (_chatAboutMode && text) {
-    var qid = _chatAboutQId;
-    var label = _chatAboutLabel;
-    _chatAboutMode = false;
-    _chatAboutQId = null;
-    _chatAboutLabel = null;
-    if (window._chatAboutOption) {
-      window._chatAboutOption(qid, label, text);
-    }
-    return;
-  }
   // Will be wired to Kotlin via JBCefJSQuery
   if (window._submitPrompt) {
     window._submitPrompt(text);
@@ -1629,26 +1635,65 @@ function enableChatAbout(questionId, optionLabel) {
   _chatAboutQId = questionId;
   _chatAboutLabel = optionLabel;
 
-  // Remove the question wizard card
+  // Remove the current question wizard card
   removeQuestionElements();
 
-  // Show a chat-about banner
-  var banner = document.createElement('div');
-  banner.className = 'message question-wizard-wrapper';
-  banner.innerHTML = '<div class="question-chat-banner" id="chat-about-banner">'
-    + '<span class="banner-label">&#x1F4AC; Chatting about: <strong>' + esc(optionLabel) + '</strong> &mdash; Type your note below</span>'
-    + '<button class="banner-close" onclick="cancelChatAbout()">&#xd7;</button>'
+  // Render a chat-about card with inline textarea
+  endStream(); hideEmpty();
+  var card = document.createElement('div');
+  card.className = 'message question-wizard-wrapper';
+  card.id = 'chat-about-card';
+  card.innerHTML = '<div class="question-wizard">'
+    + '<div class="question-header" style="background:rgba(249,226,175,0.1);border-bottom-color:var(--border);">'
+    + '<span style="color:var(--warning,#f9e2af);font-size:13px;">&#x1F4AC; Add a note about: <strong>' + esc(optionLabel) + '</strong></span>'
+    + '</div>'
+    + '<div style="padding:16px;">'
+    + '<textarea id="chat-about-input" class="chat-about-textarea" placeholder="Add your note about ' + esc(optionLabel) + '..." rows="3" autofocus></textarea>'
+    + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px;">'
+    + '<button class="question-nav-btn skip" onclick="cancelChatAbout()">Cancel</button>'
+    + '<button class="question-nav-btn next" onclick="submitChatAbout()">Send &amp; go to summary &#x2192;</button>'
+    + '</div>'
+    + '</div>'
     + '</div>';
-  container.appendChild(banner);
+  container.appendChild(card);
   scrollToBottom();
+
+  // Focus the textarea after render
+  setTimeout(function() {
+    var ta = document.getElementById('chat-about-input');
+    if (ta) {
+      ta.focus();
+      // Enter key submits (Shift+Enter for newline)
+      ta.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          submitChatAbout();
+        }
+      });
+    }
+  }, 100);
+}
+
+function submitChatAbout() {
+  var ta = document.getElementById('chat-about-input');
+  var message = ta ? ta.value.trim() : '';
+  if (window._chatAboutOption) {
+    window._chatAboutOption(_chatAboutQId, _chatAboutLabel, message);
+  }
+  // Remove the chat-about card
+  var card = document.getElementById('chat-about-card');
+  if (card) card.remove();
+  _chatAboutMode = false;
 }
 
 function cancelChatAbout() {
+  // Remove the chat-about card and go back to the question
+  var card = document.getElementById('chat-about-card');
+  if (card) card.remove();
   _chatAboutMode = false;
   _chatAboutQId = null;
   _chatAboutLabel = null;
-  removeQuestionElements();
-  // Re-show the question we were on
+  // Re-show the current question
   if (_questionData) {
     showQuestion(_questionIndex);
   }

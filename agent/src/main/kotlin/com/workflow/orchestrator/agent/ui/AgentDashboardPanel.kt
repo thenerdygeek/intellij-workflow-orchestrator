@@ -256,6 +256,20 @@ class AgentDashboardPanel(
         cefPanel?.enableChatInput()
     }
 
+    /** Disable the Swing chat input while JCEF question wizard is active. */
+    fun disableChatInput() = runOnEdt {
+        chatInput.isEnabled = false
+        sendButton.isEnabled = false
+        chatInput.text = ""
+    }
+
+    /** Re-enable the Swing chat input after the question wizard completes. */
+    fun enableSwingChatInput() = runOnEdt {
+        chatInput.isEnabled = true
+        sendButton.isEnabled = true
+        chatInput.requestFocusInWindow()
+    }
+
     fun setCefQuestionCallbacks(
         onAnswered: (String, String) -> Unit,
         onSkipped: (String) -> Unit,
