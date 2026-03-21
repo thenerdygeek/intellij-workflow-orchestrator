@@ -377,6 +377,24 @@ class AgentCefPanel(
         callJs("hideSkillBanner()")
     }
 
+    // ── ANSI, Skeleton, Toast, Table support ──
+
+    fun appendAnsiOutput(text: String) {
+        callJs("appendAnsiOutput(${jsonStr(text)})")
+    }
+
+    fun showSkeleton() {
+        callJs("showSkeleton()")
+    }
+
+    fun hideSkeleton() {
+        callJs("hideSkeleton()")
+    }
+
+    fun showToast(message: String, type: String = "info", durationMs: Int = 3000) {
+        callJs("showToast(${jsonStr(message)},${jsonStr(type)},$durationMs)")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {
