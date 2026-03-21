@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.intellij.ui.AnimatedIcon
@@ -570,6 +571,76 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 prBar.refreshPrs()
                 loadBuildHistory()
             }
+        })
+
+        group.add(object : AnAction("Stop Build", "Stop a running build", AllIcons.Actions.Suspend) {
+            override fun actionPerformed(e: AnActionEvent) {
+                val state = monitorService.stateFlow.value ?: return
+                val resultKey = "${state.planKey}-${state.buildNumber}"
+                val confirm = Messages.showYesNoDialog(
+                    project,
+                    "Stop build ${state.planKey} #${state.buildNumber}?",
+                    "Stop Build",
+                    Messages.getQuestionIcon()
+                )
+                if (confirm != Messages.YES) return
+                statusLabel.text = "Stopping build..."
+                scope.launch {
+                    val result = bambooService.stopBuild(resultKey)
+                    invokeLater {
+                        if (!result.isError) {
+                            statusLabel.text = "Build $resultKey stopped"
+                            scope.launch {
+                                kotlinx.coroutines.delay(2000)
+                                monitorService.pollOnce(state.planKey, state.branch)
+                            }
+                        } else {
+                            statusLabel.text = "Stop failed: ${result.summary}"
+                        }
+                    }
+                }
+            }
+            override fun update(e: AnActionEvent) {
+                val state = monitorService.stateFlow.value
+                e.presentation.isEnabled = state != null &&
+                    state.overallStatus == BuildStatus.IN_PROGRESS
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
+        })
+
+        group.add(object : AnAction("Cancel Build", "Cancel a queued build", AllIcons.Actions.Cancel) {
+            override fun actionPerformed(e: AnActionEvent) {
+                val state = monitorService.stateFlow.value ?: return
+                val resultKey = "${state.planKey}-${state.buildNumber}"
+                val confirm = Messages.showYesNoDialog(
+                    project,
+                    "Cancel queued build ${state.planKey} #${state.buildNumber}?",
+                    "Cancel Build",
+                    Messages.getQuestionIcon()
+                )
+                if (confirm != Messages.YES) return
+                statusLabel.text = "Cancelling build..."
+                scope.launch {
+                    val result = bambooService.cancelBuild(resultKey)
+                    invokeLater {
+                        if (!result.isError) {
+                            statusLabel.text = "Build $resultKey cancelled"
+                            scope.launch {
+                                kotlinx.coroutines.delay(2000)
+                                monitorService.pollOnce(state.planKey, state.branch)
+                            }
+                        } else {
+                            statusLabel.text = "Cancel failed: ${result.summary}"
+                        }
+                    }
+                }
+            }
+            override fun update(e: AnActionEvent) {
+                val state = monitorService.stateFlow.value
+                e.presentation.isEnabled = state != null &&
+                    (state.overallStatus == BuildStatus.PENDING)
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
         })
 
         group.add(object : AnAction("Rerun Failed Jobs", "Rerun failed/incomplete jobs on Bamboo", AllIcons.Actions.Restart) {
