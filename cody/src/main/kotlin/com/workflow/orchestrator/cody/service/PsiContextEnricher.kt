@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.cody.service
 
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -27,30 +28,61 @@ class PsiContextEnricher(private val project: Project) {
     )
 
     suspend fun enrich(filePath: String): PsiContext {
-        return readAction {
+        // Read 1: Resolve file and basic structural info (fast)
+        val basicInfo = readAction {
             val vFile = LocalFileSystem.getInstance().findFileByPath(filePath)
-                ?: return@readAction emptyContext(filePath)
+                ?: return@readAction null
             val psiFile = PsiManager.getInstance(project).findFile(vFile)
-                ?: return@readAction emptyContext(filePath)
-
+                ?: return@readAction null
             val fileIndex = ProjectFileIndex.getInstance(project)
             val isTest = fileIndex.isInTestSourceContent(vFile)
-
             val psiClass = PsiTreeUtil.findChildOfType(psiFile, PsiClass::class.java)
+            Triple(psiFile, psiClass, isTest)
+        } ?: return emptyContext(filePath)
 
-            PsiContext(
-                fileType = psiFile.fileType.name,
-                packageName = (psiFile as? PsiJavaFile)?.packageName,
-                className = psiClass?.qualifiedName,
-                classAnnotations = psiClass?.let { extractAnnotations(it) } ?: emptyList(),
-                methodAnnotations = psiClass?.let { extractMethodAnnotations(it) } ?: emptyMap(),
-                testFilePath = if (!isTest) psiClass?.let { findTestFile(it) } else null,
-                imports = extractImports(psiFile),
-                mavenModule = detectMavenModule(vFile),
-                relatedFiles = psiClass?.let { findRelatedFiles(it) } ?: emptyList(),
-                isTestFile = isTest
-            )
+        val (psiFile, psiClass, isTest) = basicInfo
+
+        // Read 2: Extract lightweight metadata (fast)
+        val fileType = readAction { psiFile.fileType.name }
+        val packageName = readAction { (psiFile as? PsiJavaFile)?.packageName }
+        val className = readAction { psiClass?.qualifiedName }
+        val classAnnotations = readAction { psiClass?.let { extractAnnotations(it) } ?: emptyList() }
+        val methodAnnotations = readAction { psiClass?.let { extractMethodAnnotations(it) } ?: emptyMap() }
+        val imports = readAction { extractImports(psiFile) }
+
+        // Read 3: Find test file (potentially slow due to index lookups)
+        val testFilePath = if (!isTest && psiClass != null) {
+            readAction { findTestFile(psiClass) }
+        } else null
+
+        // Read 4: Maven module detection
+        val mavenModule = readAction {
+            val vFile = LocalFileSystem.getInstance().findFileByPath(filePath)
+            if (vFile != null) detectMavenModule(vFile) else null
         }
+
+        // Read 5: Related files via ReferencesSearch (slowest — smartReadAction
+        // auto-cancels on write conflict and waits for smart mode before running)
+        val relatedFiles = if (psiClass != null) {
+            try {
+                smartReadAction(project) { findRelatedFiles(psiClass) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
+        return PsiContext(
+            fileType = fileType,
+            packageName = packageName,
+            className = className,
+            classAnnotations = classAnnotations,
+            methodAnnotations = methodAnnotations,
+            testFilePath = testFilePath,
+            imports = imports,
+            mavenModule = mavenModule,
+            relatedFiles = relatedFiles,
+            isTestFile = isTest
+        )
     }
 
     private fun extractAnnotations(psiClass: PsiClass): List<String> {
