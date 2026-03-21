@@ -255,7 +255,8 @@ data class JiraAttachment(
     val mimeType: String? = null,
     val size: Long = 0,
     val created: String? = null,
-    val content: String = ""
+    val content: String = "",
+    val thumbnail: String? = null    // Jira-generated thumbnail URL (images only)
 )
 
 @Serializable
