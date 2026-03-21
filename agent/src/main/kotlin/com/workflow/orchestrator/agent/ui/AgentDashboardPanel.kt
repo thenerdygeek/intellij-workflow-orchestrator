@@ -252,9 +252,10 @@ class AgentDashboardPanel(
     }
 
     fun updateLastToolCall(
-        status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0
+        status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0,
+        toolName: String = ""
     ) {
-        cefPanel?.updateLastToolCall(status, result, durationMs)
+        cefPanel?.updateLastToolCall(status, result, durationMs, toolName)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
     }
 

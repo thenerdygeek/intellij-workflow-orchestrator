@@ -453,9 +453,10 @@ class AgentCefPanel(
 
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus,
-        result: String = "", durationMs: Long = 0
+        result: String = "", durationMs: Long = 0,
+        toolName: String = ""
     ) {
-        callJs("updateToolResult(${jsonStr(result)},$durationMs)")
+        callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)})")
     }
 
     fun appendEditDiff(
