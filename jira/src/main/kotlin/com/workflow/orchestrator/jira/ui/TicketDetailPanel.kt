@@ -98,6 +98,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         addSubtasks(issue)
         addDependencies(issue)
 
+        // Worklog summary (lazy-loaded)
+        addVerticalSpace(12)
+        addSectionHeader("Time Logged")
+        val worklogSection = WorklogSection(project!!)
+        addFullWidthComponent(worklogSection)
+        worklogSection.loadWorklogs(issue.key)
+
         // Lazy-loaded sections (show placeholders, fetch in background)
         if (issue.fields.attachment.isNotEmpty()) {
             addVerticalSpace(12)
