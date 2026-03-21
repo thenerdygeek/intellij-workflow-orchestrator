@@ -6,9 +6,12 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
+import com.workflow.orchestrator.core.model.jira.SprintData
+import com.workflow.orchestrator.core.model.jira.WorklogData
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -259,6 +262,123 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     summary = "Error fetching comments for $key: ${result.message}",
                     isError = true,
                     hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getWorklogs(issueKey: String): ToolResult<List<WorklogData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch worklogs for $issueKey.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getWorklogs(issueKey)) {
+            is ApiResult.Success -> {
+                val worklogs = result.data.worklogs.map { w ->
+                    WorklogData(
+                        author = w.author?.displayName ?: "Unknown",
+                        timeSpent = w.timeSpent,
+                        timeSpentSeconds = w.timeSpentSeconds,
+                        comment = w.comment,
+                        started = w.started
+                    )
+                }
+                val totalSeconds = worklogs.sumOf { it.timeSpentSeconds }
+                val hours = totalSeconds / 3600
+                val minutes = (totalSeconds % 3600) / 60
+                ToolResult.success(
+                    data = worklogs,
+                    summary = "Found ${worklogs.size} worklog(s) totaling ${hours}h ${minutes}m for $issueKey"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch worklogs for $issueKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching worklogs for $issueKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getAvailableSprints(boardId: Int): ToolResult<List<SprintData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch sprints for board $boardId.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        // Fetch both active and closed sprints
+        val activeSprints = when (val result = api.getActiveSprints(boardId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch active sprints: ${result.message}")
+                emptyList()
+            }
+        }
+        val closedSprints = when (val result = api.getClosedSprints(boardId)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch closed sprints: ${result.message}")
+                emptyList()
+            }
+        }
+
+        val allSprints = (activeSprints + closedSprints).map { s ->
+            SprintData(
+                id = s.id,
+                name = s.name,
+                state = s.state,
+                startDate = s.startDate,
+                endDate = s.endDate
+            )
+        }
+
+        val activeCount = allSprints.count { it.state.equals("active", ignoreCase = true) }
+        val closedCount = allSprints.count { it.state.equals("closed", ignoreCase = true) }
+        return ToolResult.success(
+            data = allSprints,
+            summary = "Board $boardId: $activeCount active, $closedCount closed sprint(s)"
+        )
+    }
+
+    override suspend fun getLinkedPullRequests(issueId: String): ToolResult<List<DevStatusPrData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch linked PRs for issue $issueId.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getDevStatusPullRequests(issueId)) {
+            is ApiResult.Success -> {
+                val prs = result.data.map { pr ->
+                    DevStatusPrData(
+                        name = pr.name,
+                        url = pr.url,
+                        status = pr.status,
+                        lastUpdate = pr.lastUpdate
+                    )
+                }
+                val listing = if (prs.isEmpty()) "none" else prs.joinToString(", ") { "${it.name} (${it.status})" }
+                ToolResult.success(
+                    data = prs,
+                    summary = "Found ${prs.size} linked PR(s) for issue $issueId: $listing"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch linked PRs for issue $issueId: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching linked PRs for issue $issueId: ${result.message}",
+                    isError = true,
+                    hint = "The dev-status API may not be available on your Jira instance."
                 )
             }
         }

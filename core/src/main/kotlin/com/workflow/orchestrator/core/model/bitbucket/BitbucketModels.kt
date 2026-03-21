@@ -15,3 +15,15 @@ data class PullRequestData(
     val link: String,
     val authorName: String?
 )
+
+/**
+ * Simplified commit data shared between UI panels and AI agent.
+ */
+@Serializable
+data class CommitData(
+    val id: String,
+    val displayId: String,
+    val message: String,
+    val author: String?,
+    val timestamp: Long
+)

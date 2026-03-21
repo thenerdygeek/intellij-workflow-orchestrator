@@ -39,3 +39,38 @@ data class JiraCommentData(
     val body: String,
     val created: String
 )
+
+/**
+ * Worklog entry for a Jira ticket, shared between UI panels and AI agent.
+ */
+@Serializable
+data class WorklogData(
+    val author: String,
+    val timeSpent: String,
+    val timeSpentSeconds: Long,
+    val comment: String?,
+    val started: String
+)
+
+/**
+ * Dev-status pull request linked to a Jira ticket.
+ */
+@Serializable
+data class DevStatusPrData(
+    val name: String,
+    val url: String,
+    val status: String,
+    val lastUpdate: String?
+)
+
+/**
+ * Sprint data shared between UI panels and AI agent.
+ */
+@Serializable
+data class SprintData(
+    val id: Int,
+    val name: String,
+    val state: String,
+    val startDate: String?,
+    val endDate: String?
+)
