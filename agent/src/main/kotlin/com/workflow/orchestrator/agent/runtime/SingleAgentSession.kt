@@ -59,7 +59,8 @@ sealed class SingleAgentResult {
  * Max iterations: 50 (higher than WorkerSession's 10, since this handles full tasks).
  */
 class SingleAgentSession(
-    private val maxIterations: Int = 50
+    private val maxIterations: Int = 50,
+    val cancelled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)
 ) {
     companion object {
         private val LOG = Logger.getInstance(SingleAgentSession::class.java)
@@ -131,8 +132,20 @@ class SingleAgentSession(
         var activeToolDefs = toolDefinitions
         var activeTools = tools
         var verificationPending = false
+        var forceTextOnly = false
 
         for (iteration in 1..maxIterations) {
+            // Mid-loop cancellation check
+            if (cancelled.get()) {
+                LOG.info("SingleAgentSession: cancelled at iteration $iteration")
+                return SingleAgentResult.Completed(
+                    content = "Task cancelled by user after $iteration iterations.",
+                    summary = "Cancelled",
+                    tokensUsed = totalTokensUsed,
+                    artifacts = allArtifacts
+                )
+            }
+
             LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
             sessionTrace?.iterationStarted(iteration, contextManager.currentTokens, budgetEnforcer.utilizationPercent())
             onProgress(AgentProgress(
@@ -218,8 +231,37 @@ class SingleAgentSession(
                 ))
             }
 
+            // 5a: Inject context budget warning when >50% full (like Claude Code's <system_warning>)
+            val maxInputTokens = contextManager.effectiveMaxInputTokens
+            val usedPercent = if (maxInputTokens > 0) ((contextManager.currentTokens.toDouble() / maxInputTokens) * 100).toInt() else 0
+            if (usedPercent > 50) {
+                val remaining = maxInputTokens - contextManager.currentTokens
+                contextManager.addMessage(ChatMessage(
+                    role = "system",
+                    content = "<system_warning>Context usage: ${contextManager.currentTokens}/$maxInputTokens tokens ($usedPercent%). $remaining tokens remaining. Be efficient with remaining context.</system_warning>"
+                ))
+            }
+
+            // 5b: Graceful degradation at high iterations
+            val iterationPercent = (iteration * 100) / maxIterations
+            when {
+                iterationPercent >= 95 -> {
+                    contextManager.addMessage(ChatMessage(
+                        role = "system",
+                        content = "<system_warning>CRITICAL: This is your final iteration. Tools are disabled after this response. Provide a complete summary of what you accomplished and what remains.</system_warning>"
+                    ))
+                    forceTextOnly = true
+                }
+                iterationPercent >= 80 -> {
+                    contextManager.addMessage(ChatMessage(
+                        role = "system",
+                        content = "<system_warning>IMPORTANT: You have used $iteration of $maxIterations iterations. Focus on completing the task. Avoid unnecessary exploration.</system_warning>"
+                    ))
+                }
+            }
+
             val messages = contextManager.getMessages()
-            val toolDefsForCall = if (activeTools.isNotEmpty()) activeToolDefs else null
+            val toolDefsForCall = if (forceTextOnly) null else if (activeTools.isNotEmpty()) activeToolDefs else null
 
             // LLM call with retry logic for rate limits and context length exceeded
             val result = callLlmWithRetry(
@@ -232,8 +274,11 @@ class SingleAgentSession(
                 activeToolDefs = result.reducedToolDefs
                 activeTools = result.reducedTools
                 eventLog?.log(AgentEventType.CONTEXT_EXCEEDED_RETRY, "Reduced to ${activeTools.size} core tools")
-                // Also compress conversation history for maximum token savings
-                contextManager.compress()
+                LOG.info("SingleAgentSession: context exceeded — pruning old tool results + compressing")
+                // Phase 1: Prune old tool results (fast, no LLM)
+                contextManager.pruneOldToolResults()
+                // Phase 2: Full compression (LLM if brain available, otherwise truncation)
+                try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
                 // Re-fetch messages after compression
                 val compressedMessages = contextManager.getMessages()
                 // Retry with reduced tools and compressed context
@@ -445,9 +490,20 @@ class SingleAgentSession(
         }
 
         // Execute tool calls with approval gate
+        // TODO: Parallel tool execution for read-only tools (read_file, search_code, glob_files,
+        //  find_definition, find_references, type_hierarchy, call_hierarchy, diagnostics, git_status,
+        //  git_blame). Requires extracting tool execution into executeSingleToolCall() and using
+        //  coroutineScope { parallelCalls.map { async { ... } } }. Skipped for now due to deep
+        //  integration with approval gate, progress callbacks, edit tracking, and LoopGuard.
         val toolResults = mutableListOf<Pair<String, Boolean>>() // (toolCallId, isError) for LoopGuard
 
         for (toolCall in toolCalls) {
+            // Mid-loop cancellation check before each tool execution
+            if (cancelled.get()) {
+                contextManager.addToolResult(toolCall.id, "Cancelled by user", "Cancelled")
+                break
+            }
+
             val toolName = toolCall.function.name
             val tool = tools[toolName]
 

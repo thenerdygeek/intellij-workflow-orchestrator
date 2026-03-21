@@ -28,7 +28,7 @@ class ContextManager(
     private val tMaxRatio: Double = 0.85,
     private val tRetainedRatio: Double = 0.60,
     private val toolResultMaxTokens: Int = 4000,
-    private val reservedTokens: Int = 0,
+    private var reservedTokens: Int = 0,
     private val summarizer: (List<ChatMessage>) -> String = { msgs ->
         val sb = StringBuilder("Previous conversation summary:\n")
         for (msg in msgs) {
@@ -67,6 +67,19 @@ class ContextManager(
 
     /** Current message count. */
     val messageCount: Int get() = messages.size
+
+    /** The effective max input tokens (for budget warning calculations). */
+    val effectiveMaxInputTokens: Int get() = maxInputTokens
+
+    /**
+     * Recalculate reserved tokens when the tool set changes.
+     * This adjusts the effective budget and compression thresholds
+     * so they stay accurate as tools expand during a session.
+     */
+    fun updateReservedTokens(newReserved: Int) {
+        reservedTokens = newReserved
+        // effectiveBudget, tMax, tRetained are computed properties — they auto-update
+    }
 
     /**
      * Set or update the anchored plan summary. Dedicated slot separate from
