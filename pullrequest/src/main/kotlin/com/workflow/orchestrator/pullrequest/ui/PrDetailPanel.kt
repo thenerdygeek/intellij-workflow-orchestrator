@@ -1088,13 +1088,15 @@ class PrDetailPanel(
         needsWorkButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
             val pr = currentPr ?: return@addActionListener
-            // Determine current user from the PR author or settings
-            val currentUser = pr.author?.user?.name
-            if (currentUser.isNullOrBlank()) {
-                showNotification("Cannot determine current user for Needs Work")
-                return@addActionListener
-            }
             scope.launch {
+                // Resolve the actual authenticated user, not the PR author
+                val currentUser = resolveCurrentUsername()
+                if (currentUser.isNullOrBlank()) {
+                    SwingUtilities.invokeLater {
+                        showNotification("Cannot determine current user for Needs Work")
+                    }
+                    return@launch
+                }
                 try {
                     val result = PrActionService.getInstance(project).setNeedsWork(prId, currentUser)
                     SwingUtilities.invokeLater {
@@ -1236,9 +1238,12 @@ class PrDetailPanel(
     }
 
     /**
-     * Resolve the current Bitbucket username via API.
+     * Resolve the current Bitbucket username via API (cached after first successful call).
      */
+    private var cachedUsername: String? = null
+
     private suspend fun resolveCurrentUsername(): String? {
+        cachedUsername?.let { return it }
         val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
         if (url.isBlank()) return null
         val credentialStore = CredentialStore()
@@ -1247,7 +1252,7 @@ class PrDetailPanel(
             tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
         )
         return when (val result = client.getCurrentUsername()) {
-            is ApiResult.Success -> result.data
+            is ApiResult.Success -> { cachedUsername = result.data; result.data }
             is ApiResult.Error -> null
         }
     }
@@ -2049,6 +2054,8 @@ class PrDetailPanel(
                     viewport.isOpaque = false
                 }, BorderLayout.CENTER)
             }
+            // Re-add comment input panel (removeAll() at top removes it)
+            add(commentInputPanel, BorderLayout.SOUTH)
             revalidate()
             repaint()
         }
