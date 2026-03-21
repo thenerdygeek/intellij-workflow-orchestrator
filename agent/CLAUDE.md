@@ -105,6 +105,31 @@ Three layers:
 - **External data tags** — tool results wrapped in `<external_data>` for prompt injection defense
 - **Plan editor** — file click handler validates path within project basePath
 
+## Rich Chat UI
+
+JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
+
+**Core (always loaded, ~32KB gzipped):**
+- marked.js — Markdown parsing with GFM, custom renderers
+- Prism.js — Syntax highlighting (297 languages, on-demand autoloader)
+- DOMPurify — XSS prevention on all LLM-rendered HTML
+- ansi_up — ANSI terminal colors in command output
+
+**Lazy-loaded (on first use):**
+- Mermaid.js (~250KB) — Diagrams from ```mermaid code blocks (flowchart, sequence, class, ER, Gantt, git graph)
+- KaTeX (~320KB) — LaTeX math from $...$ and $$...$$ expressions
+- Chart.js (~65KB) — Interactive charts from ```chart JSON configs
+- diff2html (~40KB) — Side-by-side diffs from ```diff code blocks
+
+**IDE-native features:**
+- Click-to-navigate file paths (opens file at line in IDE editor)
+- Jira card embeds with status/priority/assignee
+- Sonar quality gate badges with metrics
+- Toast notifications, skeleton loading, timeline visualization
+- Sortable/filterable tables, tabbed content, progress bars
+
+**Resource serving:** `CefResourceSchemeHandler` serves all resources from plugin JAR via `http://workflow-agent/` scheme. CSP enforced: `connect-src: 'none'` (no outbound network).
+
 ## Testing
 
 ```bash

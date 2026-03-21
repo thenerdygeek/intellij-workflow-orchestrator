@@ -51,6 +51,7 @@ class AgentCefPanel(
     private var questionsCancelledQuery: JBCefJSQuery? = null
     private var editQuestionQuery: JBCefJSQuery? = null
     private var deactivateSkillQuery: JBCefJSQuery? = null
+    private var navigateToFileQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -88,6 +89,9 @@ class AgentCefPanel(
 
     /** Callback when user dismisses the skill banner. */
     var onSkillDismissed: (() -> Unit)? = null
+
+    /** Callback when user clicks a file path link in chat output. */
+    var onNavigateToFile: ((String, Int) -> Unit)? = null
 
     init {
         try {
@@ -191,6 +195,16 @@ class AgentCefPanel(
         deactivateSkillQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { _ -> onSkillDismissed?.invoke(); JBCefJSQuery.Response("ok") }
         }
+        navigateToFileQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                val colonIdx = data.lastIndexOf(':')
+                val hasLine = colonIdx > 0 && data.substring(colonIdx + 1).toIntOrNull() != null
+                val filePath = if (hasLine) data.substring(0, colonIdx) else data
+                val line = if (hasLine) data.substring(colonIdx + 1).toInt() else 0
+                onNavigateToFile?.invoke(filePath, line)
+                JBCefJSQuery.Response("ok")
+            }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -254,6 +268,10 @@ class AgentCefPanel(
                     deactivateSkillQuery?.let { q ->
                         val dsJs = q.inject("'dismiss'")
                         js("window._deactivateSkill = function() { $dsJs }")
+                    }
+                    navigateToFileQuery?.let { q ->
+                        val navJs = q.inject("path")
+                        js("window._navigateToFile = function(path) { $navJs }")
                     }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
@@ -401,6 +419,30 @@ class AgentCefPanel(
         callJs("showToast(${jsonStr(message)},${jsonStr(type)},$durationMs)")
     }
 
+    // ── Tabbed content, timeline, progress bar ──
+
+    fun appendTabs(tabsJson: String) {
+        callJs("appendTabs(${jsonStr(tabsJson)})")
+    }
+
+    fun appendTimeline(itemsJson: String) {
+        callJs("appendTimeline(${jsonStr(itemsJson)})")
+    }
+
+    fun appendProgressBar(percent: Int, type: String = "info") {
+        callJs("appendProgressBar($percent,${jsonStr(type)})")
+    }
+
+    // ── Jira card & Sonar badge ──
+
+    fun appendJiraCard(cardJson: String) {
+        callJs("appendJiraCard(${jsonStr(cardJson)})")
+    }
+
+    fun appendSonarBadge(badgeJson: String) {
+        callJs("appendSonarBadge(${jsonStr(badgeJson)})")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {
@@ -458,6 +500,9 @@ class AgentCefPanel(
 
         val jsObj = vars.entries.joinToString(",") { "'${it.key}':'${it.value}'" }
         js("applyTheme({$jsObj})")
+        val isDarkJs = if (isDark) "true" else "false"
+        js("setPrismTheme($isDarkJs)")
+        js("setMermaidTheme($isDarkJs)")
     }
 
     // ═══════════════════════════════════════════════════
@@ -509,6 +554,7 @@ class AgentCefPanel(
         questionsCancelledQuery?.dispose()
         editQuestionQuery?.dispose()
         deactivateSkillQuery?.dispose()
+        navigateToFileQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -523,6 +569,7 @@ class AgentCefPanel(
         questionsCancelledQuery = null
         editQuestionQuery = null
         deactivateSkillQuery = null
+        navigateToFileQuery = null
         browser = null
     }
 }

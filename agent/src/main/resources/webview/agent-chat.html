@@ -928,6 +928,61 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
     position: relative;
 }
 .chart-wrapper canvas { max-width: 100%; }
+
+/* Tabbed Content */
+.tab-container { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.tab-bar { display: flex; border-bottom: 1px solid var(--border); background: var(--tool-bg); }
+.tab-btn { padding: 8px 16px; font-size: 12px; color: var(--fg-muted); cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; transition: all 0.15s; }
+.tab-btn:hover { color: var(--fg); }
+.tab-btn.active { color: var(--link); border-bottom-color: var(--link); }
+.tab-content { display: none; padding: 12px 16px; }
+.tab-content.active { display: block; }
+
+/* Timeline / Progress Visualization */
+.timeline { margin: 10px 0; padding: 0 8px; }
+.timeline-item { display: flex; gap: 12px; position: relative; padding-bottom: 16px; }
+.timeline-item:last-child { padding-bottom: 0; }
+.timeline-item::before { content: ''; position: absolute; left: 11px; top: 24px; bottom: 0; width: 2px; background: var(--border); }
+.timeline-item:last-child::before { display: none; }
+.timeline-dot { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; z-index: 1; }
+.timeline-dot.pending { background: var(--border); color: var(--fg-muted); }
+.timeline-dot.running { background: var(--link); color: white; animation: pulse 1.5s ease-in-out infinite; }
+.timeline-dot.done { background: var(--success); color: white; }
+.timeline-dot.failed { background: var(--error); color: white; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(96,165,250,0.4); } 50% { box-shadow: 0 0 0 6px rgba(96,165,250,0); } }
+.timeline-content { flex: 1; min-width: 0; }
+.timeline-title { font-size: 13px; font-weight: 500; }
+.timeline-desc { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+.timeline-time { font-size: 11px; color: var(--fg-muted); font-family: var(--font-mono); }
+
+/* Progress bar */
+.progress-bar-wrapper { background: var(--border); border-radius: 4px; height: 6px; margin: 8px 0; overflow: hidden; }
+.progress-bar { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+.progress-bar.success { background: var(--success); }
+.progress-bar.warning { background: var(--warning); }
+.progress-bar.error { background: var(--error); }
+.progress-bar.info { background: var(--link); }
+
+/* File Navigation */
+.file-link { color: var(--link); cursor: pointer; text-decoration: none; border-bottom: 1px dotted var(--link); }
+.file-link:hover { border-bottom-style: solid; }
+
+/* Jira Card Embed */
+.jira-card { background: var(--tool-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 8px 0; }
+.jira-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.jira-card-key { font-family: var(--font-mono); font-weight: 600; color: var(--link); font-size: 13px; }
+.jira-card-summary { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+.jira-card-meta { font-size: 11px; color: var(--fg-muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.jira-card-status { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+.jira-card-status.todo { background: var(--badge-read-bg); color: var(--badge-read-fg); }
+.jira-card-status.in-progress { background: var(--badge-edit-bg); color: var(--badge-edit-fg); }
+.jira-card-status.done { background: var(--badge-write-bg); color: var(--badge-write-fg); }
+
+/* Sonar Quality Overlay */
+.sonar-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.sonar-badge.passed { background: var(--badge-write-bg); color: var(--badge-write-fg); }
+.sonar-badge.failed { background: var(--badge-cmd-bg); color: var(--badge-cmd-fg); }
+.sonar-metric { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-family: var(--font-mono); padding: 2px 6px; background: var(--code-bg); border-radius: 4px; margin: 2px; }
 </style>
 
 <!-- Core libraries — bundled in plugin JAR, served via CefResourceSchemeHandler -->
@@ -1345,6 +1400,7 @@ function renderMarkdown(text) {
           ALLOW_DATA_ATTR: true
         });
       }
+      html = linkifyFilePaths(html);
       return html;
     } catch (e) {
       console.warn('marked.parse failed, using fallback:', e);
@@ -2530,6 +2586,159 @@ function hideSkillBanner() {
 function dismissSkill() {
     if (window._deactivateSkill) window._deactivateSkill();
     hideSkillBanner();
+}
+
+/* ── Tabbed Content ── */
+function appendTabs(tabsConfig) {
+    endStream(); hideEmpty();
+    var config = typeof tabsConfig === 'string' ? JSON.parse(tabsConfig) : tabsConfig;
+    var tabId = 'tabs-' + Date.now();
+    var barHtml = '';
+    var contentHtml = '';
+    config.tabs.forEach(function(tab, i) {
+        var activeClass = i === 0 ? ' active' : '';
+        barHtml += '<button class="tab-btn' + activeClass + '" data-tab-container="' + tabId + '" data-tab-index="' + i + '">' + esc(tab.label) + '</button>';
+        contentHtml += '<div class="tab-content' + activeClass + '" data-tab-index="' + i + '">' + renderMarkdown(tab.content) + '</div>';
+    });
+    var el = document.createElement('div');
+    el.className = 'message';
+    el.innerHTML = '<div class="tab-container" id="' + tabId + '"><div class="tab-bar">' + barHtml + '</div>' + contentHtml + '</div>';
+    container.appendChild(el);
+    scrollToBottom();
+}
+
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.tab-btn[data-tab-container]');
+    if (btn) {
+        var containerId = btn.dataset.tabContainer;
+        var index = parseInt(btn.dataset.tabIndex);
+        var tabContainer = document.getElementById(containerId);
+        if (!tabContainer) return;
+        tabContainer.querySelectorAll('.tab-btn').forEach(function(b, i) { b.classList.toggle('active', i === index); });
+        tabContainer.querySelectorAll('.tab-content').forEach(function(c, i) { c.classList.toggle('active', i === index); });
+    }
+});
+
+/* ── Timeline Visualization ── */
+function appendTimeline(items) {
+    endStream(); hideEmpty();
+    var data = typeof items === 'string' ? JSON.parse(items) : items;
+    var icons = { pending: '\u25CB', running: '\u25C9', done: '\u2713', failed: '\u2717' };
+    var html = '<div class="timeline">';
+    data.forEach(function(item) {
+        var status = item.status || 'pending';
+        html += '<div class="timeline-item">'
+            + '<div class="timeline-dot ' + status + '">' + (icons[status] || '\u25CB') + '</div>'
+            + '<div class="timeline-content">'
+            + '<div class="timeline-title">' + esc(item.title) + '</div>'
+            + (item.description ? '<div class="timeline-desc">' + esc(item.description) + '</div>' : '')
+            + (item.time ? '<div class="timeline-time">' + esc(item.time) + '</div>' : '')
+            + '</div></div>';
+    });
+    html += '</div>';
+    var el = document.createElement('div');
+    el.className = 'message';
+    el.innerHTML = html;
+    container.appendChild(el);
+    scrollToBottom();
+}
+
+/* ── Progress Bar ── */
+function appendProgressBar(percent, type) {
+    type = type || 'info';
+    var el = document.createElement('div');
+    el.className = 'message';
+    el.innerHTML = '<div class="progress-bar-wrapper"><div class="progress-bar ' + type + '" style="width:' + Math.min(100, Math.max(0, percent)) + '%"></div></div>';
+    container.appendChild(el);
+    scrollToBottom();
+}
+
+/* ── File Navigation ── */
+function navigateToFile(filePath, line) {
+    var data = filePath;
+    if (line && line > 0) data += ':' + line;
+    if (window._navigateToFile) window._navigateToFile(data);
+}
+
+function linkifyFilePaths(html) {
+    return html.replace(
+        /(?<!["\w\/])([a-zA-Z][\w.\/-]*\.(kt|java|xml|yaml|yml|json|properties|gradle|md|txt|html|css|js|ts))(?::(\d+))?/g,
+        function(match, path, ext, line) {
+            var lineNum = line ? parseInt(line) : 0;
+            return '<span class="file-link" data-file-path="' + esc(path) + '" data-line="' + lineNum + '">' + match + '</span>';
+        }
+    );
+}
+
+document.addEventListener('click', function(e) {
+    var link = e.target.closest('.file-link[data-file-path]');
+    if (link) {
+        navigateToFile(link.dataset.filePath, parseInt(link.dataset.line) || 0);
+    }
+});
+
+/* ── Jira Card Embed ── */
+function appendJiraCard(data) {
+    var card = typeof data === 'string' ? JSON.parse(data) : data;
+    endStream(); hideEmpty();
+
+    var typeIcons = { Story: '\uD83D\uDCD7', Bug: '\uD83D\uDC1B', Task: '\u2705', Epic: '\uD83C\uDFD4\uFE0F', 'Sub-task': '\uD83D\uDCCC' };
+    var priorityIcons = { Highest: '\u2B06\uFE0F', High: '\uD83D\uDD3C', Medium: '\u27A1\uFE0F', Low: '\uD83D\uDD3D', Lowest: '\u2B07\uFE0F' };
+    var statusClass = 'todo';
+    var statusLower = (card.status || '').toLowerCase();
+    if (['in progress', 'in review', 'testing'].indexOf(statusLower) >= 0) statusClass = 'in-progress';
+    else if (['done', 'closed', 'resolved'].indexOf(statusLower) >= 0) statusClass = 'done';
+
+    var el = document.createElement('div');
+    el.className = 'message';
+    el.innerHTML = '<div class="jira-card">'
+        + '<div class="jira-card-header">'
+        + '<span>' + (typeIcons[card.type] || '\uD83D\uDCCB') + '</span>'
+        + '<span class="jira-card-key">' + esc(card.key || '') + '</span>'
+        + '<span class="jira-card-status ' + statusClass + '">' + esc(card.status || '') + '</span>'
+        + '<span>' + (priorityIcons[card.priority] || '') + '</span>'
+        + '</div>'
+        + '<div class="jira-card-summary">' + esc(card.summary || '') + '</div>'
+        + '<div class="jira-card-meta">'
+        + (card.assignee ? '<span>Assignee: ' + esc(card.assignee) + '</span>' : '')
+        + (card.storyPoints ? '<span>Points: ' + card.storyPoints + '</span>' : '')
+        + (card.sprint ? '<span>Sprint: ' + esc(card.sprint) + '</span>' : '')
+        + '</div></div>';
+    container.appendChild(el);
+    scrollToBottom();
+}
+
+/* ── Sonar Quality Badge ── */
+function appendSonarBadge(data) {
+    var d = typeof data === 'string' ? JSON.parse(data) : data;
+    endStream(); hideEmpty();
+
+    var statusClass = d.qualityGate === 'OK' ? 'passed' : 'failed';
+    var metrics = (d.metrics || []).map(function(m) {
+        return '<span class="sonar-metric">' + esc(m.label) + ': ' + esc(m.value) + '</span>';
+    }).join('');
+
+    var el = document.createElement('div');
+    el.className = 'message';
+    el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        + '<span class="sonar-badge ' + statusClass + '">' + (d.qualityGate === 'OK' ? '\u2713 Passed' : '\u2717 Failed') + '</span>'
+        + metrics + '</div>';
+    container.appendChild(el);
+    scrollToBottom();
+}
+
+/* ── Prism/Mermaid Theme Switching ── */
+function setPrismTheme(isDark) {
+    var link = document.getElementById('prism-theme');
+    if (link) {
+        link.href = isDark ? 'lib/prism-themes/prism-one-dark.css' : 'lib/prism-themes/prism-one-light.css';
+    }
+}
+
+function setMermaidTheme(isDark) {
+    if (typeof mermaid !== 'undefined' && _mermaidLoaded) {
+        mermaid.initialize({ theme: isDark ? 'dark' : 'default' });
+    }
 }
 </script>
 </body>
