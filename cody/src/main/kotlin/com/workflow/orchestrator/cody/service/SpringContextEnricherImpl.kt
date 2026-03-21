@@ -6,6 +6,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiField
+import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiParameter
 import com.intellij.psi.util.PsiTreeUtil
@@ -38,17 +39,42 @@ class SpringContextEnricherImpl(private val project: Project) : SpringContextEnr
     )
 
     override suspend fun enrich(filePath: String): SpringContextEnricher.SpringContext? {
-        return readAction {
+        // readAction 1: resolve file, PSI, and extract basic class/annotation info
+        data class BasicInfo(
+            val psiClass: PsiClass,
+            val psiFile: PsiFile,
+            val beanType: String?
+        )
+
+        val basicInfo = readAction {
             val vFile = LocalFileSystem.getInstance().findFileByPath(filePath) ?: return@readAction null
             val psiFile = PsiManager.getInstance(project).findFile(vFile) ?: return@readAction null
             val psiClass = PsiTreeUtil.findChildOfType(psiFile, PsiClass::class.java)
                 ?: return@readAction null
+            BasicInfo(psiClass, psiFile, detectBeanType(psiClass))
+        } ?: return null
 
-            val springModel = SpringManager.getInstance(project).getSpringModelByFile(psiFile)
-                ?: return@readAction null
+        // readAction 2: Spring model queries (doesBeanExist, getSpringModelByFile)
+        data class SpringModelInfo(
+            val isBean: Boolean,
+            val springModel: CommonSpringModel?
+        )
 
-            val isBean = isSpringBean(psiClass, springModel)
-            if (!isBean) return@readAction SpringContextEnricher.SpringContext(
+        val springModelInfo = readAction {
+            val springModel = SpringManager.getInstance(project)
+                .getSpringModelByFile(basicInfo.psiFile)
+            if (springModel == null) {
+                SpringModelInfo(isBean = false, springModel = null)
+            } else {
+                SpringModelInfo(
+                    isBean = isSpringBean(basicInfo.psiClass, springModel),
+                    springModel = springModel
+                )
+            }
+        }
+
+        if (!springModelInfo.isBean || springModelInfo.springModel == null) {
+            return SpringContextEnricher.SpringContext(
                 isBean = false,
                 beanType = null,
                 injectedDependencies = emptyList(),
@@ -56,14 +82,17 @@ class SpringContextEnricherImpl(private val project: Project) : SpringContextEnr
                 requestMappings = emptyList(),
                 beanConsumers = emptyList()
             )
+        }
 
+        // readAction 3: method scanning (injected deps, transactional methods, request mappings, bean consumers)
+        return readAction {
             SpringContextEnricher.SpringContext(
                 isBean = true,
-                beanType = detectBeanType(psiClass),
-                injectedDependencies = findInjectedDependencies(psiClass),
-                transactionalMethods = findTransactionalMethods(psiClass),
-                requestMappings = findRequestMappings(psiClass),
-                beanConsumers = findBeanConsumers(psiClass, springModel)
+                beanType = basicInfo.beanType,
+                injectedDependencies = findInjectedDependencies(basicInfo.psiClass),
+                transactionalMethods = findTransactionalMethods(basicInfo.psiClass),
+                requestMappings = findRequestMappings(basicInfo.psiClass),
+                beanConsumers = findBeanConsumers(basicInfo.psiClass, springModelInfo.springModel)
             )
         }
     }
