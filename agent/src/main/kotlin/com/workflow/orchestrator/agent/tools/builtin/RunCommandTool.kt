@@ -8,25 +8,29 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 class RunCommandTool : AgentTool {
     override val name = "run_command"
-    override val description = "Execute a shell command in the project directory. Has a 60-second timeout and 4000-character output limit. Dangerous commands are blocked."
+    override val description = "Execute a shell command in the project directory. Has a 120-second default timeout (max 600s) and 30000-character output limit. Dangerous commands are blocked."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "command" to ParameterProperty(type = "string", description = "The shell command to execute. Examples: 'ls -la src/', 'grep -r TODO .', 'mvn test -pl core'"),
-            "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'")
+            "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this command does (5-10 words, for logging/UI)"),
+            "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600.")
         ),
         required = listOf("command")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 
     companion object {
-        private const val TIMEOUT_SECONDS = 60L
-        private const val MAX_OUTPUT_CHARS = 4000
+        private const val DEFAULT_TIMEOUT_SECONDS = 120L
+        private const val MAX_TIMEOUT_SECONDS = 600L
+        private const val MAX_OUTPUT_CHARS = 30_000
 
         /** Commands that are always safe to run (read-only or build tools). */
         private val ALLOWED_PREFIXES = listOf(
@@ -133,23 +137,27 @@ class RunCommandTool : AgentTool {
                 ProcessBuilder("sh", "-c", command)
             }
 
+            val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
+                .coerceIn(1, MAX_TIMEOUT_SECONDS)
+
             processBuilder.directory(workDir)
             processBuilder.redirectErrorStream(true)
 
             val process = processBuilder.start()
-            val completed = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
 
-            val output = process.inputStream.bufferedReader().readText()
-            val truncatedOutput = if (output.length > MAX_OUTPUT_CHARS) {
-                output.take(MAX_OUTPUT_CHARS) + "\n... (output truncated, ${output.length - MAX_OUTPUT_CHARS} chars omitted)"
+            val rawOutput = process.inputStream.bufferedReader().readText()
+            val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
+                rawOutput.take(MAX_OUTPUT_CHARS) +
+                    "\n\n[Output truncated at $MAX_OUTPUT_CHARS characters. ${rawOutput.length - MAX_OUTPUT_CHARS} characters omitted. Use run_command with a more targeted command to see specific output.]"
             } else {
-                output
+                rawOutput
             }
 
             if (!completed) {
                 process.destroyForcibly()
                 return ToolResult(
-                    "Error: Command timed out after ${TIMEOUT_SECONDS}s.\nPartial output:\n$truncatedOutput",
+                    "Error: Command timed out after ${timeoutSeconds}s.\nPartial output:\n$truncatedOutput",
                     "Error: command timed out",
                     TokenEstimator.estimate(truncatedOutput),
                     isError = true
@@ -157,7 +165,12 @@ class RunCommandTool : AgentTool {
             }
 
             val exitCode = process.exitValue()
-            val summary = "Command exited with code $exitCode: ${command.take(80)}"
+            val description = params["description"]?.jsonPrimitive?.content
+            val summary = if (description != null) {
+                "$description — exit code $exitCode"
+            } else {
+                "Command exited with code $exitCode: ${command.take(80)}"
+            }
             ToolResult(
                 content = "Exit code: $exitCode\n$truncatedOutput",
                 summary = summary,
