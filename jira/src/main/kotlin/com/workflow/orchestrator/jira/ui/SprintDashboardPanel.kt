@@ -30,6 +30,7 @@ import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
 import com.intellij.ui.AnimatedIcon
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -302,7 +303,7 @@ class SprintDashboardPanel(
 
         scope.launch {
             val result = sprintService.loadSprintIssues(boardId, boardType, showAllUsers, boardName)
-            withContext(Dispatchers.Main) {
+            withContext(Dispatchers.EDT) {
                 when (result) {
                     is ApiResult.Success -> {
                         allIssues = result.data
@@ -499,7 +500,7 @@ class SprintDashboardPanel(
                 val branches = when (branchesResult) {
                     is ApiResult.Success -> branchesResult.data
                     is ApiResult.Error -> {
-                        withContext(Dispatchers.Main) {
+                        withContext(Dispatchers.EDT) {
                             setLoading(false, "Failed to fetch branches: ${branchesResult.message}")
                         }
                         return@launch
@@ -509,7 +510,7 @@ class SprintDashboardPanel(
                 // Fetch linked branches from Jira dev-status (with Bitbucket fallback)
                 val linkedBranches = branchingService.fetchLinkedBranches(selectedIssue, branches)
 
-                withContext(Dispatchers.Main) {
+                withContext(Dispatchers.EDT) {
                     setLoading(false, "")
 
                     // Show dialog on EDT
@@ -533,7 +534,7 @@ class SprintDashboardPanel(
                                 val generator = BranchNameAiGenerator.getInstance()
                                 if (generator == null) {
                                     log.warn("[Jira:StartWork] No BranchNameAiGenerator registered — Cody not available")
-                                    withContext(Dispatchers.Main) {
+                                    withContext(Dispatchers.EDT) {
                                         dialog.setCodyFailed("Cody AI not available")
                                     }
                                 } else {
@@ -551,19 +552,19 @@ class SprintDashboardPanel(
                                             codySummary = slug
                                         )
                                         log.info("[Jira:StartWork] Cody generated full branch name: '$codyBranchName'")
-                                        withContext(Dispatchers.Main) {
+                                        withContext(Dispatchers.EDT) {
                                             dialog.setCodyResult(codyBranchName)
                                         }
                                     } else {
                                         log.warn("[Jira:StartWork] Cody returned null slug")
-                                        withContext(Dispatchers.Main) {
+                                        withContext(Dispatchers.EDT) {
                                             dialog.setCodyFailed("Cody returned empty response")
                                         }
                                     }
                                 }
                             } catch (e: Exception) {
                                 log.error("[Jira:StartWork] Cody branch generation failed with exception", e)
-                                withContext(Dispatchers.Main) {
+                                withContext(Dispatchers.EDT) {
                                     dialog.setCodyFailed(e.message ?: "Unknown error")
                                 }
                             }
@@ -581,7 +582,7 @@ class SprintDashboardPanel(
                                 issue = selectedIssue,
                                 branchName = dialogResult.branchName
                             )
-                            withContext(Dispatchers.Main) {
+                            withContext(Dispatchers.EDT) {
                                 when (result) {
                                     is ApiResult.Success -> {
                                         setLoading(false, "Checked out: ${result.data}")
@@ -608,7 +609,7 @@ class SprintDashboardPanel(
                                 projectKey = projectKey,
                                 repoSlug = repoSlug
                             )
-                            withContext(Dispatchers.Main) {
+                            withContext(Dispatchers.EDT) {
                                 when (result) {
                                     is ApiResult.Success -> {
                                         setLoading(false, "Branch created: ${result.data}")

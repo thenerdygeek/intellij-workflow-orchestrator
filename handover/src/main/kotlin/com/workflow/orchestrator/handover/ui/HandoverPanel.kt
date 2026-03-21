@@ -6,6 +6,7 @@ import com.intellij.ui.JBSplitter
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import com.workflow.orchestrator.handover.ui.panels.*
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,7 +18,7 @@ import javax.swing.JPanel
 
 class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.EDT + SupervisorJob())
     private val stateService = HandoverStateService.getInstance(project)
 
     // UI components

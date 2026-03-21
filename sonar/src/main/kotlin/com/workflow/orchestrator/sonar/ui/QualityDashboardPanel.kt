@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.QualityGateStatus
 import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.Color
@@ -28,7 +29,7 @@ class QualityDashboardPanel(
 ) : JPanel(BorderLayout()), Disposable {
 
     private val dataService = SonarDataService.getInstance(project)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
 
     // UI components
     private val headerLabel = JBLabel("").apply {

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
@@ -25,9 +26,8 @@ class CollapsibleSection(
 ) : JPanel(BorderLayout()) {
 
     private var expanded = initiallyExpanded
-    private val arrowLabel = JBLabel(if (expanded) "▼" else "▶").apply {
-        font = font.deriveFont(JBUI.scale(10).toFloat())
-        foreground = StatusColors.SECONDARY_TEXT
+    private val arrowLabel = JBLabel().apply {
+        icon = if (expanded) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
     }
     private val titleLabel = JBLabel(title).apply {
         font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
@@ -65,7 +65,7 @@ class CollapsibleSection(
     fun toggle() {
         expanded = !expanded
         content.isVisible = expanded
-        arrowLabel.text = if (expanded) "▼" else "▶"
+        arrowLabel.icon = if (expanded) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
         revalidate()
         repaint()
     }

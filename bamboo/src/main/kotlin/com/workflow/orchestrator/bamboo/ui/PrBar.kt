@@ -397,7 +397,7 @@ class PrBar(
 
     private fun updateSinglePrInfo(pr: BitbucketPrResponse) {
         val target = pr.toRef?.displayId ?: "?"
-        prInfoLabel.text = "<html><b>PR #${pr.id}</b> &nbsp; ${escapeHtml(pr.title)} &nbsp; <font color='gray'>→ $target</font> &nbsp; <font color='${statusColor(pr.state)}'>${pr.state}</font></html>"
+        prInfoLabel.text = "<html><b>PR #${pr.id}</b> &nbsp; ${escapeHtml(pr.title)} &nbsp; <font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>→ $target</font> &nbsp; <font color='${statusColor(pr.state)}'>${pr.state}</font></html>"
     }
 
     private fun statusColor(state: String): String = when (state.uppercase()) {

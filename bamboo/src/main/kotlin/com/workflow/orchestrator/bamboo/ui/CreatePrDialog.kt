@@ -24,6 +24,7 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.intellij.openapi.application.EDT
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
@@ -358,7 +359,7 @@ class CreatePrDialog(
 
     private fun generateDescription() {
         scope.launch {
-            val targetBranch = withContext(Dispatchers.Main) { targetField.text }
+            val targetBranch = withContext(Dispatchers.EDT) { targetField.text }
             val description = PrDescriptionGenerator.generate(
                 project, ticketDetails, sourceBranch, targetBranch
             )

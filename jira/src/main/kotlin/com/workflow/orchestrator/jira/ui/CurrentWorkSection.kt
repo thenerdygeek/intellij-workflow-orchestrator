@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -93,7 +94,8 @@ class CurrentWorkSection(
         val repos = GitRepositoryManager.getInstance(project).repositories
         val currentBranch = repos.firstOrNull()?.currentBranchName ?: ""
         if (currentBranch.isNotBlank()) {
-            branchLabel.text = "🔀 $currentBranch"
+            branchLabel.text = currentBranch
+            branchLabel.icon = AllIcons.Vcs.Branch
             metaRow.add(branchLabel)
         }
 

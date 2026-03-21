@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.settings
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
@@ -20,9 +21,7 @@ class WorkflowSettingsConfigurable(
     override fun createComponent(): JComponent {
         return panel {
             group("Connection Status") {
-                row {
-                    comment(buildConnectionSummary())
-                }
+                buildConnectionRows()
             }
             row {
                 comment("Configure connections, workflow, CI/CD, and AI settings in the sub-pages below.")
@@ -34,7 +33,7 @@ class WorkflowSettingsConfigurable(
     override fun apply() {}
     override fun reset() {}
 
-    private fun buildConnectionSummary(): String {
+    private fun Panel.buildConnectionRows() {
         val cs = ConnectionSettings.getInstance().state
         val services = listOf(
             "Jira" to cs.jiraUrl,
@@ -45,9 +44,14 @@ class WorkflowSettingsConfigurable(
             "Nexus" to cs.nexusUrl,
         )
 
-        return services.joinToString("<br>") { (name, url) ->
+        for ((name, url) in services) {
             val hasUrl = !url.isNullOrBlank()
-            if (hasUrl) "\u2705 $name — configured" else "\u274C $name — not configured"
+            val statusIcon = if (hasUrl) AllIcons.General.InspectionsOK else AllIcons.General.Error
+            val statusText = if (hasUrl) "$name — configured" else "$name — not configured"
+            row {
+                icon(statusIcon)
+                label(statusText)
+            }
         }
     }
 }

@@ -9,6 +9,7 @@ import com.intellij.openapi.wm.impl.status.EditorBasedWidget
 import com.intellij.util.Consumer
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import com.workflow.orchestrator.automation.service.QueueService
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import java.awt.event.MouseEvent
@@ -81,7 +82,7 @@ private class AutomationStatusBarWidget(
                         else -> "\u2713 Suite Idle"
                     }
 
-                    withContext(Dispatchers.Main) {
+                    withContext(Dispatchers.EDT) {
                         myStatusBar?.updateWidget(ID())
                     }
                 }

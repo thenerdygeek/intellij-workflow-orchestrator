@@ -149,7 +149,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val totalEffortMinutes = state.activeIssues.mapNotNull { it.effort?.let { e -> parseEffortToMinutes(e) } }.sum()
         val effortText = formatEffortMinutes(totalEffortMinutes)
 
-        issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H<br/><font color='gray'>Total effort: $effortText</font></html>"
+        issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H<br/><font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>Total effort: $effortText</font></html>"
         issueBreakdownLabel.font = issueBreakdownLabel.font.deriveFont(JBUI.scale(10).toFloat())
 
         // Recent issues (top 5 by severity)
@@ -257,7 +257,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         IssueSeverity.INFO -> StatusColors.INFO
     }
 
-    private fun htmlColor(c: Color) = "#%02x%02x%02x".format(c.red, c.green, c.blue)
+    private fun htmlColor(c: Color) = StatusColors.htmlColor(c as com.intellij.ui.JBColor)
 
     /**
      * Parse SonarQube effort string (e.g., "30min", "2h", "1h30min", "3d") to total minutes.

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -168,7 +169,14 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
 
         for (comp in components) {
-            tagsPanel.add(createTextTag("📦 ${comp.name}"))
+            tagsPanel.add(JBLabel(comp.name, AllIcons.Nodes.Module, SwingConstants.LEFT).apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
+                    JBUI.Borders.empty(2, 6)
+                )
+            })
         }
         for (label in labels) {
             tagsPanel.add(JBLabel(label).apply {
@@ -244,9 +252,9 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         for (att in attachments) {
             val icon = when {
-                att.mimeType?.startsWith("image/") == true -> "🖼️"
-                att.filename.endsWith(".pdf") -> "📄"
-                else -> "📎"
+                att.mimeType?.startsWith("image/") == true -> AllIcons.FileTypes.Any_type
+                att.filename.endsWith(".pdf") -> AllIcons.FileTypes.Text
+                else -> AllIcons.FileTypes.Any_type
             }
             val sizeStr = when {
                 att.size < 1024 -> "${att.size} B"
@@ -260,7 +268,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     JBUI.Borders.empty(4, 8)
                 )
                 cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-                add(JBLabel(icon))
+                add(JBLabel().apply { this.icon = icon })
                 val infoPanel = JPanel().apply {
                     layout = BoxLayout(this, BoxLayout.Y_AXIS)
                     isOpaque = false

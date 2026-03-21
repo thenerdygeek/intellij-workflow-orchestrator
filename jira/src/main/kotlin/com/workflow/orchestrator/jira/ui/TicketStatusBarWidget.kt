@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.wm.StatusBar
@@ -68,20 +69,22 @@ class TicketStatusBarWidget(
 
         var row = 0
         if (!ticketId.isNullOrBlank()) {
+            val safeTicketId = StringUtil.escapeXmlEntities(ticketId)
             gbc.gridy = row++
-            panel.add(JBLabel("<html><b>Active Ticket:</b> $ticketId</html>"), gbc)
+            panel.add(JBLabel("<html><b>Active Ticket:</b> $safeTicketId</html>"), gbc)
 
             if (!summary.isNullOrBlank()) {
                 gbc.gridy = row++
                 gbc.insets = JBUI.insets(2, 0)
-                panel.add(JBLabel(summary), gbc)
+                panel.add(JBLabel(StringUtil.escapeXmlEntities(summary)), gbc)
             }
 
             val currentBranch = tryGetCurrentBranch()
             if (currentBranch != null) {
+                val safeBranch = StringUtil.escapeXmlEntities(currentBranch)
                 gbc.gridy = row++
                 gbc.insets = JBUI.insets(4, 0, 0, 0)
-                panel.add(JBLabel("<html><b>Branch:</b> $currentBranch</html>"), gbc)
+                panel.add(JBLabel("<html><b>Branch:</b> $safeBranch</html>"), gbc)
             }
         } else {
             gbc.gridy = row++

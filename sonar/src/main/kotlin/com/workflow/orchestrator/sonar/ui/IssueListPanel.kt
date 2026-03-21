@@ -256,10 +256,10 @@ private class IssueListCellRenderer : ListCellRenderer<MappedIssue> {
             }
         }
         val color = when (value.severity) {
-            IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> "#ff4444"
-            IssueSeverity.MAJOR -> "#e68a00"
-            IssueSeverity.MINOR -> "#ffaa00"
-            IssueSeverity.INFO -> "#888888"
+            IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> StatusColors.htmlColor(StatusColors.ERROR)
+            IssueSeverity.MAJOR -> StatusColors.htmlColor(StatusColors.WARNING)
+            IssueSeverity.MINOR -> StatusColors.htmlColor(StatusColors.WARNING)
+            IssueSeverity.INFO -> StatusColors.htmlColor(StatusColors.INFO)
         }
         val typeStr = value.type.name.replace("_", " ")
         val fileName = java.io.File(value.filePath).name

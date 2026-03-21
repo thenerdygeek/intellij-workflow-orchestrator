@@ -190,11 +190,9 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                         if (detected != null) {
                             projectKeyField.component.text = detected
                         } else {
-                            javax.swing.JOptionPane.showMessageDialog(
-                                mainPanel,
+                            com.intellij.openapi.ui.Messages.showWarningDialog(
                                 "Could not detect sonar.projectKey from pom.xml.\nEnsure Maven is configured with a sonar.projectKey property.",
-                                "Auto-detect Failed",
-                                javax.swing.JOptionPane.WARNING_MESSAGE
+                                "Auto-detect Failed"
                             )
                         }
                     }

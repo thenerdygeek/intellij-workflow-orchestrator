@@ -28,7 +28,6 @@ import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
-import java.text.SimpleDateFormat
 import java.util.*
 import javax.swing.*
 
@@ -63,7 +62,8 @@ class PrDetailPanel(
         private val STATUS_DECLINED = StatusColors.DECLINED
         private val APPROVED_COLOR = StatusColors.SUCCESS
 
-        private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm")
+        private val DATE_FORMAT = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+            .withZone(java.time.ZoneId.systemDefault())
     }
 
     // -- Empty state --
@@ -443,14 +443,13 @@ class PrDetailPanel(
         declineButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
             val version = currentPr?.version ?: 0
-            val confirm = JOptionPane.showConfirmDialog(
+            val confirm = com.intellij.openapi.ui.Messages.showYesNoDialog(
                 this,
                 "Decline PR #$prId?",
                 "Confirm Decline",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.WARNING_MESSAGE
+                com.intellij.openapi.ui.Messages.getWarningIcon()
             )
-            if (confirm != JOptionPane.YES_OPTION) return@addActionListener
+            if (confirm != com.intellij.openapi.ui.Messages.YES) return@addActionListener
             scope.launch {
                 PrActionService.getInstance(project).decline(prId, version)
                 SwingUtilities.invokeLater {
@@ -886,7 +885,7 @@ class PrDetailPanel(
                         ?: activity.user.displayName
                     val commentText = activity.comment?.text ?: ""
                     val timestamp = if (activity.createdDate > 0) {
-                        DATE_FORMAT.format(Date(activity.createdDate))
+                        DATE_FORMAT.format(java.time.Instant.ofEpochMilli(activity.createdDate))
                     } else ""
 
                     // Extract inline comment anchor (file + line)
