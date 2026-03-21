@@ -336,6 +336,17 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
             invokeLater { prBar.refreshPrs() }
         }
+
+        // Wire visibility to SmartPoller so polling pauses when tab is not visible
+        addAncestorListener(object : javax.swing.event.AncestorListener {
+            override fun ancestorAdded(event: javax.swing.event.AncestorEvent) {
+                monitorService.setVisible(true)
+            }
+            override fun ancestorRemoved(event: javax.swing.event.AncestorEvent) {
+                monitorService.setVisible(false)
+            }
+            override fun ancestorMoved(event: javax.swing.event.AncestorEvent) {}
+        })
     }
 
     override fun dispose() {

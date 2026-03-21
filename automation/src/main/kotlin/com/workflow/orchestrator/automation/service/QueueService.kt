@@ -196,7 +196,9 @@ class QueueService : Disposable {
                 val hasActive = _stateFlow.value.any {
                     it.status in listOf(QueueEntryStatus.RUNNING, QueueEntryStatus.QUEUED_ON_BAMBOO)
                 }
-                delay(if (hasActive) 15_000L else 60_000L)
+                val interval = if (hasActive) 15_000L else 60_000L
+                val jitter = kotlin.random.Random.nextLong(interval / 10)
+                delay(interval + jitter)
 
                 if (_stateFlow.value.isEmpty()) {
                     log.info("[Automation:Queue] Queue empty, stopping polling")

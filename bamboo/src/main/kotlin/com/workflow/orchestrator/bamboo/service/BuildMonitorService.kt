@@ -17,12 +17,11 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,25 +71,33 @@ class BuildMonitorService : Disposable {
 
     private var previousBuildNumber: Int? = null
     private var previousStatus: BuildStatus? = null
-    private var pollingJob: Job? = null
+    private var poller: SmartPoller? = null
 
     fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
         log.info("[Bamboo:Monitor] Starting polling for planKey=$planKey, branch=$branch, intervalMs=$intervalMs")
         stopPolling()
         previousBuildNumber = null
         previousStatus = null
-        pollingJob = scope.launch {
-            while (true) {
-                pollOnce(planKey, branch)
-                delay(intervalMs)
-            }
-        }
+        poller = SmartPoller(
+            name = "BuildMonitor",
+            baseIntervalMs = intervalMs,
+            scope = scope
+        ) {
+            val prevNum = previousBuildNumber
+            val prevStat = previousStatus
+            pollOnce(planKey, branch)
+            previousBuildNumber != prevNum || previousStatus != prevStat
+        }.also { it.start() }
     }
 
     fun stopPolling() {
         log.info("[Bamboo:Monitor] Stopping polling")
-        pollingJob?.cancel()
-        pollingJob = null
+        poller?.stop()
+        poller = null
+    }
+
+    fun setVisible(isVisible: Boolean) {
+        poller?.setVisible(isVisible)
     }
 
     fun switchBranch(planKey: String, newBranch: String, intervalMs: Long = 30_000) {

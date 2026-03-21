@@ -16,6 +16,7 @@ import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
 import com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.*
 import kotlinx.coroutines.cancel
 import java.awt.BorderLayout
@@ -44,7 +45,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         border = JBUI.Borders.empty(12)
     }
 
-    private var pollingJob: Job? = null
+    private var poller: SmartPoller? = null
 
     data class RunEntry(
         val suiteName: String,
@@ -82,6 +83,17 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         }
 
         showEmptyState()
+
+        // Wire visibility to SmartPoller so polling pauses when tab is not visible
+        addAncestorListener(object : javax.swing.event.AncestorListener {
+            override fun ancestorAdded(event: javax.swing.event.AncestorEvent) {
+                poller?.setVisible(true)
+            }
+            override fun ancestorRemoved(event: javax.swing.event.AncestorEvent) {
+                poller?.setVisible(false)
+            }
+            override fun ancestorMoved(event: javax.swing.event.AncestorEvent) {}
+        })
     }
 
     fun addRun(suitePlanKey: String, resultKey: String) {
@@ -101,13 +113,15 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     private fun startPolling() {
-        pollingJob?.cancel()
-        pollingJob = scope.launch {
-            while (isActive) {
-                pollAllRuns()
-                delay(15_000)
-            }
-        }
+        poller?.stop()
+        poller = SmartPoller(
+            name = "AutomationMonitor",
+            baseIntervalMs = 15_000,
+            scope = scope
+        ) {
+            pollAllRuns()
+            true
+        }.also { it.start() }
     }
 
     private suspend fun pollAllRuns() {
@@ -312,7 +326,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     override fun dispose() {
-        pollingJob?.cancel()
+        poller?.stop()
         scope.cancel()
     }
 
