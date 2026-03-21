@@ -48,6 +48,8 @@ class ConversationSession private constructor(
     /** Tools auto-detected from project type (Maven/Spring/JPA). Detected once at session creation. */
     val projectTools: Set<String> = emptySet()
 ) {
+    /** Tracks which tools are active in this session. Tools only expand, never shrink. */
+    var activeToolNames: MutableSet<String> = mutableSetOf()
     /** Whether the system prompt has been added to context yet. */
     var initialized: Boolean = false
         internal set

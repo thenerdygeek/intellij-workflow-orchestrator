@@ -131,10 +131,25 @@ class AgentOrchestrator(
             val disabledTools = prefs?.getDisabledTools() ?: emptySet()
             val preferredTools = session.skillManager?.getPreferredTools() ?: emptySet()
             val skillAllowedTools = session.skillManager?.getAllowedTools()
-            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext, disabledTools = disabledTools, preferredTools = preferredTools, projectTools = session.projectTools, skillAllowedTools = skillAllowedTools)
+            val newlySelectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext, disabledTools = disabledTools, preferredTools = preferredTools, projectTools = session.projectTools, skillAllowedTools = skillAllowedTools)
+
+            // STABILIZE: Merge with existing session tools — only ADD, never remove.
+            // This prevents tool count from swinging 24→62→24 between messages,
+            // which confuses the LLM and breaks budget math.
+            val stableToolNames = session.activeToolNames
+            stableToolNames.addAll(newlySelectedTools.map { it.name })
+            session.activeToolNames = stableToolNames
+            val selectedTools = session.tools.values.filter { it.name in stableToolNames }
+
             allTools = selectedTools.associateBy { it.name }
             allToolDefs = selectedTools.map { it.toToolDefinition() }
             contextManager = session.contextManager
+
+            // Recalculate reserved tokens for the current (expanded) tool set
+            val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)
+            val systemPromptTokens = TokenEstimator.estimate(session.systemPrompt)
+            val newReservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
+            contextManager.updateReservedTokens(newReservedTokens)
 
             // Initialize session (adds system prompt) on first use, then null to avoid re-adding
             session.initialize()

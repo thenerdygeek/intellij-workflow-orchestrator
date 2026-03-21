@@ -138,11 +138,12 @@ class SingleAgentSessionTest {
 
     @Test
     fun `budget terminate when context exceeds 90 percent`() = runTest {
-        // Simulate context already at terminal level (over 90%)
-        // effectiveBudget = currentTokens + remainingBudget = 140_000 + 10_000 = 150_000
-        // utilization = 140_000 / 150_000 = 93% → TERMINATE
-        every { contextManager.currentTokens } returns 140_000
-        every { contextManager.remainingBudget() } returns 10_000
+        // Simulate context already at terminal level (over 95%)
+        // effectiveBudget = currentTokens + remainingBudget = 146_000 + 4_000 = 150_000
+        // utilization = 146_000 / 150_000 = 97.3% → TERMINATE (threshold is 95%)
+        every { contextManager.currentTokens } returns 146_000
+        every { contextManager.remainingBudget() } returns 4_000
+        every { contextManager.effectiveMaxInputTokens } returns 150_000
 
         val result = session.execute(
             task = "Complex refactoring task",
