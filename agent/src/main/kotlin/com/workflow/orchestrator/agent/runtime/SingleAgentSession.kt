@@ -70,8 +70,12 @@ class SingleAgentSession(
     companion object {
         private val LOG = Logger.getInstance(SingleAgentSession::class.java)
         private val json = Json { ignoreUnknownKeys = true }
-        private const val MAX_RATE_LIMIT_RETRIES = 3
-        private val RATE_LIMIT_BACKOFF_MS = longArrayOf(2000, 4000, 8000)
+        /** Max retries for rate limits (429) and server errors (5xx). */
+        private const val MAX_RETRIES = 5
+        /** Base backoff for exponential retry with jitter. */
+        private const val BASE_BACKOFF_MS = 1000L
+        /** Maximum backoff cap. */
+        private const val MAX_BACKOFF_MS = 30000L
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think")
@@ -518,6 +522,14 @@ class SingleAgentSession(
             tc.function.name in READ_ONLY_TOOLS
         }
 
+        // Doom loop detection: check each tool call before execution
+        for (tc in toolCalls) {
+            val doomMessage = loopGuard.checkDoomLoop(tc.function.name, tc.function.arguments)
+            if (doomMessage != null) {
+                contextManager.addMessage(ChatMessage(role = "system", content = "<system_warning>$doomMessage</system_warning>"))
+            }
+        }
+
         // Execute read-only tools in parallel, collect results first
         if (readOnlyCalls.isNotEmpty()) {
             val parallelResults: List<Triple<ToolCall, ToolResult, Long>> = coroutineScope {
@@ -586,6 +598,9 @@ class SingleAgentSession(
             // Track edited files for LoopGuard auto-verification
             if (toolName == "edit_file" && !toolResult.isError) {
                 editedFiles.addAll(toolResult.artifacts)
+                // Clear file read tracking so agent can re-read after edit
+                val editPathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolCall.function.arguments)
+                editPathMatch?.groupValues?.get(1)?.let { loopGuard.clearFileRead(it) }
                 if (toolResult.content.contains("Edit rejected: syntax errors")) {
                     eventLog?.log(AgentEventType.EDIT_REJECTED_SYNTAX, toolResult.artifacts.firstOrNull() ?: "unknown")
                 } else {
@@ -762,14 +777,7 @@ class SingleAgentSession(
     ): LlmCallResult {
         var lastError: String? = null
 
-        for (attempt in 0..MAX_RATE_LIMIT_RETRIES) {
-            if (attempt > 0) {
-                val backoffMs = RATE_LIMIT_BACKOFF_MS.getOrElse(attempt - 1) { 8000L }
-                LOG.info("SingleAgentSession: rate limit retry $attempt, waiting ${backoffMs}ms")
-                eventLog?.log(AgentEventType.RATE_LIMITED_RETRY, "Attempt $attempt, backoff ${backoffMs}ms")
-                delay(backoffMs)
-            }
-
+        for (attempt in 1..MAX_RETRIES) {
             // Use non-streaming when tools are present — Sourcegraph's SSE may not
             // properly relay tool_calls in streaming mode (produces empty tool names).
             // Use streaming only for text responses (no tools or after tool reduction).
@@ -796,8 +804,18 @@ class SingleAgentSession(
                 }
                 is ApiResult.Error -> {
                     when (result.type) {
-                        ErrorType.RATE_LIMITED -> {
+                        ErrorType.RATE_LIMITED, ErrorType.SERVER_ERROR -> {
                             lastError = result.message
+                            if (attempt < MAX_RETRIES) {
+                                // Exponential backoff with random jitter (±50%)
+                                val backoff = minOf(BASE_BACKOFF_MS * (1L shl (attempt - 1)), MAX_BACKOFF_MS)
+                                val jitter = (backoff * 0.5 * kotlin.random.Random.nextDouble()).toLong()
+                                val delayMs = backoff + jitter
+                                val reason = if (result.type == ErrorType.RATE_LIMITED) "rate limited" else "server error"
+                                LOG.info("SingleAgentSession: retry $attempt/$MAX_RETRIES after ${delayMs}ms ($reason)")
+                                eventLog?.log(AgentEventType.RATE_LIMITED_RETRY, "Attempt $attempt, backoff ${delayMs}ms ($reason)")
+                                delay(delayMs)
+                            }
                             continue // retry with backoff
                         }
                         ErrorType.CONTEXT_LENGTH_EXCEEDED -> {
@@ -820,7 +838,7 @@ class SingleAgentSession(
             }
         }
 
-        return LlmCallResult.Failed(lastError ?: "Rate limited after $MAX_RATE_LIMIT_RETRIES retries")
+        return LlmCallResult.Failed(lastError ?: "Failed after $MAX_RETRIES retries")
     }
 
     /** Internal result type for LLM calls with retry. */

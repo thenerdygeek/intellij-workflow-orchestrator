@@ -25,9 +25,9 @@ AgentController (UI entry point)
 
 ## Key Components
 
-- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support.
+- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Two-threshold compression (T_max=85%, T_retained=60%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Tool result cap: 4000 tokens (~14K chars). Not thread-safe — must be accessed from a single coroutine context.
+- **ContextManager** — Two-threshold compression (T_max=85%, T_retained=60%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses structured compaction template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
 - **BudgetEnforcer** — Four-status budget monitoring: OK (<60%), COMPRESS (60-75%), NUDGE (75-85%), STRONG_NUDGE (85-95%), TERMINATE (>95%).
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose.
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
@@ -56,11 +56,32 @@ Three layers:
 4. **agent**, **delegate_task**, and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
 5. Tool set stabilizes per session — tools only expand across messages, never shrink
 
+## Context Management
+
+- **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). No premature compression — LLM sees everything on first read. Full content saved to disk for re-reads after pruning.
+- **Phase 1 compression**: Prune old tool results (protect last 30K tokens)
+- **Phase 2 compression**: Structured LLM summary (Goal/Discoveries/Accomplished/Files template)
+- **Compression trigger**: 85% of effective budget
+- **System messages**: Old LoopGuard/budget warnings compressible (only original system prompt protected)
+
+## Tool Execution
+
+- **Read-only tools**: Execute in parallel (read_file, search_code, diagnostics, etc.)
+- **Write tools**: Execute sequentially (edit_file, run_command)
+- **Doom loop detection**: 3 identical tool calls = warning injected as system message
+- **File re-read detection**: Warns when reading a file already in context; cleared on edit
+- **Context overflow**: Compress + REPLAY the failed request (OpenCode pattern)
+
+## Error Handling
+
+- **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429 AND 5xx
+- **Context overflow**: Phase 1 prune + Phase 2 compress + replay
+- **Streaming**: Heuristic token estimate when API returns usage: null
+
 ## Token Management
 
 - Token display shows current context window fill (contextManager.currentTokens), not cumulative API total
 - Token reconciliation uses API's promptTokens as authoritative (no stale reservation subtraction)
-- Tool results capped at 4000 tokens (~14K chars) — enough to see most source files
 - reservedTokens recalculated when tool set changes
 
 ## Interactive UI

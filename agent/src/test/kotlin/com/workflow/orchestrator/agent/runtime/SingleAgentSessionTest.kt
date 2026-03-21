@@ -473,6 +473,49 @@ class SingleAgentSessionTest {
         assertTrue(result is SingleAgentResult.Completed, "Expected Completed after retry, got $result")
     }
 
+    @Test
+    fun `retries on server error 5xx then succeeds`() = runTest {
+        // First call: server error. Second: success.
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Error(ErrorType.SERVER_ERROR, "Internal server error"),
+            ApiResult.Success(chatResponse("Done after 5xx retry"))
+        )
+
+        val result = session.execute(
+            task = "Task",
+            tools = emptyMap(),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        assertTrue(result is SingleAgentResult.Completed, "Expected Completed after 5xx retry, got $result")
+        val completed = result as SingleAgentResult.Completed
+        assertTrue(completed.content.contains("Done after 5xx retry"))
+    }
+
+    @Test
+    fun `fails after exhausting all retries`() = runTest {
+        // All calls: rate limited
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Error(
+            ErrorType.RATE_LIMITED, "Rate limited"
+        )
+
+        val result = session.execute(
+            task = "Task",
+            tools = emptyMap(),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        assertTrue(result is SingleAgentResult.Failed, "Expected Failed after exhausting retries, got $result")
+        val failed = result as SingleAgentResult.Failed
+        assertTrue(failed.error.contains("Rate limited") || failed.error.contains("retries"))
+    }
+
     // --- Step 8: Event logging ---
 
     @Test
