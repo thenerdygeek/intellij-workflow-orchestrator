@@ -75,7 +75,7 @@ All credentials stored in PasswordSafe. Never in XML.
 
 ## UX Constraints
 
-- ONE tool window "Workflow" (bottom-docked), 6 tabs: Sprint, Build, PR, Quality, Automation, Handover
+- ONE tool window "Workflow" (bottom-docked), 6 tabs: Sprint, PR, Build, Quality, Automation, Handover
 - ONE status bar widget per service area
 - JB components only: JBList, JBTable, JBSplitter, JBColor, JBUI.Borders
 - SVG icons with light + dark variants; reuse `AllIcons.*` for standard concepts

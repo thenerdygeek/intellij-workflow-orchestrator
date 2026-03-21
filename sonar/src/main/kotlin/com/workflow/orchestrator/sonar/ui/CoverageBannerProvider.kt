@@ -33,7 +33,7 @@ class CoverageBannerProvider : EditorNotificationProvider {
                 createActionLabel("View in Quality Tab") {
                     val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Workflow")
                     toolWindow?.show {
-                        // The Quality tab is at index 3 (Sprint=0, Build=1, PR=2, Quality=3)
+                        // The Quality tab is at index 3 (Sprint=0, PR=1, Build=2, Quality=3)
                         val content = toolWindow.contentManager.contents.getOrNull(3)
                         content?.let { toolWindow.contentManager.setSelectedContent(it) }
                     }
