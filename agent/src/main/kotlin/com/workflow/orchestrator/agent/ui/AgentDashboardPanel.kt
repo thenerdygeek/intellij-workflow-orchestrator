@@ -1,31 +1,18 @@
 package com.workflow.orchestrator.agent.ui
 
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
-import java.awt.*
-import java.awt.event.KeyEvent
-import java.awt.event.KeyListener
-import javax.swing.*
+import java.awt.BorderLayout
+import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 /**
- * Chat-first agent dashboard with JCEF (Chromium) rendering when available,
- * falling back to JEditorPane for environments without JCEF.
+ * Chat-first agent dashboard — thin JCEF wrapper.
  *
- * Layout:
- * ┌──────────────────────────────────────────────────┐
- * │ [Stop] [New Chat]                     🪙 tokens  │
- * ├──────────────────────────────────────────────────┤
- * │  JCEF Browser (CSS3, animations, rounded badges) │
- * │  OR JEditorPane fallback (HTML 3.2)              │
- * ├──────────────────────────────────────────────────┤
- * │ Type a message...                        [Send]  │
- * │ Enter to send · Shift+Enter for new line         │
- * └──────────────────────────────────────────────────┘
+ * All toolbar, input bar, and token budget UI lives inside the JCEF panel
+ * (agent-chat.html). This Kotlin panel just hosts the browser component
+ * and delegates API calls through to [AgentCefPanel].
  */
 class AgentDashboardPanel(
     private val parentDisposable: Disposable? = null
@@ -52,159 +39,71 @@ class AgentDashboardPanel(
     private val fallbackPanel: RichStreamingPanel? = if (cefPanel == null) RichStreamingPanel() else null
     val usingJcef: Boolean get() = cefPanel != null
 
-    // ── UI components ──
-    private val tokenWidget = TokenBudgetWidget()
-    private val modelLabel = JBLabel("").apply {
-        font = JBUI.Fonts.smallFont()
-        foreground = JBColor.GRAY
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        toolTipText = "Current LLM model \u2014 click to change in Settings"
-    }
-
-    private val chatInput = JBTextArea(2, 40).apply {
-        lineWrap = true
-        wrapStyleWord = true
-        border = JBUI.Borders.empty(8)
-        font = JBUI.Fonts.label(13f)
-        emptyText.setText("Ask the agent to do something...")
-    }
-
-    val sendButton = JButton("Send").apply {
-        icon = AllIcons.Actions.Execute
-        putClientProperty("JButton.buttonType", "roundRect")
-    }
-    val cancelButton = JButton("Stop").apply {
-        icon = AllIcons.Actions.Suspend
-        isEnabled = false
-        putClientProperty("JButton.buttonType", "roundRect")
-    }
-    val newChatButton = JButton("New Chat").apply {
-        icon = AllIcons.General.Add
-        putClientProperty("JButton.buttonType", "roundRect")
-    }
-    val planModeToggle = JToggleButton("Plan").apply {
-        icon = AllIcons.Actions.ListFiles
-        toolTipText = "Plan mode \u2014 forces the agent to create an implementation plan before making changes"
-        putClientProperty("JButton.buttonType", "roundRect")
-        font = JBUI.Fonts.smallFont()
-    }
-    val toolsButton = JButton("Tools").apply {
-        icon = AllIcons.Nodes.Plugin
-        putClientProperty("JButton.buttonType", "roundRect")
-        toolTipText = "View available agent tools"
-    }
-    val tracesButton = JButton("Traces").apply {
-        icon = AllIcons.Actions.ListFiles
-        putClientProperty("JButton.buttonType", "roundRect")
-        toolTipText = "Open debug traces for recent agent sessions"
-    }
-    val skillsButton = JButton("Skills").apply {
-        icon = AllIcons.Nodes.Tag
-        putClientProperty("JButton.buttonType", "roundRect")
-        toolTipText = "Available workflow skills"
-        font = font.deriveFont(12f)
-        addActionListener { showSkillsPopup(this) }
-        isVisible = false  // shown when skills are available
-    }
-    val settingsLink = JBLabel("<html><a href=''>Settings</a></html>").apply {
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        font = JBUI.Fonts.smallFont()
-    }
-
-    val isPlanMode: Boolean get() = planModeToggle.isSelected
-
     var onSendMessage: ((String) -> Unit)? = null
 
     init {
         border = JBUI.Borders.empty()
-
-        // ── North: toolbar ──
-        val toolbar = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.merge(
-                JBUI.Borders.empty(4, 8),
-                JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0), true
-            )
-            val left = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-            left.add(cancelButton)
-            left.add(newChatButton)
-            left.add(planModeToggle)
-            left.add(toolsButton)
-            left.add(skillsButton)
-            add(left, BorderLayout.WEST)
-            val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
-            right.add(tracesButton)
-            right.add(modelLabel)
-            right.add(tokenWidget)
-            right.add(settingsLink)
-            add(right, BorderLayout.EAST)
-        }
-        add(toolbar, BorderLayout.NORTH)
-
-        // ── Center: JCEF or fallback ──
         val outputComponent = cefPanel ?: fallbackPanel!!
         add(outputComponent, BorderLayout.CENTER)
-
-        // ── South: chat input ──
-        add(buildInputBar(), BorderLayout.SOUTH)
-
-        // ── Wire Enter key ──
-        chatInput.addKeyListener(object : KeyListener {
-            override fun keyPressed(e: KeyEvent) {
-                if (e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown) {
-                    e.consume(); submitMessage()
-                }
-                if (e.keyCode == KeyEvent.VK_ESCAPE) {
-                    e.consume()
-                    // Trigger cancel if agent is running
-                    cancelButton.doClick()
-                }
-            }
-            override fun keyReleased(e: KeyEvent) {}
-            override fun keyTyped(e: KeyEvent) {
-                if (e.keyChar == '\n' && !e.isShiftDown) e.consume()
-            }
-        })
-        sendButton.addActionListener { submitMessage() }
     }
 
-    private fun buildInputBar(): JPanel {
-        val bar = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.merge(
-                JBUI.Borders.empty(6, 8),
-                JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0), true
-            )
-        }
-        val inputScroll = JScrollPane(chatInput).apply {
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(JBColor.border(), 1, true),
-                JBUI.Borders.empty()
-            )
-            preferredSize = Dimension(0, JBUI.scale(60))
-            minimumSize = Dimension(0, JBUI.scale(40))
-        }
-        val hint = JBLabel("Enter to send · Shift+Enter for new line").apply {
-            font = JBUI.Fonts.smallFont()
-            foreground = JBColor.GRAY
-            border = JBUI.Borders.emptyTop(4)
-        }
-        val bottomPanel = JPanel(BorderLayout())
-        bottomPanel.add(inputScroll, BorderLayout.CENTER)
-        val sendPanel = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.emptyLeft(6)
-            add(sendButton, BorderLayout.SOUTH)
-        }
-        bottomPanel.add(sendPanel, BorderLayout.EAST)
-        bar.add(bottomPanel, BorderLayout.CENTER)
-        bar.add(hint, BorderLayout.SOUTH)
-        return bar
+    // ═══════════════════════════════════════════════════
+    //  JCEF action bridge — single entry point for controller
+    // ═══════════════════════════════════════════════════
+
+    fun setCefActionCallbacks(
+        onCancel: () -> Unit,
+        onNewChat: () -> Unit,
+        onSendMessage: (String) -> Unit,
+        onChangeModel: (String) -> Unit,
+        onTogglePlanMode: (Boolean) -> Unit,
+        onActivateSkill: (String) -> Unit,
+        onRequestFocusIde: () -> Unit,
+        onOpenSettings: () -> Unit,
+        onOpenToolsPanel: () -> Unit
+    ) {
+        cefPanel?.onCancelTask = onCancel
+        cefPanel?.onNewChat = onNewChat
+        cefPanel?.onSendMessage = onSendMessage
+        cefPanel?.onChangeModel = onChangeModel
+        cefPanel?.onTogglePlanMode = onTogglePlanMode
+        cefPanel?.onActivateSkill = onActivateSkill
+        cefPanel?.onRequestFocusIde = onRequestFocusIde
+        cefPanel?.onOpenSettings = onOpenSettings
+        cefPanel?.onOpenToolsPanel = onOpenToolsPanel
     }
 
-    private fun submitMessage() {
-        val text = chatInput.text?.trim() ?: return
-        if (text.isBlank()) return
-        chatInput.text = ""
-        chatInput.requestFocusInWindow()
-        onSendMessage?.invoke(text)
+    // ═══════════════════════════════════════════════════
+    //  Delegated state methods — route to JCEF
+    // ═══════════════════════════════════════════════════
+
+    fun setBusy(busy: Boolean) = runOnEdt {
+        cefPanel?.setBusy(busy)
+    }
+
+    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
+        cefPanel?.updateTokenBudget(tokensUsed, maxTokens)
+    }
+
+    fun setModelName(name: String) = runOnEdt {
+        val shortName = name.substringAfterLast("::").ifBlank { name }
+        cefPanel?.setModelName(shortName)
+    }
+
+    fun setInputLocked(locked: Boolean) = runOnEdt {
+        cefPanel?.setInputLocked(locked)
+    }
+
+    fun showRetryButton(lastMessage: String) {
+        cefPanel?.showRetryButton(lastMessage)
+    }
+
+    fun focusInput() = runOnEdt {
+        cefPanel?.focusInput()
+    }
+
+    fun updateSkillsList(skillsJson: String) {
+        cefPanel?.updateSkillsList(skillsJson)
     }
 
     // ═══════════════════════════════════════════════════
@@ -265,17 +164,6 @@ class AgentDashboardPanel(
         cefPanel?.enableChatInput()
     }
 
-    /** Saved chat input text — restored when interactive UI (question wizard, etc.) completes. */
-    private var savedChatInputText: String = ""
-
-    /** Disable the Swing chat input while JCEF question wizard is active. */
-    fun disableChatInput() = runOnEdt {
-        savedChatInputText = chatInput.text ?: ""
-        chatInput.isEnabled = false
-        sendButton.isEnabled = false
-        chatInput.text = ""
-    }
-
     // ── Skill banner delegation ──
 
     fun showSkillBanner(name: String) {
@@ -284,46 +172,6 @@ class AgentDashboardPanel(
 
     fun hideSkillBanner() {
         cefPanel?.hideSkillBanner()
-    }
-
-    // ── Skills toolbar ──
-
-    private var availableSkills: List<Pair<String, String>> = emptyList()
-    private var availableSkillScopes: List<String> = emptyList()
-    private var onSkillSelected: ((String) -> Unit)? = null
-
-    fun updateSkillsList(skills: List<Pair<String, String>>, scope: List<String>) {
-        skillsButton.isVisible = skills.isNotEmpty()
-        this.availableSkills = skills
-        this.availableSkillScopes = scope
-    }
-
-    private fun showSkillsPopup(anchor: JComponent) {
-        if (availableSkills.isEmpty()) return
-        val menu = javax.swing.JPopupMenu()
-
-        val projectSkills = availableSkills.filterIndexed { i, _ -> availableSkillScopes.getOrNull(i) == "PROJECT" }
-        val userSkills = availableSkills.filterIndexed { i, _ -> availableSkillScopes.getOrNull(i) == "USER" }
-
-        if (projectSkills.isNotEmpty()) {
-            menu.add(javax.swing.JMenuItem("— Project Skills —").apply { isEnabled = false; font = font.deriveFont(java.awt.Font.BOLD) })
-            projectSkills.forEach { (name, desc) ->
-                menu.add(javax.swing.JMenuItem("/$name — $desc").apply {
-                    addActionListener { onSkillSelected?.invoke(name) }
-                })
-            }
-        }
-        if (userSkills.isNotEmpty()) {
-            if (projectSkills.isNotEmpty()) menu.addSeparator()
-            menu.add(javax.swing.JMenuItem("— Personal Skills —").apply { isEnabled = false; font = font.deriveFont(java.awt.Font.BOLD) })
-            userSkills.forEach { (name, desc) ->
-                menu.add(javax.swing.JMenuItem("/$name — $desc").apply {
-                    addActionListener { onSkillSelected?.invoke(name) }
-                })
-            }
-        }
-
-        menu.show(anchor, 0, anchor.height)
     }
 
     fun setCefNavigationCallbacks(onNavigateToFile: (String, Int) -> Unit) {
@@ -338,20 +186,8 @@ class AgentDashboardPanel(
         cefPanel?.appendSonarBadge(badgeJson)
     }
 
-    fun setCefSkillCallbacks(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+    fun setCefSkillCallbacks(onDismiss: () -> Unit) {
         cefPanel?.onSkillDismissed = onDismiss
-        onSkillSelected = onSelect
-    }
-
-    /** Re-enable the Swing chat input after the question wizard completes. Restores any text the user had typed. */
-    fun enableSwingChatInput() = runOnEdt {
-        chatInput.isEnabled = true
-        sendButton.isEnabled = true
-        if (savedChatInputText.isNotBlank()) {
-            chatInput.text = savedChatInputText
-            savedChatInputText = ""
-        }
-        chatInput.requestFocusInWindow()
     }
 
     fun setCefQuestionCallbacks(
@@ -425,40 +261,13 @@ class AgentDashboardPanel(
         cefPanel?.appendError(message) ?: fallbackPanel?.appendError(message)
     }
 
-    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
-        tokenWidget.update(tokensUsed, maxTokens)
-    }
-
     fun showResult(text: String) = runOnEdt {
         cefPanel?.setText(text) ?: fallbackPanel?.setText(text)
-        cancelButton.isEnabled = false
-        sendButton.isEnabled = true
-        chatInput.isEnabled = true
     }
 
     fun reset() = runOnEdt {
         cefPanel?.clear() ?: fallbackPanel?.clear()
-        tokenWidget.update(0, 0)
-        cancelButton.isEnabled = false
-        sendButton.isEnabled = true
-        chatInput.isEnabled = true
-        chatInput.text = ""
     }
-
-    fun setBusy(busy: Boolean) = runOnEdt {
-        chatInput.isEnabled = true   // Always enabled — user can type mid-loop
-        sendButton.isEnabled = true  // Always enabled — user can send mid-loop
-        cancelButton.isEnabled = busy
-        if (!busy) chatInput.requestFocusInWindow()
-    }
-
-    fun setModelName(name: String) = runOnEdt {
-        // Show just the model name part (strip provider prefix)
-        val shortName = name.substringAfterLast("::").ifBlank { name }
-        modelLabel.text = shortName
-    }
-
-    fun focusInput() = runOnEdt { chatInput.requestFocusInWindow() }
 
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
