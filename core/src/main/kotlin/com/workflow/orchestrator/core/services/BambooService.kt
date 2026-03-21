@@ -46,6 +46,9 @@ interface BambooService {
     /** Get artifacts for a build result. */
     suspend fun getArtifacts(resultKey: String): ToolResult<List<com.workflow.orchestrator.core.model.bamboo.ArtifactData>>
 
+    /** Download an artifact to a local file. Returns true on success. */
+    suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): ToolResult<Boolean>
+
     /** Get recent build results for a plan. */
     suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10): ToolResult<List<BuildResultData>>
 }

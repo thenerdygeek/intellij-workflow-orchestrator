@@ -407,6 +407,38 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
+    override suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): ToolResult<Boolean> {
+        val api = client ?: return ToolResult(
+            data = false,
+            summary = "Bamboo not configured. Cannot download artifact.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return try {
+            val success = api.downloadArtifact(artifactUrl, targetFile)
+            if (success) {
+                ToolResult.success(
+                    data = true,
+                    summary = "Downloaded artifact to ${targetFile.absolutePath}"
+                )
+            } else {
+                ToolResult(
+                    data = false,
+                    summary = "Failed to download artifact from $artifactUrl",
+                    isError = true
+                )
+            }
+        } catch (e: Exception) {
+            log.warn("[BambooService] Failed to download artifact: ${e.message}")
+            ToolResult(
+                data = false,
+                summary = "Error downloading artifact: ${e.message}",
+                isError = true
+            )
+        }
+    }
+
     override suspend fun getRecentBuilds(planKey: String, maxResults: Int): ToolResult<List<BuildResultData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),

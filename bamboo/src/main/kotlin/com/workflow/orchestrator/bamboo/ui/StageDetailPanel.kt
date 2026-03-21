@@ -12,10 +12,15 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
 import com.intellij.execution.testframework.sm.runner.SMTestLocator
+import com.intellij.ide.BrowserUtil
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
@@ -28,10 +33,20 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildError
+import com.workflow.orchestrator.core.model.bamboo.ArtifactData
+import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.ui.StatusColors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import com.intellij.openapi.application.invokeLater
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.event.KeyAdapter
@@ -96,6 +111,24 @@ class StageDetailPanel(
         }, BorderLayout.CENTER)
     }
 
+    // Artifacts tab
+    private val bambooService = project.getService(BambooService::class.java)
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val artifactsModel = DefaultListModel<ArtifactData>()
+    private val artifactsList = JBList(artifactsModel)
+    private val artifactsPlaceholder = JBLabel("No artifacts for this build.").apply {
+        horizontalAlignment = SwingConstants.CENTER
+    }
+    private val artifactsLoadingLabel = JBLabel("Loading artifacts...").apply {
+        horizontalAlignment = SwingConstants.CENTER
+        font = JBUI.Fonts.smallFont()
+        foreground = StatusColors.SECONDARY_TEXT
+    }
+    private val artifactsPanel = JPanel(BorderLayout()).apply {
+        border = JBUI.Borders.empty(4)
+        add(artifactsPlaceholder, BorderLayout.CENTER)
+    }
+
     // "Open full log in editor" button bar
     private val logActionBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
         isVisible = false
@@ -120,6 +153,7 @@ class StageDetailPanel(
         }
         addTab("Log", logTab)
         addTab("Tests", testsPlaceholder)
+        addTab("Artifacts", artifactsPanel)
     }
 
     // Store full log for "Open in editor"
@@ -165,6 +199,10 @@ class StageDetailPanel(
         })
         nextMatchButton.addActionListener { navigateMatch(1) }
         prevMatchButton.addActionListener { navigateMatch(-1) }
+
+        // Artifacts list setup
+        artifactsList.cellRenderer = ArtifactCellRenderer()
+        artifactsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
 
         createConsoleView()
     }
@@ -394,11 +432,167 @@ class StageDetailPanel(
         }
     }
 
+    /**
+     * Load and display artifacts for a build result.
+     */
+    fun showArtifacts(resultKey: String) {
+        // Show loading state
+        artifactsPanel.removeAll()
+        artifactsPanel.add(artifactsLoadingLabel, BorderLayout.CENTER)
+        artifactsPanel.revalidate()
+        artifactsPanel.repaint()
+
+        scope.launch {
+            val result = bambooService.getArtifacts(resultKey)
+            invokeLater {
+                artifactsPanel.removeAll()
+                if (result.isError) {
+                    val errorLabel = JBLabel("Error loading artifacts: ${result.summary}").apply {
+                        horizontalAlignment = SwingConstants.CENTER
+                        foreground = StatusColors.ERROR
+                    }
+                    artifactsPanel.add(errorLabel, BorderLayout.CENTER)
+                } else if (result.data.isEmpty()) {
+                    artifactsPanel.add(artifactsPlaceholder, BorderLayout.CENTER)
+                } else {
+                    artifactsModel.clear()
+                    result.data.forEach { artifactsModel.addElement(it) }
+                    val scrollPane = JScrollPane(artifactsList)
+                    artifactsPanel.add(scrollPane, BorderLayout.CENTER)
+                }
+                artifactsPanel.revalidate()
+                artifactsPanel.repaint()
+            }
+        }
+    }
+
+    private fun downloadArtifact(artifact: ArtifactData) {
+        val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
+            .withTitle("Select Download Directory")
+        val chosen = FileChooser.chooseFile(descriptor, project, null) ?: return
+        val targetFile = java.io.File(chosen.path, artifact.name)
+
+        scope.launch {
+            val result = bambooService.downloadArtifact(artifact.downloadUrl, targetFile)
+            invokeLater {
+                if (result.data) {
+                    NotificationGroupManager.getInstance()
+                        .getNotificationGroup("Workflow Orchestrator")
+                        .createNotification(
+                            "Downloaded ${artifact.name} to ${targetFile.parentFile.absolutePath}",
+                            NotificationType.INFORMATION
+                        )
+                        .notify(project)
+                    log.info("[Build:Artifacts] Downloaded ${artifact.name} to ${targetFile.absolutePath}")
+                } else {
+                    NotificationGroupManager.getInstance()
+                        .getNotificationGroup("Workflow Orchestrator")
+                        .createNotification(
+                            "Failed to download ${artifact.name}: ${result.summary}",
+                            NotificationType.ERROR
+                        )
+                        .notify(project)
+                }
+            }
+        }
+    }
+
+    private fun formatFileSize(bytes: Long): String {
+        return when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+            else -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+        }
+    }
+
     fun showEmpty() {
         consoleView?.clear()
         fullLogText = null
         logActionBar.isVisible = false
         tabbedPane.setComponentAt(1, testsPlaceholder)
+        artifactsModel.clear()
+        artifactsPanel.removeAll()
+        artifactsPanel.add(artifactsPlaceholder, BorderLayout.CENTER)
+        artifactsPanel.revalidate()
+    }
+
+    /**
+     * Cached cell renderer for artifact list items.
+     * Shows: name, formatted size, Download button, and Open button for HTML artifacts.
+     */
+    private inner class ArtifactCellRenderer : ListCellRenderer<ArtifactData> {
+        private val panel = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(4, 8)
+        }
+        private val nameLabel = JBLabel().apply {
+            font = JBUI.Fonts.label()
+        }
+        private val sizeLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.emptyLeft(8)
+        }
+        private val downloadButton = JButton("Download").apply {
+            font = JBUI.Fonts.smallFont()
+            margin = JBUI.insets(1, 6)
+            isFocusable = false
+        }
+        private val openButton = JButton("Open").apply {
+            font = JBUI.Fonts.smallFont()
+            margin = JBUI.insets(1, 6)
+            isFocusable = false
+        }
+        private val infoPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            add(nameLabel)
+            add(sizeLabel)
+        }
+        private val actionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+        }
+
+        init {
+            panel.add(infoPanel, BorderLayout.CENTER)
+            panel.add(actionsPanel, BorderLayout.EAST)
+
+            downloadButton.addActionListener {
+                val selectedArtifact = artifactsList.selectedValue
+                if (selectedArtifact != null && selectedArtifact.downloadUrl.isNotEmpty()) {
+                    downloadArtifact(selectedArtifact)
+                }
+            }
+            openButton.addActionListener {
+                val selectedArtifact = artifactsList.selectedValue
+                if (selectedArtifact != null && selectedArtifact.downloadUrl.isNotEmpty()) {
+                    BrowserUtil.browse(selectedArtifact.downloadUrl)
+                }
+            }
+        }
+
+        override fun getListCellRendererComponent(
+            list: JList<out ArtifactData>,
+            value: ArtifactData,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            nameLabel.text = value.name
+            sizeLabel.text = formatFileSize(value.size)
+
+            actionsPanel.removeAll()
+            if (value.downloadUrl.isNotEmpty()) {
+                actionsPanel.add(downloadButton)
+                if (value.name.endsWith(".html", ignoreCase = true)) {
+                    actionsPanel.add(openButton)
+                }
+            }
+
+            panel.background = if (isSelected) list.selectionBackground else list.background
+            nameLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
+            panel.isOpaque = true
+
+            return panel
+        }
     }
 }
 
