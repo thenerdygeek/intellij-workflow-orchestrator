@@ -300,6 +300,87 @@ class LoopGuardTest {
         assertTrue(r3.isEmpty())
     }
 
+    // --- Doom loop detection (OpenCode pattern) ---
+
+    @Test
+    fun `checkDoomLoop returns null for first call`() {
+        val result = guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        assertNull(result)
+    }
+
+    @Test
+    fun `checkDoomLoop returns warning after 3 identical sequential calls`() {
+        val args = """{"query": "TODO"}"""
+        assertNull(guard.checkDoomLoop("search_code", args))
+        assertNull(guard.checkDoomLoop("search_code", args))
+        val warning = guard.checkDoomLoop("search_code", args)
+        assertNotNull(warning)
+        assertTrue(warning!!.contains("search_code"))
+        assertTrue(warning.contains("${LoopGuard.DOOM_LOOP_THRESHOLD} times"))
+    }
+
+    @Test
+    fun `checkDoomLoop does not trigger for different args`() {
+        assertNull(guard.checkDoomLoop("search_code", """{"query": "A"}"""))
+        assertNull(guard.checkDoomLoop("search_code", """{"query": "B"}"""))
+        assertNull(guard.checkDoomLoop("search_code", """{"query": "C"}"""))
+    }
+
+    @Test
+    fun `checkDoomLoop clears after triggering`() {
+        val args = """{"query": "TODO"}"""
+        guard.checkDoomLoop("search_code", args)
+        guard.checkDoomLoop("search_code", args)
+        val warning = guard.checkDoomLoop("search_code", args)
+        assertNotNull(warning)
+
+        // After triggering, list is cleared — next call should not trigger
+        assertNull(guard.checkDoomLoop("search_code", args))
+    }
+
+    @Test
+    fun `checkDoomLoop keeps list bounded to 20`() {
+        // Add 25 unique calls
+        for (i in 1..25) {
+            guard.checkDoomLoop("tool_$i", "{}")
+        }
+        // No crash, no false positive
+        assertNull(guard.checkDoomLoop("unique_tool", "{}"))
+    }
+
+    // --- File re-read tracking ---
+
+    @Test
+    fun `checkDoomLoop warns on re-reading same file`() {
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        val warning = guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        assertNotNull(warning)
+        assertTrue(warning!!.contains("already read"))
+        assertTrue(warning.contains("/src/Main.kt"))
+    }
+
+    @Test
+    fun `checkDoomLoop allows reading different files`() {
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}"""))
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}"""))
+    }
+
+    @Test
+    fun `clearFileRead allows re-reading after edit`() {
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        guard.clearFileRead("/src/Main.kt")
+        // After clearing, re-read should not warn
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+    }
+
+    @Test
+    fun `reset clears doom loop and file read state`() {
+        guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        guard.reset()
+        // After reset, re-read should not warn
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+    }
+
     // --- Helper ---
 
     private var toolCallCounter = 0
