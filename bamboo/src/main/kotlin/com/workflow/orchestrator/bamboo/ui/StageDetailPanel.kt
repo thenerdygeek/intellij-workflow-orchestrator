@@ -299,6 +299,9 @@ private object BambooTestLocator : SMTestLocator {
             val simpleClassName = className.substringAfterLast('.')
             val expectedPackage = className.substringBeforeLast('.', "")
 
+            // Bail out during indexing to avoid IndexNotReadyException
+            if (com.intellij.openapi.project.DumbService.getInstance(project).isDumb) return emptyList()
+
             // Find files matching the simple class name (.java or .kt)
             for (ext in listOf("$simpleClassName.java", "$simpleClassName.kt")) {
                 @Suppress("DEPRECATION")

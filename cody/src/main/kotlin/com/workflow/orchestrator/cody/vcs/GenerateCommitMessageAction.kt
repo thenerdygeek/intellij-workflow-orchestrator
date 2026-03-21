@@ -35,7 +35,7 @@ class GenerateCommitMessageAction : AnAction(
     "Generate with Workflow",
     "Generate commit message using Cody AI",
     AllIcons.Actions.Lightning
-) {
+), com.intellij.openapi.project.DumbAware {
 
     private val log = Logger.getInstance(GenerateCommitMessageAction::class.java)
     private val generating = AtomicBoolean(false)
