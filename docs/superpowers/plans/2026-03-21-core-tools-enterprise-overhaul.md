@@ -4,9 +4,11 @@
 
 **Goal:** Overhaul the 4 core agent tools (search_code, read_file, edit_file, run_command) to match enterprise-grade standards from Claude Code, Codex, and Cursor. Add a new glob_files tool. Fix critical gaps: search output modes, .gitignore respect, file type filters, read-before-edit enforcement, command output truncation, and result pagination.
 
-**Architecture:** Enhance existing tools in-place (no new tool classes except GlobFilesTool). Each tool gains parameters from the Claude Code research. Search gets 3 output modes (files/content/count) + context lines + file type filter + .gitignore respect. Read gains line truncation + binary detection. Edit gains read-before-edit enforcement via WorkingSet. Run gains configurable timeout + output limit increase + background flag.
+**Architecture:** Enhance existing tools using **IntelliJ-native APIs** where superior (Document + WriteCommandAction for edits, PsiSearchHelper for indexed search, FileDocumentManager for reads, FilenameIndex for file discovery). Fall back to filesystem for dumb mode and complex patterns. LLM-facing parameters and response format match Claude Code's Grep/Read/Edit/Bash exactly.
 
-**Tech Stack:** Kotlin 2.1.10, IntelliJ Platform, Java ProcessBuilder, regex, kotlinx.serialization
+**Tech Stack:** Kotlin 2.1.10, IntelliJ Platform APIs (Document, WriteCommandAction, PsiSearchHelper, FilenameIndex, ProjectFileIndex, FileDocumentManager, GeneralCommandLine), kotlinx.serialization
+
+**Research:** `docs/superpowers/research/2026-03-21-core-tool-implementations.md` + `docs/superpowers/research/2026-03-21-intellij-native-apis-vs-basic.md`
 
 **Research:** `docs/superpowers/research/2026-03-21-core-tool-implementations.md`
 
