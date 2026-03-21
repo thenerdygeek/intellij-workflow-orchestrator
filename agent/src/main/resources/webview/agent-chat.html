@@ -1093,6 +1093,9 @@ function completeSession(status, tokensUsed, durationMs, iterations, files) {
 
 /* ── Streaming ── */
 
+// Accumulates raw text during streaming (preserves newlines for markdown rendering)
+var _streamRawText = '';
+
 function appendToken(token) {
   hideEmpty();
   if (!activeStreamEl) {
@@ -1103,8 +1106,11 @@ function appendToken(token) {
     activeStreamEl._inner = inner;
     activeStreamEl.appendChild(inner);
     container.appendChild(activeStreamEl);
+    _streamRawText = '';
   }
-  // Convert markdown-like patterns
+  // Accumulate raw text (with original newlines)
+  _streamRawText += token;
+  // Show with basic newline rendering during streaming
   const html = esc(token).replace(/\n/g, '<br>');
   activeStreamEl._inner.insertAdjacentHTML('beforeend', html);
   scrollToBottom();
@@ -1113,11 +1119,14 @@ function appendToken(token) {
 function endStream() {
   if (activeStreamEl && activeStreamEl._inner) {
     activeStreamEl._inner.classList.remove('stream-cursor');
-    // Re-render with markdown
-    var raw = activeStreamEl._inner.textContent || '';
-    activeStreamEl._inner.innerHTML = renderMarkdown(raw);
+    // Re-render accumulated raw text with full markdown
+    // (NOT from textContent which strips newlines)
+    if (_streamRawText) {
+      activeStreamEl._inner.innerHTML = renderMarkdown(_streamRawText);
+    }
   }
   activeStreamEl = null;
+  _streamRawText = '';
 }
 
 /* ── Tool Calls ── */
