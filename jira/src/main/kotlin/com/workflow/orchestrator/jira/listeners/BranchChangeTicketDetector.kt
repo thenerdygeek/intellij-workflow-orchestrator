@@ -79,7 +79,8 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
                             ticketKey = ticketId,
                             ticketSummary = summary,
                             sprint = sprintName,
-                            assignee = assigneeName
+                            assignee = assigneeName,
+                            branchName = branchName
                         )
                     )
                     return@launch
@@ -110,7 +111,8 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
                                         ticketKey = ticketId,
                                         ticketSummary = summary,
                                         sprint = sprintName,
-                                        assignee = assigneeName
+                                        assignee = assigneeName,
+                                        branchName = branchName
                                     )
                                 )
                             }
@@ -130,6 +132,6 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
     companion object {
         /** Branches the user has dismissed detection for (resets on IDE restart). */
-        val dismissedBranches = mutableSetOf<String>()
+        val dismissedBranches: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
     }
 }

@@ -152,6 +152,7 @@ class SprintDashboardPanel(
     private var lastDetectedSummary: String? = null
     private var lastDetectedSprint: String? = null
     private var lastDetectedAssignee: String? = null
+    private var lastDetectedBranchName: String? = null
 
     // -- State --
     private var allIssues: List<JiraIssue> = emptyList()
@@ -169,6 +170,11 @@ class SprintDashboardPanel(
     init {
         background = JBColor.PanelBackground
         isOpaque = true
+
+        // Restore persisted sort/group preferences
+        val initSettings = PluginSettings.getInstance(project)
+        groupByCombo.selectedItem = initSettings.state.sprintGroupBy ?: "Assignee"
+        sortByCombo.selectedItem = initSettings.state.sprintSortBy ?: "Default"
 
         setupDetectionBanner()
         setupLayout()
@@ -220,8 +226,8 @@ class SprintDashboardPanel(
                         settings.state.activeTicketSummary = summary
                         ActiveTicketService.getInstance(project).setActiveTicket(key, summary)
                         detectionBanner.isVisible = false
-                        // Remove from dismissed so it won't re-trigger banner
-                        BranchChangeTicketDetector.dismissedBranches.clear()
+                        // Remove this branch from dismissed so it won't re-trigger banner
+                        lastDetectedBranchName?.let { BranchChangeTicketDetector.dismissedBranches.remove(it) }
                         revalidate()
                     },
                     onDismiss = {
@@ -242,6 +248,7 @@ class SprintDashboardPanel(
                     lastDetectedSummary = event.ticketSummary
                     lastDetectedSprint = event.sprint
                     lastDetectedAssignee = event.assignee
+                    lastDetectedBranchName = event.branchName
                     withContext(Dispatchers.EDT) {
                         detectionLabel.text = "Detected: ${event.ticketKey} \u2014 ${event.ticketSummary}"
                         detectionBanner.isVisible = true
@@ -455,9 +462,17 @@ class SprintDashboardPanel(
             loadSprintBySelection(selectedSprint)
         }
 
-        // Sort/group combo changes trigger filter reapply
-        groupByCombo.addActionListener { applyFilter() }
-        sortByCombo.addActionListener { applyFilter() }
+        // Sort/group combo changes trigger filter reapply and persist selection
+        groupByCombo.addActionListener {
+            val settings = PluginSettings.getInstance(project)
+            settings.state.sprintGroupBy = groupByCombo.selectedItem as? String ?: "Assignee"
+            applyFilter()
+        }
+        sortByCombo.addActionListener {
+            val settings = PluginSettings.getInstance(project)
+            settings.state.sprintSortBy = sortByCombo.selectedItem as? String ?: "Default"
+            applyFilter()
+        }
 
         // Search/filter (debounced — see searchDebounce collector in init)
         searchField.addDocumentListener(object : DocumentListener {

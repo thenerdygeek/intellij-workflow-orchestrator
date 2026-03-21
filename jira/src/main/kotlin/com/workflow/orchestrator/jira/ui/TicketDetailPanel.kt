@@ -28,7 +28,7 @@ import javax.swing.SwingConstants
  * Displays ticket header, info cards (assignee, sprint, dates),
  * dependency list, and description.
  */
-class TicketDetailPanel(private val project: com.intellij.openapi.project.Project? = null) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
+class TicketDetailPanel(private val project: com.intellij.openapi.project.Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
     private val log = Logger.getInstance(TicketDetailPanel::class.java)
 
@@ -54,7 +54,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         verticalAlignment = SwingConstants.CENTER
     }
 
-    private val quickCommentPanel = QuickCommentPanel(project!!).apply {
+    private val quickCommentPanel = QuickCommentPanel(project).apply {
         isVisible = false
     }
 
@@ -73,6 +73,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     }
 
     private var currentIssueKey: String? = null
+    private var currentWorklogSection: WorklogSection? = null
+    private var currentDevStatusSection: DevStatusSection? = null
     private var lazyLoadJob: kotlinx.coroutines.Job? = null
     private val lazyScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
@@ -90,6 +92,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         log.info("[Jira:UI] Showing detail for ${issue.key}")
         currentIssueKey = issue.key
         lazyLoadJob?.cancel()
+
+        // Dispose previous lazy-loaded sections to prevent scope leaks
+        currentWorklogSection?.dispose()
+        currentWorklogSection = null
+        currentDevStatusSection?.dispose()
+        currentDevStatusSection = null
+
         contentPanel.removeAll()
 
         // Immediate sections (from cached sprint data)
@@ -106,14 +115,16 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         // Pull Requests (lazy-loaded via dev-status API)
         addVerticalSpace(12)
         addSectionHeader("Pull Requests")
-        val devStatusSection = DevStatusSection(project!!)
+        val devStatusSection = DevStatusSection(project)
+        currentDevStatusSection = devStatusSection
         addFullWidthComponent(devStatusSection)
         devStatusSection.loadDevStatus(issue.id)
 
         // Worklog summary (lazy-loaded)
         addVerticalSpace(12)
         addSectionHeader("Time Logged")
-        val worklogSection = WorklogSection(project!!)
+        val worklogSection = WorklogSection(project)
+        currentWorklogSection = worklogSection
         addFullWidthComponent(worklogSection)
         worklogSection.loadWorklogs(issue.key)
 
@@ -157,8 +168,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             addActionListener {
                 com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
                     ?.showTransitionDialog(
-                        project
-                            ?: return@addActionListener,
+                        project,
                         issue.key
                     ) {
                         // Refresh after transition
@@ -170,7 +180,6 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         val jiraUrl = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(
             project
-                ?: return
         ).connections.jiraUrl.orEmpty().trimEnd('/')
         if (jiraUrl.isNotBlank()) {
             val openLink = JBLabel("<html><a href=''>Open in Jira ↗</a></html>").apply {
@@ -331,8 +340,6 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             kotlinx.coroutines.delay(200) // debounce
             if (currentIssueKey != issueKey) return@launch
 
-            val project = project
-                ?: return@launch
             val cache = IssueDetailCache.getInstance(project)
             val cached = cache.get(issueKey)
 
@@ -433,6 +440,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     override fun dispose() {
         lazyLoadJob?.cancel()
         lazyScope.cancel()
+        currentWorklogSection?.dispose()
+        currentWorklogSection = null
+        currentDevStatusSection?.dispose()
+        currentDevStatusSection = null
         quickCommentPanel.dispose()
     }
 

@@ -126,7 +126,8 @@ sealed class WorkflowEvent {
         val ticketKey: String,
         val ticketSummary: String,
         val sprint: String?,
-        val assignee: String?
+        val assignee: String?,
+        val branchName: String? = null
     ) : WorkflowEvent()
 
     /** Emitted when the git branch changes (via BranchChangeListener). */
