@@ -5,12 +5,17 @@ import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.filters.RegexpFilter
 import com.intellij.execution.filters.TextConsoleBuilderFactory
+import com.intellij.execution.impl.ConsoleViewImpl
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
 import com.intellij.execution.testframework.sm.runner.SMTestLocator
+import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.ConsoleViewContentType
@@ -20,12 +25,17 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.SearchTextField
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildError
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.awt.Font
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import java.io.OutputStream
 import javax.swing.*
 
@@ -49,6 +59,37 @@ class StageDetailPanel(
     private var consoleView: ConsoleView? = null
     private val consolePanel = JPanel(BorderLayout())
 
+    // Log search
+    private val logSearchField = SearchTextField(false).apply {
+        textEditor.emptyText.text = "Search in log..."
+    }
+    private val matchCountLabel = JBLabel("").apply {
+        font = JBUI.Fonts.smallFont()
+        border = JBUI.Borders.emptyLeft(6)
+    }
+    private val prevMatchButton = JButton("<").apply {
+        font = Font(font.family, Font.PLAIN, JBUI.scale(11))
+        toolTipText = "Previous match (Shift+Enter)"
+        margin = JBUI.insets(1, 4)
+    }
+    private val nextMatchButton = JButton(">").apply {
+        font = Font(font.family, Font.PLAIN, JBUI.scale(11))
+        toolTipText = "Next match (Enter)"
+        margin = JBUI.insets(1, 4)
+    }
+    private val searchBarPanel = JPanel(BorderLayout()).apply {
+        border = JBUI.Borders.empty(2, 4)
+        val buttonsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
+            add(prevMatchButton)
+            add(nextMatchButton)
+            add(matchCountLabel)
+        }
+        add(logSearchField, BorderLayout.CENTER)
+        add(buttonsPanel, BorderLayout.EAST)
+    }
+    private var matchOffsets = mutableListOf<Int>()
+    private var currentMatchIndex = -1
+
     private val testsPlaceholder = JPanel(BorderLayout()).apply {
         add(JBLabel("No test results available.").apply {
             horizontalAlignment = SwingConstants.CENTER
@@ -68,8 +109,13 @@ class StageDetailPanel(
     }
 
     private val tabbedPane = JBTabbedPane().apply {
+        val logTopPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(searchBarPanel)
+            add(logActionBar)
+        }
         val logTab = JPanel(BorderLayout()).apply {
-            add(logActionBar, BorderLayout.NORTH)
+            add(logTopPanel, BorderLayout.NORTH)
             add(consolePanel, BorderLayout.CENTER)
         }
         addTab("Log", logTab)
@@ -91,6 +137,34 @@ class StageDetailPanel(
         logActionBar.add(openInEditorButton)
 
         openInEditorButton.addActionListener { openFullLogInEditor() }
+
+        // Search field listeners
+        logSearchField.addDocumentListener(object : com.intellij.ui.DocumentAdapter() {
+            override fun textChanged(e: javax.swing.event.DocumentEvent) {
+                performSearch(logSearchField.text.trim())
+            }
+        })
+        logSearchField.textEditor.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                when {
+                    e.keyCode == KeyEvent.VK_ENTER && e.isShiftDown -> {
+                        navigateMatch(-1)
+                        e.consume()
+                    }
+                    e.keyCode == KeyEvent.VK_ENTER -> {
+                        navigateMatch(1)
+                        e.consume()
+                    }
+                    e.keyCode == KeyEvent.VK_ESCAPE -> {
+                        logSearchField.text = ""
+                        clearSearchHighlights()
+                        e.consume()
+                    }
+                }
+            }
+        })
+        nextMatchButton.addActionListener { navigateMatch(1) }
+        prevMatchButton.addActionListener { navigateMatch(-1) }
 
         createConsoleView()
     }
@@ -182,6 +256,81 @@ class StageDetailPanel(
                 ConsoleViewContentType.ERROR_OUTPUT
             else -> ConsoleViewContentType.NORMAL_OUTPUT
         }
+    }
+
+    private fun performSearch(query: String) {
+        clearSearchHighlights()
+        matchOffsets.clear()
+        currentMatchIndex = -1
+
+        if (query.isEmpty()) {
+            matchCountLabel.text = ""
+            return
+        }
+
+        val editor = (consoleView as? ConsoleViewImpl)?.editor ?: return
+        val text = editor.document.text
+        var searchFrom = 0
+        while (true) {
+            val offset = text.indexOf(query, searchFrom, ignoreCase = true)
+            if (offset < 0) break
+            matchOffsets.add(offset)
+            searchFrom = offset + query.length
+        }
+
+        if (matchOffsets.isEmpty()) {
+            matchCountLabel.text = "No matches"
+            matchCountLabel.foreground = com.workflow.orchestrator.core.ui.StatusColors.WARNING
+            return
+        }
+
+        // Highlight all matches
+        val highlightColor = JBColor(
+            java.awt.Color(255, 200, 0, 80),
+            java.awt.Color(255, 200, 0, 50)
+        )
+        val attrs = TextAttributes().apply {
+            backgroundColor = highlightColor
+        }
+        val markupModel = editor.markupModel
+        for (offset in matchOffsets) {
+            markupModel.addRangeHighlighter(
+                offset,
+                offset + query.length,
+                HighlighterLayer.SELECTION - 1,
+                attrs,
+                HighlighterTargetArea.EXACT_RANGE
+            )
+        }
+
+        // Navigate to first match
+        currentMatchIndex = 0
+        scrollToCurrentMatch(editor, query.length)
+    }
+
+    private fun navigateMatch(direction: Int) {
+        if (matchOffsets.isEmpty()) return
+        currentMatchIndex = (currentMatchIndex + direction + matchOffsets.size) % matchOffsets.size
+        val editor = (consoleView as? ConsoleViewImpl)?.editor ?: return
+        val query = logSearchField.text.trim()
+        scrollToCurrentMatch(editor, query.length)
+    }
+
+    private fun scrollToCurrentMatch(editor: com.intellij.openapi.editor.Editor, queryLength: Int) {
+        if (currentMatchIndex < 0 || currentMatchIndex >= matchOffsets.size) return
+        val offset = matchOffsets[currentMatchIndex]
+
+        editor.caretModel.moveToOffset(offset)
+        editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+        editor.selectionModel.setSelection(offset, offset + queryLength)
+
+        matchCountLabel.text = "${currentMatchIndex + 1} of ${matchOffsets.size} matches"
+        matchCountLabel.foreground = JBColor.foreground()
+    }
+
+    private fun clearSearchHighlights() {
+        val editor = (consoleView as? ConsoleViewImpl)?.editor ?: return
+        editor.markupModel.removeAllHighlighters()
     }
 
     private fun openFullLogInEditor() {
