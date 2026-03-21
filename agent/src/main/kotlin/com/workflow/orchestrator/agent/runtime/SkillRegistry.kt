@@ -19,6 +19,10 @@ class SkillRegistry(
         val disableModelInvocation: Boolean = false,
         val userInvocable: Boolean = true,
         val preferredTools: List<String> = emptyList(),
+        val allowedTools: List<String>? = null,      // hard tool restriction (null = no restriction)
+        val contextFork: Boolean = false,             // run in isolated subagent
+        val agentType: String? = null,                // subagent type when context: fork
+        val argumentHint: String? = null,             // autocomplete hint
         val filePath: String,
         val scope: SkillScope
     )
@@ -67,6 +71,10 @@ class SkillRegistry(
                     disableModelInvocation = frontmatter["disable-model-invocation"]?.toBooleanStrictOrNull() ?: false,
                     userInvocable = frontmatter["user-invocable"]?.toBooleanStrictOrNull() ?: true,
                     preferredTools = parseList(frontmatter["preferred-tools"] ?: ""),
+                    allowedTools = frontmatter["allowed-tools"]?.let { parseList(it) }?.takeIf { it.isNotEmpty() },
+                    contextFork = frontmatter["context"]?.trim()?.equals("fork", ignoreCase = true) ?: false,
+                    agentType = frontmatter["agent"]?.trim()?.takeIf { it.isNotBlank() },
+                    argumentHint = frontmatter["argument-hint"]?.trim()?.takeIf { it.isNotBlank() },
                     filePath = "builtin:$resourcePath",
                     scope = SkillScope.BUILTIN
                 )
@@ -136,6 +144,10 @@ class SkillRegistry(
                         disableModelInvocation = frontmatter["disable-model-invocation"]?.toBooleanStrictOrNull() ?: false,
                         userInvocable = frontmatter["user-invocable"]?.toBooleanStrictOrNull() ?: true,
                         preferredTools = parseList(frontmatter["preferred-tools"] ?: ""),
+                        allowedTools = frontmatter["allowed-tools"]?.let { parseList(it) }?.takeIf { it.isNotEmpty() },
+                        contextFork = frontmatter["context"]?.trim()?.equals("fork", ignoreCase = true) ?: false,
+                        agentType = frontmatter["agent"]?.trim()?.takeIf { it.isNotBlank() },
+                        argumentHint = frontmatter["argument-hint"]?.trim()?.takeIf { it.isNotBlank() },
                         filePath = skillFile.absolutePath,
                         scope = scope
                     )
