@@ -898,6 +898,36 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 .td-param .ptype { color: var(--link); font-family: var(--font-mono); min-width: 50px; }
 .td-param .preq { color: var(--error); font-size: 9px; font-weight: 600; }
 .td-param .pdesc { color: var(--fg-muted); flex: 1; }
+
+/* Mermaid Diagrams */
+.mermaid-wrapper {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 10px 0;
+    overflow-x: auto;
+    text-align: center;
+}
+.mermaid-wrapper svg { max-width: 100%; height: auto; }
+.mermaid-loading {
+    color: var(--fg-muted);
+    font-size: 12px;
+    padding: 20px;
+    text-align: center;
+}
+
+/* Chart.js Visualizations */
+.chart-wrapper {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 10px 0;
+    max-height: 400px;
+    position: relative;
+}
+.chart-wrapper canvas { max-width: 100%; }
 </style>
 
 <!-- Core libraries — bundled in plugin JAR, served via CefResourceSchemeHandler -->
@@ -945,6 +975,239 @@ function esc(text) {
   return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/* ── Mermaid Diagrams (lazy-loaded) ── */
+var _mermaidLoaded = false;
+var _mermaidPending = [];
+
+function loadMermaid(callback) {
+    if (_mermaidLoaded && typeof mermaid !== 'undefined') {
+        callback();
+        return;
+    }
+    _mermaidPending.push(callback);
+    if (_mermaidPending.length > 1) return;
+
+    var script = document.createElement('script');
+    script.src = 'lib/mermaid.min.js';
+    script.onload = function() {
+        var isDark = (getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#2B2D30').charAt(1) < '8';
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: isDark ? 'dark' : 'default',
+            securityLevel: 'strict',
+            fontFamily: 'var(--font-body)',
+            flowchart: { htmlLabels: true, curve: 'basis' }
+        });
+        _mermaidLoaded = true;
+        _mermaidPending.forEach(function(cb) { cb(); });
+        _mermaidPending = [];
+    };
+    script.onerror = function() {
+        console.warn('Failed to load mermaid.js');
+        _mermaidPending.forEach(function(cb) { cb(); });
+        _mermaidPending = [];
+    };
+    document.head.appendChild(script);
+}
+
+var _mermaidCounter = 0;
+function renderMermaidBlock(code) {
+    var wrapperId = 'mermaid-' + (++_mermaidCounter);
+    var wrapper = '<div class="mermaid-wrapper" id="' + wrapperId + '"><div class="mermaid-loading">Loading diagram...</div></div>';
+
+    setTimeout(function() {
+        loadMermaid(function() {
+            var el = document.getElementById(wrapperId);
+            if (!el || typeof mermaid === 'undefined') return;
+            try {
+                mermaid.render('mermaid-svg-' + _mermaidCounter, code).then(function(result) {
+                    el.innerHTML = result.svg;
+                }).catch(function(err) {
+                    el.innerHTML = '<div class="mermaid-loading" style="color:var(--error);">Diagram error: ' + esc(err.message || String(err)) + '</div>' +
+                        '<pre class="code-block"><code>' + esc(code) + '</code></pre>';
+                });
+            } catch (err) {
+                el.innerHTML = '<pre class="code-block"><code>' + esc(code) + '</code></pre>';
+            }
+        });
+    }, 0);
+
+    return wrapper;
+}
+
+/* ── KaTeX Math Rendering (lazy-loaded) ── */
+var _katexLoaded = false;
+var _katexPending = [];
+
+function loadKaTeX(callback) {
+    if (_katexLoaded && typeof katex !== 'undefined') {
+        callback();
+        return;
+    }
+    _katexPending.push(callback);
+    if (_katexPending.length > 1) return;
+
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'lib/katex.min.css';
+    document.head.appendChild(link);
+
+    var script = document.createElement('script');
+    script.src = 'lib/katex.min.js';
+    script.onload = function() {
+        _katexLoaded = true;
+        _katexPending.forEach(function(cb) { cb(); });
+        _katexPending = [];
+    };
+    script.onerror = function() {
+        _katexPending.forEach(function(cb) { cb(); });
+        _katexPending = [];
+    };
+    document.head.appendChild(script);
+}
+
+function renderKaTeXInline(expr) {
+    var spanId = 'katex-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+    setTimeout(function() {
+        loadKaTeX(function() {
+            var el = document.getElementById(spanId);
+            if (el && typeof katex !== 'undefined') {
+                try {
+                    katex.render(expr, el, { throwOnError: false, displayMode: false });
+                } catch (_) { el.textContent = expr; }
+            }
+        });
+    }, 0);
+    return '<span id="' + spanId + '" class="katex-inline">' + esc(expr) + '</span>';
+}
+
+function renderKaTeXBlock(expr) {
+    var divId = 'katex-blk-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+    setTimeout(function() {
+        loadKaTeX(function() {
+            var el = document.getElementById(divId);
+            if (el && typeof katex !== 'undefined') {
+                try {
+                    katex.render(expr, el, { throwOnError: false, displayMode: true });
+                } catch (_) { el.textContent = expr; }
+            }
+        });
+    }, 0);
+    return '<div id="' + divId + '" class="katex-block" style="text-align:center;margin:10px 0;">' + esc(expr) + '</div>';
+}
+
+/* ── Chart.js Visualizations (lazy-loaded) ── */
+var _chartJsLoaded = false;
+var _chartJsPending = [];
+
+function loadChartJs(callback) {
+    if (_chartJsLoaded && typeof Chart !== 'undefined') {
+        callback();
+        return;
+    }
+    _chartJsPending.push(callback);
+    if (_chartJsPending.length > 1) return;
+
+    var script = document.createElement('script');
+    script.src = 'lib/chart.min.js';
+    script.onload = function() {
+        Chart.defaults.color = getComputedStyle(document.documentElement).getPropertyValue('--fg-secondary').trim() || '#94A3B8';
+        Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3F3F46';
+        _chartJsLoaded = true;
+        _chartJsPending.forEach(function(cb) { cb(); });
+        _chartJsPending = [];
+    };
+    script.onerror = function() {
+        console.warn('Failed to load chart.js');
+        _chartJsPending.forEach(function(cb) { cb(); });
+        _chartJsPending = [];
+    };
+    document.head.appendChild(script);
+}
+
+var _chartCounter = 0;
+function renderChart(configJson) {
+    var chartId = 'chart-' + (++_chartCounter);
+    var wrapper = '<div class="chart-wrapper"><canvas id="' + chartId + '"></canvas></div>';
+
+    setTimeout(function() {
+        loadChartJs(function() {
+            var canvas = document.getElementById(chartId);
+            if (!canvas || typeof Chart === 'undefined') return;
+            try {
+                var config = typeof configJson === 'string' ? JSON.parse(configJson) : configJson;
+                new Chart(canvas, config);
+            } catch (err) {
+                canvas.parentElement.innerHTML = '<div style="color:var(--error);font-size:12px;">Chart error: ' + esc(err.message) + '</div>';
+            }
+        });
+    }, 0);
+
+    return wrapper;
+}
+
+function appendChart(configJson) {
+    endStream(); hideEmpty();
+    var el = document.createElement('div');
+    el.className = 'message';
+    el.innerHTML = renderChart(configJson);
+    container.appendChild(el);
+    scrollToBottom();
+}
+
+/* ── diff2html Side-by-Side Diffs (lazy-loaded) ── */
+var _diff2htmlLoaded = false;
+var _diff2htmlPending = [];
+
+function loadDiff2Html(callback) {
+    if (_diff2htmlLoaded && typeof Diff2Html !== 'undefined') {
+        callback();
+        return;
+    }
+    _diff2htmlPending.push(callback);
+    if (_diff2htmlPending.length > 1) return;
+
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'lib/diff2html.min.css';
+    document.head.appendChild(link);
+
+    var script = document.createElement('script');
+    script.src = 'lib/diff2html.min.js';
+    script.onload = function() {
+        _diff2htmlLoaded = true;
+        _diff2htmlPending.forEach(function(cb) { cb(); });
+        _diff2htmlPending = [];
+    };
+    script.onerror = function() {
+        console.warn('Failed to load diff2html');
+        _diff2htmlPending.forEach(function(cb) { cb(); });
+        _diff2htmlPending = [];
+    };
+    document.head.appendChild(script);
+}
+
+var _diffCounter = 0;
+function renderDiff2Html(diffText) {
+    var diffId = 'diff2html-' + (++_diffCounter);
+    setTimeout(function() {
+        loadDiff2Html(function() {
+            var el = document.getElementById(diffId);
+            if (!el || typeof Diff2Html === 'undefined') return;
+            try {
+                el.innerHTML = Diff2Html.html(diffText, {
+                    drawFileList: false,
+                    matching: 'lines',
+                    outputFormat: 'side-by-side'
+                });
+            } catch (err) {
+                el.innerHTML = '<pre class="code-block">' + esc(diffText) + '</pre>';
+            }
+        });
+    }, 0);
+    return '<div id="' + diffId + '" class="diff2html-wrapper" style="margin:10px 0;border-radius:8px;overflow:hidden;border:1px solid var(--border);">Loading diff...</div>';
+}
+
 /* ── Markdown Rendering — marked.js + Prism.js ── */
 
 (function() {
@@ -968,8 +1231,18 @@ function esc(text) {
 
   var renderer = new marked.Renderer();
 
-  // Code blocks: Prism.js highlighting + copy button + language label
+  // Code blocks: special renderers + Prism.js highlighting + copy button + language label
   renderer.code = function(code, lang) {
+    // Mermaid diagrams
+    if (lang === 'mermaid') { return renderMermaidBlock(code); }
+    // Math
+    if (lang === 'math' || lang === 'latex') { return renderKaTeXBlock(code); }
+    // Charts
+    if (lang === 'chart' || lang === 'chartjs') { return renderChart(code); }
+    // Diffs
+    if (lang === 'diff' || lang === 'patch') { return renderDiff2Html(code); }
+
+    // Regular code — Prism.js highlighting
     var langLabel = lang ? '<div class="code-lang">' + esc(lang) + '</div>' : '';
     var highlighted = esc(code);
     if (typeof Prism !== 'undefined' && lang) {
@@ -1027,6 +1300,37 @@ function esc(text) {
   };
 
   marked.use({ renderer: renderer });
+
+  // Math extensions for $...$ and $$...$$
+  marked.use({
+    extensions: [{
+      name: 'mathInline',
+      level: 'inline',
+      start: function(src) { return src.indexOf('$'); },
+      tokenizer: function(src) {
+        var match = src.match(/^\$([^\$\n]+?)\$/);
+        if (match) {
+          return { type: 'mathInline', raw: match[0], text: match[1] };
+        }
+      },
+      renderer: function(token) {
+        return renderKaTeXInline(token.text);
+      }
+    }, {
+      name: 'mathBlock',
+      level: 'block',
+      start: function(src) { return src.indexOf('$$'); },
+      tokenizer: function(src) {
+        var match = src.match(/^\$\$([\s\S]+?)\$\$/);
+        if (match) {
+          return { type: 'mathBlock', raw: match[0], text: match[1].trim() };
+        }
+      },
+      renderer: function(token) {
+        return renderKaTeXBlock(token.text);
+      }
+    }]
+  });
 })();
 
 function renderMarkdown(text) {
@@ -1036,7 +1340,8 @@ function renderMarkdown(text) {
       // Sanitize to prevent XSS from LLM output
       if (typeof DOMPurify !== 'undefined') {
         html = DOMPurify.sanitize(html, {
-          ADD_TAGS: ['details', 'summary'],
+          ADD_TAGS: ['details', 'summary', 'canvas', 'svg', 'path', 'line', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'text', 'tspan', 'g', 'defs', 'marker', 'foreignObject', 'use', 'clipPath', 'mask', 'pattern', 'image', 'symbol', 'linearGradient', 'radialGradient', 'stop', 'animate', 'animateTransform', 'title', 'desc', 'metadata'],
+          ADD_ATTR: ['viewBox', 'xmlns', 'fill', 'stroke', 'stroke-width', 'd', 'cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'points', 'transform', 'text-anchor', 'dominant-baseline', 'font-size', 'font-family', 'font-weight', 'marker-end', 'marker-start', 'opacity', 'clip-path', 'mask', 'gradientUnits', 'offset', 'stop-color', 'stop-opacity', 'preserveAspectRatio'],
           ALLOW_DATA_ATTR: true
         });
       }
