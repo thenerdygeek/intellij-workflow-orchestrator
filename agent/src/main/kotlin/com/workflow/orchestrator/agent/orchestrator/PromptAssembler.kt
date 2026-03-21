@@ -72,7 +72,10 @@ class PromptAssembler(
         // 10. Memory instructions
         sections.add(MEMORY_RULES)
 
-        // 11. Rules and Constraints (including anti-loop)
+        // 11. Efficiency constraints (prevents 13-iteration exploration for simple questions)
+        sections.add(EFFICIENCY_RULES)
+
+        // 12. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -206,6 +209,19 @@ class PromptAssembler(
             - After plan approval, execute step by step, calling update_plan_step to track progress.
             - If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
+        """.trimIndent()
+
+        val EFFICIENCY_RULES = """
+            <efficiency>
+            - For questions about the codebase (how does X work, explain Y, where is Z), limit exploration to 3-5 tool calls.
+              Read 2-3 key files and synthesize an answer. Do NOT exhaustively search every related file.
+            - For code changes (fix, add, refactor), use as many tool calls as needed to do the job correctly.
+            - Always use search_code with output_mode="files" first to discover relevant files,
+              then read only the most relevant 2-3 files.
+            - Prefer reading specific file sections (offset + limit) over reading entire large files.
+            - When you have enough information to answer a question, STOP exploring and answer immediately.
+            - Do not read files "just to be thorough" — read files only when you need specific information you don't yet have.
+            </efficiency>
         """.trimIndent()
 
         val RULES = """

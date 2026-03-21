@@ -203,154 +203,49 @@ class AgentController(
             return
         }
 
-        // Create or reuse session — the core multi-turn fix
-        if (session == null) {
-            session = ConversationSession.create(project, agentService, planMode = dashboard.isPlanMode)
+        // Create or reuse session — session creation moved off EDT into coroutine
+        // (ConversationSession.create() calls RepoMapGenerator which does a blocking ReadAction
+        //  that recursively walks the entire PSI tree — must NOT run on EDT)
+        val isNewSession = session == null
+        if (isNewSession) {
             dashboard.startSession(task)
+            dashboard.appendStatus("Initializing agent...", RichStreamingPanel.StatusType.INFO)
         } else {
             dashboard.appendUserMessage(task)
         }
 
-        val currentSession = session!!
-        currentSession.recordUserMessage(task)
-
-        // Set PlanManager and SkillManager on AgentService so tools can find it
-        try {
-            val agentSvc = AgentService.getInstance(project)
-            agentSvc.currentPlanManager = currentSession.planManager
-            agentSvc.currentQuestionManager = currentSession.questionManager
-            agentSvc.currentSkillManager = currentSession.skillManager
-        } catch (_: Exception) {}
-
-        // Only wire callbacks once per session (not on every turn)
-        if (currentSession.planManager.onPlanCreated == null) {
-            // Wire PlanManager UI callbacks
-            currentSession.planManager.onPlanCreated = { plan ->
-                val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
-                dashboard.renderPlan(json)
-                // Open full-screen plan in editor tab (don't steal focus from chat)
-                ApplicationManager.getApplication().invokeLater {
-                    val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
-                    FileEditorManager.getInstance(project).openFile(virtualFile, false)
-                    currentPlanFile = virtualFile
-                }
-            }
-            currentSession.planManager.onStepUpdated = { stepId, status ->
-                dashboard.updatePlanStep(stepId, status)
-                // Update editor tab
-                ApplicationManager.getApplication().invokeLater {
-                    currentPlanFile?.let { file ->
-                        currentSession.planManager.currentPlan?.let { file.currentPlan = it }
-                        FileEditorManager.getInstance(project)
-                            .getEditors(file)
-                            .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
-                            .forEach { editor -> editor.updatePlanStep(stepId, status) }
-                    }
-                }
-            }
-
-            // Set session directory for plan persistence
-            currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
-
-            // Wire anchor update: sets/updates the <active_plan> system message
-            currentSession.planManager.onPlanAnchorUpdate = { plan ->
-                currentSession.contextManager.setPlanAnchor(
-                    com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
-                )
-            }
-
-            // Wire QuestionManager UI callbacks
-            currentSession.questionManager.onQuestionsCreated = { questionSet ->
-                val json = QuestionManager.json.encodeToString(
-                    QuestionSet.serializer(), questionSet
-                )
-                dashboard.showQuestions(json)
-                dashboard.disableChatInput()  // Disable Swing input while wizard is active
-            }
-            currentSession.questionManager.onShowQuestion = { index ->
-                dashboard.showQuestion(index)
-            }
-            currentSession.questionManager.onShowSummary = { result ->
-                val json = QuestionManager.json.encodeToString(
-                    QuestionResult.serializer(), result
-                )
-                dashboard.showQuestionSummary(json)
-            }
-            currentSession.questionManager.onSubmitted = {
-                dashboard.enableChatInput()
-                dashboard.enableSwingChatInput()  // Re-enable Swing input
-            }
-
-            // Wire JCEF → QuestionManager callbacks
-            dashboard.setCefQuestionCallbacks(
-                onAnswered = { questionId, optionsJson ->
-                    val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
-                    currentSession.questionManager.answerQuestion(questionId, options)
-                },
-                onSkipped = { questionId ->
-                    currentSession.questionManager.skipQuestion(questionId)
-                },
-                onChatAbout = { questionId, optionLabel, message ->
-                    currentSession.questionManager.setChatMessage(questionId, optionLabel, message)
-                },
-                onSubmitted = {
-                    currentSession.questionManager.submitAnswers()
-                },
-                onCancelled = {
-                    currentSession.questionManager.cancelQuestions()
-                },
-                onEdit = { questionId ->
-                    currentSession.questionManager.editQuestion(questionId)
-                }
-            )
-
-            // Wire SkillManager callbacks
-            currentSession.skillManager?.let { sm ->
-                sm.onSkillActivated = { skill ->
-                    currentSession.contextManager.setSkillAnchor(
-                        com.workflow.orchestrator.agent.api.dto.ChatMessage(
-                            role = "system",
-                            content = "<active_skill name=\"${skill.entry.name}\">\n${skill.content}\n</active_skill>"
-                        )
-                    )
-                    try { dashboard.showSkillBanner(skill.entry.name) } catch (_: Exception) {}
-                }
-                sm.onSkillDeactivated = {
-                    currentSession.contextManager.setSkillAnchor(null)
-                    try { dashboard.hideSkillBanner() } catch (_: Exception) {}
-                }
-            }
-
-            // Skills toolbar
-            val userSkills = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
-                it.name to it.description
-            } ?: emptyList()
-            val scopes = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
-                it.scope.name
-            } ?: emptyList()
-            dashboard.updateSkillsList(userSkills, scopes)
-
-            dashboard.setCefSkillCallbacks(
-                onDismiss = { currentSession.skillManager?.deactivateSkill() },
-                onSelect = { name -> executeTask("/$name") }
-            )
-        }
-
         dashboard.setBusy(true)
 
-        // Create orchestrator (lightweight — just brain + registry + project)
-        val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
-        currentOrchestrator = orchestrator
         sessionStartMs = System.currentTimeMillis()
-
-        val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-        val approvalGate = ApprovalGate(
-            approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
-            onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) }
-        )
 
         scope.launch {
             try {
+                // Create session off EDT (RepoMapGenerator + skill discovery + memory loading are heavy)
+                if (isNewSession) {
+                    session = ConversationSession.create(project, agentService, planMode = dashboard.isPlanMode)
+                    wireSessionCallbacks(session!!)
+                }
+                val currentSession = session!!
+                currentSession.recordUserMessage(task)
+
+                // Set PlanManager and SkillManager on AgentService so tools can find it
+                try {
+                    val agentSvc = AgentService.getInstance(project)
+                    agentSvc.currentPlanManager = currentSession.planManager
+                    agentSvc.currentQuestionManager = currentSession.questionManager
+                    agentSvc.currentSkillManager = currentSession.skillManager
+                } catch (_: Exception) {}
+
+                val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+                val approvalGate = ApprovalGate(
+                    approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
+                    onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) }
+                )
+
+                // Create orchestrator (lightweight — just brain + registry + project)
+                val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
+                currentOrchestrator = orchestrator
+
                 val result = orchestrator.executeTask(
                     taskDescription = task,
                     session = currentSession,
@@ -412,6 +307,126 @@ class AgentController(
         currentPlanFile = null
         dashboard.reset()
         dashboard.focusInput()
+    }
+
+    /**
+     * Wire all UI callbacks on a newly created session.
+     * Called once per session from within the coroutine (off EDT).
+     */
+    private fun wireSessionCallbacks(currentSession: ConversationSession) {
+        // Only wire callbacks once per session (not on every turn)
+        if (currentSession.planManager.onPlanCreated != null) return
+
+        // Wire PlanManager UI callbacks
+        currentSession.planManager.onPlanCreated = { plan ->
+            val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
+            dashboard.renderPlan(json)
+            // Open full-screen plan in editor tab (don't steal focus from chat)
+            ApplicationManager.getApplication().invokeLater {
+                val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
+                FileEditorManager.getInstance(project).openFile(virtualFile, false)
+                currentPlanFile = virtualFile
+            }
+        }
+        currentSession.planManager.onStepUpdated = { stepId, status ->
+            dashboard.updatePlanStep(stepId, status)
+            // Update editor tab
+            ApplicationManager.getApplication().invokeLater {
+                currentPlanFile?.let { file ->
+                    currentSession.planManager.currentPlan?.let { file.currentPlan = it }
+                    FileEditorManager.getInstance(project)
+                        .getEditors(file)
+                        .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
+                        .forEach { editor -> editor.updatePlanStep(stepId, status) }
+                }
+            }
+        }
+
+        // Set session directory for plan persistence
+        currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
+
+        // Wire anchor update: sets/updates the <active_plan> system message
+        currentSession.planManager.onPlanAnchorUpdate = { plan ->
+            currentSession.contextManager.setPlanAnchor(
+                com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
+            )
+        }
+
+        // Wire QuestionManager UI callbacks
+        currentSession.questionManager.onQuestionsCreated = { questionSet ->
+            val json = QuestionManager.json.encodeToString(
+                QuestionSet.serializer(), questionSet
+            )
+            dashboard.showQuestions(json)
+            dashboard.disableChatInput()  // Disable Swing input while wizard is active
+        }
+        currentSession.questionManager.onShowQuestion = { index ->
+            dashboard.showQuestion(index)
+        }
+        currentSession.questionManager.onShowSummary = { result ->
+            val json = QuestionManager.json.encodeToString(
+                QuestionResult.serializer(), result
+            )
+            dashboard.showQuestionSummary(json)
+        }
+        currentSession.questionManager.onSubmitted = {
+            dashboard.enableChatInput()
+            dashboard.enableSwingChatInput()  // Re-enable Swing input
+        }
+
+        // Wire JCEF → QuestionManager callbacks
+        dashboard.setCefQuestionCallbacks(
+            onAnswered = { questionId, optionsJson ->
+                val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
+                currentSession.questionManager.answerQuestion(questionId, options)
+            },
+            onSkipped = { questionId ->
+                currentSession.questionManager.skipQuestion(questionId)
+            },
+            onChatAbout = { questionId, optionLabel, message ->
+                currentSession.questionManager.setChatMessage(questionId, optionLabel, message)
+            },
+            onSubmitted = {
+                currentSession.questionManager.submitAnswers()
+            },
+            onCancelled = {
+                currentSession.questionManager.cancelQuestions()
+            },
+            onEdit = { questionId ->
+                currentSession.questionManager.editQuestion(questionId)
+            }
+        )
+
+        // Wire SkillManager callbacks
+        currentSession.skillManager?.let { sm ->
+            sm.onSkillActivated = { skill ->
+                currentSession.contextManager.setSkillAnchor(
+                    com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                        role = "system",
+                        content = "<active_skill name=\"${skill.entry.name}\">\n${skill.content}\n</active_skill>"
+                    )
+                )
+                try { dashboard.showSkillBanner(skill.entry.name) } catch (_: Exception) {}
+            }
+            sm.onSkillDeactivated = {
+                currentSession.contextManager.setSkillAnchor(null)
+                try { dashboard.hideSkillBanner() } catch (_: Exception) {}
+            }
+        }
+
+        // Skills toolbar
+        val userSkills = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
+            it.name to it.description
+        } ?: emptyList()
+        val scopes = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
+            it.scope.name
+        } ?: emptyList()
+        dashboard.updateSkillsList(userSkills, scopes)
+
+        dashboard.setCefSkillCallbacks(
+            onDismiss = { currentSession.skillManager?.deactivateSkill() },
+            onSelect = { name -> executeTask("/$name") }
+        )
     }
 
     /**
