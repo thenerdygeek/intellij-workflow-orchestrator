@@ -37,37 +37,55 @@ import java.util.concurrent.atomic.AtomicInteger
 class QueueService : Disposable {
 
     private val log = Logger.getInstance(QueueService::class.java)
-    private val bambooClient: BambooApiClient
-    private val registryClient: DockerRegistryClient
-    private val eventBus: EventBus
-    private val tagHistoryService: TagHistoryService
+
+    private var _project: Project? = null
+
+    // Backing fields — set directly by test constructor, or lazily resolved from project
+    private var _bambooClient: BambooApiClient? = null
+    private var _registryClient: DockerRegistryClient? = null
+    private var _eventBus: EventBus? = null
+    private var _tagHistoryService: TagHistoryService? = null
+
+    private val bambooClient: BambooApiClient get() = _bambooClient ?: run {
+        val p = _project!!
+        val settings = PluginSettings.getInstance(p)
+        val credentialStore = CredentialStore()
+        BambooApiClient(
+            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
+            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+        ).also { _bambooClient = it }
+    }
+
+    private val registryClient: DockerRegistryClient get() = _registryClient ?: run {
+        val p = _project!!
+        val settings = PluginSettings.getInstance(p)
+        val credentialStore = CredentialStore()
+        val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
+            ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
+        val nexusUsername = settings.connections.nexusUsername.orEmpty()
+        DockerRegistryClient(
+            registryUrl = registryUrl,
+            tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
+            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
+            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+        ).also { _registryClient = it }
+    }
+
+    private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
+    private val tagHistoryService: TagHistoryService get() = _tagHistoryService ?: _project!!.getService(TagHistoryService::class.java).also { _tagHistoryService = it }
+
     private val scope: CoroutineScope
     private val autoTriggerEnabled: Boolean
     private val maxDepthPerSuite: Int
     private val tagValidationOnTrigger: Boolean
     private val buildVariableName: String
 
-    /** Project service constructor — used by IntelliJ DI. */
+    /** Project service constructor — used by IntelliJ DI. Heavy deps are lazy-inited on first use. */
     constructor(project: Project) {
+        this._project = project
         val settings = PluginSettings.getInstance(project)
-        val credentialStore = CredentialStore()
-        this.bambooClient = BambooApiClient(
-            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        )
-        val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
-            ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
-        val nexusUsername = settings.connections.nexusUsername.orEmpty()
-        this.registryClient = DockerRegistryClient(
-            registryUrl = registryUrl,
-            tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        )
-        this.eventBus = project.getService(EventBus::class.java)
-        this.tagHistoryService = project.getService(TagHistoryService::class.java)
         this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
@@ -87,10 +105,10 @@ class QueueService : Disposable {
         tagValidationOnTrigger: Boolean = true,
         buildVariableName: String = "dockerTagsAsJson"
     ) {
-        this.bambooClient = bambooClient
-        this.registryClient = registryClient
-        this.eventBus = eventBus
-        this.tagHistoryService = tagHistoryService
+        this._bambooClient = bambooClient
+        this._registryClient = registryClient
+        this._eventBus = eventBus
+        this._tagHistoryService = tagHistoryService
         this.scope = scope
         this.autoTriggerEnabled = autoTriggerEnabled
         this.maxDepthPerSuite = maxDepthPerSuite

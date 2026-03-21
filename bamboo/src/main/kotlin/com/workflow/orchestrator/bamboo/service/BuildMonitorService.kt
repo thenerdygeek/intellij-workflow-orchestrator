@@ -33,24 +33,40 @@ class BuildMonitorService : Disposable {
 
     private val log = Logger.getInstance(BuildMonitorService::class.java)
 
-    private val apiClient: BambooApiClient
-    private val eventBus: EventBus
-    private val scope: CoroutineScope
-    private val notificationService: WorkflowNotificationService?
+    private var _project: Project? = null
+    private var _notificationServiceResolved = false
 
-    /** Project service constructor — used by IntelliJ DI. */
-    constructor(project: Project) {
-        val settings = PluginSettings.getInstance(project)
+    // Backing fields — set directly by test constructor, or lazily resolved from project
+    private var _apiClient: BambooApiClient? = null
+    private var _eventBus: EventBus? = null
+    private var _notificationService: WorkflowNotificationService? = null
+
+    private val apiClient: BambooApiClient get() = _apiClient ?: run {
+        val p = _project!!
+        val settings = PluginSettings.getInstance(p)
         val credentialStore = CredentialStore()
-        this.apiClient = BambooApiClient(
+        BambooApiClient(
             baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
             tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
             connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
             readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        )
-        this.eventBus = project.getService(EventBus::class.java)
+        ).also { _apiClient = it }
+    }
+
+    private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
+    private val scope: CoroutineScope
+    private val notificationService: WorkflowNotificationService? get() {
+        if (!_notificationServiceResolved) {
+            _notificationService = _project?.let { WorkflowNotificationService.getInstance(it) }
+            _notificationServiceResolved = true
+        }
+        return _notificationService
+    }
+
+    /** Project service constructor — used by IntelliJ DI. Deps are lazy-inited on first use. */
+    constructor(project: Project) {
+        this._project = project
         this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        this.notificationService = WorkflowNotificationService.getInstance(project)
     }
 
     /** Test constructor — allows injecting mocks. */
@@ -60,10 +76,11 @@ class BuildMonitorService : Disposable {
         scope: CoroutineScope,
         notificationService: WorkflowNotificationService? = null
     ) {
-        this.apiClient = apiClient
-        this.eventBus = eventBus
+        this._apiClient = apiClient
+        this._eventBus = eventBus
         this.scope = scope
-        this.notificationService = notificationService
+        this._notificationService = notificationService
+        this._notificationServiceResolved = true
     }
 
     private val _stateFlow = MutableStateFlow<BuildState?>(null)
@@ -164,14 +181,14 @@ class BuildMonitorService : Disposable {
     }
 
     private fun sendBuildNotification(planKey: String, buildNumber: Int, status: BuildStatus) {
-        notificationService ?: return
+        val ns = notificationService ?: return
         when (status) {
-            BuildStatus.SUCCESS -> notificationService.notifyInfo(
+            BuildStatus.SUCCESS -> ns.notifyInfo(
                 WorkflowNotificationService.GROUP_BUILD,
                 "Build Passed",
                 "$planKey #$buildNumber completed successfully"
             )
-            BuildStatus.FAILED -> notificationService.notifyError(
+            BuildStatus.FAILED -> ns.notifyError(
                 WorkflowNotificationService.GROUP_BUILD,
                 "Build Failed",
                 "$planKey #$buildNumber failed. Click to view details."
