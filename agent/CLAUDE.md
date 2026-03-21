@@ -114,6 +114,31 @@ Three layers:
 **Description budget:** 2% of context window (max 16K chars). Excess skills hidden with warning.
 **Context fork:** Skills with `context: fork` execute in a fresh `WorkerSession` with scoped tools, returning a summary to the orchestrator.
 
+## Custom Subagents
+
+User-definable agent definitions via markdown files with YAML frontmatter:
+- Project: `{basePath}/.workflow/agents/{name}.md`
+- User: `~/.workflow-orchestrator/agents/{name}.md`
+
+**Frontmatter fields:**
+| Field | Default | Description |
+|-------|---------|-------------|
+| `name` | filename | Unique identifier |
+| `description` | -- | When to delegate (required) |
+| `tools` | inherit all | Tool allowlist |
+| `disallowed-tools` | [] | Tool denylist |
+| `model` | inherit | Model override |
+| `max-turns` | 10 | Max agentic iterations |
+| `skills` | [] | Skills preloaded at startup |
+| `memory` | none | Persistent memory: user/project/local |
+
+**Memory locations:**
+- `user`: `~/.workflow-orchestrator/agent-memory/{name}/`
+- `project`: `.workflow/agent-memory/{name}/`
+- `local`: `.workflow/agent-memory-local/{name}/`
+
+Invoked via `delegate_task(agent="name", task="...")`. LLM sees available subagent descriptions in system prompt.
+
 ## Security
 
 - **PathValidator** — canonical path comparison prevents traversal (`../../etc/passwd`)

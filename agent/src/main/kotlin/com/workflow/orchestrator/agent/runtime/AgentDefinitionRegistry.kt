@@ -121,6 +121,20 @@ class AgentDefinitionRegistry(private val project: Project) {
         return map to body
     }
 
+    /**
+     * Resolve the persistent memory directory for a subagent based on its MemoryScope.
+     * Returns null if memory is not enabled. Creates the directory if it doesn't exist.
+     */
+    fun getMemoryDirectory(agentDef: AgentDefinition, project: Project): File? {
+        val scope = agentDef.memory ?: return null
+        val name = agentDef.name
+        return when (scope) {
+            MemoryScope.USER -> File(System.getProperty("user.home"), ".workflow-orchestrator/agent-memory/$name")
+            MemoryScope.PROJECT -> File(project.basePath ?: return null, ".workflow/agent-memory/$name")
+            MemoryScope.LOCAL -> File(project.basePath ?: return null, ".workflow/agent-memory-local/$name")
+        }.also { it.mkdirs() }
+    }
+
     private fun parseList(value: String): List<String> =
         value.split(",").map { it.trim() }.filter { it.isNotBlank() }
 }
