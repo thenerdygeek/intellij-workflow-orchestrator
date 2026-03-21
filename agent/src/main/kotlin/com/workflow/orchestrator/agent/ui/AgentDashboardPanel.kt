@@ -79,6 +79,7 @@ class AgentDashboardPanel(
 
     fun setBusy(busy: Boolean) = runOnEdt {
         cefPanel?.setBusy(busy)
+        // No fallback needed — RichStreamingPanel has no input controls to disable
     }
 
     fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
@@ -92,6 +93,7 @@ class AgentDashboardPanel(
 
     fun setInputLocked(locked: Boolean) = runOnEdt {
         cefPanel?.setInputLocked(locked)
+        // No fallback needed — RichStreamingPanel has no input controls
     }
 
     fun showRetryButton(lastMessage: String) {

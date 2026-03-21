@@ -1029,7 +1029,10 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 .question-option:focus-visible, .tool-row:focus-visible, .tab-btn:focus-visible,
 .footer-btn:focus-visible, .code-copy:focus-visible, .md-table-filter:focus-visible,
 .question-cancel:focus-visible, .skill-banner-dismiss:focus-visible,
-.tools-panel-header .close-btn:focus-visible, .td-close:focus-visible {
+.tools-panel-header .close-btn:focus-visible, .td-close:focus-visible,
+.tb-btn:focus-visible, .tb-overflow:focus-visible, .send-btn:focus-visible,
+.input-chip:focus-visible, .retry-btn:focus-visible,
+.overflow-item:focus-visible, .chip-dropdown-item:focus-visible {
   outline: 2px solid var(--link);
   outline-offset: 2px;
 }
@@ -1272,12 +1275,12 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
   <button class="tb-btn stop hidden" id="tb-stop" onclick="if(window._cancelTask)window._cancelTask()">&#x23F9; Stop</button>
   <button class="tb-btn" id="tb-new" onclick="if(window._newChat)window._newChat()">+ New</button>
   <div class="tb-divider"></div>
-  <div class="tb-overflow" id="tb-overflow" onclick="toggleOverflow()">
+  <div class="tb-overflow" id="tb-overflow" tabindex="0" role="button" onclick="toggleOverflow()">
     &#x22EF;
     <div class="overflow-menu" id="overflow-menu">
-      <div class="overflow-item" onclick="event.stopPropagation();closeOverflow();if(window._openToolsPanel)window._openToolsPanel()">&#x2261; Tools</div>
-      <div class="overflow-item" onclick="event.stopPropagation();closeOverflow();if(window._requestViewTrace)window._requestViewTrace()">&#x2630; Traces</div>
-      <div class="overflow-item" onclick="event.stopPropagation();closeOverflow();if(window._openSettings)window._openSettings()">&#x2699; Settings</div>
+      <div class="overflow-item" tabindex="0" role="menuitem" onclick="event.stopPropagation();closeOverflow();if(window._openToolsPanel)window._openToolsPanel()">&#x2261; Tools</div>
+      <div class="overflow-item" tabindex="0" role="menuitem" onclick="event.stopPropagation();closeOverflow();if(window._requestViewTrace)window._requestViewTrace()">&#x2630; Traces</div>
+      <div class="overflow-item" tabindex="0" role="menuitem" onclick="event.stopPropagation();closeOverflow();if(window._openSettings)window._openSettings()">&#x2699; Settings</div>
     </div>
   </div>
   <div class="tb-spacer"></div>
@@ -1307,13 +1310,13 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
   <div class="input-wrapper">
     <textarea class="input-ta" id="chat-input" placeholder="Ask the agent to do something..." rows="1"></textarea>
     <div class="input-bottom">
-      <div class="input-chip" id="model-chip" onclick="toggleModelDropdown()" style="position:relative;">
+      <div class="input-chip" id="model-chip" tabindex="0" role="button" onclick="toggleModelDropdown()" style="position:relative;">
         <span class="model-dot"></span>
         <span id="model-chip-text">Model</span> &#x25BE;
         <div class="chip-dropdown" id="model-dropdown"></div>
       </div>
-      <div class="input-chip" id="plan-chip" onclick="togglePlan()">&#x2630; Plan</div>
-      <div class="input-chip" id="skills-chip" onclick="toggleSkillsDropdown()" style="position:relative;">
+      <div class="input-chip" id="plan-chip" tabindex="0" role="button" onclick="togglePlan()">&#x2630; Plan</div>
+      <div class="input-chip" id="skills-chip" tabindex="0" role="button" onclick="toggleSkillsDropdown()" style="position:relative;">
         &#x26A1; Skills
         <div class="chip-dropdown" id="skills-dropdown"></div>
       </div>
@@ -3045,8 +3048,8 @@ function appendJiraCard(data) {
     var card = typeof data === 'string' ? JSON.parse(data) : data;
     endStream(); hideEmpty();
 
-    var typeIcons = { Story: '\uD83D\uDCD7', Bug: '\uD83D\uDC1B', Task: '\u2705', Epic: '\uD83C\uDFD4\uFE0F', 'Sub-task': '\uD83D\uDCCC' };
-    var priorityIcons = { Highest: '\u2B06\uFE0F', High: '\uD83D\uDD3C', Medium: '\u27A1\uFE0F', Low: '\uD83D\uDD3D', Lowest: '\u2B07\uFE0F' };
+    var typeIcons = { Story: '[S]', Bug: '[B]', Task: '[T]', Epic: '[E]', 'Sub-task': '[ST]' };
+    var priorityIcons = { Highest: '!!', High: '!', Medium: '-', Low: 'v', Lowest: 'vv' };
     var statusClass = 'todo';
     var statusLower = (card.status || '').toLowerCase();
     if (['in progress', 'in review', 'testing'].indexOf(statusLower) >= 0) statusClass = 'in-progress';

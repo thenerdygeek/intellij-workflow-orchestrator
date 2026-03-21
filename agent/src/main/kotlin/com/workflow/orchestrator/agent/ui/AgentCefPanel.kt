@@ -61,7 +61,7 @@ class AgentCefPanel(
     private var requestFocusIdeQuery: JBCefJSQuery? = null
     private var openSettingsQuery: JBCefJSQuery? = null
     private var openToolsPanelQuery: JBCefJSQuery? = null
-    private var pageLoaded = false
+    @Volatile private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
     /** Callback when user clicks "Undo" in the JCEF footer. */
@@ -261,7 +261,6 @@ class AgentCefPanel(
                 canGoBack: Boolean, canGoForward: Boolean
             ) {
                 if (!isLoading) {
-                    pageLoaded = true
                     applyCurrentTheme()
                     // Inject JS→Kotlin bridge functions for JCEF UI actions
                     undoQuery?.let { q ->
@@ -358,7 +357,9 @@ class AgentCefPanel(
                         val toolsJs = q.inject("'tools'")
                         js("window._openToolsPanel = function() { $toolsJs }")
                     }
-                    // Execute any pending calls
+                    // Set pageLoaded AFTER bridges are injected
+                    pageLoaded = true
+                    // Then flush pending calls (they can now execute)
                     synchronized(pendingCalls) {
                         pendingCalls.forEach { js(it) }
                         pendingCalls.clear()
