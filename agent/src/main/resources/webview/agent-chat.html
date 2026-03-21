@@ -3278,13 +3278,27 @@ var _planMode = false;
 function sendMessage() {
   var ta = document.getElementById('chat-input');
   var text = ta ? ta.value.trim() : '';
-  if (!text) return;
-  // Disable send immediately to prevent double-submit
+  if (!text && _mentions.length === 0) return;
+
+  // Build message with mention context
+  var message = text;
+  if (_mentions.length > 0) {
+    var context = _mentions.map(function(m) {
+      return '@' + m.type + ' ' + m.value;
+    }).join(', ');
+    message = '[Context: ' + context + ']\n\n' + text;
+  }
+
+  // Clear state
   var sendBtn = document.getElementById('send-btn');
   if (sendBtn) sendBtn.disabled = true;
   ta.value = '';
   ta.style.height = 'auto';
-  if (window._sendMessage) window._sendMessage(text);
+  _mentions = [];
+  renderMentionPills();
+  closeMentionDropdown();
+
+  if (window._sendMessage) window._sendMessage(message);
 }
 
 // Auto-expand textarea
@@ -3409,6 +3423,247 @@ function focusInput() {
   var ta = document.getElementById('chat-input');
   if (ta) ta.focus();
 }
+
+/* ═══════════════════════════════════════════════════
+   @ Mention Autocomplete
+   ═══════════════════════════════════════════════════ */
+var _mentionState = null; // { active: bool, type: null|'file'|'symbol'|'tool'|'skill', query: '', startPos: 0, selectedIndex: 0, results: [] }
+var _mentions = []; // Array of { type, name, value }
+
+function initMentionSystem() {
+  var ta = document.getElementById('chat-input');
+  if (!ta) return;
+
+  ta.addEventListener('input', function(e) {
+    var val = this.value;
+    var pos = this.selectionStart;
+
+    // Check if we just typed @
+    if (val.charAt(pos - 1) === '@' && (pos === 1 || /\s/.test(val.charAt(pos - 2)))) {
+      _mentionState = { active: true, type: null, query: '', startPos: pos, selectedIndex: 0, results: [] };
+      showMentionCategories();
+      return;
+    }
+
+    // If mention is active, update query
+    if (_mentionState && _mentionState.active) {
+      var textAfterAt = val.substring(_mentionState.startPos);
+      var spaceIdx = textAfterAt.indexOf(' ');
+      var query = spaceIdx >= 0 ? textAfterAt.substring(0, spaceIdx) : textAfterAt;
+
+      // Check for type prefix: file:, symbol:, tool:, skill:
+      var colonIdx = query.indexOf(':');
+      if (colonIdx > 0 && !_mentionState.type) {
+        var typePart = query.substring(0, colonIdx);
+        if (['file', 'symbol', 'tool', 'skill'].indexOf(typePart) >= 0) {
+          _mentionState.type = typePart;
+          _mentionState.query = query.substring(colonIdx + 1);
+        } else {
+          _mentionState.query = query;
+        }
+      } else if (_mentionState.type) {
+        _mentionState.query = query;
+      } else {
+        _mentionState.query = query;
+      }
+
+      // If space was typed, close dropdown
+      if (spaceIdx >= 0 && !_mentionState.type) {
+        closeMentionDropdown();
+        return;
+      }
+
+      // Search
+      if (_mentionState.type) {
+        searchMentions(_mentionState.type, _mentionState.query);
+      } else if (_mentionState.query.length > 0) {
+        // Filter categories by typed text
+        filterCategories(_mentionState.query);
+      }
+    }
+  });
+
+  // Keyboard navigation for mention dropdown
+  ta.addEventListener('keydown', function(e) {
+    if (!_mentionState || !_mentionState.active) return;
+    var dd = document.getElementById('mention-dropdown');
+    if (!dd || !dd.classList.contains('visible')) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _mentionState.selectedIndex = Math.min(_mentionState.selectedIndex + 1, _mentionState.results.length - 1);
+      updateMentionSelection();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _mentionState.selectedIndex = Math.max(_mentionState.selectedIndex - 1, 0);
+      updateMentionSelection();
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      selectMentionItem(_mentionState.selectedIndex);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMentionDropdown();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      selectMentionItem(_mentionState.selectedIndex);
+    }
+  }, true); // capture phase to intercept before sendMessage handler
+}
+
+function showMentionCategories() {
+  if (window._searchMentions) {
+    window._searchMentions('categories:');
+  }
+}
+
+function searchMentions(type, query) {
+  if (window._searchMentions) {
+    window._searchMentions(type + ':' + query);
+  }
+}
+
+function receiveMentionResults(resultsJson) {
+  var results;
+  try {
+    results = typeof resultsJson === 'string' ? JSON.parse(resultsJson) : resultsJson;
+  } catch (e) { return; }
+
+  if (!_mentionState || !_mentionState.active) return;
+  _mentionState.results = results;
+  _mentionState.selectedIndex = 0;
+  renderMentionDropdown(results);
+}
+
+function renderMentionDropdown(items) {
+  var dd = document.getElementById('mention-dropdown');
+  if (!dd) return;
+
+  if (items.length === 0) {
+    dd.innerHTML = '<div class="mention-loading">No results</div>';
+    dd.classList.add('visible');
+    return;
+  }
+
+  var html = '';
+  items.forEach(function(item, idx) {
+    var selected = idx === _mentionState.selectedIndex ? ' selected' : '';
+    var icon = item.icon || (item.type === 'file' ? '&#x1F4C4;' : item.type === 'symbol' ? '&#x2726;' : item.type === 'tool' ? '&#x2699;' : '&#x26A1;');
+
+    if (item.type && item.label) {
+      // Category item
+      html += '<div class="mention-item' + selected + '" data-index="' + idx + '" onclick="selectCategory(\'' + esc(item.type) + '\')">'
+        + '<span class="mention-icon">' + icon + '</span>'
+        + '<span class="mention-name">' + esc(item.label) + '</span>'
+        + '<span class="mention-desc">' + esc(item.hint || '') + '</span>'
+        + '</div>';
+    } else {
+      // Result item
+      html += '<div class="mention-item' + selected + '" data-index="' + idx + '" onclick="selectMentionItem(' + idx + ')">'
+        + '<span class="mention-icon">' + icon + '</span>'
+        + '<span class="mention-name">' + esc(item.name) + '</span>'
+        + '<span class="mention-desc">' + esc(item.desc || '') + '</span>'
+        + '</div>';
+    }
+  });
+
+  dd.innerHTML = html;
+  dd.classList.add('visible');
+}
+
+function filterCategories(query) {
+  // Re-request categories and filter client-side
+  // For simplicity, just search across all types
+  searchMentions('file', query);
+}
+
+function selectCategory(type) {
+  _mentionState.type = type;
+  _mentionState.query = '';
+  _mentionState.selectedIndex = 0;
+  // Remove the category text from textarea
+  var ta = document.getElementById('chat-input');
+  // Search with empty query to show top results
+  searchMentions(type, '');
+}
+
+function selectMentionItem(index) {
+  if (!_mentionState || index < 0 || index >= _mentionState.results.length) return;
+  var item = _mentionState.results[index];
+  if (!item.value && item.type && item.label) {
+    // This is a category, not a result
+    selectCategory(item.type);
+    return;
+  }
+
+  // Add to mentions list
+  _mentions.push({ type: item.type || _mentionState.type || 'file', name: item.name, value: item.value });
+
+  // Remove the @query text from textarea
+  var ta = document.getElementById('chat-input');
+  if (ta) {
+    var val = ta.value;
+    var before = val.substring(0, _mentionState.startPos - 1); // before the @
+    var after = val.substring(ta.selectionStart);
+    ta.value = before + after;
+    ta.selectionStart = ta.selectionEnd = before.length;
+    ta.dispatchEvent(new Event('input')); // trigger auto-expand
+  }
+
+  // Render pills
+  renderMentionPills();
+  closeMentionDropdown();
+}
+
+function updateMentionSelection() {
+  var dd = document.getElementById('mention-dropdown');
+  if (!dd) return;
+  dd.querySelectorAll('.mention-item').forEach(function(el, i) {
+    el.classList.toggle('selected', i === _mentionState.selectedIndex);
+  });
+  // Scroll selected into view
+  var sel = dd.querySelector('.mention-item.selected');
+  if (sel) sel.scrollIntoView({ block: 'nearest' });
+}
+
+function closeMentionDropdown() {
+  _mentionState = null;
+  var dd = document.getElementById('mention-dropdown');
+  if (dd) { dd.classList.remove('visible'); dd.innerHTML = ''; }
+}
+
+function renderMentionPills() {
+  var container = document.getElementById('mention-pills');
+  if (!container) return;
+  if (_mentions.length === 0) {
+    container.classList.remove('has-items');
+    container.innerHTML = '';
+    return;
+  }
+  container.classList.add('has-items');
+  container.innerHTML = _mentions.map(function(m, i) {
+    return '<span class="mention-pill type-' + esc(m.type) + '">'
+      + '@' + esc(m.name)
+      + '<span class="pill-remove" onclick="removeMention(' + i + ')">&#xD7;</span>'
+      + '</span>';
+  }).join('');
+}
+
+function removeMention(index) {
+  _mentions.splice(index, 1);
+  renderMentionPills();
+}
+
+// Close mention dropdown on click outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.input-wrapper')) {
+    closeMentionDropdown();
+  }
+});
+
+// Initialize mention system
+initMentionSystem();
 </script>
 </body>
 </html>

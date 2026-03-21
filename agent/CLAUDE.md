@@ -175,6 +175,7 @@ JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 - Click-to-navigate file paths (opens file at line in IDE editor)
 - Jira card embeds with status/priority/assignee
 - Sonar quality gate badges with metrics
+- @ mention autocomplete: type @ to search files (VFS), symbols (PSI), tools, skills — mentions provide context to the LLM
 - Toast notifications, skeleton loading, timeline visualization
 - Sortable/filterable tables, tabbed content, progress bars
 
