@@ -185,17 +185,20 @@ object DynamicToolSelector {
         } catch (_: Exception) { /* Maven plugin not available */ }
 
         // Detect Spring project (check for spring-boot or spring-context in classpath)
+        // PSI calls require ReadAction — without it, findClass() throws on background threads
         try {
-            val facade = com.intellij.psi.JavaPsiFacade.getInstance(project)
-            val scope = com.intellij.psi.search.GlobalSearchScope.allScope(project)
-            val hasSpring = facade.findClass("org.springframework.context.ApplicationContext", scope) != null
-            if (hasSpring) {
-                tools.addAll(SPRING_PROJECT_TOOLS)
-            }
-            val hasJpa = facade.findClass("javax.persistence.Entity", scope) != null ||
-                facade.findClass("jakarta.persistence.Entity", scope) != null
-            if (hasJpa) {
-                tools.addAll(JPA_PROJECT_TOOLS)
+            com.intellij.openapi.application.ReadAction.compute<Unit, Exception> {
+                val facade = com.intellij.psi.JavaPsiFacade.getInstance(project)
+                val scope = com.intellij.psi.search.GlobalSearchScope.allScope(project)
+                val hasSpring = facade.findClass("org.springframework.context.ApplicationContext", scope) != null
+                if (hasSpring) {
+                    tools.addAll(SPRING_PROJECT_TOOLS)
+                }
+                val hasJpa = facade.findClass("javax.persistence.Entity", scope) != null ||
+                    facade.findClass("jakarta.persistence.Entity", scope) != null
+                if (hasJpa) {
+                    tools.addAll(JPA_PROJECT_TOOLS)
+                }
             }
         } catch (_: Exception) { /* PSI not available in dumb mode — will be picked up by keywords */ }
 
