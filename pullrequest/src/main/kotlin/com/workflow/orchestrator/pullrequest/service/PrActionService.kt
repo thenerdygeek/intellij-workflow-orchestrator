@@ -214,6 +214,44 @@ class PrActionService(private val project: Project) {
     }
 
     /**
+     * Update a pull request title.
+     * Fetches current PR to preserve description/reviewers (Bitbucket PUT replaces entire PR).
+     */
+    suspend fun updateTitle(prId: Int, newTitle: String): ApiResult<Unit> {
+        val client = getClient()
+            ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
+        if (!isConfigured())
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
+
+        log.info("[PR:Action] Updating title for PR #$prId — fetching current PR to preserve description/reviewers")
+
+        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
+        val existingPr = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ApiResult.Error(currentPr.type, "Failed to fetch PR: ${currentPr.message}")
+        }
+
+        val updateRequest = BitbucketPrUpdateRequest(
+            title = newTitle,
+            description = existingPr.description ?: "",
+            version = existingPr.version,
+            reviewers = existingPr.reviewers.map {
+                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+            }
+        )
+        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] PR #$prId title updated to: $newTitle")
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to update PR #$prId title: ${result.message}")
+                ApiResult.Error(result.type, result.message)
+            }
+        }
+    }
+
+    /**
      * Update a pull request description.
      */
     suspend fun updateDescription(prId: Int, description: String, version: Int): ApiResult<Unit> {

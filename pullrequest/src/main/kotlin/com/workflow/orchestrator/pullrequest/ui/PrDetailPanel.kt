@@ -46,6 +46,10 @@ import com.workflow.orchestrator.pullrequest.service.PrListService
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
@@ -169,11 +173,17 @@ class PrDetailPanel(
         border = JBUI.Borders.emptyBottom(4)
     }
 
-    // Header
+    // Header — title label with double-click-to-edit
     private val titleLabel = JBLabel("").apply {
         font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
         foreground = JBColor.foreground()
     }
+    private val titleEditField = JBTextField().apply {
+        font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
+        isVisible = false
+    }
+    private var titleEditing = false
+    private var currentUserApproved = false
     private val prIdLabel = JBLabel("").apply {
         font = font.deriveFont(JBUI.scale(12).toFloat())
         foreground = SECONDARY_TEXT
@@ -829,7 +839,36 @@ class PrDetailPanel(
             maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(60))
             alignmentX = Component.LEFT_ALIGNMENT
         }
-        headerSection.add(titleLabel, BorderLayout.NORTH)
+        val titleContainer = JPanel(CardLayout()).apply {
+            isOpaque = false
+        }
+        titleContainer.add(titleLabel, "label")
+        titleContainer.add(titleEditField, "edit")
+        headerSection.add(titleContainer, BorderLayout.NORTH)
+
+        // Double-click title label to enter edit mode
+        titleLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2 && currentPr?.state.equals("OPEN", ignoreCase = true)) {
+                    enterTitleEditMode(titleContainer)
+                }
+            }
+        })
+        // Enter to save, Escape to cancel
+        titleEditField.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                when (e.keyCode) {
+                    KeyEvent.VK_ENTER -> saveTitleEdit(titleContainer)
+                    KeyEvent.VK_ESCAPE -> cancelTitleEdit(titleContainer)
+                }
+            }
+        })
+        // Focus lost saves
+        titleEditField.addFocusListener(object : FocusAdapter() {
+            override fun focusLost(e: FocusEvent) {
+                if (titleEditing) saveTitleEdit(titleContainer)
+            }
+        })
         val metaRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             isOpaque = false
         }
@@ -929,11 +968,35 @@ class PrDetailPanel(
             val prId = currentPrId ?: return@addActionListener
             scope.launch {
                 try {
-                    PrActionService.getInstance(project).approve(prId)
-                    // Refresh to reflect the update
-                    SwingUtilities.invokeLater {
-                        approveButton.text = "Approved"
-                        approveButton.isEnabled = false
+                    val actionService = PrActionService.getInstance(project)
+                    if (currentUserApproved) {
+                        // Unapprove
+                        val result = actionService.unapprove(prId)
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    currentUserApproved = false
+                                    approveButton.text = "Approve"
+                                    approveButton.icon = AllIcons.Actions.Checked
+                                    refreshCurrentPr()
+                                }
+                                is ApiResult.Error -> showNotification("Unapprove failed: ${result.message}")
+                            }
+                        }
+                    } else {
+                        // Approve
+                        val result = actionService.approve(prId)
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    currentUserApproved = true
+                                    approveButton.text = "Unapprove"
+                                    approveButton.icon = AllIcons.Actions.Undo
+                                    refreshCurrentPr()
+                                }
+                                is ApiResult.Error -> showNotification("Approve failed: ${result.message}")
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     SwingUtilities.invokeLater {
@@ -1140,11 +1203,52 @@ class PrDetailPanel(
         // Enable/disable action buttons based on state
         val isOpen = state.equals("OPEN", ignoreCase = true)
         approveButton.isEnabled = isOpen
-        approveButton.text = "Approve"
         needsWorkButton.isEnabled = isOpen
         mergeButton.isEnabled = isOpen
         declineButton.isEnabled = isOpen
         addReviewerLink.isVisible = isOpen
+
+        // Check current user's approval status for approve/unapprove toggle
+        if (isOpen) {
+            scope.launch {
+                val currentUsername = resolveCurrentUsername()
+                val pr = currentPr
+                val approved = if (currentUsername != null && pr != null) {
+                    pr.reviewers.any { it.user.name == currentUsername && it.approved }
+                } else false
+                SwingUtilities.invokeLater {
+                    currentUserApproved = approved
+                    if (approved) {
+                        approveButton.text = "Unapprove"
+                        approveButton.icon = AllIcons.Actions.Undo
+                    } else {
+                        approveButton.text = "Approve"
+                        approveButton.icon = AllIcons.Actions.Checked
+                    }
+                }
+            }
+        } else {
+            currentUserApproved = false
+            approveButton.text = "Approve"
+            approveButton.icon = AllIcons.Actions.Checked
+        }
+    }
+
+    /**
+     * Resolve the current Bitbucket username via API.
+     */
+    private suspend fun resolveCurrentUsername(): String? {
+        val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
+        if (url.isBlank()) return null
+        val credentialStore = CredentialStore()
+        val client = BitbucketBranchClient(
+            baseUrl = url,
+            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+        )
+        return when (val result = client.getCurrentUsername()) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error -> null
+        }
     }
 
     private fun renderReviewers(pr: BitbucketPrDetail) {
@@ -1219,6 +1323,46 @@ class PrDetailPanel(
 
         reviewersPanel.revalidate()
         reviewersPanel.repaint()
+    }
+
+    private fun enterTitleEditMode(titleContainer: JPanel) {
+        titleEditing = true
+        titleEditField.text = titleLabel.text
+        (titleContainer.layout as CardLayout).show(titleContainer, "edit")
+        titleEditField.requestFocusInWindow()
+        titleEditField.selectAll()
+    }
+
+    private fun cancelTitleEdit(titleContainer: JPanel) {
+        titleEditing = false
+        (titleContainer.layout as CardLayout).show(titleContainer, "label")
+    }
+
+    private fun saveTitleEdit(titleContainer: JPanel) {
+        val newTitle = titleEditField.text.trim()
+        titleEditing = false
+        (titleContainer.layout as CardLayout).show(titleContainer, "label")
+
+        if (newTitle.isBlank() || newTitle == titleLabel.text) return
+        val prId = currentPrId ?: return
+
+        titleLabel.text = newTitle
+        scope.launch {
+            val result = PrActionService.getInstance(project).updateTitle(prId, newTitle)
+            SwingUtilities.invokeLater {
+                when (result) {
+                    is ApiResult.Success -> {
+                        // Refresh to get updated version
+                        refreshCurrentPr()
+                    }
+                    is ApiResult.Error -> {
+                        // Revert title on failure
+                        titleLabel.text = currentPr?.title ?: titleLabel.text
+                        showNotification("Failed to update title: ${result.message}")
+                    }
+                }
+            }
+        }
     }
 
     /**
