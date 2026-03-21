@@ -29,22 +29,24 @@ class SkillRegistry(
 
     enum class SkillScope { BUILTIN, USER, PROJECT }
 
-    private val skills = mutableMapOf<String, SkillEntry>()
+    @Volatile
+    private var skills: Map<String, SkillEntry> = emptyMap()
 
     fun scan(): List<SkillEntry> {
-        skills.clear()
+        val newSkills = mutableMapOf<String, SkillEntry>()
 
         // 1. Load built-in skills from plugin resources (lowest priority)
-        if (loadBuiltins) loadBuiltinSkills()
+        if (loadBuiltins) loadBuiltinSkills(newSkills)
 
         // 2. Scan user directory (overwrites built-in with same name)
-        scanDirectory(File(userHome, ".workflow-orchestrator/skills"), SkillScope.USER)
+        scanDirectory(File(userHome, ".workflow-orchestrator/skills"), SkillScope.USER, newSkills)
 
         // 3. Scan project directory (highest priority — overwrites user + built-in)
         if (projectBasePath != null) {
-            scanDirectory(File(projectBasePath, ".workflow/skills"), SkillScope.PROJECT)
+            scanDirectory(File(projectBasePath, ".workflow/skills"), SkillScope.PROJECT, newSkills)
         }
 
+        skills = newSkills  // atomic swap
         return skills.values.sortedBy { it.name }
     }
 
@@ -54,7 +56,7 @@ class SkillRegistry(
      * Users can override them by creating a skill with the same name
      * in their project or user directory.
      */
-    private fun loadBuiltinSkills() {
+    private fun loadBuiltinSkills(target: MutableMap<String, SkillEntry>) {
         val builtinSkillNames = listOf("systematic-debugging", "create-skill")
         for (skillName in builtinSkillNames) {
             try {
@@ -65,7 +67,7 @@ class SkillRegistry(
                 val description = frontmatter["description"]?.trim()
                 if (description.isNullOrBlank()) continue
 
-                skills[name] = SkillEntry(
+                target[name] = SkillEntry(
                     name = name,
                     description = description,
                     disableModelInvocation = frontmatter["disable-model-invocation"]?.toBooleanStrictOrNull() ?: false,
@@ -157,7 +159,7 @@ class SkillRegistry(
         return sb.toString().trimEnd()
     }
 
-    private fun scanDirectory(dir: File, scope: SkillScope) {
+    private fun scanDirectory(dir: File, scope: SkillScope, target: MutableMap<String, SkillEntry>) {
         try {
             if (!dir.isDirectory) return
             val skillDirs = dir.listFiles() ?: return
@@ -192,7 +194,7 @@ class SkillRegistry(
                         filePath = skillFile.absolutePath,
                         scope = scope
                     )
-                    skills[name] = entry
+                    target[name] = entry
                 } catch (e: Exception) {
                     // Skip malformed skill files
                 }
@@ -213,6 +215,8 @@ class SkillRegistry(
             if (sep > 0) {
                 val key = line.substring(0, sep).trim()
                 val value = line.substring(sep + 1).trim()
+                    .removeSurrounding("\"")
+                    .removeSurrounding("'")
                 map[key] = value
             }
         }
