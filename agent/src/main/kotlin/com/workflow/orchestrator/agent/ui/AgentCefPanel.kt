@@ -107,13 +107,27 @@ class AgentCefPanel(
         // Set larger JS query pool for streaming
         b.jbCefClient.setProperty(JBCefClient.Properties.JS_QUERY_POOL_SIZE, 200)
 
-        // Load HTML from resources
-        val htmlContent = javaClass.classLoader.getResource("webview/agent-chat.html")?.readText()
-        if (htmlContent != null) {
-            b.loadHTML(htmlContent)
-        } else {
-            LOG.error("AgentCefPanel: agent-chat.html not found in resources")
-            return
+        // Register scheme handler factory for serving resources from JAR
+        try {
+            val factory = org.cef.callback.CefSchemeHandlerFactory { _, _, _, _ ->
+                CefResourceSchemeHandler()
+            }
+            org.cef.CefApp.getInstance().registerSchemeHandlerFactory(
+                CefResourceSchemeHandler.SCHEME,
+                CefResourceSchemeHandler.AUTHORITY,
+                factory
+            )
+            // Load via scheme URL — all relative paths in HTML resolve via our handler
+            b.loadURL(CefResourceSchemeHandler.BASE_URL + "agent-chat.html")
+        } catch (e: Exception) {
+            // Fallback: if CefApp registration fails, load HTML directly
+            LOG.warn("AgentCefPanel: scheme handler registration failed, falling back to loadHTML", e)
+            val htmlContent = javaClass.classLoader.getResource("webview/agent-chat.html")?.readText()
+            if (htmlContent != null) b.loadHTML(htmlContent)
+            else {
+                LOG.error("AgentCefPanel: agent-chat.html not found in resources")
+                return
+            }
         }
 
         // Create JS→Kotlin bridges for UI actions (undo, view-trace, example prompts)
@@ -439,7 +453,7 @@ class AgentCefPanel(
 
     private fun js(code: String) {
         try {
-            browser?.cefBrowser?.executeJavaScript(code, "agent://bridge", 0)
+            browser?.cefBrowser?.executeJavaScript(code, CefResourceSchemeHandler.BASE_URL, 0)
         } catch (e: Exception) {
             LOG.debug("AgentCefPanel: JS execution failed: ${e.message}")
         }
