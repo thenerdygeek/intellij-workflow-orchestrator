@@ -592,7 +592,16 @@ class AgentCefPanel(
             "diff-add-bg" to c.hex(c.diffAddBg), "diff-add-fg" to c.hex(c.diffAddText),
             "diff-rem-bg" to c.hex(c.diffRemBg), "diff-rem-fg" to c.hex(c.diffRemText),
             "success" to c.hex(c.success), "error" to c.hex(c.error),
-            "warning" to c.hex(c.warning), "link" to c.hex(c.linkText)
+            "warning" to c.hex(c.warning), "link" to c.hex(c.linkText),
+            "hover-overlay" to "rgba(255,255,255,0.03)",
+            "hover-overlay-strong" to "rgba(255,255,255,0.05)",
+            "divider-subtle" to "rgba(255,255,255,0.05)",
+            "row-alt" to "rgba(255,255,255,0.02)",
+            "input-bg" to "#1a1c22",
+            "input-border" to "rgba(255,255,255,0.08)",
+            "toolbar-bg" to "#1e2028",
+            "chip-bg" to "rgba(255,255,255,0.03)",
+            "chip-border" to "rgba(255,255,255,0.07)"
         ) else mapOf(
             "bg" to "#FFFFFF", "fg" to "#1E293B",
             "fg-secondary" to "#475569", "fg-muted" to "#64748B",
@@ -610,7 +619,16 @@ class AgentCefPanel(
             "diff-add-bg" to "#DCFCE7", "diff-add-fg" to "#166534",
             "diff-rem-bg" to "#FEE2E2", "diff-rem-fg" to "#991B1B",
             "success" to "#16A34A", "error" to "#DC2626",
-            "warning" to "#D97706", "link" to "#2563EB"
+            "warning" to "#D97706", "link" to "#2563EB",
+            "hover-overlay" to "rgba(0,0,0,0.03)",
+            "hover-overlay-strong" to "rgba(0,0,0,0.05)",
+            "divider-subtle" to "rgba(0,0,0,0.05)",
+            "row-alt" to "rgba(0,0,0,0.02)",
+            "input-bg" to "#ffffff",
+            "input-border" to "#e2e8f0",
+            "toolbar-bg" to "#f8fafc",
+            "chip-bg" to "rgba(0,0,0,0.03)",
+            "chip-border" to "#e2e8f0"
         )
 
         val jsObj = vars.entries.joinToString(",") { "'${it.key}':'${it.value}'" }

@@ -107,6 +107,13 @@ Three layers:
 
 ## Rich Chat UI
 
+**Full JCEF Architecture:**
+- Entire agent tab is a single `JBCefBrowser` — toolbar, chat, and input all rendered in HTML/CSS/JS
+- `AgentDashboardPanel` is a thin Swing wrapper hosting `AgentCefPanel`
+- 24 `JBCefJSQuery` bridges for JS→Kotlin communication
+- Same HTML page reusable in editor tabs and popup windows
+- Bolt-style glassmorphic input bar with gradient glow, auto-expand, model/plan/skills chips
+
 JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 
 **Core (always loaded, ~32KB gzipped):**
