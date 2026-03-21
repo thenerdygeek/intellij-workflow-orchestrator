@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 63 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 64 tools.
 
 ## LLM API
 
@@ -29,14 +29,15 @@ AgentController (UI entry point)
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
 - **ContextManager** — Two-threshold compression (T_max=70%, T_retained=40%). `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call (subtracts `reservedTokens` to avoid double-counting tool definition overhead). Not thread-safe — must be accessed from a single coroutine context.
 - **BudgetEnforcer** — Four-status budget monitoring: OK, COMPRESS, NUDGE, STRONG_NUDGE, TERMINATE.
-- **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
+- **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose.
+- **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (63 total, 9 categories)
+## Tools (64 total, 9 categories)
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task, think |
+| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, agent, delegate_task (deprecated), think |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests |
 | VCS & Navigation | git_status, git_blame, find_implementations |
 | Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners |
@@ -52,7 +53,7 @@ Three layers:
 1. **DynamicToolSelector** — keyword scan of last 3 user messages triggers relevant tool groups
 2. **RequestToolsTool** (`request_tools`) — LLM activates categories on demand (always available)
 3. **ToolPreferences** — user checkboxes in Tools panel, persisted per project
-4. **delegate_task** and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
+4. **agent**, **delegate_task**, and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
 
 ## Interactive UI
 
@@ -137,7 +138,7 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 - `project`: `.workflow/agent-memory/{name}/`
 - `local`: `.workflow/agent-memory-local/{name}/`
 
-Invoked via `delegate_task(agent="name", task="...")`. LLM sees available subagent descriptions in system prompt.
+Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt. Legacy `delegate_task(agent="name", task="...")` still supported but deprecated.
 
 ## Security
 
