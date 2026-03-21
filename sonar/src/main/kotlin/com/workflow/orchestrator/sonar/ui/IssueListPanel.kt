@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.sonar.model.*
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.event.MouseAdapter
@@ -222,7 +223,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
                 prompt = prompt,
                 contextFilePaths = listOf(absolutePath)
             )
-            withContext(Dispatchers.Main) {
+            withContext(Dispatchers.EDT) {
                 val notificationService = WorkflowNotificationService.getInstance(project)
                 if (result != null) {
                     notificationService.notifyInfo(

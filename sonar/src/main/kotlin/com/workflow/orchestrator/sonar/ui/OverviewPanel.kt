@@ -257,7 +257,9 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         IssueSeverity.INFO -> StatusColors.INFO
     }
 
-    private fun htmlColor(c: Color) = StatusColors.htmlColor(c as com.intellij.ui.JBColor)
+    private fun htmlColor(c: Color): String {
+        return if (c is JBColor) StatusColors.htmlColor(c) else String.format("#%02x%02x%02x", c.red, c.green, c.blue)
+    }
 
     /**
      * Parse SonarQube effort string (e.g., "30min", "2h", "1h30min", "3d") to total minutes.

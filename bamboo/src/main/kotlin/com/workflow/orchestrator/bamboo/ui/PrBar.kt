@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.bamboo.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
@@ -116,7 +117,7 @@ class PrBar(
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
-            add(JBLabel("🔀").apply { font = font.deriveFont(14f) })
+            add(JBLabel(AllIcons.Vcs.Branch))
             add(JBLabel("No pull request for this branch"))
             add(JBLabel("Create a PR to trigger Bamboo builds").apply {
                 foreground = StatusColors.SECONDARY_TEXT
@@ -147,7 +148,7 @@ class PrBar(
         // Header
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(JBLabel("🔀 Create Pull Request").apply { font = font.deriveFont(font.style or java.awt.Font.BOLD) }, BorderLayout.WEST)
+            add(JBLabel("Create Pull Request", AllIcons.Vcs.Branch, JBLabel.LEFT).apply { font = font.deriveFont(font.style or java.awt.Font.BOLD) }, BorderLayout.WEST)
             add(cancelButton, BorderLayout.EAST)
         }
 

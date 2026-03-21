@@ -40,7 +40,7 @@ class CurrentWorkSection(
     private val emptyPanel = JPanel(BorderLayout())
 
     companion object {
-        private val EMPTY_BG = JBColor(java.awt.Color(0xF5, 0xF5, 0xF5), java.awt.Color(0x25, 0x27, 0x2e))
+        private val EMPTY_BG = StatusColors.CARD_BG
     }
 
     init {
