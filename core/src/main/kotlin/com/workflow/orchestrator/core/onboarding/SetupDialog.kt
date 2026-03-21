@@ -22,6 +22,10 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
     private val credentialStore = CredentialStore()
     private val authTestService = AuthTestService()
 
+    /** Holds successfully tested credentials until user clicks Finish Setup. */
+    private data class TestResult(val serviceType: ServiceType, val url: String, val token: String, val username: String? = null)
+    private val successfulTests = mutableMapOf<ServiceType, TestResult>()
+
     init {
         title = "Setup Workflow Orchestrator"
         setOKButtonText("Finish Setup")
@@ -77,8 +81,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                             when (result) {
                                 is ApiResult.Success -> {
                                     statusLabel.text = "Connected!"
-                                    credentialStore.storeToken(serviceType, token)
-                                    urlSaver(url)
+                                    successfulTests[serviceType] = TestResult(serviceType, url, token)
                                 }
                                 is ApiResult.Error -> {
                                     statusLabel.text = "Failed: ${result.message}"
@@ -129,9 +132,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                             when (result) {
                                 is ApiResult.Success -> {
                                     statusLabel.text = "Connected!"
-                                    settings.connections.nexusUrl = url
-                                    settings.connections.nexusUsername = username
-                                    credentialStore.storeNexusPassword(password)
+                                    successfulTests[ServiceType.NEXUS] = TestResult(ServiceType.NEXUS, url, password, username = username)
                                 }
                                 is ApiResult.Error -> {
                                     statusLabel.text = "Failed: ${result.message}"
@@ -143,5 +144,39 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                 cell(statusLabel)
             }
         }
+    }
+
+    override fun doOKAction() {
+        // Persist credentials only when user confirms with Finish Setup
+        for ((_, result) in successfulTests) {
+            when (result.serviceType) {
+                ServiceType.NEXUS -> {
+                    settings.connections.nexusUrl = result.url
+                    settings.connections.nexusUsername = result.username.orEmpty()
+                    credentialStore.storeNexusPassword(result.token)
+                }
+                ServiceType.JIRA -> {
+                    settings.connections.jiraUrl = result.url
+                    credentialStore.storeToken(result.serviceType, result.token)
+                }
+                ServiceType.BAMBOO -> {
+                    settings.connections.bambooUrl = result.url
+                    credentialStore.storeToken(result.serviceType, result.token)
+                }
+                ServiceType.BITBUCKET -> {
+                    settings.connections.bitbucketUrl = result.url
+                    credentialStore.storeToken(result.serviceType, result.token)
+                }
+                ServiceType.SONARQUBE -> {
+                    settings.connections.sonarUrl = result.url
+                    credentialStore.storeToken(result.serviceType, result.token)
+                }
+                ServiceType.SOURCEGRAPH -> {
+                    settings.connections.sourcegraphUrl = result.url
+                    credentialStore.storeToken(result.serviceType, result.token)
+                }
+            }
+        }
+        super.doOKAction()
     }
 }

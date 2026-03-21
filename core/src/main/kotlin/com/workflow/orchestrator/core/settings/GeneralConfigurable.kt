@@ -48,6 +48,9 @@ class GeneralConfigurable(
     private var pendingNexusUsername: String? = null
     private var pendingBitbucketUsername: String? = null
 
+    // Guard against false modification during initial token load
+    private var isInitializing = true
+
     // --- Repository state (from RepositoryConfigurable) ---
     private val projectKeyModel = DefaultComboBoxModel<String>()
     private val repoSlugModel = DefaultComboBoxModel<String>()
@@ -74,6 +77,8 @@ class GeneralConfigurable(
             repoSlugModel.selectedItem = currentRepoSlug
         }
 
+        isInitializing = true
+
         val innerPanel = panel {
             // ========== Section 1: Connections ==========
             connectionsSection()
@@ -85,6 +90,8 @@ class GeneralConfigurable(
             moduleVisibilitySection()
         }
         dialogPanel = innerPanel
+
+        isInitializing = false
 
         // Auto-detect repo on first open if not configured
         if (currentProjectKey.isBlank() && currentRepoSlug.isBlank()) {
@@ -221,7 +228,9 @@ class GeneralConfigurable(
                     .onChanged { field ->
                         val newToken = String(field.password)
                         currentToken = newToken
-                        pendingTokens[serviceType] = newToken
+                        if (!isInitializing) {
+                            pendingTokens[serviceType] = newToken
+                        }
                     }
             }
             row {
@@ -292,7 +301,9 @@ class GeneralConfigurable(
                     .onChanged { field ->
                         val newToken = String(field.password)
                         currentToken = newToken
-                        pendingTokens[ServiceType.BITBUCKET] = newToken
+                        if (!isInitializing) {
+                            pendingTokens[ServiceType.BITBUCKET] = newToken
+                        }
                     }
             }
             row("Username:") {
@@ -302,7 +313,11 @@ class GeneralConfigurable(
                         text = existingUsername
                         usernameField = this
                     }
-                    .onChanged { field -> pendingBitbucketUsername = field.text }
+                    .onChanged { field ->
+                        if (!isInitializing) {
+                            pendingBitbucketUsername = field.text
+                        }
+                    }
                     .comment("Auto-detected on Test Connection, or enter manually")
             }
             row {
@@ -385,7 +400,9 @@ class GeneralConfigurable(
                     }
                     .onChanged { field ->
                         currentUsername = field.text
-                        pendingNexusUsername = field.text
+                        if (!isInitializing) {
+                            pendingNexusUsername = field.text
+                        }
                     }
             }
             row("Password:") {
@@ -397,7 +414,9 @@ class GeneralConfigurable(
                     .onChanged { field ->
                         val newPassword = String(field.password)
                         currentPassword = newPassword
-                        pendingNexusPassword = newPassword
+                        if (!isInitializing) {
+                            pendingNexusPassword = newPassword
+                        }
                     }
             }
             row {

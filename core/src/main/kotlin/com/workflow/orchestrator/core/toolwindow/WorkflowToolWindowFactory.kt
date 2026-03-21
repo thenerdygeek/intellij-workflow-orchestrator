@@ -55,15 +55,12 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             // Refresh current tab
             object : DumbAwareAction("Refresh", "Reload data for the current tab", AllIcons.Actions.Refresh) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    val selectedTab = toolWindow.contentManager.selectedContent?.displayName
+                    val content = toolWindow.contentManager.selectedContent
+                    val selectedTab = content?.displayName
                     log.info("[Workflow:UI] Refresh requested for tab: $selectedTab")
-                    // Rebuild just the selected tab by rebuilding all tabs
-                    val snapshot = settingsSnapshot(project)
-                    buildTabs(project, toolWindow)
-                    if (selectedTab != null) {
-                        toolWindow.contentManager.contents
-                            .firstOrNull { it.displayName == selectedTab }
-                            ?.let { toolWindow.contentManager.setSelectedContent(it) }
+                    val component = content?.component
+                    if (component is Refreshable) {
+                        (component as Refreshable).refresh()
                     }
                 }
             },
