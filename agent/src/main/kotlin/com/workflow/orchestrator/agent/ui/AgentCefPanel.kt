@@ -52,6 +52,15 @@ class AgentCefPanel(
     private var editQuestionQuery: JBCefJSQuery? = null
     private var deactivateSkillQuery: JBCefJSQuery? = null
     private var navigateToFileQuery: JBCefJSQuery? = null
+    private var cancelTaskQuery: JBCefJSQuery? = null
+    private var newChatQuery: JBCefJSQuery? = null
+    private var sendMessageQuery: JBCefJSQuery? = null
+    private var changeModelQuery: JBCefJSQuery? = null
+    private var togglePlanModeQuery: JBCefJSQuery? = null
+    private var activateSkillQuery: JBCefJSQuery? = null
+    private var requestFocusIdeQuery: JBCefJSQuery? = null
+    private var openSettingsQuery: JBCefJSQuery? = null
+    private var openToolsPanelQuery: JBCefJSQuery? = null
     private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -92,6 +101,16 @@ class AgentCefPanel(
 
     /** Callback when user clicks a file path link in chat output. */
     var onNavigateToFile: ((String, Int) -> Unit)? = null
+
+    var onCancelTask: (() -> Unit)? = null
+    var onNewChat: (() -> Unit)? = null
+    var onSendMessage: ((String) -> Unit)? = null
+    var onChangeModel: ((String) -> Unit)? = null
+    var onTogglePlanMode: ((Boolean) -> Unit)? = null
+    var onActivateSkill: ((String) -> Unit)? = null
+    var onRequestFocusIde: (() -> Unit)? = null
+    var onOpenSettings: (() -> Unit)? = null
+    var onOpenToolsPanel: (() -> Unit)? = null
 
     init {
         try {
@@ -206,6 +225,35 @@ class AgentCefPanel(
             }
         }
 
+        // Toolbar + input bar bridges
+        cancelTaskQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onCancelTask?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        newChatQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onNewChat?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        sendMessageQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { text -> onSendMessage?.invoke(text); JBCefJSQuery.Response("ok") }
+        }
+        changeModelQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { modelId -> onChangeModel?.invoke(modelId); JBCefJSQuery.Response("ok") }
+        }
+        togglePlanModeQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { enabled -> onTogglePlanMode?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
+        }
+        activateSkillQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
+        }
+        requestFocusIdeQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onRequestFocusIde?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        openSettingsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onOpenSettings?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        openToolsPanelQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onOpenToolsPanel?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
@@ -272,6 +320,43 @@ class AgentCefPanel(
                     navigateToFileQuery?.let { q ->
                         val navJs = q.inject("path")
                         js("window._navigateToFile = function(path) { $navJs }")
+                    }
+                    // Toolbar + input bar bridges
+                    cancelTaskQuery?.let { q ->
+                        val cancelJs = q.inject("'cancel'")
+                        js("window._cancelTask = function() { $cancelJs }")
+                    }
+                    newChatQuery?.let { q ->
+                        val newJs = q.inject("'new'")
+                        js("window._newChat = function() { $newJs }")
+                    }
+                    sendMessageQuery?.let { q ->
+                        val sendJs = q.inject("text")
+                        js("window._sendMessage = function(text) { $sendJs }")
+                    }
+                    changeModelQuery?.let { q ->
+                        val modelJs = q.inject("modelId")
+                        js("window._changeModel = function(modelId) { $modelJs }")
+                    }
+                    togglePlanModeQuery?.let { q ->
+                        val planJs = q.inject("String(enabled)")
+                        js("window._togglePlanMode = function(enabled) { $planJs }")
+                    }
+                    activateSkillQuery?.let { q ->
+                        val skillJs = q.inject("name")
+                        js("window._activateSkill = function(name) { $skillJs }")
+                    }
+                    requestFocusIdeQuery?.let { q ->
+                        val focusJs = q.inject("'focus'")
+                        js("window._requestFocusIde = function() { $focusJs }")
+                    }
+                    openSettingsQuery?.let { q ->
+                        val settingsJs = q.inject("'settings'")
+                        js("window._openSettings = function() { $settingsJs }")
+                    }
+                    openToolsPanelQuery?.let { q ->
+                        val toolsJs = q.inject("'tools'")
+                        js("window._openToolsPanel = function() { $toolsJs }")
                     }
                     // Execute any pending calls
                     synchronized(pendingCalls) {
@@ -383,6 +468,36 @@ class AgentCefPanel(
 
     fun enableChatInput() {
         callJs("enableChatInput()")
+    }
+
+    // ── Toolbar + input bar control ──
+
+    fun setBusy(busy: Boolean) {
+        callJs("setBusy(${if (busy) "true" else "false"})")
+    }
+
+    fun setInputLocked(locked: Boolean) {
+        callJs("setInputLocked(${if (locked) "true" else "false"})")
+    }
+
+    fun updateTokenBudget(used: Int, max: Int) {
+        callJs("updateTokenBudget($used,$max)")
+    }
+
+    fun setModelName(name: String) {
+        callJs("setModelName(${jsonStr(name)})")
+    }
+
+    fun updateSkillsList(skillsJson: String) {
+        callJs("updateSkillsList(${jsonStr(skillsJson)})")
+    }
+
+    fun showRetryButton(lastMessage: String) {
+        callJs("showRetryButton(${jsonStr(lastMessage)})")
+    }
+
+    fun focusInput() {
+        callJs("focusInput()")
     }
 
     // ── Skill banner rendering ──
@@ -555,6 +670,15 @@ class AgentCefPanel(
         editQuestionQuery?.dispose()
         deactivateSkillQuery?.dispose()
         navigateToFileQuery?.dispose()
+        cancelTaskQuery?.dispose()
+        newChatQuery?.dispose()
+        sendMessageQuery?.dispose()
+        changeModelQuery?.dispose()
+        togglePlanModeQuery?.dispose()
+        activateSkillQuery?.dispose()
+        requestFocusIdeQuery?.dispose()
+        openSettingsQuery?.dispose()
+        openToolsPanelQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -570,6 +694,15 @@ class AgentCefPanel(
         editQuestionQuery = null
         deactivateSkillQuery = null
         navigateToFileQuery = null
+        cancelTaskQuery = null
+        newChatQuery = null
+        sendMessageQuery = null
+        changeModelQuery = null
+        togglePlanModeQuery = null
+        activateSkillQuery = null
+        requestFocusIdeQuery = null
+        openSettingsQuery = null
+        openToolsPanelQuery = null
         browser = null
     }
 }
