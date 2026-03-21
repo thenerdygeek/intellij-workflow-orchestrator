@@ -41,7 +41,7 @@ class SkillManagerTest {
     @BeforeEach
     fun setup() {
         registry = SkillRegistry(projectDir.toString(), userDir.toString(), loadBuiltins = false)
-        manager = SkillManager(registry)
+        manager = SkillManager(registry, projectDir.toString())
         writeProjectSkill("review", reviewSkill)
         writeProjectSkill("deploy", deploySkill)
         registry.scan()
@@ -146,5 +146,87 @@ class SkillManagerTest {
 
         assertNull(result)
         assertFalse(manager.isActive())
+    }
+
+    @Test
+    fun `getAllowedTools returns null when no skill active`() {
+        assertNull(manager.getAllowedTools())
+    }
+
+    @Test
+    fun `getAllowedTools returns null when active skill has no allowed-tools`() {
+        manager.activateSkill("review")
+        assertNull(manager.getAllowedTools())
+    }
+
+    @Test
+    fun `getAllowedTools returns set when active skill has allowed-tools`() {
+        writeProjectSkill("safe-reader", """
+            |---
+            |name: safe-reader
+            |description: Read-only mode
+            |allowed-tools: read_file, search_code, glob_files
+            |---
+            |Read files only.
+        """.trimMargin())
+        registry.scan()
+
+        manager.activateSkill("safe-reader")
+
+        val allowed = manager.getAllowedTools()
+        assertNotNull(allowed)
+        assertEquals(setOf("read_file", "search_code", "glob_files"), allowed)
+    }
+
+    @Test
+    fun `CLAUDE_SKILL_DIR substitution replaces with skill directory`() {
+        writeProjectSkill("dir-skill", """
+            |---
+            |name: dir-skill
+            |description: test skill dir
+            |---
+            |Run: ${'$'}{CLAUDE_SKILL_DIR}/scripts/validate.sh
+        """.trimMargin())
+        registry.scan()
+
+        val result = manager.activateSkill("dir-skill")
+
+        assertNotNull(result)
+        val content = result!!.content
+        assertFalse(content.contains("\${CLAUDE_SKILL_DIR}"), "CLAUDE_SKILL_DIR should be substituted")
+        assertTrue(content.contains("/scripts/validate.sh"), "script path should remain")
+        // The substituted path should contain the skill directory
+        val expectedDir = File(projectDir.toFile(), ".workflow/skills/dir-skill").absolutePath
+        assertTrue(content.contains(expectedDir), "Should contain skill directory path: $expectedDir, got: $content")
+    }
+
+    @Test
+    fun `dynamic context injection runs shell commands`() {
+        val content = "Current year: !`date +%Y`\nDone."
+        val processed = manager.preprocessDynamicContext(content, projectDir.toString())
+        assertFalse(processed.contains("!`"), "Dynamic context pattern should be replaced")
+        assertTrue(processed.contains("202"), "Should contain year starting with 202x")
+        assertTrue(processed.contains("Done."), "Non-dynamic content should remain")
+    }
+
+    @Test
+    fun `dynamic context injection skips when no basePath`() {
+        val content = "Current year: !`date +%Y`\nDone."
+        val processed = manager.preprocessDynamicContext(content, null)
+        assertEquals(content, processed, "Content should be unchanged when basePath is null")
+    }
+
+    @Test
+    fun `dynamic context injection handles no patterns`() {
+        val content = "No commands here."
+        val processed = manager.preprocessDynamicContext(content, projectDir.toString())
+        assertEquals(content, processed, "Content with no patterns should be unchanged")
+    }
+
+    @Test
+    fun `dynamic context injection handles failed commands`() {
+        val content = "Result: !`nonexistent_command_12345`"
+        val processed = manager.preprocessDynamicContext(content, projectDir.toString())
+        assertFalse(processed.contains("!`"), "Failed command pattern should be replaced")
     }
 }
