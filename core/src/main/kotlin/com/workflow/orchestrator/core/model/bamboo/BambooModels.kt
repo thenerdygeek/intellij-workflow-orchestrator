@@ -14,7 +14,9 @@ data class BuildResultData(
     val stages: List<BuildStageData> = emptyList(),
     val testsPassed: Int = 0,
     val testsFailed: Int = 0,
-    val testsSkipped: Int = 0
+    val testsSkipped: Int = 0,
+    val buildResultKey: String = "",
+    val buildRelativeTime: String = ""
 )
 
 /**

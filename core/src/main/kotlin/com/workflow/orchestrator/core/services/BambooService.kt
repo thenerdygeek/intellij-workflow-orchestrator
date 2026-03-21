@@ -45,4 +45,7 @@ interface BambooService {
 
     /** Get artifacts for a build result. */
     suspend fun getArtifacts(resultKey: String): ToolResult<List<com.workflow.orchestrator.core.model.bamboo.ArtifactData>>
+
+    /** Get recent build results for a plan. */
+    suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10): ToolResult<List<BuildResultData>>
 }

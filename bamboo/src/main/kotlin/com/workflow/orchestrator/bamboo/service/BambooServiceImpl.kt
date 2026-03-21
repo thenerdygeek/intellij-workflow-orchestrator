@@ -407,6 +407,50 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
+    override suspend fun getRecentBuilds(planKey: String, maxResults: Int): ToolResult<List<BuildResultData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch recent builds for $planKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getRecentResults(planKey, maxResults)) {
+            is ApiResult.Success -> {
+                val builds = result.data.map { dto ->
+                    BuildResultData(
+                        planKey = dto.plan?.key ?: dto.key.substringBeforeLast("-"),
+                        buildNumber = dto.buildNumber,
+                        state = dto.state.ifBlank { dto.lifeCycleState },
+                        durationSeconds = dto.buildDurationInSeconds,
+                        buildResultKey = dto.buildResultKey.ifBlank { dto.key },
+                        buildRelativeTime = dto.buildRelativeTime,
+                        stages = dto.stages.stage.map { stage ->
+                            BuildStageData(
+                                name = stage.name,
+                                state = stage.state.ifBlank { stage.lifeCycleState },
+                                durationSeconds = stage.buildDurationInSeconds
+                            )
+                        }
+                    )
+                }
+                ToolResult.success(
+                    data = builds,
+                    summary = "Found ${builds.size} recent builds for $planKey"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch recent builds for $planKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching recent builds for $planKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
     // --- Private helpers ---
 
     private fun mapBuildResult(dto: BambooResultDto): ToolResult<BuildResultData> {

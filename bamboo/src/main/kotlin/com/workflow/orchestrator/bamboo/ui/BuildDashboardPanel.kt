@@ -14,8 +14,11 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBSplitter
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.service.BuildLogParser
@@ -29,6 +32,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepositoryManager
@@ -38,7 +42,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
+import java.awt.Cursor
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.DefaultListModel
+import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.ListSelectionModel
 
 class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
@@ -75,6 +85,64 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             name = "newerBuildLabel"
         }, BorderLayout.CENTER)
     }
+
+    // Historical build banner — shown when viewing a non-latest build
+    private val historicalBuildBanner = JPanel(BorderLayout()).apply {
+        background = StatusColors.INFO_BG
+        border = com.intellij.util.ui.JBUI.Borders.empty(4, 8)
+        isVisible = false
+
+        val label = JBLabel("").apply {
+            foreground = StatusColors.INFO
+            icon = AllIcons.General.Information
+        }
+        add(label, BorderLayout.CENTER)
+
+        val viewLatestLink = JBLabel("View Latest").apply {
+            foreground = StatusColors.LINK
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            border = JBUI.Borders.empty(0, 8, 0, 0)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    returnToLatestBuild()
+                }
+            })
+        }
+        add(viewLatestLink, BorderLayout.EAST)
+    }
+
+    // Build history list
+    private val historyListModel = DefaultListModel<BuildResultData>()
+    private val historyList = JBList(historyListModel).apply {
+        selectionMode = ListSelectionModel.SINGLE_SELECTION
+        cellRenderer = BuildHistoryCellRenderer()
+        visibleRowCount = 5
+    }
+    private val historyPanel = JPanel(BorderLayout()).apply {
+        border = JBUI.Borders.empty()
+        isVisible = false
+
+        val historyHeader = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(4, 8, 2, 8)
+            val titleLabel = JBLabel("Build History").apply {
+                icon = AllIcons.Vcs.History
+            }
+            add(titleLabel, BorderLayout.WEST)
+        }
+        add(historyHeader, BorderLayout.NORTH)
+
+        val scrollPane = com.intellij.ui.components.JBScrollPane(historyList).apply {
+            preferredSize = java.awt.Dimension(0, JBUI.scale(120))
+            border = JBUI.Borders.empty(0, 8, 4, 8)
+        }
+        add(scrollPane, BorderLayout.CENTER)
+    }
+
+    // Track whether we're viewing a historical build
+    @Volatile
+    private var viewingHistoricalBuild: Boolean = false
+    @Volatile
+    private var latestBuildNumber: Int? = null
 
     private val prBar = PrBar(project, scope) { branchName ->
         log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
@@ -225,12 +293,14 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
         add(headerPanel, BorderLayout.NORTH)
 
-        // PR bar + warning + newer build banner + build splitter
+        // PR bar + warning + newer build banner + historical build banner + history list + build splitter
         val topPanel2 = JPanel().apply {
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
             add(prBar)
             add(warningLabel)
             add(newerBuildBanner)
+            add(historicalBuildBanner)
+            add(historyPanel)
         }
         val contentPanel = JPanel(BorderLayout()).apply {
             add(topPanel2, BorderLayout.NORTH)
@@ -265,6 +335,14 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // Manual stage run handler
         stageListPanel.onRunStage = { stage -> triggerManualStage(stage.name) }
 
+        // Build history click handler — load selected historical build
+        historyList.addListSelectionListener { e ->
+            if (!e.valueIsAdjusting) {
+                val selected = historyList.selectedValue ?: return@addListSelectionListener
+                loadHistoricalBuild(selected)
+            }
+        }
+
         // Subscribe to branch changes
         project.messageBus.connect(this).subscribe(
             BranchChangeListener.VCS_BRANCH_CHANGED,
@@ -278,6 +356,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                         invokeLater {
                             headerLabel.text = "Plan: $planKey / $branchName"
                             prBar.refreshPrs()
+                            // Clear history on branch switch
+                            viewingHistoricalBuild = false
+                            historicalBuildBanner.isVisible = false
+                            historyListModel.clear()
+                            historyPanel.isVisible = false
                         }
                     }
                 }
@@ -291,13 +374,21 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 invokeLater {
                     if (state != null) {
                         loadingIcon.isVisible = false
-                        headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
-                        statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
+                        latestBuildNumber = state.buildNumber
 
-                        // Only rebuild stage list if build number changed (avoids resetting selection + re-fetching log)
-                        if (state.buildNumber != lastDisplayedBuildNumber) {
-                            lastDisplayedBuildNumber = state.buildNumber
-                            stageListPanel.updateStages(state.stages)
+                        // Only update header/stages if not viewing a historical build
+                        if (!viewingHistoricalBuild) {
+                            headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
+                            statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
+
+                            // Only rebuild stage list if build number changed (avoids resetting selection + re-fetching log)
+                            if (state.buildNumber != lastDisplayedBuildNumber) {
+                                lastDisplayedBuildNumber = state.buildNumber
+                                stageListPanel.updateStages(state.stages)
+
+                                // Load build history lazily after current build is displayed
+                                loadBuildHistory()
+                            }
                         }
 
                         // Show/hide newer build banner
@@ -374,6 +465,87 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         return repos.firstOrNull()?.currentBranchName
     }
 
+    /** Load build history for the current plan key */
+    private fun loadBuildHistory() {
+        val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
+        if (planKey.isBlank()) return
+
+        scope.launch {
+            val result = bambooService.getRecentBuilds(planKey, 10)
+            if (!result.isError) {
+                val builds = result.data
+                invokeLater {
+                    historyListModel.clear()
+                    builds.forEach { historyListModel.addElement(it) }
+                    historyPanel.isVisible = builds.isNotEmpty()
+                    log.info("[Build:Dashboard] Loaded ${builds.size} history entries for $planKey")
+                }
+            } else {
+                log.warn("[Build:Dashboard] Failed to load build history: ${result.summary}")
+            }
+        }
+    }
+
+    /** Load a historical build's details and update the stage/detail panels */
+    private fun loadHistoricalBuild(build: BuildResultData) {
+        val resultKey = build.buildResultKey.ifBlank { "${build.planKey}-${build.buildNumber}" }
+        log.info("[Build:Dashboard] Loading historical build: $resultKey (#${build.buildNumber})")
+
+        viewingHistoricalBuild = true
+        invokeLater {
+            // Show historical build banner
+            val bannerLabel = historicalBuildBanner.components
+                .filterIsInstance<JBLabel>()
+                .firstOrNull { it.icon == AllIcons.General.Information }
+            bannerLabel?.text = "Viewing build #${build.buildNumber}"
+            historicalBuildBanner.isVisible = true
+
+            headerLabel.text = "Plan: ${build.planKey}  #${build.buildNumber} (historical)"
+            statusLabel.text = "Loading build #${build.buildNumber}..."
+        }
+
+        scope.launch {
+            val buildResult = bambooService.getBuild(resultKey)
+            if (!buildResult.isError) {
+                val data = buildResult.data
+                invokeLater {
+                    statusLabel.text = "${data.state} — ${formatDurationSeconds(data.durationSeconds)}"
+
+                    // Convert BuildResultData stages to StageState for the stage list panel
+                    val stageStates = data.stages.map { stage ->
+                        com.workflow.orchestrator.bamboo.model.StageState(
+                            name = stage.name,
+                            status = com.workflow.orchestrator.bamboo.model.BuildStatus.fromBambooState(stage.state, ""),
+                            durationMs = stage.durationSeconds * 1000,
+                            resultKey = "",
+                            manual = false
+                        )
+                    }
+                    stageListPanel.updateStages(stageStates)
+                }
+            } else {
+                invokeLater {
+                    statusLabel.text = "Failed to load build #${build.buildNumber}: ${buildResult.summary}"
+                }
+            }
+        }
+    }
+
+    /** Return to monitoring the latest build */
+    private fun returnToLatestBuild() {
+        viewingHistoricalBuild = false
+        historicalBuildBanner.isVisible = false
+        historyList.clearSelection()
+
+        // Re-display the latest state from the monitor
+        val state = monitorService.stateFlow.value
+        if (state != null) {
+            headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
+            statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
+            stageListPanel.updateStages(state.stages)
+        }
+    }
+
     private fun createToolbar(): javax.swing.JComponent {
         val group = DefaultActionGroup()
 
@@ -386,12 +558,17 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     headerLabel.text = "Detecting Bamboo plan..."
                     return
                 }
+                // Return to latest build if viewing historical
+                if (viewingHistoricalBuild) {
+                    returnToLatestBuild()
+                }
                 scope.launch {
                     val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
                     monitorService.pollOnce(planKey, branch)
                 }
-                // Also refresh PR bar
+                // Also refresh PR bar and build history
                 prBar.refreshPrs()
+                loadBuildHistory()
             }
         })
 
@@ -581,5 +758,87 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private fun triggerManualStage(stageName: String) {
         val planKey = settings.state.bambooPlanKey.orEmpty()
         ManualStageDialog(project, planKey, stageName, scope).show()
+    }
+
+    private fun formatDurationSeconds(seconds: Long): String {
+        if (seconds <= 0) return "0s"
+        val mins = seconds / 60
+        val secs = seconds % 60
+        return if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
+    }
+
+    /**
+     * Cell renderer for the build history list.
+     * Shows: #buildNumber  status_icon  State  duration  relative_time
+     */
+    private class BuildHistoryCellRenderer : ColoredListCellRenderer<BuildResultData>() {
+        override fun customizeCellRenderer(
+            list: JList<out BuildResultData>,
+            value: BuildResultData,
+            index: Int,
+            selected: Boolean,
+            hasFocus: Boolean
+        ) {
+            // Build number in link color
+            append("#${value.buildNumber}", SimpleTextAttributes(
+                SimpleTextAttributes.STYLE_BOLD,
+                if (!selected) StatusColors.LINK else null
+            ))
+
+            append("  ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+
+            // Status icon and text
+            val stateNormalized = value.state.lowercase()
+            when {
+                stateNormalized == "successful" || stateNormalized == "success" -> {
+                    icon = AllIcons.General.InspectionsOK
+                    append("Success", SimpleTextAttributes(
+                        SimpleTextAttributes.STYLE_PLAIN,
+                        if (!selected) StatusColors.SUCCESS else null
+                    ))
+                }
+                stateNormalized == "failed" || stateNormalized == "error" -> {
+                    icon = AllIcons.General.Error
+                    append("Failed", SimpleTextAttributes(
+                        SimpleTextAttributes.STYLE_PLAIN,
+                        if (!selected) StatusColors.ERROR else null
+                    ))
+                }
+                stateNormalized == "inprogress" || stateNormalized == "building" -> {
+                    icon = AllIcons.Process.Step_1
+                    append("Running", SimpleTextAttributes(
+                        SimpleTextAttributes.STYLE_PLAIN,
+                        if (!selected) StatusColors.WARNING else null
+                    ))
+                }
+                stateNormalized == "queued" || stateNormalized == "pending" -> {
+                    icon = AllIcons.Process.Step_1
+                    append("Pending", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                }
+                else -> {
+                    icon = AllIcons.General.Information
+                    append(value.state, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                }
+            }
+
+            // Duration
+            val durationStr = formatHistoryDuration(value.durationSeconds)
+            append("   $durationStr", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+
+            // Relative time
+            if (value.buildRelativeTime.isNotBlank()) {
+                append("   ${value.buildRelativeTime}", SimpleTextAttributes(
+                    SimpleTextAttributes.STYLE_ITALIC,
+                    if (!selected) StatusColors.SECONDARY_TEXT else null
+                ))
+            }
+        }
+
+        private fun formatHistoryDuration(seconds: Long): String {
+            if (seconds <= 0) return "--"
+            val mins = seconds / 60
+            val secs = seconds % 60
+            return if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
+        }
     }
 }
