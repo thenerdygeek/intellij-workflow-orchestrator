@@ -147,10 +147,65 @@ object DynamicToolSelector {
         "file structure" to setOf("glob_files", "file_structure")
     )
 
+    /** Maven tools to auto-include when project is detected as Maven. */
+    private val MAVEN_PROJECT_TOOLS = setOf(
+        "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
+        "spring_version_info", "project_modules"
+    )
+
+    /** Spring tools to auto-include when project is detected as Spring. */
+    private val SPRING_PROJECT_TOOLS = setOf(
+        "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
+        "spring_profiles", "spring_repositories", "spring_security_config",
+        "spring_scheduled_tasks", "spring_event_listeners"
+    )
+
+    /** JPA tools to auto-include when JPA/Hibernate is detected. */
+    private val JPA_PROJECT_TOOLS = setOf("jpa_entities", "spring_repositories")
+
+    /**
+     * Detect project type using IntelliJ APIs.
+     * Called once at session creation and cached — not on every tool selection.
+     *
+     * @return Set of tool names that should always be included for this project type.
+     */
+    fun detectProjectTools(project: com.intellij.openapi.project.Project): Set<String> {
+        val tools = mutableSetOf<String>()
+
+        // Detect Maven project
+        try {
+            val mavenManagerClass = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
+            val getInstance = mavenManagerClass.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+            val manager = getInstance.invoke(null, project)
+            val isMaven = mavenManagerClass.getMethod("isMavenizedProject").invoke(manager) as Boolean
+            if (isMaven) {
+                tools.addAll(MAVEN_PROJECT_TOOLS)
+            }
+        } catch (_: Exception) { /* Maven plugin not available */ }
+
+        // Detect Spring project (check for spring-boot or spring-context in classpath)
+        try {
+            val facade = com.intellij.psi.JavaPsiFacade.getInstance(project)
+            val scope = com.intellij.psi.search.GlobalSearchScope.allScope(project)
+            val hasSpring = facade.findClass("org.springframework.context.ApplicationContext", scope) != null
+            if (hasSpring) {
+                tools.addAll(SPRING_PROJECT_TOOLS)
+            }
+            val hasJpa = facade.findClass("javax.persistence.Entity", scope) != null ||
+                facade.findClass("jakarta.persistence.Entity", scope) != null
+            if (hasJpa) {
+                tools.addAll(JPA_PROJECT_TOOLS)
+            }
+        } catch (_: Exception) { /* PSI not available in dumb mode — will be picked up by keywords */ }
+
+        return tools
+    }
+
     /**
      * Select tools relevant to the conversation.
      * @param allTools All registered tools
      * @param conversationContext Recent user messages to scan for keywords
+     * @param projectTools Tools auto-detected from project type (Maven/Spring/JPA). Pass from session cache.
      * @return Filtered list of tools to send to the LLM
      */
     fun selectTools(
@@ -158,12 +213,16 @@ object DynamicToolSelector {
         conversationContext: String,
         disabledTools: Set<String> = emptySet(),
         activatedTools: Set<String> = emptySet(),
-        preferredTools: Set<String> = emptySet()
+        preferredTools: Set<String> = emptySet(),
+        projectTools: Set<String> = emptySet()
     ): List<AgentTool> {
         val lowerContext = conversationContext.lowercase()
 
         // Always include core + PSI tools
         val selectedNames = ALWAYS_INCLUDE.toMutableSet()
+
+        // Include project-type-detected tools (Maven/Spring/JPA — detected at session start)
+        selectedNames.addAll(projectTools)
 
         // Scan context for trigger keywords
         for ((keyword, toolNames) in TOOL_TRIGGERS) {

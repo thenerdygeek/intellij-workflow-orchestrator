@@ -44,7 +44,9 @@ class ConversationSession private constructor(
     var lastMessageAt: Long = createdAt,
     var messageCount: Int = 0,
     var status: String = "active", // "active", "completed", "interrupted", "failed"
-    val skillManager: SkillManager? = null
+    val skillManager: SkillManager? = null,
+    /** Tools auto-detected from project type (Maven/Spring/JPA). Detected once at session creation. */
+    val projectTools: Set<String> = emptySet()
 ) {
     /** Whether the system prompt has been added to context yet. */
     var initialized: Boolean = false
@@ -214,6 +216,11 @@ class ConversationSession private constructor(
             val skillManager = SkillManager(skillRegistry)
             val skillDescriptions = skillRegistry.buildDescriptionIndex()
 
+            // Detect project type (Maven/Spring/JPA) — determines which tools are always included
+            val projectTools = try {
+                DynamicToolSelector.detectProjectTools(project)
+            } catch (_: Exception) { emptySet() }
+
             // Build system prompt
             val promptAssembler = PromptAssembler(agentService.toolRegistry)
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
@@ -244,7 +251,8 @@ class ConversationSession private constructor(
                 systemPrompt = systemPrompt,
                 reservedTokens = reservedTokens,
                 createdAt = System.currentTimeMillis(),
-                skillManager = skillManager
+                skillManager = skillManager,
+                projectTools = projectTools
             )
 
             // Register in the global session index for cross-project history
