@@ -2,7 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves tokens by not sending all 52 tools when only a subset is needed.
+ * Saves tokens by not sending all 53 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
@@ -14,7 +14,7 @@ object DynamicToolSelector {
 
     /** Core tools always available (small, essential for any coding task). */
     private val ALWAYS_INCLUDE = setOf(
-        "read_file", "edit_file", "search_code", "run_command",
+        "read_file", "edit_file", "search_code", "run_command", "glob_files",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "diagnostics", "format_code", "optimize_imports",
         "delegate_task",
@@ -122,7 +122,13 @@ object DynamicToolSelector {
 
         // Skill tools
         "skill" to setOf("activate_skill", "deactivate_skill"),
-        "workflow" to setOf("activate_skill")
+        "workflow" to setOf("activate_skill"),
+
+        // File discovery tools
+        "find file" to setOf("glob_files"),
+        "list files" to setOf("glob_files"),
+        "what files" to setOf("glob_files"),
+        "file structure" to setOf("glob_files", "file_structure")
     )
 
     /**

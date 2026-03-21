@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 52 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 53 tools.
 
 ## LLM API
 
@@ -32,11 +32,11 @@ AgentController (UI entry point)
 - **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (52 total, 9 categories)
+## Tools (53 total, 9 categories)
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task, think |
+| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task, think |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests |
 | VCS & Navigation | git_status, git_blame, find_implementations |
 | Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules |
@@ -114,3 +114,7 @@ Three layers:
 ```
 
 Key test patterns: JUnit 5 + MockK + `@TempDir` for file I/O, `runTest` for coroutines, `mockk<Project>` for IntelliJ services.
+
+## IntelliJ-Native APIs
+
+Core tools (read, edit, search) use IntelliJ Document API and VFS for undo support, unsaved change visibility, and editor sync.

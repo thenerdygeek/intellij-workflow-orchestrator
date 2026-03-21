@@ -63,6 +63,7 @@ class AgentService(
             register(EditFileTool())
             register(SearchCodeTool())
             register(RunCommandTool())
+            register(GlobFilesTool())
 
             // PSI tools
             register(FileStructureTool())
