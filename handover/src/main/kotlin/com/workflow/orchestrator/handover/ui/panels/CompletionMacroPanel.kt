@@ -7,6 +7,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.handover.model.MacroStep
 import com.workflow.orchestrator.handover.model.MacroStepStatus
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JCheckBox
@@ -21,6 +22,13 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
     val runButton = JButton("Run Macro")
     val statusLabel = JBLabel("")
     private val checkboxes = mutableMapOf<String, JCheckBox>()
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+    private val emptyLabel = JBLabel("No steps configured.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
 
     init {
         border = JBUI.Borders.empty(8)
@@ -34,14 +42,26 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
             add(statusLabel, BorderLayout.EAST)
         }
 
+        cardPanel.add(stepsPanel, "steps")
+        cardPanel.add(emptyLabel, "empty")
+        cardLayout.show(cardPanel, "empty")
+
         add(header, BorderLayout.NORTH)
-        add(stepsPanel, BorderLayout.CENTER)
+        add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
     }
 
     fun setSteps(steps: List<MacroStep>) {
         stepsPanel.removeAll()
         checkboxes.clear()
+
+        if (steps.isEmpty()) {
+            cardLayout.show(cardPanel, "empty")
+            stepsPanel.revalidate()
+            stepsPanel.repaint()
+            return
+        }
+        cardLayout.show(cardPanel, "steps")
 
         for (step in steps) {
             val checkbox = JCheckBox(step.label, step.enabled)

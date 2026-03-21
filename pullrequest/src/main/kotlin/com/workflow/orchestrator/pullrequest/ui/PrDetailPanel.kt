@@ -396,11 +396,20 @@ class PrDetailPanel(
         approveButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
             scope.launch {
-                PrActionService.getInstance(project).approve(prId)
-                // Refresh to reflect the update
-                SwingUtilities.invokeLater {
-                    approveButton.text = "Approved"
-                    approveButton.isEnabled = false
+                try {
+                    PrActionService.getInstance(project).approve(prId)
+                    // Refresh to reflect the update
+                    SwingUtilities.invokeLater {
+                        approveButton.text = "Approved"
+                        approveButton.isEnabled = false
+                    }
+                } catch (e: Exception) {
+                    SwingUtilities.invokeLater {
+                        com.intellij.notification.NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.build")
+                            .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
+                            .notify(project)
+                    }
                 }
             }
         }
@@ -423,17 +432,26 @@ class PrDetailPanel(
                     if (!dialog.showAndGet()) return@invokeLater
 
                     scope.launch {
-                        PrActionService.getInstance(project).merge(
-                            prId = prId,
-                            version = version,
-                            strategyId = dialog.selectedStrategyId,
-                            deleteSourceBranch = dialog.deleteSourceBranch,
-                            commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
-                        )
-                        SwingUtilities.invokeLater {
-                            mergeButton.isEnabled = false
-                            approveButton.isEnabled = false
-                            declineButton.isEnabled = false
+                        try {
+                            PrActionService.getInstance(project).merge(
+                                prId = prId,
+                                version = version,
+                                strategyId = dialog.selectedStrategyId,
+                                deleteSourceBranch = dialog.deleteSourceBranch,
+                                commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
+                            )
+                            SwingUtilities.invokeLater {
+                                mergeButton.isEnabled = false
+                                approveButton.isEnabled = false
+                                declineButton.isEnabled = false
+                            }
+                        } catch (e: Exception) {
+                            SwingUtilities.invokeLater {
+                                com.intellij.notification.NotificationGroupManager.getInstance()
+                                    .getNotificationGroup("workflow.build")
+                                    .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
+                                    .notify(project)
+                            }
                         }
                     }
                 }
@@ -451,11 +469,20 @@ class PrDetailPanel(
             )
             if (confirm != com.intellij.openapi.ui.Messages.YES) return@addActionListener
             scope.launch {
-                PrActionService.getInstance(project).decline(prId, version)
-                SwingUtilities.invokeLater {
-                    mergeButton.isEnabled = false
-                    approveButton.isEnabled = false
-                    declineButton.isEnabled = false
+                try {
+                    PrActionService.getInstance(project).decline(prId, version)
+                    SwingUtilities.invokeLater {
+                        mergeButton.isEnabled = false
+                        approveButton.isEnabled = false
+                        declineButton.isEnabled = false
+                    }
+                } catch (e: Exception) {
+                    SwingUtilities.invokeLater {
+                        com.intellij.notification.NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.build")
+                            .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
+                            .notify(project)
+                    }
                 }
             }
         }

@@ -16,7 +16,9 @@ class PreReviewPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val listModel = DefaultListModel<ReviewFinding>()
     private val findingsList = JBList(listModel)
     private val analyzeButton = JButton("Analyze with Cody")
-    private val statusLabel = JBLabel("Click Analyze to run Cody pre-review")
+    private val statusLabel = JBLabel("Click Analyze to run Cody pre-review").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+    }
 
     init {
         border = JBUI.Borders.empty(8)

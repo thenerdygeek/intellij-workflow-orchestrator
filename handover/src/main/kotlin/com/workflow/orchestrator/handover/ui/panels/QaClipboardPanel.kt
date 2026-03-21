@@ -6,9 +6,11 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
+import javax.swing.SwingConstants
 
 class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
 
@@ -21,6 +23,13 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
     val statusLabel = JBLabel("")
     private val tagListPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
+    }
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+    private val emptyLabel = JBLabel("No services configured.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
     }
 
     init {
@@ -42,18 +51,29 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
             add(statusLabel, BorderLayout.EAST)
         }
 
-        val centerPanel = JPanel(BorderLayout()).apply {
+        val contentPanel = JPanel(BorderLayout()).apply {
             add(JBScrollPane(tagListPanel), BorderLayout.NORTH)
             add(JBScrollPane(textArea), BorderLayout.CENTER)
         }
 
+        cardPanel.add(contentPanel, "content")
+        cardPanel.add(emptyLabel, "empty")
+        cardLayout.show(cardPanel, "empty")
+
         add(header, BorderLayout.NORTH)
-        add(centerPanel, BorderLayout.CENTER)
+        add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
     }
 
     fun setDockerTags(tags: Map<String, String>) {
         tagListPanel.removeAll()
+        if (tags.isEmpty()) {
+            cardLayout.show(cardPanel, "empty")
+            tagListPanel.revalidate()
+            tagListPanel.repaint()
+            return
+        }
+        cardLayout.show(cardPanel, "content")
         for ((service, tag) in tags) {
             val row = JPanel(BorderLayout()).apply {
                 add(JBLabel("  $service: $tag"), BorderLayout.CENTER)

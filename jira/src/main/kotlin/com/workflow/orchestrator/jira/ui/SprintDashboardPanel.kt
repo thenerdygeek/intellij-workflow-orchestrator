@@ -45,6 +45,7 @@ import java.awt.geom.RoundRectangle2D
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.SwingConstants
 
 /**
  * Main Sprint Dashboard panel that composes the ticket list, detail panel,
@@ -101,6 +102,15 @@ class SprintDashboardPanel(
         border = JBUI.Borders.emptyRight(4)
         isVisible = false
     }
+
+    // -- Empty state --
+    private val emptyLabel = JBLabel("No tickets in sprint.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
+    private lateinit var listCardLayout: CardLayout
+    private lateinit var listCardPanel: JPanel
 
     // -- State --
     private var allIssues: List<JiraIssue> = emptyList()
@@ -186,17 +196,24 @@ class SprintDashboardPanel(
             initiallyExpanded = true
         )
 
-        // Sprint ticket list with search
+        // Sprint ticket list with search + empty state
         val sprintListInner = JPanel(BorderLayout()).apply {
             isOpaque = false
         }
         searchField.preferredSize = Dimension(0, JBUI.scale(28))
         sprintListInner.add(searchField, BorderLayout.NORTH)
-        sprintListInner.add(JBScrollPane(ticketList).apply {
+
+        listCardLayout = CardLayout()
+        listCardPanel = JPanel(listCardLayout).apply { isOpaque = false }
+        listCardPanel.add(JBScrollPane(ticketList).apply {
             border = JBUI.Borders.emptyTop(4)
             isOpaque = false
             viewport.isOpaque = false
-        }, BorderLayout.CENTER)
+        }, "list")
+        listCardPanel.add(emptyLabel, "empty")
+        listCardLayout.show(listCardPanel, "list")
+
+        sprintListInner.add(listCardPanel, BorderLayout.CENTER)
 
         val sprintCollapsible = CollapsibleSection(
             title = "SPRINT TICKETS",
@@ -353,6 +370,9 @@ class SprintDashboardPanel(
         }
         if (issues.isEmpty()) {
             detailPanel.showEmpty()
+            listCardLayout.show(listCardPanel, "empty")
+        } else {
+            listCardLayout.show(listCardPanel, "list")
         }
     }
 

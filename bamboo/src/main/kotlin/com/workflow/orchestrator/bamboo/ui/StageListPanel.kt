@@ -6,12 +6,14 @@ import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.model.StageState
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Font
 import javax.swing.*
 
@@ -25,9 +27,20 @@ class StageListPanel : JPanel(BorderLayout()) {
 
     var onRunStage: ((StageState) -> Unit)? = null
 
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+    private val emptyLabel = JBLabel("No stages found.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
+
     init {
         border = JBUI.Borders.empty()
-        add(JBScrollPane(stageList), BorderLayout.CENTER)
+        cardPanel.add(JBScrollPane(stageList), "list")
+        cardPanel.add(emptyLabel, "empty")
+        cardLayout.show(cardPanel, "empty")
+        add(cardPanel, BorderLayout.CENTER)
 
         // Double-click on manual stage triggers run
         stageList.addMouseListener(object : java.awt.event.MouseAdapter() {
@@ -51,6 +64,13 @@ class StageListPanel : JPanel(BorderLayout()) {
     fun updateStages(stages: List<StageState>) {
         val selectedIndex = stageList.selectedIndex
         listModel.clear()
+
+        if (stages.isEmpty()) {
+            cardLayout.show(cardPanel, "empty")
+            return
+        }
+
+        cardLayout.show(cardPanel, "list")
 
         // Insert stage headers before jobs, grouped by stageName
         var currentStageName = ""

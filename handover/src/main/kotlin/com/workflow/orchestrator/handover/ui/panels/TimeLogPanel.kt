@@ -5,12 +5,22 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JButton
 import javax.swing.JPanel
+import javax.swing.SwingConstants
 
 class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
+
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+    private val emptyLabel = JBLabel("Select a ticket to log time.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
 
     val ticketLabel = JBLabel("")
     val dateField = JBTextField(10)
@@ -78,8 +88,22 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
             add(statusLabel, BorderLayout.EAST)
         }
 
+        cardPanel.add(formPanel, "form")
+        cardPanel.add(emptyLabel, "empty")
+        cardLayout.show(cardPanel, "empty")
+
         add(header, BorderLayout.NORTH)
-        add(formPanel, BorderLayout.CENTER)
+        add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
+    }
+
+    /** Show the form when a ticket is selected, or empty state when cleared. */
+    fun setTicket(ticketKey: String?) {
+        if (ticketKey.isNullOrBlank()) {
+            cardLayout.show(cardPanel, "empty")
+        } else {
+            ticketLabel.text = ticketKey
+            cardLayout.show(cardPanel, "form")
+        }
     }
 }

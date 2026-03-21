@@ -13,6 +13,7 @@ import com.workflow.orchestrator.automation.model.TagEntry
 import com.workflow.orchestrator.automation.model.TagSource
 import com.intellij.ui.components.JBScrollPane
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Component
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
@@ -24,6 +25,13 @@ class TagStagingPanel(
 
     private val tableModel = TagTableModel()
     private val table = JBTable(tableModel)
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+    private val emptyLabel = JBLabel("No docker tags configured.").apply {
+        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        horizontalAlignment = SwingConstants.CENTER
+        border = JBUI.Borders.emptyTop(40)
+    }
 
     init {
         border = JBUI.Borders.emptyTop(4)
@@ -47,12 +55,16 @@ class TagStagingPanel(
             font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }, BorderLayout.NORTH)
 
-        add(JBScrollPane(table), BorderLayout.CENTER)
+        cardPanel.add(JBScrollPane(table), "table")
+        cardPanel.add(emptyLabel, "empty")
+        cardLayout.show(cardPanel, "empty")
+        add(cardPanel, BorderLayout.CENTER)
     }
 
     fun setEntries(entries: List<TagEntry>) {
         tableModel.entries = entries
         tableModel.fireTableDataChanged()
+        cardLayout.show(cardPanel, if (entries.isEmpty()) "empty" else "table")
     }
 
     fun getEntries(): List<TagEntry> = tableModel.entries

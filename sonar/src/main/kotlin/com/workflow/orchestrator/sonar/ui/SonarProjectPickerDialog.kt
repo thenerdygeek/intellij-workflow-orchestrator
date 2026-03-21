@@ -3,6 +3,7 @@ package com.workflow.orchestrator.sonar.ui
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -14,6 +15,7 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.services.SonarService
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
+import java.awt.FlowLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import javax.swing.*
@@ -37,6 +39,9 @@ class SonarProjectPickerDialog(
     private val resultList = JBList(listModel).apply {
         cellRenderer = SonarProjectCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
+    }
+    private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply {
+        isVisible = false
     }
     private val statusLabel = JBLabel("Type to search SonarQube projects...").apply {
         foreground = StatusColors.SECONDARY_TEXT
@@ -85,7 +90,11 @@ class SonarProjectPickerDialog(
         panel.add(JBScrollPane(resultList), BorderLayout.CENTER)
 
         // Status at bottom
-        panel.add(statusLabel, BorderLayout.SOUTH)
+        val statusPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            add(loadingIcon)
+            add(statusLabel)
+        }
+        panel.add(statusPanel, BorderLayout.SOUTH)
 
         return panel
     }
@@ -96,6 +105,7 @@ class SonarProjectPickerDialog(
         if (query.length < 2) {
             SwingUtilities.invokeLater {
                 listModel.clear()
+                loadingIcon.isVisible = false
                 statusLabel.text = "Type at least 2 characters to search..."
             }
             return
@@ -104,6 +114,7 @@ class SonarProjectPickerDialog(
         searchJob = scope.launch {
             delay(300) // debounce 300ms
             SwingUtilities.invokeLater {
+                loadingIcon.isVisible = true
                 statusLabel.text = "Searching..."
             }
 
@@ -112,6 +123,7 @@ class SonarProjectPickerDialog(
 
             SwingUtilities.invokeLater {
                 listModel.clear()
+                loadingIcon.isVisible = false
                 if (!result.isError) {
                     if (result.data.isEmpty()) {
                         statusLabel.text = "No projects found for '$query'"

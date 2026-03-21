@@ -190,7 +190,12 @@ class QualityDashboardPanel(
     }
 
     private fun updateUI(state: SonarState) {
-        if (state.projectKey.isEmpty()) return
+        if (state.projectKey.isEmpty()) {
+            loadingIcon.isVisible = false
+            statusLabel.text = "Configure SonarQube project key in Settings > CI/CD."
+            statusLabel.foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            return
+        }
 
         val gateIcon = when (state.qualityGate.status) {
             QualityGateStatus.PASSED -> "\u2713"
