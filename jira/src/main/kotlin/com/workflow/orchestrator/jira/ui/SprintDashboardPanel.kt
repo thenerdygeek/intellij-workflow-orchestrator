@@ -36,6 +36,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.*
@@ -117,6 +120,10 @@ class SprintDashboardPanel(
     private var allIssues: List<JiraIssue> = emptyList()
     private var showAllUsers: Boolean = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val searchDebounce = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
     private lateinit var currentWorkSection: CurrentWorkSection
 
     /** Check if a JiraIssue is a section header (used for assignee grouping). */
@@ -128,6 +135,13 @@ class SprintDashboardPanel(
 
         setupLayout()
         setupListeners()
+
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        scope.launch {
+            searchDebounce.debounce(250).collect {
+                withContext(Dispatchers.EDT) { applyFilter() }
+            }
+        }
     }
 
     // ---------------------------------------------------------------
@@ -299,11 +313,11 @@ class SprintDashboardPanel(
             }
         })
 
-        // Search/filter
+        // Search/filter (debounced — see searchDebounce collector in init)
         searchField.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = applyFilter()
-            override fun removeUpdate(e: DocumentEvent) = applyFilter()
-            override fun changedUpdate(e: DocumentEvent) = applyFilter()
+            override fun insertUpdate(e: DocumentEvent) { searchDebounce.tryEmit(Unit) }
+            override fun removeUpdate(e: DocumentEvent) { searchDebounce.tryEmit(Unit) }
+            override fun changedUpdate(e: DocumentEvent) { searchDebounce.tryEmit(Unit) }
         })
     }
 

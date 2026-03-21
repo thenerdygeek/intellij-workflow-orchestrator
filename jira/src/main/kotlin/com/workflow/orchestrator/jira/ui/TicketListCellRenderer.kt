@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.ui.JBColor
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
@@ -125,11 +126,11 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         val contentX = x + padding
         val contentW = w - padding * 2
 
-        // -- Fonts --
-        val keyFont = g2.font.deriveFont(Font.BOLD, JBUI.scale(13).toFloat())
-        val summaryFont = g2.font.deriveFont(Font.PLAIN, JBUI.scale(13).toFloat())
-        val smallFont = g2.font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
-        val pillFont = g2.font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+        // -- Fonts (cached in companion object) --
+        val keyFont = KEY_FONT
+        val summaryFont = SUMMARY_FONT
+        val smallFont = SMALL_FONT
+        val pillFont = PILL_FONT
 
         val keyMetrics = g2.getFontMetrics(keyFont)
         val summaryMetrics = g2.getFontMetrics(summaryFont)
@@ -240,6 +241,12 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
 
         // -- Text colors --
         private val TYPE_BADGE_BG = JBColor(0xE8EAED, 0x3D4043)
+
+        // -- Cached fonts --
+        private val KEY_FONT by lazy { JBFont.regular().deriveFont(Font.BOLD, JBUI.scale(13).toFloat()) }
+        private val SUMMARY_FONT by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(13).toFloat()) }
+        private val SMALL_FONT by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(11).toFloat()) }
+        private val PILL_FONT by lazy { JBFont.regular().deriveFont(Font.BOLD, JBUI.scale(10).toFloat()) }
 
         @JvmStatic
         fun getStatusColor(categoryKey: String): Color = when (categoryKey) {
