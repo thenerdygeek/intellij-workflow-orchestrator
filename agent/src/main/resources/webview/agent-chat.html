@@ -124,6 +124,7 @@ body {
   padding: 2px 0;
 }
 .agent-msg p { margin: 4px 0; }
+.agent-label { font-size: 10px; font-weight: 600; color: var(--fg-muted); margin-bottom: 2px; letter-spacing: 0.3px; }
 
 /* Streaming cursor */
 .stream-cursor::after {
@@ -196,6 +197,7 @@ body {
 .tool-status-icon.ok { color: var(--success); }
 .tool-status-icon.fail { color: var(--error); }
 .tool-status-icon.running { color: var(--fg-muted); display: inline-block; width: 13px; height: 13px; border: 2px solid var(--fg-muted); border-top-color: var(--link); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.tool-timer { font-size: 10px; color: var(--fg-muted); font-family: var(--font-mono); padding: 1px 6px; }
 .tool-duration { font-size: 10px; color: var(--fg-muted); margin-left: auto; padding: 1px 6px; background: var(--code-bg); border-radius: 4px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -472,6 +474,9 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
   background: var(--thinking-bg);
   border-radius: 0 6px 6px 0;
 }
+.thinking-details { margin: 8px 0; }
+.thinking-summary { font-size: 12px; color: var(--fg-muted); cursor: pointer; font-style: italic; padding: 4px 0; }
+.thinking-summary:hover { color: var(--fg-secondary); }
 
 /* ═══════════════════════════════════════════════════
    Status Messages
@@ -1035,14 +1040,14 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 <body>
 <div id="chat-container">
   <div class="empty-state" id="empty-state">
-    <div class="icon">⚡</div>
+    <div class="icon" style="font-size:28px;opacity:0.4;">&#x2726;</div>
     <div class="title">AI Agent</div>
     <div class="desc">Ask me to analyze code, fix bugs, run builds, check quality, or manage tickets.</div>
     <div class="prompts">
-      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Fix the SonarQube issues in this project">🔍 Fix the SonarQube issues in this project</div>
-      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Create a PR for my current changes">🔀 Create a PR for my current changes</div>
-      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="What is the status of the latest build?">📋 What is the status of the latest build?</div>
-      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Run tests and fix any failures">🧪 Run tests and fix any failures</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Fix the SonarQube issues in this project"><span style="opacity:0.6">&#x25B7;</span> Fix the SonarQube issues in this project</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Create a PR for my current changes"><span style="opacity:0.6">&#x25B7;</span> Create a PR for my current changes</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="What is the status of the latest build?"><span style="opacity:0.6">&#x25B7;</span> What is the status of the latest build?</div>
+      <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Run tests and fix any failures"><span style="opacity:0.6">&#x25B7;</span> Run tests and fix any failures</div>
     </div>
   </div>
 </div>
@@ -1054,13 +1059,14 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 const container = document.getElementById('chat-container');
 const emptyState = document.getElementById('empty-state');
 let activeStreamEl = null;
+var _activeTimerIntervals = [];
 
 function hideEmpty() {
   if (emptyState) emptyState.style.display = 'none';
 }
 
 function scrollToBottom() {
-  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  container.scrollTop = container.scrollHeight;
 }
 
 function esc(text) {
@@ -1348,7 +1354,7 @@ function renderDiff2Html(diffText) {
     }
     return langLabel +
       '<div class="code-wrapper">' +
-      '<button class="code-copy" onclick="copyCode(this)">Copy</button>' +
+      '<button class="code-copy" tabindex="0" onclick="copyCode(this)">Copy</button>' +
       '<pre class="code-block"><code class="language-' + (lang || 'text') + '">' +
       highlighted + '</code></pre></div>';
   };
@@ -1678,7 +1684,7 @@ function completeSession(status, tokensUsed, durationMs, iterations, files) {
     : '';
 
   const undoHtml = files && files.length > 0
-    ? '<div style="margin-top:10px;"><button class="footer-btn undo" onclick="requestUndo()">↩ Undo All Changes</button><button class="footer-btn" onclick="requestViewTrace()">📋 View Trace</button></div>'
+    ? '<div style="margin-top:10px;"><button class="footer-btn undo" onclick="requestUndo()">↩ Undo All Changes</button><button class="footer-btn" onclick="requestViewTrace()">&#x2630; View Trace</button></div>'
     : '';
 
   const footer = document.createElement('div');
@@ -1700,12 +1706,17 @@ function completeSession(status, tokensUsed, durationMs, iterations, files) {
 
 // Accumulates raw text during streaming (preserves newlines for markdown rendering)
 var _streamRawText = '';
+var _renderDebounce = null;
 
 function appendToken(token) {
   hideEmpty();
   if (!activeStreamEl) {
     activeStreamEl = document.createElement('div');
     activeStreamEl.className = 'message';
+    var agentLabel = document.createElement('div');
+    agentLabel.className = 'agent-label';
+    agentLabel.textContent = 'Agent';
+    activeStreamEl.appendChild(agentLabel);
     const inner = document.createElement('div');
     inner.className = 'agent-msg stream-cursor';
     activeStreamEl._inner = inner;
@@ -1718,6 +1729,13 @@ function appendToken(token) {
   // Show with basic newline rendering during streaming
   const html = esc(token).replace(/\n/g, '<br>');
   activeStreamEl._inner.insertAdjacentHTML('beforeend', html);
+  clearTimeout(_renderDebounce);
+  _renderDebounce = setTimeout(function() {
+    if (activeStreamEl && activeStreamEl._inner && _streamRawText) {
+      activeStreamEl._inner.innerHTML = renderMarkdown(_streamRawText);
+      scrollToBottom();
+    }
+  }, 300);
   scrollToBottom();
 }
 
@@ -1738,27 +1756,51 @@ function endStream() {
 
 function appendToolCall(toolName, args, statusStr) {
   endStream(); hideEmpty();
-  const type = toolType(toolName);
-  const badge = badgeFor(type);
-  const target = extractTarget(toolName, args);
-  const statusIcon = statusStr === 'SUCCESS' ? '<span class="tool-status-icon ok">✓</span>'
+  var type = toolType(toolName);
+  var badge = badgeFor(type);
+  var target = extractTarget(toolName, args);
+  var statusIcon = statusStr === 'SUCCESS' ? '<span class="tool-status-icon ok">✓</span>'
     : statusStr === 'FAILED' ? '<span class="tool-status-icon fail">✗</span>'
     : '<span class="tool-status-icon running"></span>';
 
-  const argsHtml = args && args.length > 2
-    ? '<div class="tool-detail collapsed">' + esc(args.substring(0, 300)) + '</div>' : '';
+  var timerId = 'timer-' + Date.now();
+  var timerHtml = statusStr === 'RUNNING' ? '<span class="tool-timer" id="' + timerId + '">0.0s</span>' : '';
 
-  const card = document.createElement('div');
+  var argsHtml = args && args.length > 2
+    ? '<div class="tool-detail collapsed">' + esc(args.substring(0, 800)) + '</div>' : '';
+
+  var card = document.createElement('div');
   card.className = 'message';
   card.innerHTML =
     '<div class="tool-card type-' + type + '" id="tool-' + Date.now() + '">' +
       '<div class="tool-header">' +
         '<span class="chevron">▶</span>' +
         badge + '<span class="tool-target">' + esc(target) + '</span>' +
-        statusIcon +
+        timerHtml + statusIcon +
       '</div>' + argsHtml +
     '</div>';
   container.appendChild(card);
+
+  // Auto-collapse all previous tool cards, expand this one
+  var allCards = container.querySelectorAll('.tool-card');
+  for (var i = 0; i < allCards.length - 1; i++) {
+    var details = allCards[i].querySelectorAll('.tool-detail, .tool-result');
+    details.forEach(function(d) { d.classList.add('collapsed'); });
+    var chev = allCards[i].querySelector('.chevron');
+    if (chev) chev.classList.remove('open');
+  }
+
+  if (statusStr === 'RUNNING') {
+    var startMs = Date.now();
+    card._timerInterval = setInterval(function() {
+      var el = document.getElementById(timerId);
+      if (el) {
+        var elapsed = (Date.now() - startMs) / 1000;
+        el.textContent = elapsed < 10 ? elapsed.toFixed(1) + 's' : Math.floor(elapsed) + 's';
+      } else { clearInterval(card._timerInterval); }
+    }, 100);
+    _activeTimerIntervals.push(card._timerInterval);
+  }
   scrollToBottom();
 }
 
@@ -1767,6 +1809,15 @@ function updateToolResult(result, durationMs) {
   var toolCards = container.querySelectorAll('.tool-card');
   if (toolCards.length === 0) return;
   var lastCard = toolCards[toolCards.length - 1];
+
+  var parentMsg = lastCard.closest('.message');
+  if (parentMsg && parentMsg._timerInterval) {
+    clearInterval(parentMsg._timerInterval);
+    _activeTimerIntervals = _activeTimerIntervals.filter(function(id) { return id !== parentMsg._timerInterval; });
+    delete parentMsg._timerInterval;
+  }
+  var timerEl = lastCard.querySelector('.tool-timer');
+  if (timerEl) timerEl.remove();
 
   // Update status icon
   var icon = lastCard.querySelector('.tool-status-icon');
@@ -1851,14 +1902,16 @@ function appendStatus(message, type) {
 
 function appendThinking(text) {
   endStream(); hideEmpty();
-  const el = document.createElement('div');
+  var el = document.createElement('div');
   el.className = 'message';
-  el.innerHTML = '<div class="thinking">' + esc(text) + '</div>';
+  el.innerHTML = '<details class="thinking-details"><summary class="thinking-summary">Thinking...</summary><div class="thinking">' + esc(text) + '</div></details>';
   container.appendChild(el);
   scrollToBottom();
 }
 
 function clearChat() {
+  _activeTimerIntervals.forEach(function(id) { clearInterval(id); });
+  _activeTimerIntervals = [];
   container.innerHTML = '';
   if (emptyState) { container.appendChild(emptyState); emptyState.style.display = ''; }
   activeStreamEl = null;
@@ -1946,7 +1999,7 @@ function renderPlan(planJson) {
       + descHtml + filesHtml
       + '<input class="plan-comment-input" data-step-id="' + esc(step.id) + '" placeholder="Add feedback for this step...">'
       + '</div>'
-      + '<div class="plan-step-comment-btn" onclick="togglePlanComment(this)">💬</div>'
+      + '<div class="plan-step-comment-btn" onclick="togglePlanComment(this)">&#x2709;</div>'
       + '</div>';
   });
 
@@ -1956,7 +2009,7 @@ function renderPlan(planJson) {
   var card = document.createElement('div');
   card.className = 'message';
   card.innerHTML = '<div class="plan-card" id="active-plan">'
-    + '<div class="plan-header"><span class="plan-icon">📋</span> Implementation Plan</div>'
+    + '<div class="plan-header"><span class="plan-icon">&#x2630;</span> Implementation Plan</div>'
     + '<div class="plan-section"><div class="plan-section-title">Goal</div><div class="plan-section-content">' + esc(plan.goal) + '</div></div>'
     + approachHtml
     + '<div class="plan-steps"><div class="plan-section-title">Steps (' + plan.steps.length + ')</div>' + stepsHtml + '</div>'
@@ -2061,7 +2114,7 @@ function renderToolsList(data, filter) {
   var totalCount = 0;
 
   var html = '<div class="tools-panel">';
-  html += '<div class="tools-panel-header"><span class="title">Agent Tools</span><span class="stats" id="tools-stats"></span><button class="close-btn" onclick="closeToolsPanel()">x</button></div>';
+  html += '<div class="tools-panel-header"><span class="title">Agent Tools</span><span class="stats" id="tools-stats"></span><button class="close-btn" onclick="closeToolsPanel()">&#xD7;</button></div>';
   html += '<div class="tools-search"><input id="tools-filter" placeholder="Search tools..." oninput="filterTools(this.value)" value="' + esc(filter) + '"/></div>';
   html += '<div class="tools-list">';
 
@@ -2159,7 +2212,7 @@ function showToolDetail(toolName) {
   overlay.innerHTML = '<div class="tool-detail-panel">' +
     '<div class="td-header"><span class="tbadge" style="background:' + badgeColor + '20;color:' + badgeFg + ';font-size:11px;padding:2px 8px;">' + esc(toolBadge) + '</span>' +
     '<span class="td-name">' + esc(tool.name) + '</span>' +
-    '<button class="td-close" onclick="closeToolDetail()">x</button></div>' +
+    '<button class="td-close" onclick="closeToolDetail()">&#xD7;</button></div>' +
     '<div class="td-tabs"><div class="td-tab active" onclick="switchDetailTab(this,0)">Description</div><div class="td-tab" onclick="switchDetailTab(this,1)">Parameters</div><div class="td-tab" onclick="switchDetailTab(this,2)">JSON Schema</div><div class="td-tab" onclick="switchDetailTab(this,3)">Example</div></div>' +
     '<div class="td-content" id="td-content-area">' +
     '<div class="td-section-title">Description</div><div style="font-size:13px;line-height:1.6;color:var(--fg-secondary);">' + esc(tool.description) + '</div>' +
@@ -2253,7 +2306,7 @@ function showQuestion(index) {
       + '<div class="question-option-label">' + esc(opt.label) + '</div>'
       + descHtml
       + '</div>'
-      + '<button class="question-option-chat" data-qid="' + esc(q.id) + '" data-label="' + esc(opt.label) + '" data-oid="' + esc(opt.id) + '">&#x1F4AC; Chat about this</button>'
+      + '<button class="question-option-chat" data-qid="' + esc(q.id) + '" data-label="' + esc(opt.label) + '" data-oid="' + esc(opt.id) + '">&#x2709; Chat about this</button>'
       + '</div>';
   });
 
@@ -2408,7 +2461,7 @@ function showQuestionSummaryFromState() {
   var card = document.createElement('div');
   card.className = 'message question-wizard-wrapper';
   card.innerHTML = '<div class="question-summary" id="active-question-summary">'
-    + '<div class="question-summary-header">&#x1F4CB; Summary &mdash; ' + total + ' Questions</div>'
+    + '<div class="question-summary-header">&#x2630; Summary &mdash; ' + total + ' Questions</div>'
     + '<div class="question-summary-items">' + itemsHtml + '</div>'
     + '<div class="question-summary-actions">'
     + '<button class="qnav-btn cancel" onclick="questionSummaryCancel()">Cancel</button>'
@@ -2473,7 +2526,7 @@ function showQuestionSummary(summaryJson) {
   var card = document.createElement('div');
   card.className = 'message question-wizard-wrapper';
   card.innerHTML = '<div class="question-summary" id="active-question-summary">'
-    + '<div class="question-summary-header">&#x1F4CB; Summary &mdash; ' + total + ' Questions</div>'
+    + '<div class="question-summary-header">&#x2630; Summary &mdash; ' + total + ' Questions</div>'
     + '<div class="question-summary-items">' + itemsHtml + '</div>'
     + '<div class="question-summary-actions">'
     + '<button class="qnav-btn cancel" onclick="questionSummaryCancel()">Cancel</button>'
@@ -2532,7 +2585,7 @@ function enableChatAbout(questionId, optionLabel) {
   card.id = 'chat-about-card';
   card.innerHTML = '<div class="question-wizard">'
     + '<div class="question-header" style="background:rgba(249,226,175,0.1);border-bottom-color:var(--border);">'
-    + '<span style="color:var(--warning,#f9e2af);font-size:13px;">&#x1F4AC; Add a note about: <strong>' + esc(optionLabel) + '</strong></span>'
+    + '<span style="color:var(--warning,#f9e2af);font-size:13px;">&#x2709; Add a note about: <strong>' + esc(optionLabel) + '</strong></span>'
     + '</div>'
     + '<div style="padding:16px;">'
     + '<textarea id="chat-about-input" class="chat-about-textarea" placeholder="Add your note about ' + esc(optionLabel) + '..." rows="3" autofocus></textarea>'
@@ -2609,7 +2662,7 @@ function showSkillBanner(name) {
     var banner = document.createElement('div');
     banner.className = 'skill-banner';
     banner.id = 'skill-banner';
-    banner.innerHTML = '<span>\uD83D\uDD27 Skill active: <strong>' + esc(name) + '</strong></span>'
+    banner.innerHTML = '<span>&#x26A1; Skill active: <strong>' + esc(name) + '</strong></span>'
         + '<span class="skill-banner-dismiss" onclick="dismissSkill()">\u00D7</span>';
     // Insert before the chat container
     if (container && container.parentElement) {
