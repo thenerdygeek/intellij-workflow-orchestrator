@@ -18,10 +18,13 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.bitbucket.BitbucketCommit
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
@@ -868,11 +871,8 @@ class PrDetailPanel(
     // ---------------------------------------------------------------
 
     private inner class ActivitySubPanel : JPanel(BorderLayout()) {
-        private val activityListModel = DefaultListModel<ActivityDisplayItem>()
-        private val activityList = JBList(activityListModel).apply {
-            cellRenderer = ActivityCellRenderer()
-            fixedCellHeight = -1 // Variable height — inline comments need more space
-            border = JBUI.Borders.empty()
+        private val contentPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
         }
         private val emptyLabel = JBLabel("No activity yet.").apply {
@@ -884,19 +884,6 @@ class PrDetailPanel(
         init {
             isOpaque = false
             add(emptyLabel, BorderLayout.CENTER)
-
-            // Double-click on inline comment → navigate to file:line
-            activityList.addMouseListener(object : MouseAdapter() {
-                override fun mouseClicked(e: MouseEvent) {
-                    if (e.clickCount == 2) {
-                        val index = activityList.locationToIndex(e.point)
-                        if (index < 0) return
-                        val item = activityListModel.getElementAt(index)
-                        val path = item.anchorPath ?: return
-                        navigateToFile(path, item.anchorLine)
-                    }
-                }
-            })
         }
 
         private fun navigateToFile(relativePath: String, line: Int) {
@@ -922,142 +909,6 @@ class PrDetailPanel(
             }
         }
 
-        fun showActivities(activities: List<com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity>) {
-            removeAll()
-            activityListModel.clear()
-
-            if (activities.isEmpty()) {
-                add(emptyLabel, BorderLayout.CENTER)
-            } else {
-                for (activity in activities) {
-                    val authorName = activity.comment?.author?.displayName
-                        ?: activity.user.displayName
-                    val commentText = activity.comment?.text ?: ""
-                    val timestamp = if (activity.createdDate > 0) {
-                        DATE_FORMAT.format(java.time.Instant.ofEpochMilli(activity.createdDate))
-                    } else ""
-
-                    // Extract inline comment anchor (file + line)
-                    val anchor = activity.commentAnchor ?: activity.comment?.anchor
-                    val anchorPath = anchor?.path?.takeIf { it.isNotBlank() }
-                    val anchorLine = anchor?.line ?: 0
-
-                    activityListModel.addElement(ActivityDisplayItem(
-                        userName = authorName,
-                        action = activity.action,
-                        timestamp = timestamp,
-                        commentText = commentText,
-                        anchorPath = anchorPath,
-                        anchorLine = anchorLine
-                    ))
-                }
-                add(JBScrollPane(activityList).apply {
-                    border = JBUI.Borders.empty()
-                    isOpaque = false
-                    viewport.isOpaque = false
-                }, BorderLayout.CENTER)
-            }
-            revalidate()
-            repaint()
-        }
-    }
-
-    private data class ActivityDisplayItem(
-        val userName: String,
-        val action: String,
-        val timestamp: String,
-        val commentText: String,
-        /** File path for inline code comments (null for general activity). */
-        val anchorPath: String? = null,
-        /** Line number for inline code comments (0 = no line). */
-        val anchorLine: Int = 0
-    )
-
-    private class ActivityCellRenderer : ListCellRenderer<ActivityDisplayItem> {
-        // Cached components — reused on every render call
-        private val rootPanel = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(6, 8)
-        }
-        private val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-        }
-        private val userLabel = JBLabel().apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-        }
-        private val actionLabel = JBLabel().apply {
-            font = font.deriveFont(JBUI.scale(11).toFloat())
-        }
-        private val timestampLabel = JBLabel().apply {
-            font = font.deriveFont(JBUI.scale(10).toFloat())
-        }
-        private val contentPanel = JPanel().apply {
-            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-            isOpaque = false
-            border = JBUI.Borders.emptyLeft(JBUI.scale(8))
-        }
-        private val anchorLabel = JBLabel().apply {
-            font = font.deriveFont(JBUI.scale(10).toFloat())
-            foreground = StatusColors.LINK
-            icon = AllIcons.FileTypes.Java
-            iconTextGap = JBUI.scale(4)
-        }
-        private val commentLabel = JBLabel().apply {
-            font = font.deriveFont(JBUI.scale(11).toFloat())
-        }
-
-        init {
-            topRow.add(userLabel)
-            topRow.add(actionLabel)
-            topRow.add(timestampLabel)
-            rootPanel.add(topRow, BorderLayout.NORTH)
-        }
-
-        override fun getListCellRendererComponent(
-            list: JList<out ActivityDisplayItem>,
-            value: ActivityDisplayItem,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean
-        ): Component {
-            rootPanel.isOpaque = isSelected
-            if (isSelected) {
-                rootPanel.background = list.selectionBackground
-            }
-
-            userLabel.text = value.userName
-            userLabel.foreground = if (isSelected) list.selectionForeground else JBColor.foreground()
-
-            actionLabel.text = formatAction(value.action)
-            actionLabel.foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
-
-            timestampLabel.text = value.timestamp
-            timestampLabel.foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
-
-            contentPanel.removeAll()
-            rootPanel.remove(contentPanel)
-
-            if (value.anchorPath != null) {
-                val fileName = value.anchorPath.substringAfterLast('/')
-                val lineText = if (value.anchorLine > 0) ":${value.anchorLine}" else ""
-                anchorLabel.text = "$fileName$lineText"
-                anchorLabel.toolTipText = "Double-click to navigate to ${value.anchorPath}$lineText"
-                contentPanel.add(anchorLabel)
-            }
-
-            if (value.commentText.isNotBlank()) {
-                commentLabel.text = PrListPanel.truncate(value.commentText, 150)
-                commentLabel.foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
-                commentLabel.toolTipText = if (value.commentText.length > 150) value.commentText else null
-                contentPanel.add(commentLabel)
-            }
-
-            if (contentPanel.componentCount > 0) {
-                rootPanel.add(contentPanel, BorderLayout.CENTER)
-            }
-
-            return rootPanel
-        }
-
         private fun formatAction(action: String): String {
             return when (action.uppercase()) {
                 "COMMENTED" -> "commented"
@@ -1069,6 +920,299 @@ class PrDetailPanel(
                 "UPDATED" -> "updated"
                 "RESCOPED" -> "updated source branch"
                 else -> action.lowercase()
+            }
+        }
+
+        /** Stored activities for refresh after reply. */
+        private var lastActivities: List<BitbucketPrActivity> = emptyList()
+
+        fun showActivities(activities: List<BitbucketPrActivity>) {
+            lastActivities = activities
+            removeAll()
+            contentPanel.removeAll()
+
+            if (activities.isEmpty()) {
+                add(emptyLabel, BorderLayout.CENTER)
+            } else {
+                // Separate inline comments (with anchor) from general activities
+                val inlineComments = activities.filter { a ->
+                    val anchor = a.commentAnchor ?: a.comment?.anchor
+                    anchor != null && anchor.path.isNotBlank()
+                }
+                val generalActivities = activities.filter { a ->
+                    val anchor = a.commentAnchor ?: a.comment?.anchor
+                    anchor == null || anchor.path.isBlank()
+                }
+
+                // Group inline comments by file:line
+                if (inlineComments.isNotEmpty()) {
+                    data class AnchorKey(val path: String, val line: Int)
+
+                    val grouped = linkedMapOf<AnchorKey, MutableList<BitbucketPrActivity>>()
+                    for (activity in inlineComments) {
+                        val anchor = activity.commentAnchor ?: activity.comment?.anchor ?: continue
+                        val key = AnchorKey(anchor.path, anchor.line)
+                        grouped.getOrPut(key) { mutableListOf() }.add(activity)
+                    }
+
+                    for ((anchorKey, group) in grouped) {
+                        // File:line header
+                        val fileName = anchorKey.path.substringAfterLast('/')
+                        val lineText = if (anchorKey.line > 0) ":${anchorKey.line}" else ""
+                        val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                            isOpaque = false
+                            border = JBUI.Borders.empty(6, 8, 2, 8)
+                            val fileLabel = JBLabel("$fileName$lineText").apply {
+                                icon = AllIcons.FileTypes.Any_type
+                                iconTextGap = JBUI.scale(4)
+                                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                                foreground = LINK_COLOR
+                                toolTipText = "Double-click to navigate to ${anchorKey.path}$lineText"
+                                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                                addMouseListener(object : MouseAdapter() {
+                                    override fun mouseClicked(e: MouseEvent) {
+                                        if (e.clickCount >= 1) {
+                                            navigateToFile(anchorKey.path, anchorKey.line)
+                                        }
+                                    }
+                                })
+                            }
+                            add(fileLabel)
+                        }
+                        contentPanel.add(headerPanel)
+
+                        // Render each comment in the thread
+                        for (activity in group) {
+                            contentPanel.add(buildCommentRow(activity, indented = true))
+                        }
+
+                        // Thin separator between file groups
+                        contentPanel.add(JSeparator(SwingConstants.HORIZONTAL).apply {
+                            maximumSize = Dimension(Int.MAX_VALUE, 1)
+                        })
+                    }
+                }
+
+                // Render general (non-inline) activities
+                for (activity in generalActivities) {
+                    contentPanel.add(buildActivityRow(activity))
+                }
+
+                add(JBScrollPane(contentPanel).apply {
+                    border = JBUI.Borders.empty()
+                    isOpaque = false
+                    viewport.isOpaque = false
+                }, BorderLayout.CENTER)
+            }
+            revalidate()
+            repaint()
+        }
+
+        /**
+         * Builds a row for a general (non-inline) activity.
+         */
+        private fun buildActivityRow(activity: BitbucketPrActivity): JPanel {
+            val authorName = activity.comment?.author?.displayName ?: activity.user.displayName
+            val commentText = activity.comment?.text ?: ""
+            val timestamp = if (activity.createdDate > 0) {
+                DATE_FORMAT.format(java.time.Instant.ofEpochMilli(activity.createdDate))
+            } else ""
+
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(4, 8)
+            }
+
+            val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+                isOpaque = false
+            }
+            topRow.add(JBLabel(authorName).apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            })
+            topRow.add(JBLabel(formatAction(activity.action)).apply {
+                font = font.deriveFont(JBUI.scale(11).toFloat())
+                foreground = SECONDARY_TEXT
+            })
+            topRow.add(JBLabel(timestamp).apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                foreground = SECONDARY_TEXT
+            })
+            row.add(topRow, BorderLayout.NORTH)
+
+            if (commentText.isNotBlank()) {
+                val bodyPanel = JPanel().apply {
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    isOpaque = false
+                    border = JBUI.Borders.emptyLeft(JBUI.scale(8))
+                }
+                bodyPanel.add(JBLabel(PrListPanel.truncate(commentText, 150)).apply {
+                    font = font.deriveFont(JBUI.scale(11).toFloat())
+                    foreground = SECONDARY_TEXT
+                    toolTipText = if (commentText.length > 150) commentText else null
+                })
+
+                // Reply link for comment activities
+                if (activity.comment != null) {
+                    bodyPanel.add(buildReplyLink(activity))
+                }
+
+                row.add(bodyPanel, BorderLayout.CENTER)
+            }
+
+            return row
+        }
+
+        /**
+         * Builds a row for an inline code comment (indented under file:line header).
+         */
+        private fun buildCommentRow(activity: BitbucketPrActivity, indented: Boolean): JPanel {
+            val authorName = activity.comment?.author?.displayName ?: activity.user.displayName
+            val commentText = activity.comment?.text ?: ""
+            val timestamp = if (activity.createdDate > 0) {
+                DATE_FORMAT.format(java.time.Instant.ofEpochMilli(activity.createdDate))
+            } else ""
+
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = if (indented) JBUI.Borders.empty(2, 24, 2, 8) else JBUI.Borders.empty(4, 8)
+            }
+
+            val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                isOpaque = false
+            }
+            topRow.add(JBLabel(authorName).apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            })
+            topRow.add(JBLabel(timestamp).apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                foreground = SECONDARY_TEXT
+            })
+            row.add(topRow, BorderLayout.NORTH)
+
+            val bodyPanel = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                border = JBUI.Borders.emptyLeft(JBUI.scale(4))
+            }
+
+            if (commentText.isNotBlank()) {
+                bodyPanel.add(JBLabel(PrListPanel.truncate(commentText, 200)).apply {
+                    font = font.deriveFont(JBUI.scale(11).toFloat())
+                    foreground = JBColor.foreground()
+                    toolTipText = if (commentText.length > 200) commentText else null
+                })
+            }
+
+            // Reply link
+            if (activity.comment != null) {
+                bodyPanel.add(buildReplyLink(activity))
+            }
+
+            row.add(bodyPanel, BorderLayout.CENTER)
+            return row
+        }
+
+        /**
+         * Builds a clickable "Reply" link that expands into an inline reply input.
+         */
+        private fun buildReplyLink(activity: BitbucketPrActivity): JPanel {
+            val commentId = activity.comment?.id?.toInt() ?: return JPanel().apply { isOpaque = false }
+            val prId = currentPrId ?: return JPanel().apply { isOpaque = false }
+
+            val replyContainer = JPanel(CardLayout()).apply {
+                isOpaque = false
+            }
+
+            // Card 1: Reply link
+            val linkPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(2)
+            }
+            val replyLink = JBLabel("Reply").apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                foreground = LINK_COLOR
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        (replyContainer.layout as CardLayout).show(replyContainer, "input")
+                    }
+                })
+            }
+            linkPanel.add(replyLink)
+            replyContainer.add(linkPanel, "link")
+
+            // Card 2: Reply input row
+            val inputPanel = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(2, 0, 2, 0)
+            }
+            val arrowLabel = JBLabel("\u21B3").apply {
+                foreground = SECONDARY_TEXT
+                font = font.deriveFont(JBUI.scale(11).toFloat())
+            }
+            val replyField = JBTextField().apply {
+                emptyText.text = "Type a reply..."
+                columns = 30
+            }
+            val sendButton = JButton("Send").apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                putClientProperty("JButton.buttonType", "borderless")
+                isEnabled = true
+                addActionListener {
+                    val text = replyField.text.trim()
+                    if (text.isBlank()) return@addActionListener
+                    isEnabled = false
+                    replyField.isEnabled = false
+                    scope.launch {
+                        val result = PrActionService.getInstance(project).replyToComment(prId, commentId, text)
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    replyField.text = ""
+                                    replyField.isEnabled = true
+                                    isEnabled = true
+                                    (replyContainer.layout as CardLayout).show(replyContainer, "link")
+                                    // Refresh activities
+                                    refreshActivities()
+                                }
+                                is ApiResult.Error -> {
+                                    replyField.isEnabled = true
+                                    isEnabled = true
+                                    log.warn("[PR:Activity] Reply failed: ${result.message}")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            val leftPanel = JPanel(BorderLayout(JBUI.scale(2), 0)).apply {
+                isOpaque = false
+                add(arrowLabel, BorderLayout.WEST)
+                add(replyField, BorderLayout.CENTER)
+            }
+            inputPanel.add(leftPanel, BorderLayout.CENTER)
+            inputPanel.add(sendButton, BorderLayout.EAST)
+            replyContainer.add(inputPanel, "input")
+
+            // Show link by default
+            (replyContainer.layout as CardLayout).show(replyContainer, "link")
+            return replyContainer
+        }
+
+        /**
+         * Re-fetches activities for the current PR and refreshes the panel.
+         */
+        private fun refreshActivities() {
+            val prId = currentPrId ?: return
+            scope.launch {
+                val detailService = PrDetailService.getInstance(project)
+                val activities = detailService.getActivities(prId)
+                SwingUtilities.invokeLater {
+                    if (currentPrId == prId) {
+                        showActivities(activities)
+                    }
+                }
             }
         }
     }

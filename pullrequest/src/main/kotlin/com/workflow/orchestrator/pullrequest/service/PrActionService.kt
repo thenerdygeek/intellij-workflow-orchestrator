@@ -269,4 +269,50 @@ class PrActionService(private val project: Project) {
             }
         }
     }
+
+    /**
+     * Add an inline comment to a specific file/line in a pull request.
+     */
+    suspend fun addInlineComment(
+        prId: Int, filePath: String, lineNumber: Int, lineType: String, text: String
+    ): ApiResult<Unit> {
+        val client = getClient()
+            ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
+        if (!isConfigured())
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
+
+        log.info("[PR:Action] Adding inline comment to PR #$prId at $filePath:$lineNumber")
+        return when (val result = client.addInlineComment(projectKey(), repoSlug(), prId, filePath, lineNumber, lineType, text)) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] Inline comment added to PR #$prId at $filePath:$lineNumber")
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to add inline comment to PR #$prId: ${result.message}")
+                ApiResult.Error(result.type, result.message)
+            }
+        }
+    }
+
+    /**
+     * Reply to an existing comment on a pull request.
+     */
+    suspend fun replyToComment(prId: Int, parentCommentId: Int, text: String): ApiResult<Unit> {
+        val client = getClient()
+            ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
+        if (!isConfigured())
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
+
+        log.info("[PR:Action] Replying to comment #$parentCommentId on PR #$prId")
+        return when (val result = client.replyToComment(projectKey(), repoSlug(), prId, parentCommentId, text)) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] Reply added to comment #$parentCommentId on PR #$prId")
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to reply to comment #$parentCommentId on PR #$prId: ${result.message}")
+                ApiResult.Error(result.type, result.message)
+            }
+        }
+    }
 }
