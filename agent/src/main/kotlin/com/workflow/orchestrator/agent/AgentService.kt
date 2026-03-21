@@ -60,6 +60,49 @@ class AgentService(
     /** Tracks delegation attempts per retry key to limit retries (max 2 per key). */
     val delegationAttempts = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
+    /**
+     * Tracks background workers for lifecycle management.
+     * Key: agentId, Value: BackgroundWorker with job handle and metadata.
+     */
+    data class BackgroundWorker(
+        val agentId: String,
+        val job: kotlinx.coroutines.Job,
+        val subagentType: String,
+        val description: String,
+        val startedAt: Long = System.currentTimeMillis(),
+        @Volatile var status: String = "running" // running, completed, failed, killed
+    )
+
+    val backgroundWorkers = java.util.concurrent.ConcurrentHashMap<String, BackgroundWorker>()
+
+    /**
+     * Callback invoked when a background worker completes.
+     * The parent session uses this to inject a notification into the conversation.
+     */
+    @Volatile var onBackgroundWorkerCompleted: ((agentId: String, result: String, isError: Boolean) -> Unit)? = null
+
+    /** Current session directory for transcript storage. Set by ConversationSession. */
+    @Volatile var currentSessionDir: java.io.File? = null
+
+    fun getBackgroundWorker(agentId: String): BackgroundWorker? = backgroundWorkers[agentId]
+
+    fun killWorker(agentId: String): Boolean {
+        val worker = backgroundWorkers[agentId] ?: return false
+        worker.job.cancel()
+        worker.status = "killed"
+        backgroundWorkers.remove(agentId)
+        activeWorkerCount.decrementAndGet()
+        return true
+    }
+
+    fun getWorkerStatus(agentId: String): String? {
+        return backgroundWorkers[agentId]?.status
+    }
+
+    fun listBackgroundWorkers(): List<BackgroundWorker> {
+        return backgroundWorkers.values.toList().sortedByDescending { it.startedAt }
+    }
+
     val toolRegistry: ToolRegistry by lazy {
         ToolRegistry().apply {
             // Builtin tools
