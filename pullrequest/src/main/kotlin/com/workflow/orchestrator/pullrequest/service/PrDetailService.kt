@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketBuildStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketCommit
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
@@ -141,6 +142,17 @@ class PrDetailService(private val project: Project) {
         log.info("[PR:Detail] Fetching commits for PR #$prId")
         val result = client.getPullRequestCommits(projectKey(), repoSlug(), prId)
         return (result as? ApiResult.Success)?.data?.values ?: emptyList()
+    }
+
+    /**
+     * Fetches build statuses for a commit from Bitbucket Server.
+     */
+    suspend fun getBuildStatus(commitId: String): List<BitbucketBuildStatus> {
+        val client = getClient() ?: return emptyList()
+
+        log.info("[PR:Detail] Fetching build statuses for commit ${commitId.take(8)}")
+        val result = client.getBuildStatuses(commitId)
+        return (result as? ApiResult.Success)?.data ?: emptyList()
     }
 
     /**

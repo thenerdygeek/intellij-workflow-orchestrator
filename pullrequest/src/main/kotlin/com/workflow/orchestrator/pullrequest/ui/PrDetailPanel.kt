@@ -20,6 +20,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.bitbucket.BitbucketBuildStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketCommit
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
@@ -135,6 +136,10 @@ class PrDetailPanel(
         font = font.deriveFont(JBUI.scale(11).toFloat())
         foreground = SECONDARY_TEXT
     }
+    private val buildStatusBadgeContainer = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+        isOpaque = false
+    }
+    private var buildStatusUrl: String? = null
 
     // Action buttons
     private val approveButton = JButton("Approve").apply {
@@ -252,6 +257,16 @@ class PrDetailPanel(
                 currentMergeStatus = mergeStatus
                 updateMergeButtonState(mergeStatus)
             }
+
+            // Fetch build status for the source branch's latest commit
+            val commitId = prDetail.fromRef?.latestCommit
+            if (!commitId.isNullOrBlank()) {
+                val statuses = detailService.getBuildStatus(commitId)
+                SwingUtilities.invokeLater {
+                    if (currentPrId != prId) return@invokeLater
+                    updateBuildStatusBadge(statuses)
+                }
+            }
         }
     }
 
@@ -293,6 +308,16 @@ class PrDetailPanel(
                 if (currentPrId != pr.id) return@invokeLater
                 currentMergeStatus = mergeStatus
                 updateMergeButtonState(mergeStatus)
+            }
+
+            // Fetch build status for the source branch's latest commit
+            val commitId = pr.fromRef?.latestCommit
+            if (!commitId.isNullOrBlank()) {
+                val statuses = detailService.getBuildStatus(commitId)
+                SwingUtilities.invokeLater {
+                    if (currentPrId != pr.id) return@invokeLater
+                    updateBuildStatusBadge(statuses)
+                }
             }
         }
     }
@@ -348,6 +373,16 @@ class PrDetailPanel(
         }
         reviewersRow.add(reviewersLabel)
         contentPanel.add(reviewersRow)
+
+        // Build status row
+        val buildStatusRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(24))
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(4)
+        }
+        buildStatusRow.add(buildStatusBadgeContainer)
+        contentPanel.add(buildStatusRow)
 
         // Action buttons row
         val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
@@ -648,6 +683,86 @@ class PrDetailPanel(
                 val textX = (width - fm.stringWidth(text)) / 2
                 val textY = (height + fm.ascent - fm.descent) / 2
                 g2.drawString(text, textX, textY)
+                g2.dispose()
+            }
+        }
+    }
+
+    private fun updateBuildStatusBadge(statuses: List<BitbucketBuildStatus>) {
+        val (text, color) = when {
+            statuses.isEmpty() -> "No builds" to StatusColors.INFO
+            statuses.any { it.state.equals("FAILED", ignoreCase = true) } ->
+                "Build Failed" to StatusColors.ERROR
+            statuses.any { it.state.equals("INPROGRESS", ignoreCase = true) } ->
+                "Building..." to StatusColors.LINK
+            statuses.all { it.state.equals("SUCCESSFUL", ignoreCase = true) } ->
+                "Build Passed" to StatusColors.SUCCESS
+            else -> "Build Unknown" to StatusColors.INFO
+        }
+
+        // Store URL of the most relevant build status for click-to-open
+        buildStatusUrl = statuses.firstOrNull { it.state.equals("FAILED", ignoreCase = true) }?.url
+            ?: statuses.firstOrNull { it.state.equals("INPROGRESS", ignoreCase = true) }?.url
+            ?: statuses.firstOrNull()?.url
+
+        buildStatusBadgeContainer.removeAll()
+        buildStatusBadgeContainer.add(createBuildStatusBadge(text, color))
+        buildStatusBadgeContainer.revalidate()
+        buildStatusBadgeContainer.repaint()
+    }
+
+    private fun createBuildStatusBadge(text: String, color: JBColor): JPanel {
+        val icon = when {
+            text.contains("Passed") -> "\u2713 "
+            text.contains("Failed") -> "\u2717 "
+            text.contains("Building") -> "\u25B6 "
+            else -> ""
+        }
+        val displayText = "$icon$text"
+
+        return object : JPanel() {
+            init {
+                isOpaque = false
+                cursor = if (buildStatusUrl?.isNotBlank() == true)
+                    Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor()
+                val fm = getFontMetrics(font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat()))
+                val textW = fm.stringWidth(displayText)
+                preferredSize = Dimension(
+                    textW + JBUI.scale(12),
+                    fm.height + JBUI.scale(6)
+                )
+                toolTipText = if (buildStatusUrl?.isNotBlank() == true) "Click to open build" else null
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent?) {
+                        val url = buildStatusUrl
+                        if (!url.isNullOrBlank()) {
+                            BrowserUtil.browse(url)
+                        }
+                    }
+                })
+            }
+
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
+                if (desktopHints != null) {
+                    desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
+                } else {
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+                }
+                g2.color = color
+                g2.fill(RoundRectangle2D.Float(
+                    0f, 0f, width.toFloat(), height.toFloat(),
+                    JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
+                ))
+                g2.color = JBColor.WHITE
+                g2.font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+                val fm = g2.fontMetrics
+                val textX = (width - fm.stringWidth(displayText)) / 2
+                val textY = (height + fm.ascent - fm.descent) / 2
+                g2.drawString(displayText, textX, textY)
                 g2.dispose()
             }
         }
