@@ -39,16 +39,16 @@ object ToolCategoryRegistry {
             displayName = "IDE Intelligence",
             color = "#F59E0B",
             badgePrefix = "IDE",
-            description = "Code inspections, refactoring, quick fixes, compilation, test execution",
-            tools = listOf("run_inspections", "refactor_rename", "list_quickfixes", "compile_module", "run_tests")
+            description = "Code inspections, refactoring, quick fixes, compilation, test execution, find implementations",
+            tools = listOf("run_inspections", "refactor_rename", "list_quickfixes", "compile_module", "run_tests", "find_implementations")
         ),
         ToolCategory(
             id = "vcs",
-            displayName = "VCS & Navigation",
+            displayName = "VCS",
             color = "#06B6D4",
             badgePrefix = "GIT",
-            description = "Git status, blame, and method implementation search",
-            tools = listOf("git_status", "git_blame", "find_implementations")
+            description = "Git status and blame",
+            tools = listOf("git_status", "git_blame")
         ),
         ToolCategory(
             id = "framework",
