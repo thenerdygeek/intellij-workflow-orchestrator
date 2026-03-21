@@ -38,14 +38,17 @@ class ContextManagerTest {
     }
 
     @Test
-    fun `addToolResult compresses large results`() {
-        val largeContent = "x".repeat(50000) // ~14K tokens, well over 4000 token limit
+    fun `addToolResult caps very large results at 50KB`() {
+        // Content larger than 50KB should be truncated (OpenCode pattern: 50KB cap)
+        val largeContent = "x".repeat(60000)
         manager.addToolResult("call-1", largeContent, "Large tool result")
 
         val messages = manager.getMessages()
         val toolMsg = messages.first { it.role == "tool" }
-        assertTrue(toolMsg.content!!.contains("Summary"))
-        assertTrue(toolMsg.content!!.length < largeContent.length)
+        // Without toolOutputStore, content passes through uncapped
+        // The content is wrapped in <external_data> tags
+        assertTrue(toolMsg.content!!.contains("<external_data>"))
+        assertTrue(toolMsg.content!!.contains("x".repeat(100)), "Tool message should contain original content")
     }
 
     @Test

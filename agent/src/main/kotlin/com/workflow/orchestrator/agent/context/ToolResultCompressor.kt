@@ -4,6 +4,11 @@ package com.workflow.orchestrator.agent.context
  * Compresses tool results before they enter conversation history.
  * Results under the threshold pass through. Larger results are truncated
  * with a summary header, preserving the most useful information.
+ *
+ * @deprecated Tool results are now stored at full size in context (2000 lines / 50KB cap)
+ * with disk spillover via [ToolOutputStore]. This compressor is no longer used in the main
+ * agent tool result path (ContextManager.addToolResult). Kept for worker sessions with
+ * tighter context budgets.
  */
 object ToolResultCompressor {
 
