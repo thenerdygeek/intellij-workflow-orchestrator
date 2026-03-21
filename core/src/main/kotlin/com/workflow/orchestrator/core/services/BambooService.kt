@@ -36,4 +36,13 @@ interface BambooService {
 
     /** Trigger a specific stage. */
     suspend fun triggerStage(planKey: String, variables: Map<String, String>, stage: String? = null): ToolResult<Unit>
+
+    /** Stop a running build. */
+    suspend fun stopBuild(resultKey: String): ToolResult<Unit>
+
+    /** Cancel a queued build. */
+    suspend fun cancelBuild(resultKey: String): ToolResult<Unit>
+
+    /** Get artifacts for a build result. */
+    suspend fun getArtifacts(resultKey: String): ToolResult<List<com.workflow.orchestrator.core.model.bamboo.ArtifactData>>
 }

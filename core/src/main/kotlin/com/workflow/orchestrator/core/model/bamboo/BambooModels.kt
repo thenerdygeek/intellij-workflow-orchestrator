@@ -67,3 +67,15 @@ data class PlanVariableData(
     val name: String,
     val value: String
 )
+
+/**
+ * A build artifact produced by a Bamboo job.
+ */
+@Serializable
+data class ArtifactData(
+    val name: String,
+    val downloadUrl: String = "",
+    val producerJobKey: String = "",
+    val shared: Boolean = false,
+    val size: Long = 0
+)

@@ -1,8 +1,6 @@
 package com.workflow.orchestrator.bamboo.api
 
 import com.workflow.orchestrator.bamboo.api.dto.*
-import com.workflow.orchestrator.bamboo.api.dto.BambooBuildStatusResponse
-import com.workflow.orchestrator.bamboo.api.dto.BambooBuildVariablesResponse
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
@@ -277,6 +275,37 @@ class BambooApiClient(
             } catch (e: IOException) {
                 log.error("[Bamboo:API] Network error for POST $path: ${e.message}", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
+            }
+        }
+
+    suspend fun getArtifacts(resultKey: String): ApiResult<List<BambooArtifact>> {
+        log.info("[Bamboo:API] Fetching artifacts for resultKey=$resultKey")
+        return get<BambooArtifactResponse>(
+            "/rest/api/latest/result/$resultKey?expand=artifacts.artifact"
+        ).map { it.artifacts.artifact }
+    }
+
+    suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url(artifactUrl).get().build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    if (it.isSuccessful) {
+                        it.body?.byteStream()?.use { input ->
+                            targetFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        true
+                    } else {
+                        log.warn("[Bamboo:API] Download artifact failed: ${it.code} for $artifactUrl")
+                        false
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Bamboo:API] Download artifact network error: ${e.message}", e)
+                false
             }
         }
 

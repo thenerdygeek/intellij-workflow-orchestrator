@@ -10,6 +10,7 @@ import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildStageData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.model.bamboo.FailedTestData
+import com.workflow.orchestrator.core.model.bamboo.ArtifactData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 import com.workflow.orchestrator.core.services.BambooService
@@ -299,6 +300,108 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                             "You may not have permission to trigger this plan."
                         else -> "Check Bamboo connection in Settings."
                     }
+                )
+            }
+        }
+    }
+
+    override suspend fun stopBuild(resultKey: String): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Bamboo not configured. Cannot stop build $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.stopBuild(resultKey)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Build $resultKey stopped."
+            )
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to stop build $resultKey: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error stopping build $resultKey: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                            "Check your Bamboo token in Settings."
+                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                            "You may not have permission to stop this build."
+                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                            "Build not found. It may have already finished."
+                        else -> "Check Bamboo connection in Settings."
+                    }
+                )
+            }
+        }
+    }
+
+    override suspend fun cancelBuild(resultKey: String): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Bamboo not configured. Cannot cancel build $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.cancelBuild(resultKey)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Build $resultKey cancelled."
+            )
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to cancel build $resultKey: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error cancelling build $resultKey: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                            "Check your Bamboo token in Settings."
+                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                            "You may not have permission to cancel this build."
+                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                            "Build not found. It may have already started or finished."
+                        else -> "Check Bamboo connection in Settings."
+                    }
+                )
+            }
+        }
+    }
+
+    override suspend fun getArtifacts(resultKey: String): ToolResult<List<ArtifactData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch artifacts for $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getArtifacts(resultKey)) {
+            is ApiResult.Success -> {
+                val data = result.data.map { artifact ->
+                    ArtifactData(
+                        name = artifact.name,
+                        downloadUrl = artifact.link?.href ?: "",
+                        producerJobKey = artifact.producerJobKey,
+                        shared = artifact.shared,
+                        size = artifact.size
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Build $resultKey has ${data.size} artifact(s): ${data.joinToString { it.name }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch artifacts for $resultKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching artifacts for $resultKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
                 )
             }
         }

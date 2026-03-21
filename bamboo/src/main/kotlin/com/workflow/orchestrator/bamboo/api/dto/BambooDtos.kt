@@ -239,3 +239,23 @@ data class BambooBuildVariablesResponse(
     val buildNumber: Int = 0,
     val variables: BambooVariableCollection = BambooVariableCollection()
 )
+
+// --- Artifact DTOs ---
+
+@Serializable
+data class BambooArtifactResponse(val artifacts: BambooArtifactList = BambooArtifactList())
+
+@Serializable
+data class BambooArtifactList(val artifact: List<BambooArtifact> = emptyList())
+
+@Serializable
+data class BambooArtifact(
+    val name: String = "",
+    val link: BambooArtifactLink? = null,
+    val producerJobKey: String = "",
+    val shared: Boolean = false,
+    val size: Long = 0
+)
+
+@Serializable
+data class BambooArtifactLink(val href: String = "")
