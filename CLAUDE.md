@@ -44,6 +44,71 @@ Service interfaces in `:core`: `JiraService`, `BambooService`, `SonarService`, `
 Implementations in feature modules (e.g., `JiraServiceImpl`, `BambooServiceImpl`).
 All return `ToolResult<T>` with typed `.data` for UI and `.summary` for logging/notifications.
 
+## Agent-Exposable Service Architecture (IMPORTANT)
+
+The `:agent` module (on a separate branch) exposes workflow capabilities as AI agent tools. For any new service method to be usable by the AI agent, it MUST follow this architecture:
+
+### The Pattern
+
+```
+1. core/services/XxxService.kt    → Add method to interface, return ToolResult<T>
+2. module/service/XxxServiceImpl.kt → Implement the method
+3. agent/tools/integration/XxxTool.kt → Wrap as agent tool (done on agent branch)
+```
+
+### Rules for New Service Methods
+
+**ALWAYS do this when adding a new feature that involves API calls or business logic:**
+
+1. **Add the method signature to the core service interface** (`core/services/JiraService.kt`, `BambooService.kt`, `SonarService.kt`, `BitbucketService.kt`)
+2. **Return `ToolResult<T>`** — not `ApiResult`, not raw DTOs, not `Unit`
+   - `ToolResult<T>` has `.data` (typed result for UI) and `.summary` (human-readable string for logging/AI)
+3. **Implement in the feature module** (`jira/service/JiraServiceImpl.kt`, etc.)
+4. **Do NOT put business logic only in UI panels or raw API clients** — if a panel can do it, a service method should exist for it
+
+### Why This Matters
+
+The AI agent (`:agent` module) depends ONLY on `:core`. It accesses services via the core interfaces. If a capability exists only in:
+- `JiraApiClient` (raw HTTP) → agent can't use it (wrong module, wrong return type)
+- `PrActionService` (`:pullrequest` module) → agent can't use it (wrong dependency)
+- A UI panel method → agent definitely can't use it
+
+Only methods on the **core service interfaces** with **`ToolResult<T>` return type** are accessible to the agent.
+
+### Example — Correct vs Incorrect
+
+**CORRECT (agent can use this):**
+```kotlin
+// core/services/BambooService.kt
+interface BambooService {
+    suspend fun stopBuild(resultKey: String): ToolResult<Unit>  // ✓ In core, returns ToolResult
+}
+
+// bamboo/service/BambooServiceImpl.kt
+override suspend fun stopBuild(resultKey: String): ToolResult<Unit> {
+    // implementation
+}
+```
+
+**INCORRECT (agent CANNOT use this):**
+```kotlin
+// jira/api/JiraApiClient.kt
+suspend fun getWorklogs(issueKey: String): ApiResult<JiraWorklogResponse> {  // ✗ In module, returns ApiResult
+    // Only accessible to jira UI, not to agent
+}
+```
+
+### Checklist for New Features
+
+When adding a new capability (API endpoint, action, query):
+- [ ] Is the method on the core service interface? (`core/services/Xxx.kt`)
+- [ ] Does it return `ToolResult<T>`?
+- [ ] Is the `T` data class defined in `core/model/`?
+- [ ] Does the `ToolResult` include a meaningful `.summary` string?
+- [ ] Is the implementation in the feature module's service class?
+
+If any answer is NO, the AI agent cannot use this feature.
+
 ## Shared Utilities (in :core)
 
 - **StatusColors** — JBColor constants: SUCCESS, ERROR, WARNING, INFO, LINK, OPEN, MERGED, DECLINED, SECONDARY_TEXT
