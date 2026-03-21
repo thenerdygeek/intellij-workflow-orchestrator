@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.ui.JBColor
+import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -10,6 +11,8 @@ import com.workflow.orchestrator.core.ui.TimeFormatter
 import java.awt.*
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 
 /**
  * Lightweight data class representing a PR in the list.
@@ -35,6 +38,26 @@ data class PrListItem(
  */
 class PrListPanel : JPanel(BorderLayout()) {
 
+    private var allItems: List<PrListItem> = emptyList()
+    private var filterDebounceTimer: Timer? = null
+
+    private val searchField = SearchTextField(false).apply {
+        textEditor.emptyText.text = "Filter by title, author, or branch..."
+        addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = scheduleFilter()
+            override fun removeUpdate(e: DocumentEvent) = scheduleFilter()
+            override fun changedUpdate(e: DocumentEvent) = scheduleFilter()
+        })
+    }
+
+    private fun scheduleFilter() {
+        filterDebounceTimer?.stop()
+        filterDebounceTimer = Timer(250) { applyFilter(searchField.text.orEmpty()) }.apply {
+            isRepeats = false
+            start()
+        }
+    }
+
     private val listModel = DefaultListModel<PrListItem>()
     val prList = JBList(listModel).apply {
         cellRenderer = PrListCellRenderer()
@@ -57,6 +80,13 @@ class PrListPanel : JPanel(BorderLayout()) {
         isOpaque = false
         background = JBColor.PanelBackground
 
+        val searchPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 8, 4, 8)
+            add(searchField, BorderLayout.CENTER)
+        }
+        add(searchPanel, BorderLayout.NORTH)
+
         val scrollPane = JBScrollPane(prList).apply {
             border = JBUI.Borders.empty()
             isOpaque = false
@@ -77,7 +107,10 @@ class PrListPanel : JPanel(BorderLayout()) {
     }
 
     fun showEmpty() {
-        removeAll()
+        allItems = emptyList()
+        // Keep search panel in NORTH, replace CENTER with empty label
+        val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
+        if (centerComponent != null) remove(centerComponent)
         add(emptyLabel, BorderLayout.CENTER)
         revalidate()
         repaint()
@@ -112,16 +145,13 @@ class PrListPanel : JPanel(BorderLayout()) {
             newItems.addAll(reviewingPrs)
         }
 
-        // Check if data actually changed (compare by id + version to detect updates)
-        val currentItems = (0 until listModel.size).map { listModel.getElementAt(it) }
-        if (currentItems == newItems) return // No change — skip update
-
-        // Save selection before update
-        val selectedId = getSelectedPr()?.id
+        // Store all items for filtering
+        allItems = newItems
 
         // Ensure scroll pane is showing (not empty state)
-        if (componentCount == 0 || getComponent(0) !is JBScrollPane) {
-            removeAll()
+        val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
+        if (centerComponent !is JBScrollPane) {
+            if (centerComponent != null) remove(centerComponent)
             add(JBScrollPane(prList).apply {
                 border = JBUI.Borders.empty()
                 isOpaque = false
@@ -129,8 +159,42 @@ class PrListPanel : JPanel(BorderLayout()) {
             }, BorderLayout.CENTER)
         }
 
+        applyFilter(searchField.text.orEmpty())
+    }
+
+    private fun applyFilter(text: String) {
+        val filtered = if (text.isBlank()) {
+            allItems
+        } else {
+            val result = mutableListOf<PrListItem>()
+            var lastHeader: PrListItem? = null
+            for (item in allItems) {
+                if (item.isHeader) {
+                    lastHeader = item
+                } else if (item.title.contains(text, ignoreCase = true)
+                    || item.authorName.contains(text, ignoreCase = true)
+                    || item.fromBranch.contains(text, ignoreCase = true)
+                    || item.toBranch.contains(text, ignoreCase = true)
+                ) {
+                    if (lastHeader != null) {
+                        result.add(lastHeader)
+                        lastHeader = null
+                    }
+                    result.add(item)
+                }
+            }
+            result
+        }
+
+        // Check if data actually changed
+        val currentItems = (0 until listModel.size).map { listModel.getElementAt(it) }
+        if (currentItems == filtered) return
+
+        // Save selection before update
+        val selectedId = getSelectedPr()?.id
+
         listModel.clear()
-        newItems.forEach { listModel.addElement(it) }
+        filtered.forEach { listModel.addElement(it) }
 
         // Restore selection
         if (selectedId != null) {
