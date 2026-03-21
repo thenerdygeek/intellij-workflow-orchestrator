@@ -17,6 +17,7 @@ object DynamicToolSelector {
         "read_file", "edit_file", "search_code", "run_command", "glob_files",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "diagnostics", "format_code", "optimize_imports",
+        "agent",
         "delegate_task",
         "think"
     )
@@ -221,7 +222,8 @@ object DynamicToolSelector {
         // This is a hard whitelist — overrides all other selection logic
         if (skillAllowedTools != null) {
             val allowed = skillAllowedTools.toMutableSet()
-            // delegate_task is the only escape hatch — request_tools could bypass the whitelist
+            // agent + delegate_task are escape hatches — request_tools could bypass the whitelist
+            allowed.add("agent")
             allowed.add("delegate_task")
             return allTools.filter { it.name in allowed }
         }
@@ -253,7 +255,8 @@ object DynamicToolSelector {
         // Always include request_tools meta-tool AFTER removing disabled tools
         // — this is the LLM's escape hatch; disabling it breaks the hybrid system
         selectedNames.add("request_tools")
-        // delegate_task is always available — it's the LLM's delegation escape hatch
+        // agent + delegate_task are always available — delegation escape hatches
+        selectedNames.add("agent")
         selectedNames.add("delegate_task")
 
         return allTools.filter { it.name in selectedNames }

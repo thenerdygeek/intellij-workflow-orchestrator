@@ -19,169 +19,171 @@ import java.text.NumberFormat
 import java.util.Locale
 
 /**
- * Delegates a scoped task to a worker subagent.
+ * Spawns a subagent to handle a task autonomously, matching Claude Code's Agent tool design.
+ *
+ * Only two required parameters: description and prompt. The subagent_type defaults to
+ * general-purpose if omitted, or can reference a built-in type or custom agent definition.
  *
  * Only available to ORCHESTRATOR-level sessions (the main agent).
- * Workers cannot call delegate_task, preventing nested delegation.
+ * Workers cannot spawn further agents, preventing nested delegation.
  *
  * The tool spawns a WorkerSession with a fresh ContextManager, filtered tools,
  * and a 5-minute timeout. On failure or timeout, file changes are rolled back
  * via LocalHistory.
  */
-class DelegateTaskTool : AgentTool {
+class SpawnAgentTool : AgentTool {
 
     companion object {
-        private val LOG = Logger.getInstance(DelegateTaskTool::class.java)
-        private val FILE_PATH_PATTERN = Regex("""[\w/\\.-]+\.\w{1,10}""")
+        private val LOG = Logger.getInstance(SpawnAgentTool::class.java)
         private const val MAX_CONCURRENT_WORKERS = 5
-        private const val MAX_RETRY_ATTEMPTS = 2
         private const val WORKER_TIMEOUT_MS = 300_000L // 5 minutes
-        private val VALID_WORKER_TYPES = setOf("coder", "analyzer", "reviewer", "tooler")
+        private const val DEFAULT_MAX_ITERATIONS = 10
+
+        data class BuiltInAgent(
+            val workerType: WorkerType,
+            val description: String
+        )
+
+        val BUILT_IN_AGENTS = mapOf(
+            "general-purpose" to BuiltInAgent(WorkerType.ORCHESTRATOR, "Full capability agent for complex tasks"),
+            "explorer" to BuiltInAgent(WorkerType.ANALYZER, "Fast read-only codebase exploration"),
+            "coder" to BuiltInAgent(WorkerType.CODER, "Code editing and implementation"),
+            "reviewer" to BuiltInAgent(WorkerType.REVIEWER, "Code review and analysis"),
+            "tooler" to BuiltInAgent(WorkerType.TOOLER, "Integration tools (Jira, Bamboo, SonarQube)")
+        )
     }
 
-    override val name = "delegate_task"
+    override val name = "agent"
 
     override val description =
-        "[DEPRECATED: Use the 'agent' tool instead] " +
-            "Spawn a scoped worker subagent to perform a task. Worker types: coder (edits code), " +
-            "analyzer (reads and analyzes code), reviewer (reviews changes), tooler (interacts with " +
-            "Jira/Bamboo/SonarQube/Bitbucket). Optionally specify a custom subagent by name. " +
-            "Workers cannot delegate further."
+        "Launch a subagent to handle a task autonomously. The subagent runs in its own context " +
+            "with its own tools and returns results.\n\n" +
+            "Available agent types:\n" +
+            "- general-purpose: Full tool access, for complex multi-step tasks\n" +
+            "- explorer: Read-only, fast codebase exploration\n" +
+            "- coder: Code editing and implementation\n" +
+            "- reviewer: Code review and analysis (read-only)\n" +
+            "- tooler: Integration tools (Jira, Bamboo, SonarQube, Bitbucket)\n" +
+            "Or specify any custom agent defined in .workflow/agents/\n\n" +
+            "If subagent_type is omitted, defaults to general-purpose."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "task" to ParameterProperty(
+            "description" to ParameterProperty(
                 type = "string",
-                description = "Detailed description of what the worker should do (min 50 characters)"
+                description = "A short (3-5 word) summary of what the agent will do"
             ),
-            "worker_type" to ParameterProperty(
+            "prompt" to ParameterProperty(
                 type = "string",
-                description = "Type of worker to spawn",
-                enumValues = VALID_WORKER_TYPES.toList()
+                description = "The task for the agent to perform. Be detailed and specific."
             ),
-            "context" to ParameterProperty(
+            "subagent_type" to ParameterProperty(
                 type = "string",
-                description = "Relevant context for the worker, must contain at least one file path"
+                description = "Which agent type to use. Built-in: general-purpose, explorer, coder, reviewer, tooler. " +
+                    "Or any custom agent name from .workflow/agents/. Defaults to general-purpose."
             ),
-            "agent" to ParameterProperty(
+            "model" to ParameterProperty(
                 type = "string",
-                description = "Name of a custom subagent definition to use. Uses the subagent's system prompt, tools, and model."
+                description = "Optional model override: sonnet, opus, haiku. If omitted, inherits from parent or agent definition."
             )
         ),
-        required = listOf("task", "worker_type", "context")
+        required = listOf("description", "prompt")
     )
 
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        // --- 1. Validate parameters ---
-        val task = params["task"]?.jsonPrimitive?.content
-            ?: return errorResult("Error: 'task' parameter required")
+        // --- 1. Parse parameters (only description + prompt required) ---
+        val description = params["description"]?.jsonPrimitive?.contentOrNull
+            ?: return errorResult("Error: 'description' parameter required")
 
-        val workerTypeStr = params["worker_type"]?.jsonPrimitive?.content
-            ?: return errorResult("Error: 'worker_type' parameter required")
+        val prompt = params["prompt"]?.jsonPrimitive?.contentOrNull
+            ?: return errorResult("Error: 'prompt' parameter required")
 
-        val context = params["context"]?.jsonPrimitive?.content
-            ?: return errorResult("Error: 'context' parameter required")
+        val subagentType = params["subagent_type"]?.jsonPrimitive?.contentOrNull
+        val modelOverride = params["model"]?.jsonPrimitive?.contentOrNull
 
-        if (task.length < 50) {
-            return errorResult(
-                "Error: 'task' must be at least 50 characters to provide sufficient instruction " +
-                    "for the worker. Current length: ${task.length}"
-            )
-        }
-
-        if (workerTypeStr !in VALID_WORKER_TYPES) {
-            return errorResult(
-                "Error: Invalid worker_type '$workerTypeStr'. Must be one of: ${VALID_WORKER_TYPES.joinToString()}"
-            )
-        }
-
-        if (!FILE_PATH_PATTERN.containsMatchIn(context)) {
-            return errorResult(
-                "Error: 'context' must contain at least one file path (e.g., src/main/kotlin/Foo.kt)"
-            )
-        }
-
-        val workerType = when (workerTypeStr) {
-            "coder" -> WorkerType.CODER
-            "analyzer" -> WorkerType.ANALYZER
-            "reviewer" -> WorkerType.REVIEWER
-            "tooler" -> WorkerType.TOOLER
-            else -> return errorResult("Error: Invalid worker_type '$workerTypeStr'")
-        }
-
-        // --- 2. Check resource limits ---
+        // --- 2. Get services ---
         val agentService: AgentService
         val settings: AgentSettings
         try {
             agentService = AgentService.getInstance(project)
             settings = AgentSettings.getInstance(project)
         } catch (e: Exception) {
-            LOG.warn("DelegateTaskTool: failed to get services", e)
+            LOG.warn("SpawnAgentTool: failed to get services", e)
             return errorResult("Error: Agent services not available: ${e.message}")
         }
 
+        // --- 3. Check resource limits ---
         if (agentService.activeWorkerCount.get() >= MAX_CONCURRENT_WORKERS) {
             return errorResult(
                 "Error: Maximum concurrent workers ($MAX_CONCURRENT_WORKERS) reached. " +
-                    "Wait for a running worker to complete before delegating another task."
+                    "Wait for a running worker to complete before spawning another agent."
             )
         }
 
         if (agentService.totalSessionTokens.get() >= settings.state.maxSessionTokens) {
             return errorResult(
                 "Error: Session token budget exceeded (${formatNumber(agentService.totalSessionTokens.get())} / " +
-                    "${formatNumber(settings.state.maxSessionTokens.toLong())}). Cannot spawn new workers."
+                    "${formatNumber(settings.state.maxSessionTokens.toLong())}). Cannot spawn new agents."
             )
         }
 
-        // --- 2b. Load custom agent definition (optional) ---
-        val agentName = params["agent"]?.jsonPrimitive?.contentOrNull
-        val agentDef = if (agentName != null) {
-            val registry = agentService.agentDefinitionRegistry
-            registry?.getAgent(agentName)
-                ?: return errorResult(
-                    "Error: subagent '$agentName' not found. Available: ${
-                        registry?.getAllAgents()?.joinToString { it.name } ?: "none"
-                    }"
-                )
-        } else null
+        // --- 4. Resolve agent definition ---
+        val resolvedType = subagentType ?: "general-purpose"
+        val agentDef: AgentDefinitionRegistry.AgentDefinition?
+        val workerType: WorkerType
+        val maxIter: Int
 
-        // --- 3. Check retry limit ---
-        val filePaths = FILE_PATH_PATTERN.findAll(context).map { it.value }.toList().sorted()
-        val retryKey = "$workerType:${filePaths.joinToString(",")}"
-        val currentAttempts = agentService.delegationAttempts.getOrDefault(retryKey, 0)
-        if (currentAttempts >= MAX_RETRY_ATTEMPTS) {
+        // Check custom agents first
+        val registry = agentService.agentDefinitionRegistry
+        val customAgent = registry?.getAgent(resolvedType)
+
+        if (customAgent != null) {
+            // Custom agent definition found
+            agentDef = customAgent
+            // Custom agents run as ORCHESTRATOR type (full capability) unless their tools suggest otherwise
+            workerType = WorkerType.ORCHESTRATOR
+            maxIter = customAgent.maxTurns
+        } else if (resolvedType in BUILT_IN_AGENTS) {
+            // Built-in agent type
+            agentDef = null
+            val builtIn = BUILT_IN_AGENTS[resolvedType]!!
+            workerType = builtIn.workerType
+            maxIter = DEFAULT_MAX_ITERATIONS
+        } else {
+            // Unknown agent type — return error with available options
+            val availableBuiltIn = BUILT_IN_AGENTS.keys.joinToString(", ")
+            val availableCustom = registry?.getAllAgents()?.joinToString(", ") { it.name } ?: "none"
             return errorResult(
-                "Error: Retry limit ($MAX_RETRY_ATTEMPTS) reached for $workerType worker on files: " +
-                    "${filePaths.joinToString()}. Try a different approach or handle this task directly."
+                "Error: Unknown subagent_type '$resolvedType'. " +
+                    "Built-in types: $availableBuiltIn. " +
+                    "Custom agents: $availableCustom"
             )
         }
 
-        // --- 4. Spawn worker ---
+        // --- 5. Spawn worker ---
         agentService.activeWorkerCount.incrementAndGet()
 
         // Create rollback checkpoint
         val rollbackManager = AgentRollbackManager(project)
-        val checkpointId = rollbackManager.createCheckpoint("delegate_task: $workerType - ${task.take(60)}")
+        val checkpointId = rollbackManager.createCheckpoint("agent: $resolvedType - ${description.take(60)}")
 
         // Create event log for telemetry
-        val sessionId = "worker-${System.currentTimeMillis()}"
+        val sessionId = "agent-${System.currentTimeMillis()}"
         val eventLog = AgentEventLog(sessionId, project.basePath ?: ".")
-        eventLog.log(AgentEventType.WORKER_SPAWNED, "type=$workerType, task=${task.take(100)}")
+        eventLog.log(AgentEventType.WORKER_SPAWNED, "type=$resolvedType, description=$description")
 
         try {
-            // Fresh context manager for the worker (150K budget)
+            // Fresh context manager for the worker
             val contextManager = ContextManager(
                 maxInputTokens = settings.state.maxInputTokens
             )
 
-            // Get worker-specific prompt and tools, applying custom agent definition if present
+            // Get worker-specific prompt and tools
             val systemPrompt: String
             val toolMap: Map<String, AgentTool>
             val toolDefinitions: List<com.workflow.orchestrator.agent.api.dto.ToolDefinition>
-            val maxIter: Int
 
             if (agentDef != null) {
                 // Custom subagent: use its system prompt, tool restrictions, and max turns
@@ -210,23 +212,13 @@ class DelegateTaskTool : AgentTool {
                 }
                 toolMap = effectiveTools.associateBy { it.name }
                 toolDefinitions = effectiveTools.map { it.toToolDefinition() }
-                maxIter = agentDef.maxTurns
             } else {
-                // Standard worker: use built-in prompts and tool selection
+                // Standard built-in worker: use built-in prompts and tool selection
                 systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
                 val toolsForWorker = agentService.toolRegistry.getToolsForWorker(workerType)
                 toolMap = toolsForWorker.associateBy { it.name }
                 toolDefinitions = agentService.toolRegistry.getToolDefinitionsForWorker(workerType)
-                maxIter = 10
             }
-
-            // Build the full task with context
-            val fullTask = """
-                |$task
-                |
-                |## Context
-                |$context
-            """.trimMargin()
 
             // Execute with timeout
             val parentJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
@@ -235,7 +227,7 @@ class DelegateTaskTool : AgentTool {
                 workerSession.execute(
                     workerType = workerType,
                     systemPrompt = systemPrompt,
-                    task = fullTask,
+                    task = prompt,
                     tools = toolMap,
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
@@ -248,16 +240,15 @@ class DelegateTaskTool : AgentTool {
             agentService.totalSessionTokens.addAndGet(workerResult.tokensUsed.toLong())
 
             if (workerResult.isError) {
-                // Worker failed — increment retry counter, rollback
-                agentService.delegationAttempts.merge(retryKey, 1) { a, b -> a + b }
+                // Worker failed — rollback
                 rollbackManager.rollbackToCheckpoint(checkpointId)
                 eventLog.log(AgentEventType.WORKER_FAILED, "error=${workerResult.summary}")
                 eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
 
                 return ToolResult(
-                    content = "Worker ($workerTypeStr) failed: ${workerResult.content}\n\n" +
-                        "File changes have been rolled back. Retry attempts: ${currentAttempts + 1}/$MAX_RETRY_ATTEMPTS",
-                    summary = "Worker failed: ${workerResult.summary}",
+                    content = "Agent ($resolvedType) failed: ${workerResult.content}\n\n" +
+                        "File changes have been rolled back.",
+                    summary = "Agent '$description' failed: ${workerResult.summary}",
                     tokenEstimate = workerResult.tokensUsed,
                     isError = true
                 )
@@ -269,17 +260,18 @@ class DelegateTaskTool : AgentTool {
                 "tokens=${workerResult.tokensUsed}, artifacts=${workerResult.artifacts.size}"
             )
 
-            val filesModified = workerResult.artifacts.ifEmpty { filePaths }
             val formattedTokens = formatNumber(workerResult.tokensUsed.toLong())
 
             return ToolResult(
-                content = "Worker ($workerTypeStr) completed successfully.\n" +
-                    "Files modified: $filesModified\n" +
+                content = "Agent ($resolvedType) completed: $description\n" +
                     "Summary: ${workerResult.summary}\n" +
-                    "Tokens used: $formattedTokens\n\n" +
-                    "Note: The above files were modified by the worker. " +
-                    "Re-read them if needed as your cached version may be stale.",
-                summary = "Worker ($workerTypeStr) completed: ${workerResult.summary.take(100)}",
+                    "Tokens used: $formattedTokens\n" +
+                    if (workerResult.artifacts.isNotEmpty())
+                        "Files modified: ${workerResult.artifacts}\n\n" +
+                            "Note: The above files were modified by the agent. " +
+                            "Re-read them if needed as your cached version may be stale."
+                    else "",
+                summary = "Agent '$description' completed: ${workerResult.summary.take(100)}",
                 tokenEstimate = workerResult.tokensUsed,
                 artifacts = workerResult.artifacts
             )
@@ -287,29 +279,27 @@ class DelegateTaskTool : AgentTool {
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             // Timeout — rollback
             rollbackManager.rollbackToCheckpoint(checkpointId)
-            agentService.delegationAttempts.merge(retryKey, 1) { a, b -> a + b }
             eventLog.log(AgentEventType.WORKER_TIMED_OUT, "timeout=${WORKER_TIMEOUT_MS}ms")
             eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
 
             return ToolResult(
-                content = "Error: Worker ($workerTypeStr) timed out after ${WORKER_TIMEOUT_MS / 1000} seconds. " +
+                content = "Error: Agent ($resolvedType) timed out after ${WORKER_TIMEOUT_MS / 1000} seconds. " +
                     "File changes have been rolled back. Consider breaking the task into smaller pieces.",
-                summary = "Worker timed out after ${WORKER_TIMEOUT_MS / 1000}s",
+                summary = "Agent '$description' timed out after ${WORKER_TIMEOUT_MS / 1000}s",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
         } catch (e: Exception) {
             // Unexpected error — rollback
-            LOG.warn("DelegateTaskTool: worker execution failed", e)
+            LOG.warn("SpawnAgentTool: agent execution failed", e)
             rollbackManager.rollbackToCheckpoint(checkpointId)
-            agentService.delegationAttempts.merge(retryKey, 1) { a, b -> a + b }
             eventLog.log(AgentEventType.WORKER_FAILED, "exception=${e.message}")
             eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
 
             return ToolResult(
-                content = "Error: Worker ($workerTypeStr) failed: ${e.message}\n" +
+                content = "Error: Agent ($resolvedType) failed: ${e.message}\n" +
                     "File changes have been rolled back.",
-                summary = "Worker error: ${e.message?.take(100)}",
+                summary = "Agent '$description' error: ${e.message?.take(100)}",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
@@ -351,8 +341,8 @@ class DelegateTaskTool : AgentTool {
         }
 
         // Per-agent memory
-        val registry = try { agentService.agentDefinitionRegistry } catch (_: Exception) { null }
-        val memoryDir = registry?.getMemoryDirectory(def, project)
+        val memRegistry = try { agentService.agentDefinitionRegistry } catch (_: Exception) { null }
+        val memoryDir = memRegistry?.getMemoryDirectory(def, project)
         if (memoryDir != null && memoryDir.isDirectory) {
             val memoryIndex = java.io.File(memoryDir, "MEMORY.md")
             if (memoryIndex.isFile) {

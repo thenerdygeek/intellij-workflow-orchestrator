@@ -60,7 +60,7 @@ class PromptAssembler(
 
         // 6b. Available Subagents (only if custom agents defined)
         if (!agentDescriptions.isNullOrBlank()) {
-            sections.add("<available_subagents>\n$agentDescriptions\n\nTo delegate to a subagent, call delegate_task with the agent parameter.\n</available_subagents>")
+            sections.add("<available_subagents>\n$agentDescriptions\n\nTo delegate to a subagent, call the agent tool with subagent_type set to the agent name.\n</available_subagents>")
         }
 
         // 7. Previous Step Results (orchestrated mode only)
@@ -169,20 +169,23 @@ class PromptAssembler(
 
         val DELEGATION_RULES = """
             <delegation>
-            You have access to delegate_task to spawn focused workers for specific sub-tasks.
-            Each worker gets a fresh context window with scoped tools — they won't see your
-            conversation history, so provide clear context in the task description.
+            You have access to the agent tool to spawn focused subagents for specific sub-tasks.
+            Each subagent runs in its own context with scoped tools — they won't see your
+            conversation history, so provide clear context in the prompt.
+
+            Built-in agent types: general-purpose, explorer, coder, reviewer, tooler.
+            Custom agents may also be available (see available_subagents section).
 
             Guidelines:
             - Simple tasks (1-2 files, quick fix): handle yourself
-            - Moderate to complex tasks (3+ files, multi-step edits): delegate to a coder worker
-            - Analysis tasks (understand codebase, find references across modules): delegate to an analyzer worker
-            - Review tasks (check quality after changes): delegate to a reviewer worker
-            - Enterprise tool tasks (Jira, Bamboo, Sonar operations): delegate to a tooler worker
-            - When you create a plan and a step is non-trivial, delegate it
-            - Always provide the worker with: what to do, which files, and any relevant context
-              from your conversation (the worker cannot see your history)
-            - If a delegated task fails twice, handle it yourself or skip it
+            - Moderate to complex tasks (3+ files, multi-step edits): use agent with subagent_type="coder"
+            - Analysis tasks (understand codebase, find references across modules): use agent with subagent_type="explorer"
+            - Review tasks (check quality after changes): use agent with subagent_type="reviewer"
+            - Enterprise tool tasks (Jira, Bamboo, Sonar operations): use agent with subagent_type="tooler"
+            - When you create a plan and a step is non-trivial, delegate it via the agent tool
+            - Always provide detailed prompts with file paths and relevant context
+              (the subagent cannot see your conversation history)
+            - If a delegated task fails, try a different approach or handle it yourself
             </delegation>
         """.trimIndent()
 
