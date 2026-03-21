@@ -702,15 +702,18 @@ class AgentController(
 
         var result: ApprovalResult = ApprovalResult.Rejected
         ApplicationManager.getApplication().invokeAndWait {
-            if (riskLevel == RiskLevel.HIGH && description.contains("run_command")) {
-                val cmdMatch = Regex("run_command\\((.+?)\\)").find(description)
-                val dialog = CommandApprovalDialog(project, cmdMatch?.groupValues?.get(1) ?: description, project.basePath ?: ".", riskLevel.name)
-                dialog.show()
-                result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
-                if (dialog.allowAll) sessionAutoApprove = true
-            } else if (riskLevel >= RiskLevel.MEDIUM && !description.contains("run_command")) {
-                // File edit approval — try to show diff via EditApprovalDialog
-                if (description.contains("edit_file")) {
+            when {
+                // Command execution — show CommandApprovalDialog with command text
+                description.contains("run_command") -> {
+                    val cmdMatch = Regex("run_command\\((.+?)\\)").find(description)
+                    val dialog = CommandApprovalDialog(project, cmdMatch?.groupValues?.get(1) ?: description, project.basePath ?: ".", riskLevel.name)
+                    dialog.show()
+                    result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
+                    if (dialog.allowAll) sessionAutoApprove = true
+                }
+
+                // File edit — try to show diff via EditApprovalDialog
+                description.contains("edit_file") -> {
                     try {
                         val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(description)
                         val oldMatch = Regex(""""old_string"\s*:\s*"([^"]*?)"""").find(description)
@@ -737,55 +740,38 @@ class AgentController(
                             dialog.show()
                             result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
                         } else {
-                            // Fallback: parsing failed — use plain dialog with session auto-approve
-                            val answer = Messages.showYesNoCancelDialog(
-                                project,
-                                "The agent wants to edit a file.\n\nAction: Replace text content\n\nYou can undo this change after it's applied.",
-                                "Agent File Edit",
-                                "Allow", "Block", "Allow All (This Session)",
-                                Messages.getQuestionIcon()
+                            // Parsing partial — show what we could extract
+                            val fileInfo = filePath ?: "unknown file"
+                            result = showGenericApprovalDialog(
+                                "The agent wants to edit $fileInfo.\n\nCould not parse the full edit details.\nYou can undo this change after it's applied.",
+                                "Agent File Edit"
                             )
-                            result = when (answer) {
-                                Messages.YES -> ApprovalResult.Approved
-                                Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
-                                else -> ApprovalResult.Rejected
-                            }
                         }
                     } catch (e: Exception) {
-                        // Fallback on any error — use plain dialog
-                        val answer = Messages.showYesNoCancelDialog(
-                            project,
-                            "The agent wants to edit a file.\n\nAction: Replace text content\n\nYou can undo this change after it's applied.",
-                            "Agent File Edit",
-                            "Allow", "Block", "Allow All (This Session)",
-                            Messages.getQuestionIcon()
+                        result = showGenericApprovalDialog(
+                            "The agent wants to edit a file.\n\nError parsing edit details: ${e.message?.take(100)}\nYou can undo this change after it's applied.",
+                            "Agent File Edit"
                         )
-                        result = when (answer) {
-                            Messages.YES -> ApprovalResult.Approved
-                            Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
-                            else -> ApprovalResult.Rejected
-                        }
-                    }
-                } else {
-                    // Non-edit_file medium+ risk — plain dialog with session auto-approve
-                    val answer = Messages.showYesNoCancelDialog(
-                        project,
-                        "The agent wants to edit a file.\n\nAction: Replace text content\n\nYou can undo this change after it's applied.",
-                        "Agent File Edit",
-                        "Allow", "Block", "Allow All (This Session)",
-                        Messages.getQuestionIcon()
-                    )
-                    result = when (answer) {
-                        Messages.YES -> ApprovalResult.Approved
-                        Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
-                        else -> ApprovalResult.Rejected
                     }
                 }
-            } else {
-                val answer = Messages.showYesNoDialog(project,
-                    "The agent wants to perform:\n\n$description\n\nRisk level: ${riskLevel.name}",
-                    "Agent Action Approval", "Allow", "Block", Messages.getQuestionIcon())
-                result = if (answer == Messages.YES) ApprovalResult.Approved else ApprovalResult.Rejected
+
+                // Any other tool at MEDIUM+ risk — show the actual description
+                riskLevel >= RiskLevel.MEDIUM -> {
+                    // Extract the tool name from description for a meaningful message
+                    val toolName = description.substringBefore("(").trim()
+                    result = showGenericApprovalDialog(
+                        "The agent wants to perform:\n\n$toolName\n\n${description.take(300)}\n\nRisk level: ${riskLevel.name}",
+                        "Agent Action Approval"
+                    )
+                }
+
+                // LOW risk — simple yes/no
+                else -> {
+                    val answer = Messages.showYesNoDialog(project,
+                        "The agent wants to perform:\n\n$description\n\nRisk level: ${riskLevel.name}",
+                        "Agent Action Approval", "Allow", "Block", Messages.getQuestionIcon())
+                    result = if (answer == Messages.YES) ApprovalResult.Approved else ApprovalResult.Rejected
+                }
             }
         }
         val type = if (result is ApprovalResult.Approved) RichStreamingPanel.StatusType.SUCCESS else RichStreamingPanel.StatusType.WARNING
@@ -832,6 +818,25 @@ class AgentController(
             }
         } else {
             dashboard.appendStatus("No trace files found at: ${tracesDir.absolutePath}", RichStreamingPanel.StatusType.INFO)
+        }
+    }
+
+    /**
+     * Show a generic approval dialog with Allow / Block / Allow All options.
+     * Used as fallback when specialized dialogs (CommandApproval, EditApproval) can't be shown.
+     */
+    private fun showGenericApprovalDialog(message: String, title: String): ApprovalResult {
+        val answer = Messages.showYesNoCancelDialog(
+            project,
+            message,
+            title,
+            "Allow", "Block", "Allow All (This Session)",
+            Messages.getQuestionIcon()
+        )
+        return when (answer) {
+            Messages.YES -> ApprovalResult.Approved
+            Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
+            else -> ApprovalResult.Rejected
         }
     }
 
