@@ -43,11 +43,17 @@ class PrDashboardPanel(
     private val listPanel = PrListPanel()
     private val detailPanel = PrDetailPanel(project)
 
-    // -- Filter toggle --
+    // -- Role filter toggle --
     private val myPrsToggle = JToggleButton("My PRs").apply { isSelected = true }
     private val reviewingToggle = JToggleButton("Reviewing")
     private val allToggle = JToggleButton("All")
     private val filterGroup = ButtonGroup()
+
+    // -- State filter toggle --
+    private val openToggle = JToggleButton("Open").apply { isSelected = true }
+    private val mergedToggle = JToggleButton("Merged")
+    private val declinedToggle = JToggleButton("Declined")
+    private val stateGroup = ButtonGroup()
 
     // -- Status bar --
     private val statusLabel = JBLabel("Ready").apply {
@@ -114,6 +120,22 @@ class PrDashboardPanel(
         filterPanel.add(allToggle)
         topPanel.add(filterPanel, BorderLayout.CENTER)
 
+        // State filter toggles (Open | Merged | Declined) — right side
+        val statePanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), JBUI.scale(2))).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyRight(8)
+        }
+        stateGroup.add(openToggle)
+        stateGroup.add(mergedToggle)
+        stateGroup.add(declinedToggle)
+        openToggle.minimumSize = openToggle.preferredSize
+        mergedToggle.minimumSize = mergedToggle.preferredSize
+        declinedToggle.minimumSize = declinedToggle.preferredSize
+        statePanel.add(openToggle)
+        statePanel.add(mergedToggle)
+        statePanel.add(declinedToggle)
+        topPanel.add(statePanel, BorderLayout.EAST)
+
         add(topPanel, BorderLayout.NORTH)
 
         // -- Center: splitter --
@@ -177,6 +199,20 @@ class PrDashboardPanel(
         allToggle.addActionListener {
             activeFilter = PrFilter.ALL
             refreshListView()
+        }
+
+        // State filter listeners — change PR state and trigger service refresh
+        openToggle.addActionListener {
+            setLoading(true, "Loading open PRs...")
+            PrListService.getInstance(project).setState("OPEN")
+        }
+        mergedToggle.addActionListener {
+            setLoading(true, "Loading merged PRs...")
+            PrListService.getInstance(project).setState("MERGED")
+        }
+        declinedToggle.addActionListener {
+            setLoading(true, "Loading declined PRs...")
+            PrListService.getInstance(project).setState("DECLINED")
         }
     }
 

@@ -61,6 +61,19 @@ class PrListService(private val project: Project) : Disposable {
 
     fun setVisible(visible: Boolean) = poller.setVisible(visible)
 
+    /** Current PR state filter (OPEN, MERGED, DECLINED). */
+    @Volatile
+    private var currentState: String = "OPEN"
+
+    /**
+     * Changes the PR state filter and triggers a refresh.
+     * Valid values: "OPEN", "MERGED", "DECLINED".
+     */
+    fun setState(state: String) {
+        currentState = state
+        scope.launch { refresh() }
+    }
+
     /** Cached Bitbucket username — auto-detected on first refresh. */
     @Volatile
     private var cachedUsername: String? = null
@@ -116,29 +129,51 @@ class PrListService(private val project: Project) : Disposable {
                 }
             }
 
-        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username)")
+        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
 
-        // Fetch PRs authored by the current user
-        when (val result = client.getMyPullRequests(projectKey, repoSlug, username = username)) {
-            is ApiResult.Success -> {
-                _myPrs.value = result.data.values
-                log.info("[PR:List] Found ${result.data.values.size} authored PRs")
+        // Fetch PRs authored by the current user (paginated)
+        val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
+        _myPrs.value = myResults
+        log.info("[PR:List] Found ${myResults.size} authored PRs (state=$currentState)")
+
+        // Fetch PRs where the current user is a reviewer (paginated)
+        val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
+        _reviewingPrs.value = reviewResults
+        log.info("[PR:List] Found ${reviewResults.size} reviewing PRs (state=$currentState)")
+    }
+
+    /**
+     * Fetches all pages of PRs for the given role (AUTHOR or REVIEWER),
+     * capped at 100 results to avoid excessive API calls.
+     */
+    private suspend fun fetchAllPages(
+        client: BitbucketBranchClient,
+        projectKey: String,
+        repoSlug: String,
+        username: String?,
+        role: String
+    ): List<BitbucketPrDetail> {
+        val results = mutableListOf<BitbucketPrDetail>()
+        var start = 0
+        var isLast = false
+        while (!isLast && results.size < 100) {
+            val result = if (role == "AUTHOR") {
+                client.getMyPullRequests(projectKey, repoSlug, currentState, username, start, 25)
+            } else {
+                client.getReviewingPullRequests(projectKey, repoSlug, currentState, username, start, 25)
             }
-            is ApiResult.Error -> {
-                log.warn("[PR:List] Failed to fetch my PRs: ${result.message}")
+            if (result is ApiResult.Success) {
+                results.addAll(result.data.values)
+                isLast = result.data.isLastPage
+                start = result.data.nextPageStart ?: break
+            } else {
+                if (result is ApiResult.Error) {
+                    log.warn("[PR:List] Failed to fetch $role PRs (page start=$start): ${result.message}")
+                }
+                break
             }
         }
-
-        // Fetch PRs where the current user is a reviewer
-        when (val result = client.getReviewingPullRequests(projectKey, repoSlug, username = username)) {
-            is ApiResult.Success -> {
-                _reviewingPrs.value = result.data.values
-                log.info("[PR:List] Found ${result.data.values.size} reviewing PRs")
-            }
-            is ApiResult.Error -> {
-                log.warn("[PR:List] Failed to fetch reviewing PRs: ${result.message}")
-            }
-        }
+        return results
     }
 
     override fun dispose() {
