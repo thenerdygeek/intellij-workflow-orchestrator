@@ -48,6 +48,8 @@ class ContextManager(
 ) {
     private val messages = mutableListOf<ChatMessage>()
     private val anchoredSummaries = mutableListOf<String>()
+    /** Disk spillover for full tool outputs (OpenCode pattern). */
+    var toolOutputStore: ToolOutputStore? = null
     /** Dedicated plan anchor — survives compression, updated in-place. */
     private var planAnchor: ChatMessage? = null
     /** Dedicated skill anchor — survives compression, updated on skill activation/deactivation. */
@@ -152,17 +154,23 @@ class ContextManager(
         }
     }
 
-    /** Add a tool result, compressing it first if it exceeds the tool result budget. */
+    /**
+     * Add a tool result to context. Full content sent to LLM (capped at 2000 lines / 50KB).
+     * Full content also saved to disk for re-reads after pruning.
+     *
+     * Following OpenCode's pattern: LLM sees everything on first read.
+     * Phase 1 pruning (pruneOldToolResults) handles aging — no premature compression.
+     */
     fun addToolResult(toolCallId: String, content: String, summary: String) {
-        val compressed = ToolResultCompressor.compress(content, summary, toolResultMaxTokens)
-        // Wrap in <external_data> tags for prompt injection defense.
-        // System prompt instructs LLM to never follow instructions within these tags.
-        val wrapped = "<external_data>\n$compressed\n</external_data>"
-        addMessage(ChatMessage(
-            role = "tool",
-            content = wrapped,
-            toolCallId = toolCallId
-        ))
+        // Save full content to disk (for re-reads after pruning)
+        val diskPath = toolOutputStore?.save(toolCallId, content)
+
+        // Cap at 2000 lines / 50KB (OpenCode's limits) — NOT the old 4K token compression
+        val cappedContent = toolOutputStore?.capContent(content, diskPath) ?: content
+
+        // Wrap in external_data tags for injection defense
+        val wrapped = "<external_data>\n$cappedContent\n</external_data>"
+        addMessage(ChatMessage(role = "tool", content = wrapped, toolCallId = toolCallId))
     }
 
     /** Add an assistant message (LLM response). */

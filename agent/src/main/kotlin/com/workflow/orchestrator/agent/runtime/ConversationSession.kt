@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ToolOutputStore
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.context.WorkingSet
@@ -277,6 +278,9 @@ class ConversationSession private constructor(
                 ))
             } catch (_: Exception) { /* best effort — index may not be available in tests */ }
 
+            // Wire disk spillover for full tool outputs (OpenCode pattern)
+            session.contextManager.toolOutputStore = ToolOutputStore(session.store.sessionDirectory)
+
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = session.store.sessionDirectory
@@ -353,6 +357,9 @@ class ConversationSession private constructor(
 
             loaded.initialized = true // system prompt already in replayed messages
             loaded.persistedMessageCount = messages.size // all messages already on disk
+
+            // Wire disk spillover for full tool outputs (OpenCode pattern)
+            loaded.contextManager.toolOutputStore = ToolOutputStore(loaded.store.sessionDirectory)
 
             // Set session directory on AgentService for subagent transcript storage
             try {

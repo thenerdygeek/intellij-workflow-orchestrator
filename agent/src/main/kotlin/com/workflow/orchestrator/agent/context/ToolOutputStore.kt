@@ -1,0 +1,69 @@
+package com.workflow.orchestrator.agent.context
+
+import com.intellij.openapi.diagnostic.Logger
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Saves full tool output to disk for re-reads after context pruning.
+ *
+ * When a tool returns a large result (file content, search results, command output),
+ * the full content is saved to disk. If the result gets pruned from context later,
+ * the agent can re-read specific sections via read_file with offset/limit.
+ *
+ * Storage: {sessionDir}/tool-outputs/{toolCallId}.txt
+ *
+ * Follows OpenCode's pattern: full content on disk, summary in context after pruning.
+ */
+class ToolOutputStore(private val sessionDir: File?) {
+
+    companion object {
+        private val LOG = Logger.getInstance(ToolOutputStore::class.java)
+        const val MAX_LINES = 2000
+        const val MAX_BYTES = 50 * 1024  // 50KB
+    }
+
+    private val outputDir: File? get() = sessionDir?.let { File(it, "tool-outputs").also { d -> d.mkdirs() } }
+    private val storedPaths = ConcurrentHashMap<String, String>()
+
+    /**
+     * Save tool output to disk. Returns the disk path.
+     * Content is capped at MAX_BYTES on disk.
+     */
+    fun save(toolCallId: String, content: String): String? {
+        val dir = outputDir ?: return null
+        return try {
+            val file = File(dir, "$toolCallId.txt")
+            file.writeText(content.take(MAX_BYTES))
+            val path = file.absolutePath
+            storedPaths[toolCallId] = path
+            path
+        } catch (e: Exception) {
+            LOG.debug("ToolOutputStore: failed to save $toolCallId: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Get the disk path for a previously saved tool output.
+     */
+    fun getPath(toolCallId: String): String? = storedPaths[toolCallId]
+
+    /**
+     * Cap content to MAX_LINES / MAX_BYTES, append truncation hint if needed.
+     */
+    fun capContent(content: String, diskPath: String?): String {
+        val lines = content.lines()
+        val cappedByLines = if (lines.size > MAX_LINES) {
+            lines.take(MAX_LINES).joinToString("\n") +
+                "\n\n[Truncated at $MAX_LINES lines — ${lines.size} total." +
+                (if (diskPath != null) " Full output saved to: $diskPath. Use read_file with offset/limit to view more.]" else "]")
+        } else content
+
+        return if (cappedByLines.length > MAX_BYTES) {
+            cappedByLines.take(MAX_BYTES) +
+                "\n\n[Truncated at ${MAX_BYTES / 1024}KB." +
+                (if (diskPath != null) " Full output at: $diskPath]" else "]")
+        } else cappedByLines
+    }
+}
