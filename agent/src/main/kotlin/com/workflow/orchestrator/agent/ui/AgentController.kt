@@ -21,6 +21,7 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.tools.ToolCategoryRegistry
 import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
 import java.io.File
 import javax.swing.SwingUtilities
 
@@ -44,6 +45,7 @@ class AgentController(
     private var sessionAutoApprove = false
     private var currentPlanFile: com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile? = null
     private var planModeEnabled = false
+    private val mentionContextBuilder by lazy { MentionContextBuilder(project) }
 
     init {
         // Tie coroutine scope to project lifecycle — cancel when project closes
@@ -76,6 +78,11 @@ class AgentController(
                 }
             },
             onOpenToolsPanel = { showToolsPanel() }
+        )
+
+        // Wire mention-aware send callback
+        dashboard.setCefMentionCallbacks(
+            onSendWithMentions = { text, mentionsJson -> handleMessageWithMentions(text, mentionsJson) }
         )
 
         // Wire JCEF JS→Kotlin action callbacks (undo, view-trace, example prompts)
@@ -198,6 +205,44 @@ class AgentController(
             put("categories", categoriesArray)
         }.toString()
         dashboard.showToolsPanel(json)
+    }
+
+    private fun handleMessageWithMentions(text: String, mentionsJson: String) {
+        // Parse mentions from JSON
+        val mentions = try {
+            kotlinx.serialization.json.Json.parseToJsonElement(mentionsJson).jsonArray.map { el ->
+                val obj = el.jsonObject
+                MentionContextBuilder.Mention(
+                    type = obj["type"]?.jsonPrimitive?.content ?: "file",
+                    name = obj["name"]?.jsonPrimitive?.content ?: "",
+                    value = obj["value"]?.jsonPrimitive?.content ?: ""
+                )
+            }
+        } catch (_: Exception) { emptyList() }
+
+        // Build mention context (reads files, generates trees) then execute
+        if (mentions.isNotEmpty()) {
+            scope.launch(Dispatchers.IO) {
+                val context = mentionContextBuilder.buildContext(mentions)
+                if (context != null) {
+                    session?.contextManager?.setMentionAnchor(
+                        com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                            role = "system",
+                            content = "<mentioned_context>\n$context</mentioned_context>"
+                        )
+                    )
+                } else {
+                    session?.contextManager?.setMentionAnchor(null)
+                }
+                SwingUtilities.invokeLater {
+                    executeTask(text)
+                }
+            }
+        } else {
+            // No mentions — clear any previous anchor and send normally
+            session?.contextManager?.setMentionAnchor(null)
+            executeTask(text)
+        }
     }
 
     fun executeTask(task: String) {

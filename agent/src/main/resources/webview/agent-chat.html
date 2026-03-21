@@ -3280,25 +3280,29 @@ function sendMessage() {
   var text = ta ? ta.value.trim() : '';
   if (!text && _mentions.length === 0) return;
 
-  // Build message with mention context
-  var message = text;
-  if (_mentions.length > 0) {
-    var context = _mentions.map(function(m) {
-      return '@' + m.type + ' ' + m.value;
-    }).join(', ');
-    message = '[Context: ' + context + ']\n\n' + text;
-  }
-
-  // Clear state
   var sendBtn = document.getElementById('send-btn');
   if (sendBtn) sendBtn.disabled = true;
   ta.value = '';
   ta.style.height = 'auto';
+
+  // Send text + structured mentions as JSON
+  var mentionsCopy = _mentions.slice();
   _mentions = [];
   renderMentionPills();
   closeMentionDropdown();
 
-  if (window._sendMessage) window._sendMessage(message);
+  if (mentionsCopy.length > 0 && window._sendMessageWithMentions) {
+    var payload = JSON.stringify({ text: text, mentions: mentionsCopy });
+    window._sendMessageWithMentions(payload);
+  } else if (window._sendMessage) {
+    // Fallback: prepend mentions as text if new bridge unavailable
+    var message = text;
+    if (mentionsCopy.length > 0) {
+      var context = mentionsCopy.map(function(m) { return '@' + m.type + ' ' + m.value; }).join(', ');
+      message = '[Context: ' + context + ']\n\n' + text;
+    }
+    window._sendMessage(message);
+  }
 }
 
 // Auto-expand textarea

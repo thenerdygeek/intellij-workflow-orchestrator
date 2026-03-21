@@ -175,7 +175,10 @@ JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 - Click-to-navigate file paths (opens file at line in IDE editor)
 - Jira card embeds with status/priority/assignee
 - Sonar quality gate badges with metrics
-- @ mention autocomplete: type @ to search files (VFS), symbols (PSI), tools, skills — mentions provide context to the LLM
+- @ mention autocomplete: type @ to reference files, folders, symbols, tools, skills.
+  @file reads content via Document API (sees unsaved changes) and injects into LLM context.
+  @folder injects directory tree. Content stored as compression-proof mentionAnchor.
+  Budget: 500 lines / 20K per file, 50K total.
 - Toast notifications, skeleton loading, timeline visualization
 - Sortable/filterable tables, tabbed content, progress bars
 

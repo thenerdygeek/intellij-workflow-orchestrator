@@ -14,6 +14,7 @@ import org.cef.handler.CefLoadHandlerAdapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.*
 import java.awt.BorderLayout
 import javax.swing.JPanel
 
@@ -65,7 +66,9 @@ class AgentCefPanel(
     private var openSettingsQuery: JBCefJSQuery? = null
     private var openToolsPanelQuery: JBCefJSQuery? = null
     private var searchMentionsQuery: JBCefJSQuery? = null
+    private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
+    var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
     @Volatile private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -272,6 +275,20 @@ class AgentCefPanel(
                 JBCefJSQuery.Response("ok")
             }
         }
+        sendMessageWithMentionsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { payload ->
+                try {
+                    val json = Json.parseToJsonElement(payload).jsonObject
+                    val text = json["text"]?.jsonPrimitive?.content ?: ""
+                    val mentionsJson = json["mentions"]?.toString() ?: "[]"
+                    onSendMessageWithMentions?.invoke(text, mentionsJson)
+                } catch (e: Exception) {
+                    // Fallback: treat entire payload as text
+                    onSendMessage?.invoke(payload)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -379,6 +396,10 @@ class AgentCefPanel(
                     searchMentionsQuery?.let { q ->
                         val searchJs = q.inject("data")
                         js("window._searchMentions = function(data) { $searchJs }")
+                    }
+                    sendMessageWithMentionsQuery?.let { q ->
+                        val sendJs = q.inject("payload")
+                        js("window._sendMessageWithMentions = function(payload) { $sendJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -722,6 +743,7 @@ class AgentCefPanel(
         openSettingsQuery?.dispose()
         openToolsPanelQuery?.dispose()
         searchMentionsQuery?.dispose()
+        sendMessageWithMentionsQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -747,6 +769,7 @@ class AgentCefPanel(
         openSettingsQuery = null
         openToolsPanelQuery = null
         searchMentionsQuery = null
+        sendMessageWithMentionsQuery = null
         browser = null
     }
 }
