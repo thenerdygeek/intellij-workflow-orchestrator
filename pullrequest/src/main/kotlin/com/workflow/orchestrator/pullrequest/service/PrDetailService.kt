@@ -108,6 +108,29 @@ class PrDetailService(private val project: Project) {
     }
 
     /**
+     * Fetches file content at a specific ref (commit hash or branch name).
+     * Returns empty string for new/deleted files or on error.
+     */
+    suspend fun getFileContent(filePath: String, atRef: String): String {
+        val client = getClient() ?: return ""
+        if (!isConfigured()) return ""
+
+        log.info("[PR:Detail] Fetching file content: $filePath at $atRef")
+        return try {
+            when (val result = client.getFileContent(projectKey(), repoSlug(), filePath, atRef)) {
+                is ApiResult.Success -> result.data ?: ""
+                is ApiResult.Error -> {
+                    log.warn("[PR:Detail] Failed to fetch file content: ${result.message}")
+                    ""
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("[PR:Detail] Error fetching file content: ${e.message}")
+            ""
+        }
+    }
+
+    /**
      * Fetches the raw diff for a PR.
      */
     suspend fun getDiff(prId: Int): String? {

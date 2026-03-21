@@ -1,8 +1,12 @@
 package com.workflow.orchestrator.pullrequest.ui
 
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.DiffManager
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -17,6 +21,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -1067,6 +1072,7 @@ class PrDetailPanel(
             fixedCellHeight = JBUI.scale(28)
             border = JBUI.Borders.empty()
             isOpaque = false
+            toolTipText = "Double-click to view diff"
         }
         private val emptyLabel = JBLabel("No file changes.").apply {
             foreground = JBUI.CurrentTheme.Label.disabledForeground()
@@ -1079,14 +1085,29 @@ class PrDetailPanel(
             border = JBUI.Borders.empty(4, 8)
         }
 
+        /** Stored changes for diff viewer lookup by index. */
+        private var currentChanges: List<BitbucketPrChange> = emptyList()
+
         init {
             isOpaque = false
             add(emptyLabel, BorderLayout.CENTER)
+
+            // Double-click to open diff viewer
+            filesList.addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    if (e.clickCount == 2) {
+                        val index = filesList.selectedIndex
+                        if (index < 0 || index >= currentChanges.size) return
+                        openDiffViewer(currentChanges[index])
+                    }
+                }
+            })
         }
 
-        fun showChanges(changes: List<com.workflow.orchestrator.core.bitbucket.BitbucketPrChange>) {
+        fun showChanges(changes: List<BitbucketPrChange>) {
             removeAll()
             filesListModel.clear()
+            currentChanges = changes
 
             if (changes.isEmpty()) {
                 add(emptyLabel, BorderLayout.CENTER)
@@ -1101,6 +1122,7 @@ class PrDetailPanel(
                     filesListModel.addElement(FileDisplayItem(
                         fileName = fileName,
                         dirPath = dirPath,
+                        fullPath = filePath,
                         changeType = change.type
                     ))
                 }
@@ -1113,11 +1135,44 @@ class PrDetailPanel(
             revalidate()
             repaint()
         }
+
+        private fun openDiffViewer(change: BitbucketPrChange) {
+            val filePath = change.path.toString.ifBlank { change.path.name }
+            if (filePath.isBlank()) return
+
+            scope.launch {
+                val detailService = PrDetailService.getInstance(project)
+                val pr = currentPr ?: return@launch
+
+                val baseRef = pr.toRef?.latestCommit ?: ""
+                val headRef = pr.fromRef?.latestCommit ?: ""
+
+                val baseText = detailService.getFileContent(filePath, baseRef)
+                val headText = detailService.getFileContent(filePath, headRef)
+
+                withContext(Dispatchers.EDT) {
+                    val diffContentFactory = DiffContentFactory.getInstance()
+                    val baseContent = diffContentFactory.create(project, baseText)
+                    val headContent = diffContentFactory.create(project, headText)
+
+                    val request = SimpleDiffRequest(
+                        filePath,
+                        baseContent,
+                        headContent,
+                        "Base (${pr.toRef?.displayId ?: "target"})",
+                        "Changes (${pr.fromRef?.displayId ?: "source"})"
+                    )
+
+                    DiffManager.getInstance().showDiff(project, request)
+                }
+            }
+        }
     }
 
     private data class FileDisplayItem(
         val fileName: String,
         val dirPath: String,
+        val fullPath: String,
         val changeType: String
     )
 
@@ -1140,9 +1195,13 @@ class PrDetailPanel(
             font = font.deriveFont(JBUI.scale(10).toFloat())
             foreground = SECONDARY_TEXT
         }
+        private val diffIconLabel = JBLabel(AllIcons.Actions.Diff).apply {
+            toolTipText = "Double-click to view diff"
+        }
 
         init {
             rootPanel.add(leftRow, BorderLayout.CENTER)
+            rootPanel.add(diffIconLabel, BorderLayout.EAST)
         }
 
         override fun getListCellRendererComponent(
