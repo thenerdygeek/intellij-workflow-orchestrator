@@ -81,7 +81,6 @@ class StageDetailPanel(
 
     companion object {
         private const val MAX_DISPLAY_CHARS = 50_000
-        private const val MAX_DOWNLOAD_CHARS = 2_000_000
     }
 
     init {

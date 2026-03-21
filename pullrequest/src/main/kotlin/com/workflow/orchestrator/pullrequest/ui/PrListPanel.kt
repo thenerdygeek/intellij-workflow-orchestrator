@@ -161,6 +161,81 @@ class PrListPanel : JPanel(BorderLayout()) {
 
     private class PrListCellRenderer : ListCellRenderer<PrListItem> {
 
+        // Cached header cell components
+        private val headerPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(8, 8, 4, 8)
+        }
+        private val headerLabel = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            foreground = SECONDARY_TEXT
+        }
+
+        // Cached PR cell components
+        private var selectedState = false
+        private val prPanel = object : JPanel(BorderLayout()) {
+            init {
+                isOpaque = false
+                border = JBUI.Borders.empty(6, 8, 6, 8)
+            }
+
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                if (selectedState) {
+                    val g2 = g.create() as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = SELECTION_BG
+                    g2.fill(RoundRectangle2D.Float(
+                        JBUI.scale(2).toFloat(), 0f,
+                        (width - JBUI.scale(4)).toFloat(), height.toFloat(),
+                        JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
+                    ))
+                    g2.dispose()
+                }
+            }
+        }
+        private val topRow = JPanel(BorderLayout()).apply { isOpaque = false }
+        private val topLeft = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
+        private val idLabel = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+        }
+        private val titleLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(12).toFloat())
+            border = JBUI.Borders.emptyLeft(6)
+        }
+        private val statusBadgePanel = StatusBadgePanel()
+        private val bottomRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(2)
+        }
+        private val authorLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            foreground = SECONDARY_TEXT
+        }
+        private val branchLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            foreground = BRANCH_TEXT
+        }
+        private val reviewerLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            foreground = SECONDARY_TEXT
+        }
+        private val timeLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            foreground = SECONDARY_TEXT
+        }
+
+        init {
+            headerPanel.add(headerLabel, BorderLayout.WEST)
+
+            topLeft.add(idLabel)
+            topLeft.add(titleLabel)
+            topRow.add(topLeft, BorderLayout.CENTER)
+            topRow.add(statusBadgePanel, BorderLayout.EAST)
+            prPanel.add(topRow, BorderLayout.NORTH)
+            prPanel.add(bottomRow, BorderLayout.CENTER)
+        }
+
         override fun getListCellRendererComponent(
             list: JList<out PrListItem>,
             value: PrListItem,
@@ -169,142 +244,85 @@ class PrListPanel : JPanel(BorderLayout()) {
             cellHasFocus: Boolean
         ): Component {
             if (value.isHeader) {
-                return createHeaderCell(value)
+                headerLabel.text = value.title
+                return headerPanel
             }
-            return createPrCell(value, isSelected)
+
+            selectedState = isSelected
+
+            idLabel.text = "#${value.id}"
+            idLabel.foreground = if (isSelected) JBColor.foreground() else LINK_COLOR
+
+            titleLabel.text = truncate(value.title, 45)
+            titleLabel.foreground = JBColor.foreground()
+            titleLabel.toolTipText = if (value.title.length > 45) value.title else null
+
+            statusBadgePanel.update(value.status)
+
+            bottomRow.removeAll()
+            authorLabel.text = value.authorName
+            bottomRow.add(authorLabel)
+
+            branchLabel.text = "${truncate(value.fromBranch, 20)} \u2192 ${truncate(value.toBranch, 20)}"
+            branchLabel.toolTipText = if (value.fromBranch.length > 20 || value.toBranch.length > 20) {
+                "${value.fromBranch} \u2192 ${value.toBranch}"
+            } else null
+            bottomRow.add(branchLabel)
+
+            if (value.reviewerCount > 0) {
+                reviewerLabel.text = "${value.reviewerCount} reviewers"
+                bottomRow.add(reviewerLabel)
+            }
+            if (value.updatedDate > 0) {
+                val (relativeText, absoluteText) = TimeFormatter.relativeWithTooltip(value.updatedDate)
+                timeLabel.text = relativeText
+                timeLabel.toolTipText = absoluteText
+                bottomRow.add(timeLabel)
+            }
+
+            return prPanel
         }
 
-        private fun createHeaderCell(item: PrListItem): JPanel {
-            return JPanel(BorderLayout()).apply {
+        /** Cached status badge that repaints with updated color/text. */
+        private class StatusBadgePanel : JPanel() {
+            private var badgeColor: Color = SECONDARY_TEXT
+            private var badgeText: String = ""
+
+            init {
                 isOpaque = false
-                border = JBUI.Borders.empty(8, 8, 4, 8)
-                val label = JBLabel(item.title).apply {
-                    font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-                    foreground = SECONDARY_TEXT
-                }
-                add(label, BorderLayout.WEST)
             }
-        }
 
-        private fun createPrCell(item: PrListItem, isSelected: Boolean): JPanel {
-            return object : JPanel(BorderLayout()) {
-                init {
-                    isOpaque = false
-                    border = JBUI.Borders.empty(6, 8, 6, 8)
+            fun update(status: String) {
+                badgeText = status.uppercase()
+                badgeColor = when (badgeText) {
+                    "OPEN" -> STATUS_OPEN
+                    "MERGED" -> STATUS_MERGED
+                    "DECLINED" -> STATUS_DECLINED
+                    else -> SECONDARY_TEXT
                 }
-
-                override fun paintComponent(g: Graphics) {
-                    super.paintComponent(g)
-                    if (isSelected) {
-                        val g2 = g.create() as Graphics2D
-                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                        g2.color = SELECTION_BG
-                        g2.fill(RoundRectangle2D.Float(
-                            JBUI.scale(2).toFloat(), 0f,
-                            (width - JBUI.scale(4)).toFloat(), height.toFloat(),
-                            JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
-                        ))
-                        g2.dispose()
-                    }
-                }
-            }.apply {
-                // Top row: PR # + title
-                val topRow = JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                }
-                val idLabel = JBLabel("#${item.id}").apply {
-                    font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
-                    foreground = if (isSelected) JBColor.foreground() else LINK_COLOR
-                }
-                val titleLabel = JBLabel(truncate(item.title, 45)).apply {
-                    font = font.deriveFont(JBUI.scale(12).toFloat())
-                    foreground = JBColor.foreground()
-                    border = JBUI.Borders.emptyLeft(6)
-                    if (item.title.length > 45) toolTipText = item.title
-                }
-                val topLeft = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-                    isOpaque = false
-                    add(idLabel)
-                    add(titleLabel)
-                }
-                topRow.add(topLeft, BorderLayout.CENTER)
-
-                // Status badge
-                topRow.add(createStatusBadge(item.status), BorderLayout.EAST)
-                add(topRow, BorderLayout.NORTH)
-
-                // Bottom row: author, branch -> branch, time
-                val bottomRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-                    isOpaque = false
-                    border = JBUI.Borders.emptyTop(2)
-                }
-                bottomRow.add(JBLabel(item.authorName).apply {
-                    font = font.deriveFont(JBUI.scale(10).toFloat())
-                    foreground = SECONDARY_TEXT
-                })
-                bottomRow.add(JBLabel("${truncate(item.fromBranch, 20)} \u2192 ${truncate(item.toBranch, 20)}").apply {
-                    font = font.deriveFont(JBUI.scale(10).toFloat())
-                    foreground = BRANCH_TEXT
-                    if (item.fromBranch.length > 20 || item.toBranch.length > 20) {
-                        toolTipText = "${item.fromBranch} \u2192 ${item.toBranch}"
-                    }
-                })
-                if (item.reviewerCount > 0) {
-                    bottomRow.add(JBLabel("${item.reviewerCount} reviewers").apply {
-                        font = font.deriveFont(JBUI.scale(10).toFloat())
-                        foreground = SECONDARY_TEXT
-                    })
-                }
-                if (item.updatedDate > 0) {
-                    val (relativeText, absoluteText) = TimeFormatter.relativeWithTooltip(item.updatedDate)
-                    bottomRow.add(JBLabel(relativeText).apply {
-                        font = font.deriveFont(JBUI.scale(10).toFloat())
-                        foreground = SECONDARY_TEXT
-                        toolTipText = absoluteText
-                    })
-                }
-                add(bottomRow, BorderLayout.CENTER)
+                val fm = getFontMetrics(font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat()))
+                val textW = fm.stringWidth(badgeText)
+                preferredSize = Dimension(textW + JBUI.scale(10), fm.height + JBUI.scale(4))
             }
-        }
 
-        private fun createStatusBadge(status: String): JPanel {
-            val color = when (status.uppercase()) {
-                "OPEN" -> STATUS_OPEN
-                "MERGED" -> STATUS_MERGED
-                "DECLINED" -> STATUS_DECLINED
-                else -> SECONDARY_TEXT
-            }
-            val text = status.uppercase()
-
-            return object : JPanel() {
-                init {
-                    isOpaque = false
-                    val fm = getFontMetrics(font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat()))
-                    val textW = fm.stringWidth(text)
-                    preferredSize = Dimension(
-                        textW + JBUI.scale(10),
-                        fm.height + JBUI.scale(4)
-                    )
-                }
-
-                override fun paintComponent(g: Graphics) {
-                    super.paintComponent(g)
-                    val g2 = g.create() as Graphics2D
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                    g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
-                    g2.color = color
-                    g2.fill(RoundRectangle2D.Float(
-                        0f, 0f, width.toFloat(), height.toFloat(),
-                        JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
-                    ))
-                    g2.color = JBColor.WHITE
-                    g2.font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
-                    val fm = g2.fontMetrics
-                    val textX = (width - fm.stringWidth(text)) / 2
-                    val textY = (height + fm.ascent - fm.descent) / 2
-                    g2.drawString(text, textX, textY)
-                    g2.dispose()
-                }
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                if (badgeText.isEmpty()) return
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
+                g2.color = badgeColor
+                g2.fill(RoundRectangle2D.Float(
+                    0f, 0f, width.toFloat(), height.toFloat(),
+                    JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
+                ))
+                g2.color = JBColor.WHITE
+                g2.font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
+                val fm = g2.fontMetrics
+                val textX = (width - fm.stringWidth(badgeText)) / 2
+                val textY = (height + fm.ascent - fm.descent) / 2
+                g2.drawString(badgeText, textX, textY)
+                g2.dispose()
             }
         }
     }

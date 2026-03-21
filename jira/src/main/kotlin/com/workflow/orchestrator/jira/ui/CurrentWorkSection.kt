@@ -104,6 +104,7 @@ class CurrentWorkSection(
 
         // Click to select ticket in the list
         cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        mouseListeners.forEach { removeMouseListener(it) }
         addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
                 onTicketClicked?.invoke(ticketId)

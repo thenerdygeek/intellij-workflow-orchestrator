@@ -97,7 +97,13 @@ class AutomationPanel(
         }
 
         tabbedPane.addTab("Configure", configurePanel)
-        tabbedPane.addTab("Monitor", monitorPanel)
+
+        // Monitor tab: queue status at top + run monitor below
+        val monitorTabPanel = JPanel(BorderLayout()).apply {
+            add(queueStatusPanel, BorderLayout.NORTH)
+            add(monitorPanel, BorderLayout.CENTER)
+        }
+        tabbedPane.addTab("Monitor", monitorTabPanel)
         add(tabbedPane, BorderLayout.CENTER)
 
         // Suite selection listener

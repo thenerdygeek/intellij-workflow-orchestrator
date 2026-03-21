@@ -925,6 +925,44 @@ class PrDetailPanel(
     )
 
     private class ActivityCellRenderer : ListCellRenderer<ActivityDisplayItem> {
+        // Cached components — reused on every render call
+        private val rootPanel = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(6, 8)
+        }
+        private val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+        }
+        private val userLabel = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+        }
+        private val actionLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+        }
+        private val timestampLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+        }
+        private val contentPanel = JPanel().apply {
+            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.emptyLeft(JBUI.scale(8))
+        }
+        private val anchorLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            foreground = StatusColors.LINK
+            icon = AllIcons.FileTypes.Java
+            iconTextGap = JBUI.scale(4)
+        }
+        private val commentLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+        }
+
+        init {
+            topRow.add(userLabel)
+            topRow.add(actionLabel)
+            topRow.add(timestampLabel)
+            rootPanel.add(topRow, BorderLayout.NORTH)
+        }
+
         override fun getListCellRendererComponent(
             list: JList<out ActivityDisplayItem>,
             value: ActivityDisplayItem,
@@ -932,61 +970,43 @@ class PrDetailPanel(
             isSelected: Boolean,
             cellHasFocus: Boolean
         ): Component {
-            return JPanel(BorderLayout()).apply {
-                isOpaque = isSelected
-                if (isSelected) {
-                    background = list.selectionBackground
-                }
-                border = JBUI.Borders.empty(6, 8)
-
-                val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-                    isOpaque = false
-                }
-                topRow.add(JBLabel(value.userName).apply {
-                    font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-                    if (isSelected) foreground = list.selectionForeground
-                })
-                topRow.add(JBLabel(formatAction(value.action)).apply {
-                    font = font.deriveFont(JBUI.scale(11).toFloat())
-                    foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
-                })
-                topRow.add(JBLabel(value.timestamp).apply {
-                    font = font.deriveFont(JBUI.scale(10).toFloat())
-                    foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
-                })
-                add(topRow, BorderLayout.NORTH)
-
-                val contentPanel = JPanel().apply {
-                    layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-                    isOpaque = false
-                    border = JBUI.Borders.emptyLeft(JBUI.scale(8))
-                }
-
-                // Show file:line anchor for inline code comments
-                if (value.anchorPath != null) {
-                    val fileName = value.anchorPath.substringAfterLast('/')
-                    val lineText = if (value.anchorLine > 0) ":${value.anchorLine}" else ""
-                    contentPanel.add(JBLabel("$fileName$lineText").apply {
-                        font = font.deriveFont(JBUI.scale(10).toFloat())
-                        foreground = StatusColors.LINK
-                        icon = AllIcons.FileTypes.Java
-                        iconTextGap = JBUI.scale(4)
-                        toolTipText = "Double-click to navigate to ${value.anchorPath}$lineText"
-                    })
-                }
-
-                if (value.commentText.isNotBlank()) {
-                    contentPanel.add(JBLabel(PrListPanel.truncate(value.commentText, 150)).apply {
-                        font = font.deriveFont(JBUI.scale(11).toFloat())
-                        foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
-                        if (value.commentText.length > 150) toolTipText = value.commentText
-                    })
-                }
-
-                if (contentPanel.componentCount > 0) {
-                    add(contentPanel, BorderLayout.CENTER)
-                }
+            rootPanel.isOpaque = isSelected
+            if (isSelected) {
+                rootPanel.background = list.selectionBackground
             }
+
+            userLabel.text = value.userName
+            userLabel.foreground = if (isSelected) list.selectionForeground else JBColor.foreground()
+
+            actionLabel.text = formatAction(value.action)
+            actionLabel.foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
+
+            timestampLabel.text = value.timestamp
+            timestampLabel.foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
+
+            contentPanel.removeAll()
+            rootPanel.remove(contentPanel)
+
+            if (value.anchorPath != null) {
+                val fileName = value.anchorPath.substringAfterLast('/')
+                val lineText = if (value.anchorLine > 0) ":${value.anchorLine}" else ""
+                anchorLabel.text = "$fileName$lineText"
+                anchorLabel.toolTipText = "Double-click to navigate to ${value.anchorPath}$lineText"
+                contentPanel.add(anchorLabel)
+            }
+
+            if (value.commentText.isNotBlank()) {
+                commentLabel.text = PrListPanel.truncate(value.commentText, 150)
+                commentLabel.foreground = if (isSelected) list.selectionForeground else SECONDARY_TEXT
+                commentLabel.toolTipText = if (value.commentText.length > 150) value.commentText else null
+                contentPanel.add(commentLabel)
+            }
+
+            if (contentPanel.componentCount > 0) {
+                rootPanel.add(contentPanel, BorderLayout.CENTER)
+            }
+
+            return rootPanel
         }
 
         private fun formatAction(action: String): String {
@@ -1070,6 +1090,29 @@ class PrDetailPanel(
     )
 
     private class FileCellRenderer : ListCellRenderer<FileDisplayItem> {
+        // Cached components — reused on every render call
+        private val rootPanel = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(2, 8)
+        }
+        private val leftRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+        }
+        private val badgeLabel = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+            border = JBUI.Borders.empty(0, 2, 0, 4)
+        }
+        private val fileNameLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(12).toFloat())
+        }
+        private val dirPathLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            foreground = SECONDARY_TEXT
+        }
+
+        init {
+            rootPanel.add(leftRow, BorderLayout.CENTER)
+        }
+
         override fun getListCellRendererComponent(
             list: JList<out FileDisplayItem>,
             value: FileDisplayItem,
@@ -1077,41 +1120,15 @@ class PrDetailPanel(
             isSelected: Boolean,
             cellHasFocus: Boolean
         ): Component {
-            return JPanel(BorderLayout()).apply {
-                isOpaque = isSelected
-                if (isSelected) {
-                    background = UIManager.getColor("List.selectionBackground")
-                }
-                border = JBUI.Borders.empty(2, 8)
-
-                val leftRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-                    isOpaque = false
-                }
-
-                // Change type badge
-                val badge = createChangeTypeBadge(value.changeType)
-                leftRow.add(badge)
-
-                // File name
-                leftRow.add(JBLabel(value.fileName).apply {
-                    font = font.deriveFont(JBUI.scale(12).toFloat())
-                    foreground = JBColor.foreground()
-                })
-
-                // Directory path
-                if (value.dirPath.isNotBlank()) {
-                    leftRow.add(JBLabel(value.dirPath).apply {
-                        font = font.deriveFont(JBUI.scale(10).toFloat())
-                        foreground = SECONDARY_TEXT
-                    })
-                }
-
-                add(leftRow, BorderLayout.CENTER)
+            rootPanel.isOpaque = isSelected
+            if (isSelected) {
+                rootPanel.background = UIManager.getColor("List.selectionBackground")
             }
-        }
 
-        private fun createChangeTypeBadge(type: String): JBLabel {
-            val letter = when (type.uppercase()) {
+            leftRow.removeAll()
+
+            // Change type badge
+            val letter = when (value.changeType.uppercase()) {
                 "ADD" -> "A"
                 "MODIFY" -> "M"
                 "DELETE" -> "D"
@@ -1119,18 +1136,27 @@ class PrDetailPanel(
                 "COPY" -> "C"
                 else -> "?"
             }
-            val color = when (type.uppercase()) {
+            val color = when (value.changeType.uppercase()) {
                 "ADD" -> StatusColors.SUCCESS
                 "MODIFY" -> StatusColors.LINK
                 "DELETE" -> StatusColors.ERROR
                 "RENAME" -> StatusColors.WARNING
                 else -> SECONDARY_TEXT
             }
-            return JBLabel(letter).apply {
-                font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
-                foreground = color
-                border = JBUI.Borders.empty(0, 2, 0, 4)
+            badgeLabel.text = letter
+            badgeLabel.foreground = color
+            leftRow.add(badgeLabel)
+
+            fileNameLabel.text = value.fileName
+            fileNameLabel.foreground = JBColor.foreground()
+            leftRow.add(fileNameLabel)
+
+            if (value.dirPath.isNotBlank()) {
+                dirPathLabel.text = value.dirPath
+                leftRow.add(dirPathLabel)
             }
+
+            return rootPanel
         }
     }
 

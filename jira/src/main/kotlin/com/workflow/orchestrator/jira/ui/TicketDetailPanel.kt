@@ -792,10 +792,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
     private fun addFullWidthComponent(component: JPanel) {
         component.alignmentX = Component.LEFT_ALIGNMENT
-        // Use explicit preferred height or fall back to a reasonable minimum
-        // to prevent zero-height on first layout pass
-        val prefHeight = component.preferredSize.height.coerceAtLeast(JBUI.scale(32))
-        component.maximumSize = Dimension(Int.MAX_VALUE, prefHeight)
+        component.maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         contentPanel.add(component)
     }
 
