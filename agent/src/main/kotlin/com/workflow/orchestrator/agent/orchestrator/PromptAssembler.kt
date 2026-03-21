@@ -55,7 +55,7 @@ class PromptAssembler(
 
         // 6. Available Skills (only if discovered)
         if (!skillDescriptions.isNullOrBlank()) {
-            sections.add("<available_skills>\n$skillDescriptions\n\nTo activate a skill, call activate_skill(name). Users can also type /skill-name in chat.\n</available_skills>")
+            sections.add("<available_skills>\n$skillDescriptions\n\nTo activate a skill, call activate_skill(name). Users can also type /skill-name in chat.\nNote: Some skills have allowed-tools which restricts your available tools while the skill is active.\nSome skills have context: fork which runs them in an isolated subagent instead of inline.\n</available_skills>")
         }
 
         // 6b. Available Subagents (only if custom agents defined)
@@ -78,10 +78,16 @@ class PromptAssembler(
         // 10. Memory instructions
         sections.add(MEMORY_RULES)
 
-        // 11. Efficiency constraints (prevents 13-iteration exploration for simple questions)
+        // 11. Thinking tool guidance
+        sections.add(THINKING_RULES)
+
+        // 12. @ Mention context guidance
+        sections.add(MENTION_RULES)
+
+        // 13. Efficiency constraints (prevents 13-iteration exploration for simple questions)
         sections.add(EFFICIENCY_RULES)
 
-        // 12. Rules and Constraints (including anti-loop)
+        // 14. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -143,14 +149,18 @@ class PromptAssembler(
     companion object {
         val CORE_IDENTITY = """
             You are an AI coding assistant integrated into IntelliJ IDEA via the Workflow Orchestrator plugin.
-            You can analyze code structure, edit files, run commands, check diagnostics, and interact with
-            enterprise tools (Jira, Bamboo, SonarQube, Bitbucket).
+            You can analyze code structure, edit files, run commands, check diagnostics, interact with
+            enterprise tools (Jira, Bamboo, SonarQube, Bitbucket), activate workflow skills, and delegate
+            tasks to specialized subagents.
 
             <capabilities>
             - Analyze: Read files, search code, find references, explore type hierarchies, view file structure
-            - Code: Edit files precisely, run shell commands, check for compilation errors
-            - Review: Read diffs, check diagnostics, find issues
+            - Code: Edit files precisely, run shell commands, check for compilation errors, format and optimize imports
+            - Review: Read diffs, check diagnostics, run inspections, find issues
             - Enterprise: Read Jira tickets, transition statuses, add comments, check builds, query quality issues, create PRs
+            - Skills: Activate workflow skills for specialized tasks (debugging, code review, deployment). Skills provide domain-specific instructions and may restrict your available tools.
+            - Delegation: Spawn subagents for complex sub-tasks. Subagents run in isolation with their own context and return results.
+            - Reasoning: Use the think tool for complex reasoning — pause and think through your approach before acting.
             </capabilities>
         """.trimIndent()
 
@@ -235,6 +245,37 @@ class PromptAssembler(
             - After plan approval, execute step by step, calling update_plan_step to track progress.
             - If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
+        """.trimIndent()
+
+        val THINKING_RULES = """
+            <thinking>
+            Use the think tool when you need to reason through a complex problem before acting.
+            The think tool is a no-op — it doesn't execute anything, it just gives you space to reason.
+
+            Use think when:
+            - Planning a multi-step approach before making changes
+            - Analyzing error messages or test failures to identify root causes
+            - Weighing trade-offs between different implementation approaches
+            - Working through complex logic or algorithms
+            - Deciding which files to read or which tools to use next
+
+            Do NOT use think for simple, obvious actions. Just act directly.
+            </thinking>
+        """.trimIndent()
+
+        val MENTION_RULES = """
+            <mentions>
+            The user may reference files, folders, symbols, tools, or skills using @ mentions.
+            When @ mentions are present, their content appears in a <mentioned_context> section.
+
+            - @file mentions include the file's full content (read via IntelliJ Document API, including unsaved changes)
+            - @folder mentions include a directory tree listing
+            - @symbol mentions reference a class or method by qualified name
+            - @tool mentions indicate which tool the user wants you to use
+            - @skill mentions indicate which skill the user wants you to activate
+
+            Use the mentioned content directly — do NOT re-read files that are already in the mentioned context.
+            </mentions>
         """.trimIndent()
 
         val EFFICIENCY_RULES = """
