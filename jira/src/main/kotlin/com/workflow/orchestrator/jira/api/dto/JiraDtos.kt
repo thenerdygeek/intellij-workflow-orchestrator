@@ -220,7 +220,8 @@ data class DevStatusBranch(
 data class DevStatusPullRequest(
     val name: String = "",
     val url: String = "",
-    val status: String = ""
+    val status: String = "",
+    val lastUpdate: String? = null
 )
 
 // --- Components, Subtasks, Attachments, Comments ---
@@ -272,6 +273,24 @@ data class JiraCommentSearchResult(
     val maxResults: Int = 50,
     val total: Int = 0,
     val comments: List<JiraComment> = emptyList()
+)
+
+// --- Worklog DTOs ---
+
+@Serializable
+data class JiraWorklogResponse(
+    val worklogs: List<JiraWorklog> = emptyList(),
+    val total: Int = 0
+)
+
+@Serializable
+data class JiraWorklog(
+    val author: JiraUser? = null,
+    val timeSpent: String = "",
+    val timeSpentSeconds: Long = 0,
+    val comment: String? = null,
+    val started: String = "",
+    val created: String = ""
 )
 
 // --- Ticket Key Validation ---

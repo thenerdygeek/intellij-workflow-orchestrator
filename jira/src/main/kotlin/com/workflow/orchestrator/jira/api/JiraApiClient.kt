@@ -255,6 +255,31 @@ class JiraApiClient(
         return ApiResult.Success(allResults)
     }
 
+    suspend fun getWorklogs(issueKey: String, maxResults: Int = 20): ApiResult<JiraWorklogResponse> {
+        val encoded = URLEncoder.encode(issueKey, "UTF-8")
+        log.info("[Jira:API] GET /rest/api/2/issue/$encoded/worklog")
+        return get<JiraWorklogResponse>("/rest/api/2/issue/$encoded/worklog?maxResults=$maxResults")
+    }
+
+    suspend fun getClosedSprints(boardId: Int, maxResults: Int = 5): ApiResult<List<JiraSprint>> {
+        log.info("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=closed")
+        return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=closed&maxResults=$maxResults")
+            .map { it.values }
+    }
+
+    suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> {
+        log.info("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=pullrequest)")
+        return try {
+            val response = get<DevStatusResponse>(
+                "/rest/dev-status/1.0/issue/detail?issueId=$issueId&applicationType=stash&dataType=pullrequest"
+            )
+            response.map { it.detail.flatMap { d -> d.pullRequests } }
+        } catch (e: Exception) {
+            log.warn("[Jira:API] Dev-status PR API failed: ${e.message}")
+            ApiResult.Success(emptyList())
+        }
+    }
+
     private fun escapeJql(text: String): String {
         val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
         return buildString {
