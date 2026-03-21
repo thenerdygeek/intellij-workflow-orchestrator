@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketCommit
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
@@ -128,6 +129,18 @@ class PrDetailService(private val project: Project) {
             log.warn("[PR:Detail] Error fetching file content: ${e.message}")
             ""
         }
+    }
+
+    /**
+     * Fetches commits for a PR.
+     */
+    suspend fun getCommits(prId: Int): List<BitbucketCommit> {
+        val client = getClient() ?: return emptyList()
+        if (!isConfigured()) return emptyList()
+
+        log.info("[PR:Detail] Fetching commits for PR #$prId")
+        val result = client.getPullRequestCommits(projectKey(), repoSlug(), prId)
+        return (result as? ApiResult.Success)?.data?.values ?: emptyList()
     }
 
     /**

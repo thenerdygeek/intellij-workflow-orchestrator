@@ -19,11 +19,13 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.bitbucket.BitbucketCommit
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.pullrequest.service.PrActionService
@@ -152,6 +154,7 @@ class PrDetailPanel(
     private val descriptionToggle = JToggleButton("Description")
     private val activityToggle = JToggleButton("Activity")
     private val filesToggle = JToggleButton("Files")
+    private val commitsToggle = JToggleButton("Commits")
     private val aiReviewToggle = JToggleButton("AI Review")
     private val toggleGroup = ButtonGroup()
 
@@ -162,6 +165,7 @@ class PrDetailPanel(
     private val descriptionSubPanel = DescriptionSubPanel()
     private val activitySubPanel = ActivitySubPanel()
     private val filesSubPanel = FilesSubPanel()
+    private val commitsSubPanel = CommitsSubPanel()
     private val aiReviewSubPanel = AiReviewSubPanel()
 
     init {
@@ -368,10 +372,12 @@ class PrDetailPanel(
         toggleGroup.add(descriptionToggle)
         toggleGroup.add(activityToggle)
         toggleGroup.add(filesToggle)
+        toggleGroup.add(commitsToggle)
         toggleGroup.add(aiReviewToggle)
         toggleRow.add(descriptionToggle)
         toggleRow.add(activityToggle)
         toggleRow.add(filesToggle)
+        toggleRow.add(commitsToggle)
         toggleRow.add(aiReviewToggle)
         contentPanel.add(toggleRow)
 
@@ -379,6 +385,7 @@ class PrDetailPanel(
         contentCards.add(descriptionSubPanel, "description")
         contentCards.add(activitySubPanel, "activity")
         contentCards.add(filesSubPanel, "files")
+        contentCards.add(commitsSubPanel, "commits")
         contentCards.add(aiReviewSubPanel, "aiReview")
         contentCards.alignmentX = Component.LEFT_ALIGNMENT
         contentPanel.add(contentCards)
@@ -387,6 +394,10 @@ class PrDetailPanel(
         descriptionToggle.addActionListener { (contentCards.layout as CardLayout).show(contentCards, "description") }
         activityToggle.addActionListener { (contentCards.layout as CardLayout).show(contentCards, "activity") }
         filesToggle.addActionListener { (contentCards.layout as CardLayout).show(contentCards, "files") }
+        commitsToggle.addActionListener {
+            (contentCards.layout as CardLayout).show(contentCards, "commits")
+            currentPrId?.let { commitsSubPanel.showCommits(it) }
+        }
         aiReviewToggle.addActionListener { (contentCards.layout as CardLayout).show(contentCards, "aiReview") }
 
         val scrollPane = JBScrollPane(contentPanel).apply {
@@ -511,6 +522,7 @@ class PrDetailPanel(
             descriptionToggle -> "description"
             activityToggle -> "activity"
             filesToggle -> "files"
+            commitsToggle -> "commits"
             aiReviewToggle -> "aiReview"
             else -> "description"
         }
@@ -1247,6 +1259,96 @@ class PrDetailPanel(
                 leftRow.add(dirPathLabel)
             }
 
+            return rootPanel
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Commits sub-panel
+    // ---------------------------------------------------------------
+
+    private inner class CommitsSubPanel : JPanel(BorderLayout()) {
+        private val commitListModel = DefaultListModel<BitbucketCommit>()
+        private val commitList = JBList(commitListModel).apply {
+            cellRenderer = CommitCellRenderer()
+            border = JBUI.Borders.empty()
+            isOpaque = false
+        }
+        private var lastLoadedPrId: Int? = null
+
+        init {
+            isOpaque = false
+            commitList.emptyText.text = "No commits."
+            add(JBScrollPane(commitList).apply {
+                border = JBUI.Borders.empty()
+                isOpaque = false
+                viewport.isOpaque = false
+            }, BorderLayout.CENTER)
+        }
+
+        fun showCommits(prId: Int) {
+            if (prId == lastLoadedPrId && commitListModel.size() > 0) return
+            lastLoadedPrId = prId
+            scope.launch {
+                val commits = PrDetailService.getInstance(project).getCommits(prId)
+                withContext(Dispatchers.EDT) {
+                    commitListModel.clear()
+                    commits.forEach { commitListModel.addElement(it) }
+                }
+            }
+        }
+    }
+
+    private class CommitCellRenderer : ListCellRenderer<BitbucketCommit> {
+        private val rootPanel = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(4, 8)
+        }
+        private val hashLabel = JBLabel().apply {
+            font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(12))
+            foreground = StatusColors.LINK
+        }
+        private val messageLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(12).toFloat())
+        }
+        private val authorLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+        }
+        private val timeLabel = JBLabel().apply {
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+        }
+        private val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+        }
+        private val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+        }
+
+        init {
+            leftPanel.add(hashLabel)
+            leftPanel.add(messageLabel)
+            rightPanel.add(authorLabel)
+            rightPanel.add(timeLabel)
+            rootPanel.add(leftPanel, BorderLayout.WEST)
+            rootPanel.add(rightPanel, BorderLayout.EAST)
+        }
+
+        override fun getListCellRendererComponent(
+            list: JList<out BitbucketCommit>,
+            value: BitbucketCommit,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            hashLabel.text = value.displayId
+            val firstLine = value.message.lineSequence().firstOrNull()?.take(80) ?: ""
+            messageLabel.text = firstLine
+            authorLabel.text = value.author?.displayName?.ifBlank { value.author?.name } ?: ""
+            timeLabel.text = TimeFormatter.relative(value.authorTimestamp)
+
+            rootPanel.background = if (isSelected) list.selectionBackground else list.background
+            rootPanel.isOpaque = true
             return rootPanel
         }
     }
