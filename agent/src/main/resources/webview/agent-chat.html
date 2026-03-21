@@ -256,6 +256,36 @@ body {
     100% { background-position: -200% 0; }
 }
 
+/* Rich Block Skeleton (shown during streaming of mermaid/chart/math blocks) */
+.rich-block-skeleton {
+    background: var(--tool-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin: 10px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+.rich-block-skeleton-icon {
+    font-size: 28px;
+    color: var(--accent);
+    opacity: 0.7;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+.rich-block-skeleton-label {
+    font-size: 13px;
+    color: var(--fg-muted);
+    font-weight: 500;
+    letter-spacing: 0.3px;
+}
+.rich-block-skeleton-bars {
+    width: 100%;
+    max-width: 320px;
+    margin-top: 4px;
+}
+
 /* Toast Notifications */
 .toast-container {
     position: fixed;
@@ -1129,6 +1159,42 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 /* ═══════════════════════════════════════════════════
    Bolt-Style Input Bar
    ═══════════════════════════════════════════════════ */
+/* Working Indicator */
+.working-indicator {
+  display: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 0 6px 6px 0;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.working-indicator.visible {
+  display: flex;
+  opacity: 1;
+}
+.working-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--link);
+  opacity: 0.5;
+  animation: workingBounce 1.2s ease-in-out infinite;
+}
+.working-dot:nth-child(2) { animation-delay: 0.2s; }
+.working-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes workingBounce {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+.working-text {
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-weight: 500;
+  margin-left: 4px;
+  font-family: var(--font-body);
+}
+
 .input-area {
   padding: 10px 16px 14px;
   flex-shrink: 0;
@@ -1423,6 +1489,12 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 
 <!-- Bolt-Style Input Bar -->
 <div class="input-area" id="input-area">
+  <div class="working-indicator" id="working-indicator">
+    <span class="working-dot"></span>
+    <span class="working-dot"></span>
+    <span class="working-dot"></span>
+    <span class="working-text" id="working-text">Working</span>
+  </div>
   <div class="input-wrapper">
     <div class="mention-dropdown" id="mention-dropdown"></div>
     <div class="mention-pills" id="mention-pills"></div>
@@ -2094,13 +2166,121 @@ function completeSession(status, tokensUsed, durationMs, iterations, files) {
   scrollToBottom();
 }
 
+/* ── Working Indicator ── */
+
+var _workingPhrases = [
+  'Working', 'Thinking', 'Analyzing', 'Reasoning', 'Processing',
+  'Understanding', 'Considering', 'Evaluating', 'Preparing', 'Figuring it out'
+];
+var _workingInterval = null;
+
+function showWorkingIndicator() {
+  var el = document.getElementById('working-indicator');
+  var textEl = document.getElementById('working-text');
+  if (!el) return;
+  textEl.textContent = _workingPhrases[0];
+  el.classList.add('visible');
+  var idx = 0;
+  clearInterval(_workingInterval);
+  _workingInterval = setInterval(function() {
+    idx = (idx + 1) % _workingPhrases.length;
+    if (textEl) textEl.textContent = _workingPhrases[idx];
+  }, 3000);
+}
+
+function hideWorkingIndicator() {
+  var el = document.getElementById('working-indicator');
+  if (!el) return;
+  el.classList.remove('visible');
+  clearInterval(_workingInterval);
+  _workingInterval = null;
+}
+
 /* ── Streaming ── */
 
 // Accumulates raw text during streaming (preserves newlines for markdown rendering)
 var _streamRawText = '';
 var _renderDebounce = null;
 
+// Rich block types that should show skeleton placeholders during streaming
+var _richBlockLangs = ['mermaid', 'chart', 'chartjs', 'math', 'latex'];
+
+/**
+ * Detects if the streamed text has an open (unclosed) rich code block.
+ * Returns { lang, startIdx } if an open rich block exists, null otherwise.
+ */
+function _detectOpenRichBlock(text) {
+  // Find all code fence openings and closings
+  var fenceRegex = /```(\w*)/g;
+  var match;
+  var openBlock = null;
+  var fenceCount = 0;
+  while ((match = fenceRegex.exec(text)) !== null) {
+    if (fenceCount % 2 === 0) {
+      // Opening fence
+      var lang = match[1].toLowerCase();
+      if (_richBlockLangs.indexOf(lang) !== -1) {
+        openBlock = { lang: lang, startIdx: match.index };
+      } else {
+        openBlock = null;
+      }
+    } else {
+      // Closing fence — block is complete
+      openBlock = null;
+    }
+    fenceCount++;
+  }
+  return openBlock;
+}
+
+/**
+ * Renders streaming markdown but replaces open rich blocks with skeleton placeholders.
+ * Completed rich blocks render normally via renderMarkdown().
+ */
+function _renderStreamingMarkdown(rawText) {
+  var openBlock = _detectOpenRichBlock(rawText);
+  if (!openBlock) {
+    // No open rich block — render everything normally
+    return renderMarkdown(rawText);
+  }
+  // Split: render everything before the open block as markdown,
+  // then show a skeleton placeholder for the in-progress block
+  var beforeBlock = rawText.substring(0, openBlock.startIdx);
+  var renderedBefore = beforeBlock ? renderMarkdown(beforeBlock) : '';
+
+  var labelMap = {
+    'mermaid': 'Generating diagram…',
+    'chart': 'Generating chart…',
+    'chartjs': 'Generating chart…',
+    'math': 'Rendering equation…',
+    'latex': 'Rendering equation…'
+  };
+  var label = labelMap[openBlock.lang] || 'Generating visualization…';
+  var iconMap = {
+    'mermaid': '◈',
+    'chart': '◧',
+    'chartjs': '◧',
+    'math': '∑',
+    'latex': '∑'
+  };
+  var icon = iconMap[openBlock.lang] || '◈';
+
+  var skeleton =
+    '<div class="rich-block-skeleton">' +
+      '<div class="rich-block-skeleton-icon">' + icon + '</div>' +
+      '<div class="rich-block-skeleton-label">' + label + '</div>' +
+      '<div class="rich-block-skeleton-bars">' +
+        '<div class="skeleton line-long"></div>' +
+        '<div class="skeleton line-medium"></div>' +
+        '<div class="skeleton line-short"></div>' +
+      '</div>' +
+    '</div>';
+
+  return renderedBefore + skeleton;
+}
+
 function appendToken(token) {
+  hideWorkingIndicator();
   hideEmpty();
   if (!activeStreamEl) {
     activeStreamEl = document.createElement('div');
@@ -2124,7 +2304,7 @@ function appendToken(token) {
   clearTimeout(_renderDebounce);
   _renderDebounce = setTimeout(function() {
     if (activeStreamEl && activeStreamEl._inner && _streamRawText) {
-      activeStreamEl._inner.innerHTML = renderMarkdown(_streamRawText);
+      activeStreamEl._inner.innerHTML = _renderStreamingMarkdown(_streamRawText);
       scrollToBottom();
     }
   }, 300);
@@ -2132,6 +2312,7 @@ function appendToken(token) {
 }
 
 function endStream() {
+  hideWorkingIndicator();
   if (activeStreamEl && activeStreamEl._inner) {
     activeStreamEl._inner.classList.remove('stream-cursor');
     // Re-render accumulated raw text with full markdown
@@ -2147,7 +2328,7 @@ function endStream() {
 /* ── Tool Calls ── */
 
 function appendToolCall(toolName, args, statusStr) {
-  endStream(); hideEmpty();
+  hideWorkingIndicator(); endStream(); hideEmpty();
   var type = toolType(toolName);
   var badge = badgeFor(type);
   var target = extractTarget(toolName, args);
@@ -3279,6 +3460,8 @@ function sendMessage() {
   var ta = document.getElementById('chat-input');
   var text = ta ? ta.value.trim() : '';
   if (!text && _mentions.length === 0) return;
+
+  showWorkingIndicator();
 
   var sendBtn = document.getElementById('send-btn');
   if (sendBtn) sendBtn.disabled = true;

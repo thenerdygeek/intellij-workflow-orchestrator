@@ -35,45 +35,20 @@ class LoopGuardTest {
         assertTrue(injections.isEmpty())
     }
 
-    // --- Loop detection triggers after 3 identical tool calls ---
+    // --- Loop detection moved to checkDoomLoop (pre-execution), afterIteration no longer detects loops ---
 
     @Test
-    fun `loop detection triggers after 3 identical tool calls`() {
+    fun `afterIteration does not inject loop warnings (deferred to checkDoomLoop)`() {
         val toolCall = makeToolCall("read_file", """{"path": "/src/Main.kt"}""")
 
-        // First call - no injection
+        // 3 identical calls via afterIteration should NOT trigger loop warning
         val result1 = guard.afterIteration(listOf(toolCall), listOf("tc-1" to false))
-        assertTrue(result1.isEmpty())
-
-        // Second call - no injection
         val result2 = guard.afterIteration(listOf(toolCall), listOf("tc-2" to false))
-        assertTrue(result2.isEmpty())
-
-        // Third call - loop detected
         val result3 = guard.afterIteration(listOf(toolCall), listOf("tc-3" to false))
-        assertTrue(result3.isNotEmpty())
-        val loopMsg = result3.first()
-        assertEquals("system", loopMsg.role)
-        assertTrue(loopMsg.content!!.contains("read_file"))
-        assertTrue(loopMsg.content!!.contains("same arguments"))
-        assertTrue(loopMsg.content!!.contains("3 times"))
-    }
 
-    // --- Loop detection clears after redirect ---
-
-    @Test
-    fun `loop detection clears history after redirect`() {
-        val toolCall = makeToolCall("read_file", """{"path": "/src/Main.kt"}""")
-
-        // Trigger loop detection (3 calls)
-        guard.afterIteration(listOf(toolCall), listOf("tc-1" to false))
-        guard.afterIteration(listOf(toolCall), listOf("tc-2" to false))
-        val result3 = guard.afterIteration(listOf(toolCall), listOf("tc-3" to false))
-        assertTrue(result3.any { it.content!!.contains("same arguments") })
-
-        // After redirect, same call should not trigger immediately
-        val result4 = guard.afterIteration(listOf(toolCall), listOf("tc-4" to false))
-        assertFalse(result4.any { it.content?.contains("same arguments") == true })
+        assertFalse(result1.any { it.content?.contains("same arguments") == true })
+        assertFalse(result2.any { it.content?.contains("same arguments") == true })
+        assertFalse(result3.any { it.content?.contains("same arguments") == true })
     }
 
     // --- Error nudge injected after tool error ---
@@ -190,15 +165,15 @@ class LoopGuardTest {
         // Reset
         guard.reset()
 
-        // After reset: no loop detection (fresh history)
-        val result1 = guard.afterIteration(listOf(toolCall), listOf("tc-5" to false))
-        assertFalse(result1.any { it.content?.contains("same arguments") == true })
-
         // After reset: iteration count restarted, so iteration 1 doesn't trigger reminder
+        val result1 = guard.afterIteration(listOf(toolCall), listOf("tc-5" to false))
         assertFalse(result1.any { it.content == LoopGuard.REMINDER_MESSAGE })
 
         // After reset: no modified files
         assertNull(guard.beforeCompletion())
+
+        // After reset: doom loop state also cleared
+        assertNull(guard.checkDoomLoop("search_code", """{"query": "test"}"""))
     }
 
     // --- Edited files tracked across iterations ---
@@ -247,17 +222,13 @@ class LoopGuardTest {
     }
 
     @Test
-    fun `custom max duplicate calls is respected`() {
-        val customGuard = LoopGuard(maxDuplicateToolCalls = 2)
-        val toolCall = makeToolCall("read_file", """{"path": "/src/Main.kt"}""")
-
-        // First call
-        val r1 = customGuard.afterIteration(listOf(toolCall), listOf("tc-1" to false))
-        assertTrue(r1.isEmpty())
-
-        // Second call - triggers with max=2
-        val r2 = customGuard.afterIteration(listOf(toolCall), listOf("tc-2" to false))
-        assertTrue(r2.any { it.content?.contains("same arguments") == true })
+    fun `doom loop threshold controls checkDoomLoop sensitivity`() {
+        // Default DOOM_LOOP_THRESHOLD is 3
+        val args = """{"query": "test"}"""
+        assertNull(guard.checkDoomLoop("search_code", args))
+        assertNull(guard.checkDoomLoop("search_code", args))
+        val warning = guard.checkDoomLoop("search_code", args)
+        assertNotNull(warning, "Expected doom loop warning after ${LoopGuard.DOOM_LOOP_THRESHOLD} identical calls")
     }
 
     // --- Multiple injections in a single iteration ---
@@ -266,38 +237,29 @@ class LoopGuardTest {
     fun `multiple injections can occur in same iteration`() {
         val toolCall = makeToolCall("read_file", """{"path": "/src/Main.kt"}""")
 
-        // Build up to 3rd duplicate call at iteration 4 with an error
+        // Build up to iteration 4 with an error
         guard.afterIteration(listOf(toolCall), listOf("tc-1" to false))
         guard.afterIteration(listOf(toolCall), listOf("tc-2" to false))
         guard.afterIteration(null, null) // iteration 3
 
-        // Iteration 4: duplicate call + error + reminder interval
+        // Iteration 4: error + reminder interval
         val result = guard.afterIteration(
             listOf(toolCall),
             listOf("tc-3" to true)
         )
 
-        // Should have loop redirect + error nudge + reminder
-        assertTrue(result.any { it.content?.contains("same arguments") == true }, "Expected loop redirect")
+        // Should have error nudge + reminder (loop detection is now in checkDoomLoop, not afterIteration)
         assertTrue(result.any { it.content?.contains("Address this error") == true }, "Expected error nudge")
         assertTrue(result.any { it.content == LoopGuard.REMINDER_MESSAGE }, "Expected reminder")
     }
 
-    // --- Different tool calls don't trigger loop ---
+    // --- Different tool calls don't trigger doom loop ---
 
     @Test
-    fun `different tool calls do not trigger loop detection`() {
-        val tc1 = makeToolCall("read_file", """{"path": "/src/A.kt"}""")
-        val tc2 = makeToolCall("read_file", """{"path": "/src/B.kt"}""")
-        val tc3 = makeToolCall("edit_file", """{"path": "/src/A.kt"}""")
-
-        val r1 = guard.afterIteration(listOf(tc1), listOf("tc-1" to false))
-        val r2 = guard.afterIteration(listOf(tc2), listOf("tc-2" to false))
-        val r3 = guard.afterIteration(listOf(tc3), listOf("tc-3" to false))
-
-        assertTrue(r1.isEmpty())
-        assertTrue(r2.isEmpty())
-        assertTrue(r3.isEmpty())
+    fun `different tool calls do not trigger doom loop detection`() {
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}"""))
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}"""))
+        assertNull(guard.checkDoomLoop("edit_file", """{"path": "/src/A.kt"}"""))
     }
 
     // --- Doom loop detection (OpenCode pattern) ---

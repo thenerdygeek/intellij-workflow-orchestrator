@@ -20,7 +20,7 @@ class ToolOutputStore(private val sessionDir: File?) {
     companion object {
         private val LOG = Logger.getInstance(ToolOutputStore::class.java)
         const val MAX_LINES = 2000
-        const val MAX_BYTES = 50 * 1024  // 50KB
+        const val MAX_CHARS = 50 * 1024  // ~50K characters
     }
 
     private val outputDir: File? get() = sessionDir?.let { File(it, "tool-outputs").also { d -> d.mkdirs() } }
@@ -28,13 +28,13 @@ class ToolOutputStore(private val sessionDir: File?) {
 
     /**
      * Save tool output to disk. Returns the disk path.
-     * Content is capped at MAX_BYTES on disk.
+     * Content is capped at MAX_CHARS characters on disk.
      */
     fun save(toolCallId: String, content: String): String? {
         val dir = outputDir ?: return null
         return try {
             val file = File(dir, "$toolCallId.txt")
-            file.writeText(content.take(MAX_BYTES))
+            file.writeText(content.take(MAX_CHARS))
             val path = file.absolutePath
             storedPaths[toolCallId] = path
             path
@@ -50,7 +50,7 @@ class ToolOutputStore(private val sessionDir: File?) {
     fun getPath(toolCallId: String): String? = storedPaths[toolCallId]
 
     /**
-     * Cap content to MAX_LINES / MAX_BYTES, append truncation hint if needed.
+     * Cap content to MAX_LINES / MAX_CHARS characters, append truncation hint if needed.
      */
     fun capContent(content: String, diskPath: String?): String {
         val lines = content.lines()
@@ -60,9 +60,9 @@ class ToolOutputStore(private val sessionDir: File?) {
                 (if (diskPath != null) " Full output saved to: $diskPath. Use read_file with offset/limit to view more.]" else "]")
         } else content
 
-        return if (cappedByLines.length > MAX_BYTES) {
-            cappedByLines.take(MAX_BYTES) +
-                "\n\n[Truncated at ${MAX_BYTES / 1024}KB." +
+        return if (cappedByLines.length > MAX_CHARS) {
+            cappedByLines.take(MAX_CHARS) +
+                "\n\n[Truncated at ${MAX_CHARS / 1024}K chars." +
                 (if (diskPath != null) " Full output at: $diskPath]" else "]")
         } else cappedByLines
     }

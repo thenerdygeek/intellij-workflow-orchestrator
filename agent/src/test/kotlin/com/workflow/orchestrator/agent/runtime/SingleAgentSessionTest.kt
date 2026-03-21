@@ -442,11 +442,10 @@ class SingleAgentSessionTest {
             project = project
         )
 
-        // LoopGuard should have injected a redirect message after 3 identical calls
+        // LoopGuard should have skipped execution and returned a doom loop tool result
+        // checkDoomLoop detects re-reads first ("already read"), then doom loops on 3rd identical call
         verify(atLeast = 1) {
-            contextManager.addMessage(match {
-                it.role == "system" && it.content?.contains("same arguments") == true
-            })
+            contextManager.addToolResult(any(), match { it.contains("already read") || it.contains("same arguments") }, any())
         }
     }
 
