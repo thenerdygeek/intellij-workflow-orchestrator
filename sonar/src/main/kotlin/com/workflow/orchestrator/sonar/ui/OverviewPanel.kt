@@ -214,7 +214,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
     private fun ratingColor(rating: String): Color = when (rating) {
         "A", "B" -> StatusColors.SUCCESS
         "C" -> StatusColors.WARNING
-        "D" -> JBColor(Color(0xFF, 0x8C, 0x00), Color(0xFF, 0xA5, 0x00)) // orange
+        "D" -> StatusColors.WARNING // orange
         "E" -> StatusColors.ERROR
         else -> JBColor.GRAY
     }
@@ -312,7 +312,7 @@ private class CoverageProgressBar : JPanel() {
         super.paintComponent(g)
         val g2 = g as Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.color = JBColor(Color(30, 30, 30), Color(30, 30, 30))
+        g2.color = JBColor(Color(0xE0, 0xE0, 0xE0), Color(0x3C, 0x3C, 0x3C))
         g2.fillRoundRect(0, 0, width, height, 4, 4)
         val fillWidth = (width * value / 100.0).toInt()
         g2.color = CoverageThresholds.colorForCoverage(value, highThreshold, mediumThreshold)

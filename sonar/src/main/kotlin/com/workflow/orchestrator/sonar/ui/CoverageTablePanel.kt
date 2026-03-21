@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.FileCoverageData
 import java.awt.BorderLayout
 import java.awt.Color
@@ -57,8 +58,8 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
             if (!isSelected) {
                 val intValue = (value as? Int) ?: 0
                 foreground = when {
-                    intValue > redThreshold -> JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x66, 0x66))
-                    intValue > orangeThreshold -> JBColor(Color(0xFF, 0x8C, 0x00), Color(0xFF, 0xA5, 0x00))
+                    intValue > redThreshold -> StatusColors.ERROR
+                    intValue > orangeThreshold -> StatusColors.WARNING
                     else -> table.foreground
                 }
             }

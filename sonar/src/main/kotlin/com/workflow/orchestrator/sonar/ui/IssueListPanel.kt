@@ -10,6 +10,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.TextGenerationService
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.sonar.model.*
 import kotlinx.coroutines.*
@@ -34,7 +35,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val paginationWarning = JBLabel().apply {
-        foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+        foreground = StatusColors.WARNING
         font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat())
         border = JBUI.Borders.empty(2, 8)
         isVisible = false

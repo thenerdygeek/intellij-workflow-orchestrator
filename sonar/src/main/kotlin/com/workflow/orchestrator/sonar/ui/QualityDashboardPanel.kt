@@ -9,6 +9,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.QualityGateStatus
 import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
@@ -40,7 +41,7 @@ class QualityDashboardPanel(
     }
     private val branchWarningLabel = JBLabel("").apply {
         font = font.deriveFont(Font.ITALIC, 10f)
-        foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+        foreground = StatusColors.WARNING
         border = JBUI.Borders.empty(0, 8, 4, 8)
         isVisible = false
     }
@@ -51,7 +52,7 @@ class QualityDashboardPanel(
     }
     private val newCodePeriodLabel = JBLabel("").apply {
         font = font.deriveFont(Font.PLAIN, 10f)
-        foreground = JBColor(Color(0x60, 0x60, 0x60), Color(0xA0, 0xA0, 0xA0))
+        foreground = StatusColors.SECONDARY_TEXT
         border = JBUI.Borders.empty(0, 8, 4, 8)
         isVisible = false
     }
@@ -150,10 +151,10 @@ class QualityDashboardPanel(
     }
 
     private fun updateToggleAppearance(newCodeMode: Boolean) {
-        val selectedBg = JBColor(Color(0x42, 0xA5, 0xF5), Color(0x89, 0xb4, 0xfa))
+        val selectedBg = StatusColors.LINK
         val selectedFg = JBColor(Color.WHITE, Color(0x1e, 0x1e, 0x2e))
         val normalBg = JBColor(Color(0xE0, 0xE0, 0xE0), Color(0x45, 0x47, 0x5a))
-        val normalFg = JBColor.foreground()
+        val normalFg = StatusColors.SECONDARY_TEXT
 
         if (newCodeMode) {
             newCodeButton.background = selectedBg
@@ -211,7 +212,7 @@ class QualityDashboardPanel(
             branchWarningLabel.isVisible = false
         } else {
             branchInfoLabel.text = "Branch: ${state.branch} \u2014 Not analyzed"
-            branchInfoLabel.foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+            branchInfoLabel.foreground = StatusColors.WARNING
             branchWarningLabel.text = "\u26A0 This branch has not been analyzed by SonarQube. Data shown is from the last available analysis."
             branchWarningLabel.isVisible = true
         }
@@ -223,23 +224,23 @@ class QualityDashboardPanel(
                 "FAILED" -> {
                     val errorMsg = lastAnalysis.errorMessage ?: "Unknown error"
                     analysisStatusLabel.text = "\u2717 Last analysis failed: $errorMsg"
-                    analysisStatusLabel.foreground = JBColor(Color(0xCC, 0x00, 0x00), Color(0xFF, 0x66, 0x66))
+                    analysisStatusLabel.foreground = StatusColors.ERROR
                     analysisStatusLabel.isVisible = true
                 }
                 "PENDING", "IN_PROGRESS" -> {
                     analysisStatusLabel.text = "\u23F3 Analysis in progress..."
-                    analysisStatusLabel.foreground = JBColor(Color(0xB0, 0x6D, 0x00), Color(0xFA, 0xB3, 0x87))
+                    analysisStatusLabel.foreground = StatusColors.WARNING
                     analysisStatusLabel.isVisible = true
                 }
                 "SUCCESS" -> {
                     val timeStr = lastAnalysis.executionTimeMs?.let { "${it / 1000}s" } ?: "N/A"
                     analysisStatusLabel.text = "\u2713 Last analysis: $timeStr"
-                    analysisStatusLabel.foreground = JBColor(Color(0x00, 0x80, 0x00), Color(0x66, 0xCC, 0x66))
+                    analysisStatusLabel.foreground = StatusColors.SUCCESS
                     analysisStatusLabel.isVisible = true
                 }
                 "CANCELED" -> {
                     analysisStatusLabel.text = "\u2014 Last analysis was canceled"
-                    analysisStatusLabel.foreground = JBColor(Color(0x80, 0x80, 0x80), Color(0xA0, 0xA0, 0xA0))
+                    analysisStatusLabel.foreground = StatusColors.SECONDARY_TEXT
                     analysisStatusLabel.isVisible = true
                 }
                 else -> {

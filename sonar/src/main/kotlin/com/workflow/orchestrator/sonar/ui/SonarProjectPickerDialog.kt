@@ -10,6 +10,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.services.SonarService
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
@@ -38,7 +39,7 @@ class SonarProjectPickerDialog(
         selectionMode = ListSelectionModel.SINGLE_SELECTION
     }
     private val statusLabel = JBLabel("Type to search SonarQube projects...").apply {
-        foreground = JBColor(0x656D76, 0x8B949E)
+        foreground = StatusColors.SECONDARY_TEXT
         font = font.deriveFont(JBUI.scale(11).toFloat())
         border = JBUI.Borders.empty(4, 4)
     }
