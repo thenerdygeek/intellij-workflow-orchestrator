@@ -66,6 +66,20 @@ class SkillRegistryTest {
         |Deploy to staging environment.
     """.trimMargin()
 
+    private val forkSkill = """
+        |---
+        |name: code-review
+        |description: Run isolated code review
+        |allowed-tools: [read_file, search_code, diagnostics]
+        |context: fork
+        |agent: reviewer
+        |argument-hint: <file-path>
+        |---
+        |## Code Review
+        |
+        |Review the specified file.
+    """.trimMargin()
+
     @Test
     fun `scan finds skills in project directory`() {
         writeProjectSkill("hotfix", hotfixSkill)
@@ -207,6 +221,51 @@ class SkillRegistryTest {
         assertEquals(SkillRegistry.SkillScope.BUILTIN, skill.scope)
         assertTrue(skill.description.contains("bug"))
         assertTrue(skill.preferredTools.contains("diagnostics"))
+    }
+
+    @Test
+    fun `parses allowed-tools from frontmatter`() {
+        writeProjectSkill("code-review", forkSkill)
+
+        registry.scan()
+        val skill = registry.getSkill("code-review")
+
+        assertNotNull(skill)
+        assertEquals(listOf("read_file", "search_code", "diagnostics"), skill!!.allowedTools)
+    }
+
+    @Test
+    fun `parses context fork and agent type from frontmatter`() {
+        writeProjectSkill("code-review", forkSkill)
+
+        registry.scan()
+        val skill = registry.getSkill("code-review")!!
+
+        assertTrue(skill.contextFork)
+        assertEquals("reviewer", skill.agentType)
+    }
+
+    @Test
+    fun `parses argument-hint from frontmatter`() {
+        writeProjectSkill("code-review", forkSkill)
+
+        registry.scan()
+        val skill = registry.getSkill("code-review")!!
+
+        assertEquals("<file-path>", skill.argumentHint)
+    }
+
+    @Test
+    fun `new fields default to null or false when absent`() {
+        writeProjectSkill("hotfix", hotfixSkill)
+
+        registry.scan()
+        val skill = registry.getSkill("hotfix")!!
+
+        assertNull(skill.allowedTools)
+        assertFalse(skill.contextFork)
+        assertNull(skill.agentType)
+        assertNull(skill.argumentHint)
     }
 
     @Test
