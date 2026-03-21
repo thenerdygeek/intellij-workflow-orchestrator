@@ -325,8 +325,9 @@ code {
 /* Horizontal rules */
 .message hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 
-/* highlight.js theme overrides for dark mode */
-.hljs { background: transparent !important; }
+/* Prism.js overrides for embedded code blocks */
+pre[class*="language-"] { margin: 0; padding: 0; background: transparent; }
+code[class*="language-"] { background: transparent; font-family: var(--font-mono); font-size: 12px; }
 
 /* Streaming cursor pre-wrap */
 .stream-cursor {
@@ -819,22 +820,13 @@ code {
 .td-param .pdesc { color: var(--fg-muted); flex: 1; }
 </style>
 
-<!-- Markdown rendering -->
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<!-- Syntax highlighting -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/highlight.min.js"></script>
-<!-- Common languages -->
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/kotlin.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/java.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/xml.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/yaml.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/json.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/bash.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/sql.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/properties.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/groovy.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/languages/gradle.min.js"></script>
+<!-- Core libraries — bundled in plugin JAR, served via CefResourceSchemeHandler -->
+<script src="lib/marked.min.js"></script>
+<script src="lib/purify.min.js"></script>
+<script src="lib/ansi_up.js"></script>
+<script src="lib/prism-core.min.js"></script>
+<script src="lib/prism-autoloader.min.js"></script>
+<link id="prism-theme" rel="stylesheet" href="lib/prism-themes/prism-one-dark.css">
 </head>
 <body>
 <div id="chat-container">
@@ -873,9 +865,8 @@ function esc(text) {
   return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-/* ── Markdown Rendering — marked.js + highlight.js ── */
+/* ── Markdown Rendering — marked.js + Prism.js ── */
 
-// Configure marked.js for safe, highlighted markdown
 (function() {
   if (typeof marked === 'undefined') {
     window._markedAvailable = false;
@@ -883,31 +874,36 @@ function esc(text) {
   }
   window._markedAvailable = true;
 
+  // Configure Prism.js autoloader to load languages from bundled path
+  if (typeof Prism !== 'undefined' && Prism.plugins && Prism.plugins.autoloader) {
+    Prism.plugins.autoloader.languages_path = 'lib/prism-languages/';
+  }
+
   marked.setOptions({
     breaks: true,
     gfm: true,
     headerIds: false,
-    mangle: false,
-    highlight: function(code, lang) {
-      if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
-        try { return hljs.highlight(code, { language: lang }).value; }
-        catch (_) {}
-      }
-      if (typeof hljs !== 'undefined') {
-        try { return hljs.highlightAuto(code).value; }
-        catch (_) {}
-      }
-      return code;
-    }
+    mangle: false
   });
 
   var renderer = new marked.Renderer();
 
-  // Code blocks: add copy button + language label
+  // Code blocks: Prism.js highlighting + copy button + language label
   renderer.code = function(code, lang) {
     var langLabel = lang ? '<div class="code-lang">' + esc(lang) + '</div>' : '';
-    var highlighted = marked.defaults.highlight(code, lang);
-    return langLabel + '<div class="code-wrapper"><button class="code-copy" onclick="copyCode(this)">Copy</button><pre class="code-block"><code class="hljs">' + highlighted + '</code></pre></div>';
+    var highlighted = esc(code);
+    if (typeof Prism !== 'undefined' && lang) {
+      var grammar = Prism.languages[lang];
+      if (grammar) {
+        try { highlighted = Prism.highlight(code, grammar, lang); }
+        catch (_) {}
+      }
+    }
+    return langLabel +
+      '<div class="code-wrapper">' +
+      '<button class="code-copy" onclick="copyCode(this)">Copy</button>' +
+      '<pre class="code-block"><code class="language-' + (lang || 'text') + '">' +
+      highlighted + '</code></pre></div>';
   };
 
   // Tables: add our CSS class
@@ -944,6 +940,13 @@ function renderMarkdown(text) {
   if (window._markedAvailable && typeof marked !== 'undefined') {
     try {
       var html = marked.parse(text);
+      // Sanitize to prevent XSS from LLM output
+      if (typeof DOMPurify !== 'undefined') {
+        html = DOMPurify.sanitize(html, {
+          ADD_TAGS: ['details', 'summary'],
+          ALLOW_DATA_ATTR: true
+        });
+      }
       return html;
     } catch (e) {
       console.warn('marked.parse failed, using fallback:', e);
