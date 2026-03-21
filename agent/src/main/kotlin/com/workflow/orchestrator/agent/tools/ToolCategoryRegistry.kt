@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 /**
- * Central registry mapping all 52 agent tools to logical categories.
+ * Central registry mapping all 53 agent tools to logical categories.
  * Used by: DynamicToolSelector (tool filtering), Tools panel UI (categorization),
  * RequestToolsTool (category activation), ToolPreferences (grouping).
  */
@@ -26,7 +26,7 @@ object ToolCategoryRegistry {
             alwaysActive = true,
             description = "Essential coding tools: read, edit, search, command, diagnostics, format, imports, PSI navigation",
             tools = listOf(
-                "read_file", "edit_file", "search_code", "run_command",
+                "read_file", "edit_file", "search_code", "run_command", "glob_files",
                 "diagnostics", "format_code", "optimize_imports",
                 "file_structure", "find_definition", "find_references",
                 "type_hierarchy", "call_hierarchy",
