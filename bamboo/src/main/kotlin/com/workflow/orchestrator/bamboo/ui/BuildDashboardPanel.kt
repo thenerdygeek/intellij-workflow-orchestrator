@@ -492,8 +492,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val resultKey = build.buildResultKey.ifBlank { "${build.planKey}-${build.buildNumber}" }
         log.info("[Build:Dashboard] Loading historical build: $resultKey (#${build.buildNumber})")
 
-        viewingHistoricalBuild = true
+        stageDetailPanel.showArtifacts(resultKey)
+
         invokeLater {
+            viewingHistoricalBuild = true
             // Show historical build banner
             val bannerLabel = historicalBuildBanner.components
                 .filterIsInstance<JBLabel>()
@@ -687,6 +689,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 if (planKey.isBlank()) return
                 openTriggerDialog(planKey)
             }
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = activePlanKey.isNotBlank() || !settings.state.bambooPlanKey.isNullOrBlank()
+            }
             override fun getActionUpdateThread() = ActionUpdateThread.BGT
         })
 
@@ -786,8 +791,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun loadJobLog(resultKey: String) {
-        log.info("[Build:Dashboard] Loading job log + test results for $resultKey")
+        log.info("[Build:Dashboard] Loading job log + test results + artifacts for $resultKey")
         invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
+        stageDetailPanel.showArtifacts(resultKey)
         scope.launch {
             // Fetch log first (needed for both display and test error extraction)
             var buildLogText: String? = null

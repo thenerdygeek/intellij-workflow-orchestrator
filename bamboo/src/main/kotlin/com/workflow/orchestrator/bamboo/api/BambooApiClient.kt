@@ -288,8 +288,11 @@ class BambooApiClient(
     suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): Boolean =
         withContext(Dispatchers.IO) {
             try {
+                // Only use authenticated client for same-origin URLs to prevent token leakage
+                val isInternal = artifactUrl.startsWith(baseUrl)
+                val client = if (isInternal) httpClient else com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool
                 val request = Request.Builder().url(artifactUrl).get().build()
-                val response = httpClient.newCall(request).execute()
+                val response = client.newCall(request).execute()
                 response.use {
                     if (it.isSuccessful) {
                         it.body?.byteStream()?.use { input ->

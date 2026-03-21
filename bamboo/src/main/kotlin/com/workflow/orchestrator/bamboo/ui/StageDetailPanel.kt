@@ -18,6 +18,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
@@ -43,6 +44,7 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import com.intellij.openapi.application.invokeLater
 import java.awt.BorderLayout
@@ -104,6 +106,7 @@ class StageDetailPanel(
     }
     private var matchOffsets = mutableListOf<Int>()
     private var currentMatchIndex = -1
+    private val searchHighlighters = mutableListOf<RangeHighlighter>()
 
     private val testsPlaceholder = JPanel(BorderLayout()).apply {
         add(JBLabel("No test results available.").apply {
@@ -164,6 +167,8 @@ class StageDetailPanel(
     }
 
     init {
+        Disposer.register(parentDisposable, Disposable { scope.cancel() })
+
         border = JBUI.Borders.empty()
         add(tabbedPane, BorderLayout.CENTER)
 
@@ -332,13 +337,14 @@ class StageDetailPanel(
         }
         val markupModel = editor.markupModel
         for (offset in matchOffsets) {
-            markupModel.addRangeHighlighter(
+            val highlighter = markupModel.addRangeHighlighter(
                 offset,
                 offset + query.length,
                 HighlighterLayer.SELECTION - 1,
                 attrs,
                 HighlighterTargetArea.EXACT_RANGE
             )
+            searchHighlighters.add(highlighter)
         }
 
         // Navigate to first match
@@ -368,7 +374,8 @@ class StageDetailPanel(
 
     private fun clearSearchHighlights() {
         val editor = (consoleView as? ConsoleViewImpl)?.editor ?: return
-        editor.markupModel.removeAllHighlighters()
+        searchHighlighters.forEach { editor.markupModel.removeHighlighter(it) }
+        searchHighlighters.clear()
     }
 
     private fun openFullLogInEditor() {
