@@ -60,7 +60,7 @@ class PromptAssembler(
 
         // 6b. Available Subagents (only if custom agents defined)
         if (!agentDescriptions.isNullOrBlank()) {
-            sections.add("<available_subagents>\n$agentDescriptions\n\nTo delegate to a subagent, call the agent tool with subagent_type set to the agent name.\n</available_subagents>")
+            sections.add("<available_subagents>\n$agentDescriptions\n\nTo delegate to a subagent, call the agent tool with subagent_type set to the agent name.\nUse run_in_background=true for independent tasks. Use resume=agentId to continue a completed agent's work.\n</available_subagents>")
         }
 
         // 7. Previous Step Results (orchestrated mode only)
@@ -176,16 +176,33 @@ class PromptAssembler(
             Built-in agent types: general-purpose, explorer, coder, reviewer, tooler.
             Custom agents may also be available (see available_subagents section).
 
-            Guidelines:
+            When to delegate:
             - Simple tasks (1-2 files, quick fix): handle yourself
             - Moderate to complex tasks (3+ files, multi-step edits): use agent with subagent_type="coder"
-            - Analysis tasks (understand codebase, find references across modules): use agent with subagent_type="explorer"
+            - Analysis tasks (understand codebase, find references): use agent with subagent_type="explorer"
             - Review tasks (check quality after changes): use agent with subagent_type="reviewer"
-            - Enterprise tool tasks (Jira, Bamboo, Sonar operations): use agent with subagent_type="tooler"
+            - Enterprise tool tasks (Jira, Bamboo, Sonar): use agent with subagent_type="tooler"
             - When you create a plan and a step is non-trivial, delegate it via the agent tool
-            - Always provide detailed prompts with file paths and relevant context
-              (the subagent cannot see your conversation history)
-            - If a delegated task fails, try a different approach or handle it yourself
+            - Always provide detailed prompts with file paths and context (subagent has no conversation history)
+
+            Background execution:
+            - For independent tasks that don't block your next step, use run_in_background=true
+            - You will be notified automatically when the background agent completes
+            - Continue working on other tasks while it runs — do NOT wait or poll
+            - Use background for: research, code review, test runs, long builds
+            - Use foreground (default) for: tasks whose results you need before proceeding
+
+            Resume:
+            - Every agent returns an agentId in its result
+            - To continue a completed agent's work: agent(resume="agentId", prompt="continue with...")
+            - The resumed agent has its full previous context preserved
+            - Use resume when: follow-up work on the same area, iterating on review feedback
+
+            Kill:
+            - To cancel a running background agent: agent(kill="agentId")
+            - Use when: the task is no longer needed, or you want to redirect the agent
+
+            If a delegated task fails, try a different approach or handle it yourself.
             </delegation>
         """.trimIndent()
 
