@@ -14,6 +14,7 @@ Shared infrastructure for all feature modules. No feature module imports another
 - `HealthCheckStarted` / `HealthCheckFinished` — pre-commit health check lifecycle
 - `AutomationTriggered` / `AutomationFinished` / `QueuePositionChanged` — automation queue
 - `PullRequestCreated` / `PullRequestUpdated` / `PullRequestMerged` / `PullRequestDeclined` / `PullRequestApproved` / `PrSelected` — PR lifecycle
+- `TicketDetected` — ticket detected from branch but dismissed (shows banner in Sprint tab)
 - `JiraCommentPosted` / `PreReviewFinished` — handover events
 
 ## ToolResult<T>

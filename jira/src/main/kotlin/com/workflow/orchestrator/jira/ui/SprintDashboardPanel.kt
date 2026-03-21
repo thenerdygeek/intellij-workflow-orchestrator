@@ -22,16 +22,20 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
 import com.workflow.orchestrator.jira.api.dto.JiraStatus
+import com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.openapi.application.EDT
@@ -134,6 +138,21 @@ class SprintDashboardPanel(
     }
     private val sortByCombo = ComboBox(arrayOf("Default", "Priority", "Status", "Updated", "Key"))
 
+    // -- Detection banner --
+    private val detectionBanner = JPanel(BorderLayout()).apply {
+        background = StatusColors.INFO_BG
+        border = JBUI.Borders.empty(4, 8)
+        isVisible = false
+    }
+    private val detectionLabel = JBLabel().apply {
+        foreground = StatusColors.LINK
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
+    private var lastDetectedTicketKey: String? = null
+    private var lastDetectedSummary: String? = null
+    private var lastDetectedSprint: String? = null
+    private var lastDetectedAssignee: String? = null
+
     // -- State --
     private var allIssues: List<JiraIssue> = emptyList()
     private var showAllUsers: Boolean = false
@@ -151,13 +170,84 @@ class SprintDashboardPanel(
         background = JBColor.PanelBackground
         isOpaque = true
 
+        setupDetectionBanner()
         setupLayout()
         setupListeners()
+        listenForTicketDetection()
 
         @OptIn(kotlinx.coroutines.FlowPreview::class)
         scope.launch {
             searchDebounce.debounce(250).collect {
                 withContext(Dispatchers.EDT) { applyFilter() }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Detection Banner
+    // ---------------------------------------------------------------
+
+    private fun setupDetectionBanner() {
+        detectionBanner.add(detectionLabel, BorderLayout.CENTER)
+
+        val dismissBannerLabel = JBLabel("x").apply {
+            foreground = StatusColors.SECONDARY_TEXT
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            border = JBUI.Borders.emptyLeft(8)
+        }
+        dismissBannerLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                detectionBanner.isVisible = false
+                revalidate()
+            }
+        })
+        detectionBanner.add(dismissBannerLabel, BorderLayout.EAST)
+
+        detectionLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                val key = lastDetectedTicketKey ?: return
+                val summary = lastDetectedSummary ?: return
+                val frame = WindowManager.getInstance().getFrame(project) ?: return
+
+                TicketDetectionPopup(
+                    ticketKey = key,
+                    summary = summary,
+                    sprint = lastDetectedSprint,
+                    assignee = lastDetectedAssignee,
+                    onAccept = {
+                        val settings = PluginSettings.getInstance(project)
+                        settings.state.activeTicketId = key
+                        settings.state.activeTicketSummary = summary
+                        ActiveTicketService.getInstance(project).setActiveTicket(key, summary)
+                        detectionBanner.isVisible = false
+                        // Remove from dismissed so it won't re-trigger banner
+                        BranchChangeTicketDetector.dismissedBranches.clear()
+                        revalidate()
+                    },
+                    onDismiss = {
+                        detectionBanner.isVisible = false
+                        revalidate()
+                    }
+                ).show(frame)
+            }
+        })
+    }
+
+    private fun listenForTicketDetection() {
+        val eventBus = project.getService(EventBus::class.java)
+        scope.launch {
+            eventBus.events.collect { event ->
+                if (event is WorkflowEvent.TicketDetected) {
+                    lastDetectedTicketKey = event.ticketKey
+                    lastDetectedSummary = event.ticketSummary
+                    lastDetectedSprint = event.sprint
+                    lastDetectedAssignee = event.assignee
+                    withContext(Dispatchers.EDT) {
+                        detectionLabel.text = "Detected: ${event.ticketKey} \u2014 ${event.ticketSummary}"
+                        detectionBanner.isVisible = true
+                        revalidate()
+                    }
+                }
             }
         }
     }
@@ -208,7 +298,13 @@ class SprintDashboardPanel(
 
         topPanel.add(sprintHeaderPanel, BorderLayout.CENTER)
 
-        add(topPanel, BorderLayout.NORTH)
+        // Wrap topPanel with detection banner above it
+        val northWrapper = JPanel(BorderLayout()).apply {
+            isOpaque = false
+        }
+        northWrapper.add(detectionBanner, BorderLayout.NORTH)
+        northWrapper.add(topPanel, BorderLayout.CENTER)
+        add(northWrapper, BorderLayout.NORTH)
 
         // -- Center: collapsible sections + detail in splitter --
         currentWorkSection = CurrentWorkSection(project) { ticketId ->

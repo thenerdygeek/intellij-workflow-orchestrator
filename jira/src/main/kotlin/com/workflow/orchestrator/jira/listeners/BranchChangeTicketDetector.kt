@@ -5,12 +5,16 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.BranchChangeListener
+import com.intellij.openapi.wm.WindowManager
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.service.ActiveTicketService
+import com.workflow.orchestrator.jira.ui.TicketDetectionPopup
 import com.intellij.openapi.application.invokeLater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,12 +47,14 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
         val jiraUrl = settings.connections.jiraUrl
         if (jiraUrl.isNullOrBlank()) return
 
-        // Write state on EDT since PersistentStateComponent is not thread-safe
-        invokeLater {
-            settings.state.activeTicketId = ticketId
+        // Skip if the detected ticket is already the active ticket
+        val currentActiveTicket = settings.state.activeTicketId
+        if (currentActiveTicket == ticketId) {
+            log.debug("[Jira:Branch] Ticket $ticketId is already active, skipping detection")
+            return
         }
 
-        // Fetch ticket summary from Jira in background and update shared ActiveTicketService
+        // Fetch ticket details from Jira in background, then show confirmation popup
         scope.launch {
             val credentialStore = CredentialStore()
             val apiClient = JiraApiClient(
@@ -58,14 +64,61 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
             val result = apiClient.getIssue(ticketId)
             if (result is ApiResult.Success) {
-                val summary = result.data.fields.summary
-                invokeLater {
-                    settings.state.activeTicketSummary = summary
+                val issue = result.data
+                val summary = issue.fields.summary
+                val sprintName = issue.fields.sprint?.name
+                val assigneeName = issue.fields.assignee?.displayName
+
+                // Check if this branch was previously dismissed
+                if (branchName in dismissedBranches) {
+                    log.info("[Jira:Branch] Branch '$branchName' was previously dismissed, showing banner only")
+                    // Emit event for Sprint tab banner
+                    val eventBus = project.getService(EventBus::class.java)
+                    eventBus.emit(
+                        WorkflowEvent.TicketDetected(
+                            ticketKey = ticketId,
+                            ticketSummary = summary,
+                            sprint = sprintName,
+                            assignee = assigneeName
+                        )
+                    )
+                    return@launch
                 }
-                ActiveTicketService.getInstance(project).setActiveTicket(ticketId, summary)
-                log.info("[Jira:Branch] Updated active ticket summary for $ticketId")
+
+                invokeLater {
+                    val frame = WindowManager.getInstance().getFrame(project) ?: return@invokeLater
+
+                    TicketDetectionPopup(
+                        ticketKey = ticketId,
+                        summary = summary,
+                        sprint = sprintName,
+                        assignee = assigneeName,
+                        onAccept = {
+                            settings.state.activeTicketId = ticketId
+                            settings.state.activeTicketSummary = summary
+                            ActiveTicketService.getInstance(project).setActiveTicket(ticketId, summary)
+                            log.info("[Jira:Branch] User accepted ticket $ticketId as active")
+                        },
+                        onDismiss = {
+                            dismissedBranches.add(branchName)
+                            log.info("[Jira:Branch] User dismissed detection for branch '$branchName'")
+                            // Emit event for Sprint tab banner
+                            scope.launch {
+                                val eventBus = project.getService(EventBus::class.java)
+                                eventBus.emit(
+                                    WorkflowEvent.TicketDetected(
+                                        ticketKey = ticketId,
+                                        ticketSummary = summary,
+                                        sprint = sprintName,
+                                        assignee = assigneeName
+                                    )
+                                )
+                            }
+                        }
+                    ).show(frame)
+                }
             } else {
-                ActiveTicketService.getInstance(project).setActiveTicket(ticketId, "")
+                log.warn("[Jira:Branch] Failed to fetch issue $ticketId from Jira")
             }
         }
     }
@@ -73,5 +126,10 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
     override fun dispose() {
         scope.cancel()
         log.info("[Jira:Branch] BranchChangeTicketDetector disposed")
+    }
+
+    companion object {
+        /** Branches the user has dismissed detection for (resets on IDE restart). */
+        val dismissedBranches = mutableSetOf<String>()
     }
 }

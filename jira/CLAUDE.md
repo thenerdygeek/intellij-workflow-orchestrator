@@ -23,12 +23,13 @@ Key endpoints:
 - `ActiveTicketService` — tracks current ticket, emits `TicketChanged` events
 - `BranchingService` — Start Work flow: creates branch on Bitbucket + transitions Jira ticket
 - `CommitPrefixService` — auto-prefixes commit messages with ticket ID
-- `BranchChangeTicketDetector` — detects ticket from branch name on branch switch
+- `BranchChangeTicketDetector` — detects ticket from branch name on branch switch, shows confirmation popup (dismissed branches tracked in-memory)
 
 ## UI
 
 - `SprintDashboardPanel` — ticket list with detail panel (collapsible sections)
 - `TicketStatusBarWidget` — shows active ticket in status bar
 - `StartWorkDialog` — branch creation + Jira transition dialog
+- `TicketDetectionPopup` — confirmation popup for branch-detected tickets (Set as Active / Dismiss)
 - `TransitionDialog` — manual status transitions
 - `JiraSearchContributorFactory` — Search Everywhere integration for tickets

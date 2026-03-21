@@ -121,6 +121,14 @@ sealed class WorkflowEvent {
         val byUser: String
     ) : WorkflowEvent()
 
+    /** Emitted by :jira when a ticket is detected from a branch but dismissed by the user. */
+    data class TicketDetected(
+        val ticketKey: String,
+        val ticketSummary: String,
+        val sprint: String?,
+        val assignee: String?
+    ) : WorkflowEvent()
+
     /** Emitted when the git branch changes (via BranchChangeListener). */
     data class BranchChanged(
         val branchName: String
