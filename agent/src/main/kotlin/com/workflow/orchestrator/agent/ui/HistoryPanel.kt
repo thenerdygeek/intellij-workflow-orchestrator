@@ -85,6 +85,21 @@ class HistoryPanel : JPanel(BorderLayout()) {
             }
         })
 
+        // Right-click context menu
+        sessionList.componentPopupMenu = javax.swing.JPopupMenu().apply {
+            add(javax.swing.JMenuItem("Resume Session").apply {
+                icon = AllIcons.Actions.Execute
+                addActionListener {
+                    val entry = sessionList.selectedValue ?: return@addActionListener
+                    onResumeSession?.invoke(entry.sessionId)
+                }
+            })
+            add(javax.swing.JMenuItem("Delete Session").apply {
+                icon = AllIcons.Actions.GC
+                addActionListener { deleteSelected() }
+            })
+        }
+
         add(JBScrollPane(sessionList), BorderLayout.CENTER)
 
         // Bottom action bar
@@ -99,7 +114,7 @@ class HistoryPanel : JPanel(BorderLayout()) {
             add(deleteBtn)
 
             val cleanupBtn = JButton("Cleanup Old").apply {
-                icon = AllIcons.Actions.ProfileCPU
+                icon = AllIcons.Actions.GC
                 toolTipText = "Remove sessions older than 30 days"
                 addActionListener {
                     try {
@@ -178,6 +193,7 @@ class HistoryPanel : JPanel(BorderLayout()) {
 
             val panel = JPanel(BorderLayout()).apply {
                 border = JBUI.Borders.empty(6, 8)
+                toolTipText = "Double-click to resume"
             }
 
             // Left: icon + text

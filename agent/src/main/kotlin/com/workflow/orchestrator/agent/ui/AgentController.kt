@@ -641,6 +641,7 @@ class AgentController(
                 val dialog = CommandApprovalDialog(project, cmdMatch?.groupValues?.get(1) ?: description, project.basePath ?: ".", riskLevel.name)
                 dialog.show()
                 result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
+                if (dialog.allowAll) sessionAutoApprove = true
             } else if (riskLevel >= RiskLevel.MEDIUM && !description.contains("run_command")) {
                 // File edit approval — try to show diff via EditApprovalDialog
                 if (description.contains("edit_file")) {
@@ -673,7 +674,7 @@ class AgentController(
                             // Fallback: parsing failed — use plain dialog with session auto-approve
                             val answer = Messages.showYesNoCancelDialog(
                                 project,
-                                "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                                "The agent wants to edit a file.\n\nAction: Replace text content\n\nYou can undo this change after it's applied.",
                                 "Agent File Edit",
                                 "Allow", "Block", "Allow All (This Session)",
                                 Messages.getQuestionIcon()
@@ -688,7 +689,7 @@ class AgentController(
                         // Fallback on any error — use plain dialog
                         val answer = Messages.showYesNoCancelDialog(
                             project,
-                            "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                            "The agent wants to edit a file.\n\nAction: Replace text content\n\nYou can undo this change after it's applied.",
                             "Agent File Edit",
                             "Allow", "Block", "Allow All (This Session)",
                             Messages.getQuestionIcon()
@@ -703,7 +704,7 @@ class AgentController(
                     // Non-edit_file medium+ risk — plain dialog with session auto-approve
                     val answer = Messages.showYesNoCancelDialog(
                         project,
-                        "The agent wants to modify a file:\n\n$description\n\nYou can undo this change after it's applied.",
+                        "The agent wants to edit a file.\n\nAction: Replace text content\n\nYou can undo this change after it's applied.",
                         "Agent File Edit",
                         "Allow", "Block", "Allow All (This Session)",
                         Messages.getQuestionIcon()
