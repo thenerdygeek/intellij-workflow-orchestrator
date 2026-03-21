@@ -25,6 +25,7 @@ class PromptAssembler(
         repoMapContext: String? = null,
         memoryContext: String? = null,
         skillDescriptions: String? = null,
+        agentDescriptions: String? = null,
         planMode: Boolean = false
     ): String {
         val sections = mutableListOf<String>()
@@ -55,6 +56,11 @@ class PromptAssembler(
         // 6. Available Skills (only if discovered)
         if (!skillDescriptions.isNullOrBlank()) {
             sections.add("<available_skills>\n$skillDescriptions\n\nTo activate a skill, call activate_skill(name). Users can also type /skill-name in chat.\n</available_skills>")
+        }
+
+        // 6b. Available Subagents (only if custom agents defined)
+        if (!agentDescriptions.isNullOrBlank()) {
+            sections.add("<available_subagents>\n$agentDescriptions\n\nTo delegate to a subagent, call delegate_task with the agent parameter.\n</available_subagents>")
         }
 
         // 7. Previous Step Results (orchestrated mode only)

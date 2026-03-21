@@ -252,6 +252,87 @@ Body.
     }
 
     @Test
+    fun `memory directory resolved for project scope`() {
+        val def = AgentDefinitionRegistry.AgentDefinition(
+            name = "reviewer",
+            description = "test",
+            systemPrompt = "test",
+            memory = AgentDefinitionRegistry.MemoryScope.PROJECT,
+            filePath = "/tmp/test.md",
+            scope = AgentDefinitionRegistry.AgentScope.PROJECT
+        )
+
+        val dir = registry.getMemoryDirectory(def, project)
+        assertNotNull(dir)
+        assertTrue(dir!!.path.contains(".workflow/agent-memory/reviewer"))
+    }
+
+    @Test
+    fun `memory directory resolved for user scope`() {
+        val def = AgentDefinitionRegistry.AgentDefinition(
+            name = "helper",
+            description = "test",
+            systemPrompt = "test",
+            memory = AgentDefinitionRegistry.MemoryScope.USER,
+            filePath = "/tmp/test.md",
+            scope = AgentDefinitionRegistry.AgentScope.USER
+        )
+
+        val dir = registry.getMemoryDirectory(def, project)
+        assertNotNull(dir)
+        assertTrue(dir!!.path.contains(".workflow-orchestrator/agent-memory/helper"))
+    }
+
+    @Test
+    fun `memory directory resolved for local scope`() {
+        val def = AgentDefinitionRegistry.AgentDefinition(
+            name = "local-agent",
+            description = "test",
+            systemPrompt = "test",
+            memory = AgentDefinitionRegistry.MemoryScope.LOCAL,
+            filePath = "/tmp/test.md",
+            scope = AgentDefinitionRegistry.AgentScope.PROJECT
+        )
+
+        val dir = registry.getMemoryDirectory(def, project)
+        assertNotNull(dir)
+        assertTrue(dir!!.path.contains(".workflow/agent-memory-local/local-agent"))
+    }
+
+    @Test
+    fun `memory directory returns null when memory not enabled`() {
+        val def = AgentDefinitionRegistry.AgentDefinition(
+            name = "no-memory",
+            description = "test",
+            systemPrompt = "test",
+            memory = null,
+            filePath = "/tmp/test.md",
+            scope = AgentDefinitionRegistry.AgentScope.PROJECT
+        )
+
+        val dir = registry.getMemoryDirectory(def, project)
+        assertNull(dir)
+    }
+
+    @Test
+    fun `memory directory returns null when project has no basePath`() {
+        val noBaseProject = mockk<Project>(relaxed = true)
+        every { noBaseProject.basePath } returns null
+
+        val def = AgentDefinitionRegistry.AgentDefinition(
+            name = "reviewer",
+            description = "test",
+            systemPrompt = "test",
+            memory = AgentDefinitionRegistry.MemoryScope.PROJECT,
+            filePath = "/tmp/test.md",
+            scope = AgentDefinitionRegistry.AgentScope.PROJECT
+        )
+
+        val dir = registry.getMemoryDirectory(def, noBaseProject)
+        assertNull(dir)
+    }
+
+    @Test
     fun `scan clears previous agents on rescan`() {
         val agentDir = File(tempDir, ".workflow/agents").also { it.mkdirs() }
         File(agentDir, "first.md").writeText("""

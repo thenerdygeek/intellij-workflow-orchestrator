@@ -219,6 +219,7 @@ class ConversationSession private constructor(
             // Discover custom subagent definitions
             val agentDefRegistry = AgentDefinitionRegistry(project).also { it.scan() }
             try { agentService.agentDefinitionRegistry = agentDefRegistry } catch (_: Exception) {}
+            val agentDescriptions = agentDefRegistry.buildDescriptionIndex()
 
             // Detect project type (Maven/Spring/JPA) — determines which tools are always included
             val projectTools = try {
@@ -233,6 +234,7 @@ class ConversationSession private constructor(
                 repoMapContext = repoMap.ifBlank { null },
                 memoryContext = memoryContext,
                 skillDescriptions = skillDescriptions.ifBlank { null },
+                agentDescriptions = agentDescriptions.ifBlank { null },
                 planMode = planMode
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)

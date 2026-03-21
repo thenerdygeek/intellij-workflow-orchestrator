@@ -184,9 +184,10 @@ class DelegateTaskTool : AgentTool {
 
             if (agentDef != null) {
                 // Custom subagent: use its system prompt, tool restrictions, and max turns
-                systemPrompt = buildSubagentPrompt(agentDef, agentService)
+                systemPrompt = buildSubagentPrompt(agentDef, agentService, project)
 
                 val allTools = agentService.toolRegistry.getToolsForWorker(workerType)
+                val allRegisteredTools = agentService.toolRegistry.allTools()
                 val effectiveTools = run {
                     var tools = if (agentDef.tools != null) {
                         allTools.filter { it.name in agentDef.tools }
@@ -195,6 +196,14 @@ class DelegateTaskTool : AgentTool {
                     }
                     if (agentDef.disallowedTools.isNotEmpty()) {
                         tools = tools.filter { it.name !in agentDef.disallowedTools }
+                    }
+                    // Auto-enable read_file/edit_file for memory-enabled agents
+                    if (agentDef.memory != null) {
+                        val memoryTools = listOf("read_file", "edit_file")
+                        val missingTools = memoryTools.filter { name -> tools.none { it.name == name } }
+                        if (missingTools.isNotEmpty()) {
+                            tools = tools + allRegisteredTools.filter { it.name in missingTools }
+                        }
                     }
                     tools
                 }
@@ -309,11 +318,12 @@ class DelegateTaskTool : AgentTool {
     }
 
     /**
-     * Build a system prompt for a custom subagent, including preloaded skills.
+     * Build a system prompt for a custom subagent, including preloaded skills and memory.
      */
     private fun buildSubagentPrompt(
         def: AgentDefinitionRegistry.AgentDefinition,
-        agentService: AgentService
+        agentService: AgentService,
+        project: Project
     ): String {
         val sb = StringBuilder(def.systemPrompt)
 
@@ -332,6 +342,24 @@ class DelegateTaskTool : AgentTool {
                 }
                 sb.appendLine("</preloaded_skills>")
             }
+        }
+
+        // Per-agent memory
+        val registry = try { agentService.agentDefinitionRegistry } catch (_: Exception) { null }
+        val memoryDir = registry?.getMemoryDirectory(def, project)
+        if (memoryDir != null && memoryDir.isDirectory) {
+            val memoryIndex = java.io.File(memoryDir, "MEMORY.md")
+            if (memoryIndex.isFile) {
+                val memoryContent = memoryIndex.readText().lines().take(200).joinToString("\n")
+                sb.appendLine("\n<agent_memory>")
+                sb.appendLine(memoryContent)
+                sb.appendLine("</agent_memory>")
+            }
+            sb.appendLine("\n<memory_instructions>")
+            sb.appendLine("You have persistent memory at: ${memoryDir.absolutePath}")
+            sb.appendLine("Use read_file and edit_file to read and update your memory files.")
+            sb.appendLine("Keep MEMORY.md as an index of your learnings (max 200 lines).")
+            sb.appendLine("</memory_instructions>")
         }
 
         return sb.toString()
