@@ -54,6 +54,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         verticalAlignment = SwingConstants.CENTER
     }
 
+    private val quickCommentPanel = QuickCommentPanel(project!!).apply {
+        isVisible = false
+    }
+
     init {
         isOpaque = false
         background = JBColor.PanelBackground
@@ -63,6 +67,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     fun showEmpty() {
         removeAll()
         add(emptyLabel, BorderLayout.CENTER)
+        quickCommentPanel.isVisible = false
         revalidate()
         repaint()
     }
@@ -126,6 +131,16 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         removeAll()
         add(scrollPane, BorderLayout.CENTER)
+
+        // Quick comment bar pinned to bottom
+        quickCommentPanel.issueKey = issue.key
+        quickCommentPanel.isVisible = true
+        quickCommentPanel.onCommentPosted = {
+            // Refresh comments section after posting
+            lazyLoadComments(issue.key)
+        }
+        add(quickCommentPanel, BorderLayout.SOUTH)
+
         revalidate()
         repaint()
 
@@ -418,6 +433,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     override fun dispose() {
         lazyLoadJob?.cancel()
         lazyScope.cancel()
+        quickCommentPanel.dispose()
     }
 
     private fun formatRelativeTime(isoDate: String): String {
