@@ -98,6 +98,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         addSubtasks(issue)
         addDependencies(issue)
 
+        // Pull Requests (lazy-loaded via dev-status API)
+        addVerticalSpace(12)
+        addSectionHeader("Pull Requests")
+        val devStatusSection = DevStatusSection(project!!)
+        addFullWidthComponent(devStatusSection)
+        devStatusSection.loadDevStatus(issue.id)
+
         // Worklog summary (lazy-loaded)
         addVerticalSpace(12)
         addSectionHeader("Time Logged")
