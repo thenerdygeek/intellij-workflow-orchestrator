@@ -197,8 +197,9 @@ class ContextManager(
         for (i in messages.indices) {
             if (tokensToRemove <= 0) break
             val msg = messages[i]
-            // Never compress system messages
-            if (msg.role == "system") continue
+            // Only protect the FIRST system message (original prompt at index 0).
+            // Allow other system messages (LoopGuard reminders, budget warnings) to be compressed.
+            if (msg.role == "system" && i == 0) continue
 
             val msgTokens = TokenEstimator.estimate(listOf(msg))
             messagesToSummarize.add(msg)
@@ -245,7 +246,9 @@ class ContextManager(
         for (i in messages.indices) {
             if (tokensToRemove <= 0) break
             val msg = messages[i]
-            if (msg.role == "system") continue
+            // Only protect the FIRST system message (original prompt at index 0).
+            // Allow other system messages (LoopGuard reminders, budget warnings) to be compressed.
+            if (msg.role == "system" && i == 0) continue
 
             val msgTokens = TokenEstimator.estimate(listOf(msg))
             messagesToDrop.add(msg)
@@ -258,15 +261,37 @@ class ContextManager(
         val hasToolResults = messagesToDrop.any { it.role == "tool" }
 
         val summary = if (hasToolResults) {
-            // Tool results contain high-information content — use LLM to preserve key details
+            // Tool results contain high-information content — use LLM with structured template
             try {
                 val promptContent = messagesToDrop.mapNotNull { it.content }.joinToString("\n---\n")
+                val summarizePrompt = """
+Summarize the conversation so far into a structured continuation prompt.
+Use this exact format:
+
+## Goal
+What is the user trying to accomplish?
+
+## Instructions
+Key instructions or constraints the user specified.
+
+## Discoveries
+Important findings from code exploration, tool results, and analysis.
+Include specific file paths, line numbers, and code patterns found.
+
+## Accomplished
+What has been completed so far. List specific changes made.
+
+## Relevant Files
+Files that were read, edited, or referenced. Include paths.
+
+Be concise but preserve ALL technical details — file paths, line numbers,
+error messages, code snippets, and specific findings. These details are
+critical for continuing the task.
+""".trimIndent()
                 val summarizationPrompt = listOf(
                     ChatMessage(
                         role = "system",
-                        content = "Summarize the following conversation messages concisely. " +
-                            "Preserve all file paths, line numbers, code changes, errors, and key decisions. " +
-                            "Output only the summary, no preamble."
+                        content = summarizePrompt
                     ),
                     ChatMessage(
                         role = "user",
