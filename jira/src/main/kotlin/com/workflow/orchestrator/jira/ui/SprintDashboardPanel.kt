@@ -21,6 +21,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraStatus
@@ -81,17 +82,17 @@ class SprintDashboardPanel(
     }
     private val sprintMetaLabel = JBLabel("").apply {
         font = font.deriveFont(JBUI.scale(11).toFloat())
-        foreground = SECONDARY_TEXT
+        foreground = StatusColors.SECONDARY_TEXT
     }
     private val ticketCountLabel = JBLabel("").apply {
         font = font.deriveFont(JBUI.scale(11).toFloat())
-        foreground = SECONDARY_TEXT
+        foreground = StatusColors.SECONDARY_TEXT
     }
     private val progressBar = SprintProgressBar()
 
     // -- Status bar --
     private val statusLabel = JBLabel("Ready").apply {
-        foreground = SECONDARY_TEXT
+        foreground = StatusColors.SECONDARY_TEXT
         font = font.deriveFont(JBUI.scale(11).toFloat())
         border = JBUI.Borders.empty(4, 8)
     }
@@ -232,7 +233,7 @@ class SprintDashboardPanel(
         // -- Bottom: status bar --
         val bottomPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.customLine(BORDER_COLOR, 1, 0, 0, 0)
+            border = JBUI.Borders.customLine(StatusColors.BORDER, 1, 0, 0, 0)
         }
         bottomPanel.add(loadingIcon)
         bottomPanel.add(statusLabel)
@@ -694,7 +695,7 @@ class SprintDashboardPanel(
             // Done segment (green)
             if (doneRatio > 0f) {
                 val segW = barWidth * doneRatio
-                g2.color = PROGRESS_DONE
+                g2.color = StatusColors.SUCCESS
                 g2.fillRect(x.toInt(), 0, segW.toInt().coerceAtLeast(1), height)
                 x += segW
             }
@@ -702,7 +703,7 @@ class SprintDashboardPanel(
             // In-progress segment (blue)
             if (inProgressRatio > 0f) {
                 val segW = barWidth * inProgressRatio
-                g2.color = PROGRESS_IN_PROGRESS
+                g2.color = StatusColors.LINK
                 g2.fillRect(x.toInt(), 0, segW.toInt().coerceAtLeast(1), height)
                 x += segW
             }
@@ -710,7 +711,7 @@ class SprintDashboardPanel(
             // Todo segment (gray) — fills remaining space
             if (todoRatio > 0f) {
                 val segW = barWidth * todoRatio
-                g2.color = PROGRESS_TODO
+                g2.color = StatusColors.INFO
                 g2.fillRect(x.toInt(), 0, segW.toInt().coerceAtLeast(1), height)
             }
 
@@ -723,12 +724,6 @@ class SprintDashboardPanel(
     // ---------------------------------------------------------------
 
     companion object {
-        private val SECONDARY_TEXT = JBColor(0x656D76, 0x8B949E)
-        private val BORDER_COLOR = JBColor(0xD1D9E0, 0x444D56)
-
         private val PROGRESS_BG = JBColor(0xE8EAED, 0x3D4043)
-        private val PROGRESS_DONE = JBColor(0x1B7F37, 0x3FB950)
-        private val PROGRESS_IN_PROGRESS = JBColor(0x0969DA, 0x58A6FF)
-        private val PROGRESS_TODO = JBColor(0x656D76, 0x8B949E)
     }
 }

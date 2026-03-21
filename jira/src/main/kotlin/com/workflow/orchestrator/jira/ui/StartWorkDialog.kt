@@ -11,9 +11,9 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
+import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
 import java.awt.CardLayout
-import java.awt.Color
 import java.awt.FlowLayout
 import javax.swing.*
 
@@ -61,7 +61,7 @@ class StartWorkDialog(
     private val loadingLabel = JBLabel("Cody generating branch name\u2026")
     private val loadingIcon = JBLabel(AnimatedIcon.Default())
     private val errorLabel = JBLabel().apply {
-        foreground = JBColor(Color(0xCC, 0x33, 0x33), Color(0xFF, 0x66, 0x66))
+        foreground = StatusColors.ERROR
         isVisible = false
     }
 
@@ -102,7 +102,7 @@ class StartWorkDialog(
                 val warningLabel = JBLabel(
                     "Warning: You have uncommitted changes. Commit or stash them before switching branches."
                 ).apply {
-                    foreground = JBColor(Color(0xCC, 0x66, 0x00), Color(0xFF, 0xAA, 0x33))
+                    foreground = StatusColors.WARNING
                     icon = com.intellij.icons.AllIcons.General.Warning
                 }
                 add(warningLabel)
@@ -117,7 +117,7 @@ class StartWorkDialog(
         val repoRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         repoRow.add(JBLabel("Repository:"))
         repoRow.add(JBLabel(repoDisplay).apply {
-            foreground = JBColor(0x0969DA, 0x58A6FF)
+            foreground = StatusColors.LINK
         })
         mainPanel.add(repoRow)
         mainPanel.add(Box.createVerticalStrut(JBUI.scale(12)))
@@ -148,7 +148,7 @@ class StartWorkDialog(
         }
         if (existingBranches.size == 1) {
             existingBranchLabel = JBLabel(existingBranches.first()).apply {
-                foreground = JBColor(0x0969DA, 0x58A6FF)
+                foreground = StatusColors.LINK
             }
             existingRow.add(existingBranchLabel)
         } else {
@@ -176,7 +176,7 @@ class StartWorkDialog(
 
         mainPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
         val comment = JBLabel("Branch will be checked out locally").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(font.size2D - 1f)
             border = JBUI.Borders.emptyLeft(JBUI.scale(8))
         }
@@ -188,7 +188,7 @@ class StartWorkDialog(
 
         mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
         val branchComment = JBLabel("Branch will be created on Bitbucket and checked out locally").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(font.size2D - 1f)
             border = JBUI.Borders.emptyLeft(JBUI.scale(8))
         }
@@ -211,7 +211,7 @@ class StartWorkDialog(
         panel.add(Box.createVerticalStrut(JBUI.scale(4)))
 
         val sourceComment = JBLabel("Branch to create from").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(font.size2D - 1f)
             border = JBUI.Borders.emptyLeft(JBUI.scale(8))
         }

@@ -2,6 +2,7 @@ package com.workflow.orchestrator.jira.ui
 
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Cursor
@@ -26,15 +27,15 @@ class CollapsibleSection(
     private var expanded = initiallyExpanded
     private val arrowLabel = JBLabel(if (expanded) "▼" else "▶").apply {
         font = font.deriveFont(JBUI.scale(10).toFloat())
-        foreground = JBColor(0x656D76, 0x8B949E)
+        foreground = StatusColors.SECONDARY_TEXT
     }
     private val titleLabel = JBLabel(title).apply {
         font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
-        foreground = JBColor(0x656D76, 0x6c7086)
+        foreground = StatusColors.SECONDARY_TEXT
     }
     private val countLabel = JBLabel(count?.let { "($it)" } ?: "").apply {
         font = font.deriveFont(JBUI.scale(10).toFloat())
-        foreground = JBColor(0x999999, 0x585b70)
+        foreground = StatusColors.SECONDARY_TEXT
     }
 
     init {

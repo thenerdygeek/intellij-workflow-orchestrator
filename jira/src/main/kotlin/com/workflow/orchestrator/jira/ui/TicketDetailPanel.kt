@@ -5,6 +5,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
 import com.workflow.orchestrator.jira.service.IssueDetailCache
@@ -171,10 +172,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
         for (label in labels) {
             tagsPanel.add(JBLabel(label).apply {
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
                 font = font.deriveFont(JBUI.scale(10).toFloat())
                 border = BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(BORDER_COLOR, 1, true),
+                    BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
                     JBUI.Borders.empty(2, 6)
                 )
             })
@@ -217,12 +218,12 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             leftPanel.add(JBLabel(statusIcon).apply { foreground = statusColor })
             leftPanel.add(JBLabel(subtask.key).apply {
                 font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-                foreground = JBColor(0x0969DA, 0x58A6FF)
+                foreground = StatusColors.LINK
                 cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             })
             leftPanel.add(JBLabel(truncate(subtask.fields.summary, 50)).apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
                 if (subtask.fields.summary.length > 50) toolTipText = subtask.fields.summary
             })
 
@@ -255,7 +256,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
             val card = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
                 border = BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(BORDER_COLOR, 1, true),
+                    BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
                     JBUI.Borders.empty(4, 8)
                 )
                 cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
@@ -268,7 +269,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     })
                     add(JBLabel(sizeStr).apply {
                         font = font.deriveFont(JBUI.scale(9).toFloat())
-                        foreground = SECONDARY_TEXT
+                        foreground = StatusColors.SECONDARY_TEXT
                     })
                 }
                 add(infoPanel)
@@ -327,7 +328,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             val emptyPanel = JPanel(BorderLayout()).apply {
                 isOpaque = false
                 add(JBLabel("No comments").apply {
-                    foreground = SECONDARY_TEXT
+                    foreground = StatusColors.SECONDARY_TEXT
                     border = JBUI.Borders.empty(8)
                 }, BorderLayout.CENTER)
             }
@@ -342,7 +343,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 val morePanel = JPanel(BorderLayout()).apply {
                     isOpaque = false
                     add(JBLabel("${comments.size - 20} more comments — open in Jira to see all").apply {
-                        foreground = SECONDARY_TEXT
+                        foreground = StatusColors.SECONDARY_TEXT
                         font = font.deriveFont(JBUI.scale(10).toFloat())
                         border = JBUI.Borders.empty(4, 8)
                     }, BorderLayout.CENTER)
@@ -376,13 +377,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
         })
         headerRow.add(JBLabel("• $timeAgo").apply {
-            foreground = SECONDARY_TEXT
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(JBUI.scale(10).toFloat())
         })
 
         commentPanel.add(headerRow, BorderLayout.NORTH)
 
-        val bodyLabel = JBLabel("<html><body style='font-size:${JBUI.scale(11)}px; color:${colorToHex(SECONDARY_TEXT)};'>" +
+        val bodyLabel = JBLabel("<html><body style='font-size:${JBUI.scale(11)}px; color:${colorToHex(StatusColors.SECONDARY_TEXT)};'>" +
             escapeHtml(comment.body).replace("\n", "<br>") +
             "</body></html>").apply {
             border = JBUI.Borders.emptyLeft(JBUI.scale(26))
@@ -472,7 +473,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 })
             } else {
                 add(JBLabel("Unassigned").apply {
-                    foreground = SECONDARY_TEXT
+                    foreground = StatusColors.SECONDARY_TEXT
                     font = font.deriveFont(JBUI.scale(12).toFloat())
                 })
             }
@@ -483,13 +484,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         cardsPanel.add(createInfoCard("Sprint") {
             val sprintText = sprint?.name ?: "No sprint"
             add(JBLabel(sprintText).apply {
-                foreground = if (sprint != null) JBColor.foreground() else SECONDARY_TEXT
+                foreground = if (sprint != null) JBColor.foreground() else StatusColors.SECONDARY_TEXT
                 font = font.deriveFont(JBUI.scale(12).toFloat())
             })
             if (sprint != null) {
                 add(createSpacerH(4))
                 add(JBLabel("(${sprint.state})").apply {
-                    foreground = SECONDARY_TEXT
+                    foreground = StatusColors.SECONDARY_TEXT
                     font = font.deriveFont(JBUI.scale(11).toFloat())
                 })
             }
@@ -508,7 +509,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 font = font.deriveFont(JBUI.scale(11).toFloat())
             })
             datesPanel.add(JBLabel("Updated: $updated").apply {
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
                 font = font.deriveFont(JBUI.scale(11).toFloat())
             })
             add(datesPanel)
@@ -551,7 +552,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         val tint = when {
             isBlockedBy -> BLOCKED_BY_TINT
             isBlocking -> BLOCKS_TINT
-            else -> CARD_BG
+            else -> StatusColors.CARD_BG
         }
 
         return object : JPanel(BorderLayout()) {
@@ -588,7 +589,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             })
             leftPanel.add(JBLabel(truncate(linkedIssue.fields.summary, 50)).apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
                 if (linkedIssue.fields.summary.length > 50) toolTipText = linkedIssue.fields.summary
             })
 
@@ -600,11 +601,11 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             }
             rightPanel.add(JBLabel(direction).apply {
                 font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat())
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
             })
             rightPanel.add(JBLabel("[${linkedIssue.fields.status.name}]").apply {
                 font = font.deriveFont(JBUI.scale(10).toFloat())
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
             })
             add(rightPanel, BorderLayout.EAST)
         }
@@ -631,7 +632,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             isEditable = false
             isOpaque = false
             border = JBUI.Borders.empty(4, 8)
-            background = CARD_BG
+            background = StatusColors.CARD_BG
         }
 
         val descPanel = object : JPanel(BorderLayout()) {
@@ -644,7 +645,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = CARD_BG
+                g2.color = StatusColors.CARD_BG
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),
                     JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat()
@@ -729,9 +730,9 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     private fun createTextTag(text: String): JBLabel {
         return JBLabel(text).apply {
             font = font.deriveFont(JBUI.scale(10).toFloat())
-            foreground = SECONDARY_TEXT
+            foreground = StatusColors.SECONDARY_TEXT
             border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER_COLOR, 1, true),
+                BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
                 JBUI.Borders.empty(2, 6)
             )
         }
@@ -748,7 +749,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = CARD_BG
+                g2.color = StatusColors.CARD_BG
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),
                     JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat()
@@ -757,7 +758,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             }
         }.apply {
             val titleLabel = JBLabel(title).apply {
-                foreground = SECONDARY_TEXT
+                foreground = StatusColors.SECONDARY_TEXT
                 font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
                 border = JBUI.Borders.emptyBottom(4)
             }
@@ -870,9 +871,6 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     // ---------------------------------------------------------------
 
     companion object {
-        private val SECONDARY_TEXT = JBColor(0x656D76, 0x8B949E)
-        private val CARD_BG = JBColor(0xF7F8FA, 0x2B2D30)
-        private val BORDER_COLOR = JBColor(0xD1D9E0, 0x444D56)
         private val BLOCKED_BY_TINT = JBColor(0xFFF0F0, 0x3D2020)
         private val BLOCKS_TINT = JBColor(0xFFF8F0, 0x3D3020)
 

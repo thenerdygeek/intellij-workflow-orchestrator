@@ -2,6 +2,7 @@ package com.workflow.orchestrator.jira.ui
 
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import java.awt.*
 import java.awt.geom.Ellipse2D
@@ -67,14 +68,14 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
 
         // Draw header text
         g2.font = headerFont
-        g2.color = SECONDARY_TEXT_COLOR
+        g2.color = StatusColors.SECONDARY_TEXT
         g2.drawString(text, textX, textY)
 
         // Draw line after text
         val lineStartX = textX + textWidth + JBUI.scale(8)
         val lineEndX = x + w - JBUI.scale(10)
         if (lineStartX < lineEndX) {
-            g2.color = JBColor(0xD0D7DE, 0x3D4043)
+            g2.color = StatusColors.BORDER
             g2.fillRect(lineStartX, midY, lineEndX - lineStartX, 1)
         }
 
@@ -138,13 +139,13 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
 
         // Ticket key (bold)
         g2.font = keyFont
-        g2.color = if (isSelected) JBColor.foreground() else KEY_TEXT_COLOR
+        g2.color = if (isSelected) JBColor.foreground() else JBColor.foreground()
         g2.drawString(issue.key, cursorX, line1Y)
         cursorX += keyMetrics.stringWidth(issue.key) + JBUI.scale(8)
 
         // Summary (regular, truncated)
         g2.font = summaryFont
-        g2.color = if (isSelected) JBColor.foreground() else SUMMARY_TEXT_COLOR
+        g2.color = if (isSelected) JBColor.foreground() else JBColor.foreground()
         val maxSummaryWidth = (contentX + contentW) - cursorX
         val truncatedSummary = truncateText(issue.fields.summary, summaryMetrics, maxSummaryWidth)
         g2.drawString(truncatedSummary, cursorX, line1Y)
@@ -188,13 +189,13 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
             typeBadgeW.toFloat(), typeBadgeH.toFloat(),
             JBUI.scale(3).toFloat(), JBUI.scale(3).toFloat()
         ))
-        g2.color = if (isSelected) JBColor.foreground() else TYPE_TEXT_COLOR
+        g2.color = if (isSelected) JBColor.foreground() else JBColor.foreground()
         g2.drawString(issueType, cursorX + JBUI.scale(4), line2Y)
         cursorX += typeBadgeW + JBUI.scale(8)
 
         // Assignee
         val assigneeName = issue.fields.assignee?.displayName ?: "Unassigned"
-        g2.color = if (isSelected) JBColor.foreground() else SECONDARY_TEXT_COLOR
+        g2.color = if (isSelected) JBColor.foreground() else StatusColors.SECONDARY_TEXT
         g2.drawString(assigneeName, cursorX, line2Y)
         cursorX += smallMetrics.stringWidth(assigneeName)
 
@@ -204,11 +205,11 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         }
         if (blockerCount > 0) {
             cursorX += JBUI.scale(6)
-            g2.color = SECONDARY_TEXT_COLOR
+            g2.color = StatusColors.SECONDARY_TEXT
             g2.drawString("\u2022", cursorX, line2Y) // bullet
             cursorX += smallMetrics.stringWidth("\u2022") + JBUI.scale(4)
 
-            g2.color = BLOCKER_TEXT
+            g2.color = StatusColors.ERROR
             val blockerText = "$blockerCount blocker${if (blockerCount > 1) "s" else ""}"
             g2.drawString(blockerText, cursorX, line2Y)
         }
@@ -223,46 +224,29 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         private const val ROW_HEIGHT = 52
 
         // -- Card colors --
-        private val CARD_BACKGROUND = JBColor(0xF7F8FA, 0x2B2D30)
-        private val CARD_HOVER = JBColor(0xEBEDF0, 0x353739)
+        private val CARD_BACKGROUND = JBColor.PanelBackground
+        private val CARD_HOVER = StatusColors.HIGHLIGHT_BG
         private val CARD_SELECTED = JBColor(0xD4E4FA, 0x2E436E)
 
         // -- Text colors --
-        private val KEY_TEXT_COLOR = JBColor(0x1F2328, 0xE6EDF3)
-        private val SUMMARY_TEXT_COLOR = JBColor(0x1F2328, 0xCDD9E5)
-        private val SECONDARY_TEXT_COLOR = JBColor(0x656D76, 0x8B949E)
-        private val TYPE_TEXT_COLOR = JBColor(0x1F2328, 0xCDD9E5)
         private val TYPE_BADGE_BG = JBColor(0xE8EAED, 0x3D4043)
-        private val BLOCKER_TEXT = JBColor(0xCF222E, 0xF85149)
-
-        // -- Status pill colors --
-        private val STATUS_DONE = JBColor(0x1B7F37, 0x3FB950)
-        private val STATUS_IN_PROGRESS = JBColor(0x0969DA, 0x58A6FF)
-        private val STATUS_TODO = JBColor(0x656D76, 0x8B949E)
-
-        // -- Priority colors --
-        private val PRIORITY_HIGHEST = JBColor(0xCF222E, 0xF85149)
-        private val PRIORITY_HIGH = JBColor(0xBF5700, 0xDB6D28)
-        private val PRIORITY_MEDIUM = JBColor(0x0969DA, 0x58A6FF)
-        private val PRIORITY_LOW = JBColor(0x1B7F37, 0x3FB950)
-        private val PRIORITY_LOWEST = JBColor(0x656D76, 0x8B949E)
 
         @JvmStatic
         fun getStatusColor(categoryKey: String): Color = when (categoryKey) {
-            "done" -> STATUS_DONE
-            "indeterminate" -> STATUS_IN_PROGRESS
-            else -> STATUS_TODO
+            "done" -> StatusColors.SUCCESS
+            "indeterminate" -> StatusColors.LINK
+            else -> StatusColors.INFO
         }
 
         @JvmStatic
         fun getPriorityColor(priorityName: String?): Color = when {
-            priorityName == null -> PRIORITY_MEDIUM
-            priorityName.equals("Highest", ignoreCase = true) || priorityName.equals("Blocker", ignoreCase = true) -> PRIORITY_HIGHEST
-            priorityName.equals("High", ignoreCase = true) || priorityName.equals("Critical", ignoreCase = true) -> PRIORITY_HIGH
-            priorityName.equals("Medium", ignoreCase = true) -> PRIORITY_MEDIUM
-            priorityName.equals("Low", ignoreCase = true) || priorityName.equals("Minor", ignoreCase = true) -> PRIORITY_LOW
-            priorityName.equals("Lowest", ignoreCase = true) || priorityName.equals("Trivial", ignoreCase = true) -> PRIORITY_LOWEST
-            else -> PRIORITY_MEDIUM
+            priorityName == null -> StatusColors.WARNING
+            priorityName.equals("Highest", ignoreCase = true) || priorityName.equals("Blocker", ignoreCase = true) -> StatusColors.ERROR
+            priorityName.equals("High", ignoreCase = true) || priorityName.equals("Critical", ignoreCase = true) -> StatusColors.ERROR
+            priorityName.equals("Medium", ignoreCase = true) -> StatusColors.WARNING
+            priorityName.equals("Low", ignoreCase = true) || priorityName.equals("Minor", ignoreCase = true) -> StatusColors.SUCCESS
+            priorityName.equals("Lowest", ignoreCase = true) || priorityName.equals("Trivial", ignoreCase = true) -> StatusColors.SUCCESS
+            else -> StatusColors.WARNING
         }
 
         private fun truncateText(text: String, metrics: FontMetrics, maxWidth: Int): String {

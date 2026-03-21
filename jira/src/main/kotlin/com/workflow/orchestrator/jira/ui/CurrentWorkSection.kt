@@ -3,6 +3,7 @@ package com.workflow.orchestrator.jira.ui
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepositoryManager
@@ -25,22 +26,20 @@ class CurrentWorkSection(
 
     private val ticketKeyLabel = JBLabel("").apply {
         font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(13).toFloat())
-        foreground = JBColor(0x0969DA, 0x58A6FF)
+        foreground = StatusColors.LINK
     }
     private val summaryLabel = JBLabel("").apply {
         font = font.deriveFont(JBUI.scale(11).toFloat())
     }
     private val branchLabel = JBLabel("").apply {
-        foreground = JBColor(0x656D76, 0x8B949E)
+        foreground = StatusColors.SECONDARY_TEXT
         font = font.deriveFont(JBUI.scale(10).toFloat())
     }
     private val statusBadge = JBLabel("")
     private val emptyPanel = JPanel(BorderLayout())
 
     companion object {
-        private val GREEN_BG = JBColor(Color(0xE8, 0xF5, 0xE9), Color(0x1a, 0x3d, 0x1a))
-        private val GREEN_BORDER = JBColor(Color(0x66, 0xBB, 0x6A), Color(0xa6, 0xe3, 0xa1))
-        private val EMPTY_BG = JBColor(Color(0xF5, 0xF5, 0xF5), Color(0x25, 0x27, 0x2e))
+        private val EMPTY_BG = JBColor(java.awt.Color(0xF5, 0xF5, 0xF5), java.awt.Color(0x25, 0x27, 0x2e))
     }
 
     init {
@@ -62,8 +61,8 @@ class CurrentWorkSection(
 
     private fun buildActiveState(ticketId: String, summary: String) {
         removeAll()
-        background = GREEN_BG
-        border = JBUI.Borders.customLine(GREEN_BORDER, 0, 0, 1, 0)
+        background = StatusColors.SUCCESS_BG
+        border = JBUI.Borders.customLine(StatusColors.SUCCESS, 0, 0, 1, 0)
 
         val inner = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -73,7 +72,7 @@ class CurrentWorkSection(
 
         // Section header
         val headerLabel = JBLabel("Currently Working On").apply {
-            foreground = JBColor(0x656D76, 0x6c7086)
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(9).toFloat())
         }
         inner.add(headerLabel)
@@ -122,16 +121,16 @@ class CurrentWorkSection(
         }
 
         inner.add(JBLabel("Currently Working On").apply {
-            foreground = JBColor(0x656D76, 0x6c7086)
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(9).toFloat())
         })
         inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
         inner.add(JBLabel("No active ticket").apply {
-            foreground = JBColor(0x999999, 0x585b70)
+            foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(JBUI.scale(11).toFloat())
         })
         inner.add(JBLabel("Select a ticket and click Start Work").apply {
-            foreground = JBColor(0x0969DA, 0x89b4fa)
+            foreground = StatusColors.LINK
             font = font.deriveFont(JBUI.scale(10).toFloat())
         })
 
