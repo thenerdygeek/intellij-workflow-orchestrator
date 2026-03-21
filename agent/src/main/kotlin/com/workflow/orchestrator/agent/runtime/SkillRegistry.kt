@@ -108,12 +108,53 @@ class SkillRegistry(
     fun getAutoDiscoverableSkills(): List<SkillEntry> =
         skills.values.filter { !it.disableModelInvocation }.sortedBy { it.name }
 
-    fun buildDescriptionIndex(): String {
+    /**
+     * List supporting files in a skill's directory (excluding SKILL.md).
+     * Returns relative paths from the skill directory.
+     */
+    fun getSupportingFiles(skillName: String): List<String> {
+        val entry = skills[skillName] ?: return emptyList()
+        if (entry.filePath.startsWith("builtin:")) return emptyList()
+        val skillDir = File(entry.filePath).parentFile ?: return emptyList()
+        if (!skillDir.isDirectory) return emptyList()
+        return skillDir.walkTopDown()
+            .filter { it.isFile && it.name != "SKILL.md" }
+            .map { it.relativeTo(skillDir).path }
+            .toList()
+    }
+
+    /**
+     * Build a compact index of auto-discoverable skills for LLM context.
+     * Enforces a description budget of 2% of the context window (max 16K chars).
+     */
+    fun buildDescriptionIndex(maxInputTokens: Int = 190_000): String {
         // Only show auto-discoverable skills (disable-model-invocation: false)
         // Skills with disable-model-invocation: true must be completely hidden from LLM context
         val discoverable = getAutoDiscoverableSkills()
         if (discoverable.isEmpty()) return "No skills available."
-        return "Available skills:\n" + discoverable.joinToString("\n") { "- /${it.name} — ${it.description}" }
+
+        // Budget: 2% of context window in chars (1 token ~ 4 chars), capped at 16K
+        val budget = maxOf(1000, (maxInputTokens * 0.02 * 4).toInt().coerceAtMost(16_000))
+
+        val sb = StringBuilder("Available skills:\n")
+        var usedChars = sb.length
+        var excluded = 0
+
+        for (skill in discoverable) {
+            val line = "- /${skill.name} — ${skill.description}\n"
+            if (usedChars + line.length > budget) {
+                excluded++
+                continue
+            }
+            sb.append(line)
+            usedChars += line.length
+        }
+
+        if (excluded > 0) {
+            sb.append("\n($excluded skill(s) hidden due to description budget. Use /skill-name to invoke directly.)")
+        }
+
+        return sb.toString().trimEnd()
     }
 
     private fun scanDirectory(dir: File, scope: SkillScope) {

@@ -214,7 +214,7 @@ class ConversationSession private constructor(
             val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
             skillRegistry.scan()
             val skillManager = SkillManager(skillRegistry, project.basePath)
-            val skillDescriptions = skillRegistry.buildDescriptionIndex()
+            val skillDescriptions = skillRegistry.buildDescriptionIndex(maxInputTokens)
 
             // Detect project type (Maven/Spring/JPA) — determines which tools are always included
             val projectTools = try {

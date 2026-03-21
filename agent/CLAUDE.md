@@ -92,9 +92,27 @@ Three layers:
 - Project overrides user if same name
 - Discovery: descriptions loaded at session start, full content on activation
 - Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `activate_skill`
-- `preferred-tools` field provides soft tool preference (not hard restriction)
 - Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
 - Built-in skills: `systematic-debugging` and `create-skill` ship with the plugin from resources
+- Supporting files: non-SKILL.md files in skill directory listed via `getSupportingFiles()`
+
+**Frontmatter fields:**
+| Field | Default | Description |
+|-------|---------|-------------|
+| `name` | directory name | Skill identifier, becomes /slash-command |
+| `description` | -- | When to use. LLM uses this for auto-invocation |
+| `disable-model-invocation` | false | true = only user can invoke, hidden from LLM |
+| `user-invocable` | true | false = only LLM can invoke, hidden from / menu |
+| `allowed-tools` | null | Hard tool whitelist when skill active (overrides all selection) |
+| `preferred-tools` | [] | Soft tool preference (additive, not restrictive) |
+| `context` | -- | "fork" = run in isolated WorkerSession (10 iter, 5 min timeout) |
+| `agent` | -- | Subagent type when context: fork |
+| `argument-hint` | -- | Autocomplete hint for arguments |
+
+**Substitutions:** `$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`
+**Dynamic injection:** `` !`command` `` runs shell at preprocessing time (10s per cmd, 30s total, 10K cap)
+**Description budget:** 2% of context window (max 16K chars). Excess skills hidden with warning.
+**Context fork:** Skills with `context: fork` execute in a fresh `WorkerSession` with scoped tools, returning a summary to the orchestrator.
 
 ## Security
 

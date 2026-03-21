@@ -17,24 +17,22 @@ class SkillManager(val registry: SkillRegistry, val projectBasePath: String? = n
     var onSkillActivated: ((ActiveSkill) -> Unit)? = null
     var onSkillDeactivated: (() -> Unit)? = null
 
-    fun activateSkill(name: String, arguments: String? = null): ActiveSkill? {
-        val entry = registry.getSkill(name) ?: return null
-        val rawContent = registry.getSkillContent(name) ?: return null
+    /**
+     * Load skill content with all substitutions and preprocessing applied.
+     * Used by context:fork execution which needs the processed content for a WorkerSession,
+     * and by activateSkill() for normal inline activation.
+     */
+    fun loadAndPreprocessSkill(entry: SkillRegistry.SkillEntry, arguments: String?): String? {
+        val rawContent = registry.getSkillContent(entry.name) ?: return null
+        var processed = rawContent
 
-        // Deactivate previous skill if any
-        if (activeSkill != null) {
-            deactivateSkill()
-        }
-
-        var processed = if (arguments != null) {
-            var s = rawContent.replace("\$ARGUMENTS", arguments)
+        // Argument substitution
+        if (arguments != null) {
+            processed = processed.replace("\$ARGUMENTS", arguments)
             val positionalArgs = arguments.split(" ")
             for ((index, arg) in positionalArgs.withIndex()) {
-                s = s.replace("\$${index + 1}", arg)
+                processed = processed.replace("\$${index + 1}", arg)
             }
-            s
-        } else {
-            rawContent
         }
 
         // Substitute ${CLAUDE_SKILL_DIR} with the skill's directory path
@@ -49,10 +47,23 @@ class SkillManager(val registry: SkillRegistry, val projectBasePath: String? = n
         // Dynamic context injection: !`command` runs shell and replaces with output
         processed = preprocessDynamicContext(processed, projectBasePath)
 
+        // Truncate
         val MAX_SKILL_CHARS = 20_000  // ~5000 tokens at 4 chars/token
-        val content = if (processed.length > MAX_SKILL_CHARS) {
-            processed.take(MAX_SKILL_CHARS) + "\n\n[Skill content truncated at ~5000 tokens. Keep SKILL.md files concise.]"
-        } else processed
+        if (processed.length > MAX_SKILL_CHARS) {
+            processed = processed.take(MAX_SKILL_CHARS) + "\n\n[Skill content truncated at ~5000 tokens. Keep SKILL.md files concise.]"
+        }
+
+        return processed
+    }
+
+    fun activateSkill(name: String, arguments: String? = null): ActiveSkill? {
+        val entry = registry.getSkill(name) ?: return null
+        val content = loadAndPreprocessSkill(entry, arguments) ?: return null
+
+        // Deactivate previous skill if any
+        if (activeSkill != null) {
+            deactivateSkill()
+        }
 
         val skill = ActiveSkill(
             entry = entry,

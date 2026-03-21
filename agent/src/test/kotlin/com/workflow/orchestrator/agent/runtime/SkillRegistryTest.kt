@@ -177,10 +177,10 @@ class SkillRegistryTest {
         registry.scan()
         val index = registry.buildDescriptionIndex()
 
+        // hotfix has disable-model-invocation: true, so it must be hidden from LLM context
         val expected = """
             |Available skills:
             |- /deploy — Deploy service to staging
-            |- /hotfix — Create hotfix for production
         """.trimMargin()
         assertEquals(expected, index)
     }
@@ -266,6 +266,69 @@ class SkillRegistryTest {
         assertFalse(skill.contextFork)
         assertNull(skill.agentType)
         assertNull(skill.argumentHint)
+    }
+
+    @Test
+    fun `getSupportingFiles lists files excluding SKILL_MD`() {
+        val skillDir = File(projectDir.toString(), ".workflow/skills/my-skill")
+        skillDir.mkdirs()
+        File(skillDir, "SKILL.md").writeText("""
+            |---
+            |name: my-skill
+            |description: test skill
+            |---
+            |Hello
+        """.trimMargin())
+        File(skillDir, "template.md").writeText("Template content")
+        val scriptsDir = File(skillDir, "scripts")
+        scriptsDir.mkdirs()
+        File(scriptsDir, "validate.sh").writeText("#!/bin/bash\necho ok")
+
+        registry.scan()
+        val files = registry.getSupportingFiles("my-skill")
+
+        assertTrue(files.any { it == "template.md" })
+        assertTrue(files.any { it.contains("validate.sh") })
+        assertFalse(files.any { it == "SKILL.md" })
+    }
+
+    @Test
+    fun `getSupportingFiles returns empty for builtin skills`() {
+        val builtinRegistry = SkillRegistry("/nonexistent", "/nonexistent", loadBuiltins = true)
+        builtinRegistry.scan()
+        val files = builtinRegistry.getSupportingFiles("systematic-debugging")
+        assertTrue(files.isEmpty())
+    }
+
+    @Test
+    fun `description budget truncates when exceeded`() {
+        // Create many skills with long descriptions that will exceed a small budget
+        for (i in 1..50) {
+            writeProjectSkill("skill-$i", """
+                |---
+                |name: skill-$i
+                |description: This is a long description for skill number $i that takes up space in the budget
+                |---
+                |Content for skill $i
+            """.trimMargin())
+        }
+
+        registry.scan()
+        // Use a very small maxInputTokens to force a tiny budget
+        val index = registry.buildDescriptionIndex(maxInputTokens = 5_000)
+
+        assertTrue(index.contains("hidden due to description budget"))
+    }
+
+    @Test
+    fun `description budget includes all skills when budget is large`() {
+        writeProjectSkill("deploy", deploySkill)
+
+        registry.scan()
+        val index = registry.buildDescriptionIndex(maxInputTokens = 190_000)
+
+        assertFalse(index.contains("hidden due to description budget"))
+        assertTrue(index.contains("/deploy"))
     }
 
     @Test
