@@ -60,7 +60,7 @@ class StageDetailPanel(
         isVisible = false
     }
     private val truncationLabel = JBLabel("").apply {
-        foreground = com.intellij.ui.JBColor(0xCC6600, 0xFFAA33)
+        foreground = com.workflow.orchestrator.core.ui.StatusColors.WARNING
         font = font.deriveFont(JBUI.scale(10).toFloat())
     }
     private val openInEditorButton = JButton("Open full log in editor").apply {

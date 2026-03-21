@@ -26,6 +26,7 @@ import com.workflow.orchestrator.core.maven.SurefireReportParser
 import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
 import com.intellij.ui.JBColor
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.services.BambooService
@@ -57,7 +58,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     // Divergence warning bar
     private val warningLabel = com.intellij.ui.components.JBLabel("").apply {
-        foreground = JBColor(java.awt.Color(0xCC, 0x66, 0x00), java.awt.Color(0xFF, 0xAA, 0x33))
+        foreground = StatusColors.WARNING
         icon = com.intellij.icons.AllIcons.General.Warning
         border = com.intellij.util.ui.JBUI.Borders.empty(4, 8)
         isVisible = false
@@ -65,11 +66,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     // Newer build running banner
     private val newerBuildBanner = JPanel(BorderLayout()).apply {
-        background = JBColor(java.awt.Color(0xE8, 0xF0, 0xFE), java.awt.Color(0x1E, 0x3A, 0x5F))
+        background = StatusColors.INFO_BG
         border = com.intellij.util.ui.JBUI.Borders.empty(4, 8)
         isVisible = false
         add(com.intellij.ui.components.JBLabel("").apply {
-            foreground = JBColor(java.awt.Color(0x1A, 0x73, 0xE8), java.awt.Color(0x8A, 0xB4, 0xF8))
+            foreground = StatusColors.LINK
             icon = com.intellij.icons.AllIcons.Toolwindows.ToolWindowRun
             name = "newerBuildLabel"
         }, BorderLayout.CENTER)

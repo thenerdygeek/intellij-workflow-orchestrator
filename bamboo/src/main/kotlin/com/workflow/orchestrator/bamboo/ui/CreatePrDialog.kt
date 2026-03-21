@@ -16,6 +16,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.service.MarkdownToHtml
 import com.workflow.orchestrator.bamboo.service.PrDescriptionGenerator
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
@@ -165,7 +166,7 @@ class CreatePrDialog(
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0
         branchPanel.add(JBLabel("Source:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
         gbc.gridx = 1; gbc.weightx = 1.0
-        branchPanel.add(JBLabel(sourceBranch).apply { foreground = JBColor(0x0969DA, 0x58A6FF) }, gbc)
+        branchPanel.add(JBLabel(sourceBranch).apply { foreground = StatusColors.LINK }, gbc)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
         branchPanel.add(JBLabel("Target:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
@@ -178,14 +179,14 @@ class CreatePrDialog(
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
         // Title
-        content.add(JBLabel("Title").apply { foreground = JBColor(0x656D76, 0x8B949E) })
+        content.add(JBLabel("Title").apply { foreground = StatusColors.SECONDARY_TEXT })
         content.add(Box.createVerticalStrut(JBUI.scale(4)))
         content.add(titleField)
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
         // Description with Edit/Preview tabs
         val descHeader = JPanel(BorderLayout()).apply {
-            add(JBLabel("Description").apply { foreground = JBColor(0x656D76, 0x8B949E) }, BorderLayout.WEST)
+            add(JBLabel("Description").apply { foreground = StatusColors.SECONDARY_TEXT }, BorderLayout.WEST)
             val tabButtons = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
                 add(editTabButton); add(previewTabButton); add(regenerateButton)
             }
@@ -202,7 +203,7 @@ class CreatePrDialog(
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
         // Reviewers
-        content.add(JBLabel("Reviewers").apply { foreground = JBColor(0x656D76, 0x8B949E) })
+        content.add(JBLabel("Reviewers").apply { foreground = StatusColors.SECONDARY_TEXT })
         content.add(Box.createVerticalStrut(JBUI.scale(4)))
         val reviewerPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createCompoundBorder(
@@ -214,7 +215,7 @@ class CreatePrDialog(
         reviewerChipsPanel.add(reviewerInput)
         content.add(reviewerPanel)
         content.add(JBLabel("Type to search Bitbucket users").apply {
-            foreground = JBColor(0x9E9E9E, 0x585B70); font = font.deriveFont(font.size2D - 2f)
+            foreground = StatusColors.INFO; font = font.deriveFont(font.size2D - 2f)
         })
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
         content.add(JSeparator())
@@ -315,12 +316,12 @@ class CreatePrDialog(
         if (username in selectedReviewers) return
         selectedReviewers.add(username)
         val chip = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-            background = JBColor(Color(0xE0, 0xE0, 0xE0), Color(0x45, 0x47, 0x5a))
+            background = StatusColors.CARD_BG
             border = JBUI.Borders.empty(1, 6)
             add(JBLabel(username).apply { font = font.deriveFont(11f) })
             val removeBtn = JBLabel("✕").apply {
                 cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                foreground = JBColor(0x999999, 0x6c7086)
+                foreground = StatusColors.SECONDARY_TEXT
             }
             removeBtn.addMouseListener(object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent?) {

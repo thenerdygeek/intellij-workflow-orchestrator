@@ -11,6 +11,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrResponse
 import com.workflow.orchestrator.core.bitbucket.PrService
@@ -76,7 +77,7 @@ class PrBar(
     private val singlePrPanel = JPanel(BorderLayout())
     private val prInfoLabel = JBLabel("")
     private val openInBrowserLink = JBLabel("Open in browser ↗").apply {
-        foreground = JBColor(0x0969DA, 0x58A6FF)
+        foreground = StatusColors.LINK
         cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
     }
 
@@ -84,15 +85,15 @@ class PrBar(
     private val multiPrPanel = JPanel(BorderLayout())
     private val prDropdown = JComboBox<PrComboItem>()
     private val multiOpenLink = JBLabel("Open in browser ↗").apply {
-        foreground = JBColor(0x0969DA, 0x58A6FF)
+        foreground = StatusColors.LINK
         cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
     }
 
     companion object {
-        private val BLUE_BG = JBColor(Color(0xE3, 0xF2, 0xFD), Color(0x1e, 0x3a, 0x5f))
-        private val GREEN_BG = JBColor(Color(0xE8, 0xF5, 0xE9), Color(0x1a, 0x3d, 0x1a))
-        private val BLUE_BORDER = JBColor(Color(0x42, 0xA5, 0xF5), Color(0x89, 0xb4, 0xfa))
-        private val GREEN_BORDER = JBColor(Color(0x66, 0xBB, 0x6A), Color(0xa6, 0xe3, 0xa1))
+        private val BLUE_BG = StatusColors.INFO_BG
+        private val GREEN_BG = StatusColors.SUCCESS_BG
+        private val BLUE_BORDER = StatusColors.LINK
+        private val GREEN_BORDER = StatusColors.SUCCESS
     }
 
     init {
@@ -118,7 +119,7 @@ class PrBar(
             add(JBLabel("🔀").apply { font = font.deriveFont(14f) })
             add(JBLabel("No pull request for this branch"))
             add(JBLabel("Create a PR to trigger Bamboo builds").apply {
-                foreground = JBColor(0x757575, 0x6c7086)
+                foreground = StatusColors.SECONDARY_TEXT
                 font = font.deriveFont(font.size2D - 1f)
             })
         }
@@ -196,7 +197,7 @@ class PrBar(
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
-            add(JBLabel("✓").apply { foreground = JBColor(0x2E7D32, 0xa6e3a1) })
+            add(JBLabel("✓").apply { foreground = StatusColors.SUCCESS })
             add(prInfoLabel)
         }
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
@@ -222,7 +223,7 @@ class PrBar(
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
-            add(JBLabel("✓").apply { foreground = JBColor(0x2E7D32, 0xa6e3a1) })
+            add(JBLabel("✓").apply { foreground = StatusColors.SUCCESS })
             add(prDropdown)
         }
         val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
@@ -400,10 +401,10 @@ class PrBar(
     }
 
     private fun statusColor(state: String): String = when (state.uppercase()) {
-        "OPEN" -> "#4CAF50"
-        "MERGED" -> "#7B1FA2"
-        "DECLINED" -> "#F44336"
-        else -> "#9E9E9E"
+        "OPEN" -> StatusColors.htmlColor(StatusColors.SUCCESS)
+        "MERGED" -> StatusColors.htmlColor(StatusColors.MERGED)
+        "DECLINED" -> StatusColors.htmlColor(StatusColors.ERROR)
+        else -> StatusColors.htmlColor(StatusColors.INFO)
     }
 
     private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

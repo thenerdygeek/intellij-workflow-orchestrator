@@ -4,11 +4,10 @@ import com.intellij.ide.projectView.PresentationData
 import com.intellij.ide.projectView.ProjectViewNode
 import com.intellij.ide.projectView.ProjectViewNodeDecorator
 import com.intellij.openapi.project.guessProjectDir
-import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.service.BuildMonitorService
-import java.awt.Color
+import com.workflow.orchestrator.core.ui.StatusColors
 
 /**
  * Decorates the project tree root with the latest Bamboo build status.
@@ -31,10 +30,10 @@ class BuildStatusNodeDecorator : ProjectViewNodeDecorator {
         } ?: return
 
         val (symbol, color) = when (state.overallStatus) {
-            BuildStatus.SUCCESS -> "✓" to JBColor(Color(0x59, 0xA6, 0x0F), Color(0x6C, 0xC6, 0x44))
-            BuildStatus.FAILED -> "✗" to JBColor(Color(0xE0, 0x40, 0x40), Color(0xF0, 0x60, 0x60))
-            BuildStatus.IN_PROGRESS -> "⟳" to JBColor(Color(0x40, 0x7E, 0xC9), Color(0x58, 0x9D, 0xF6))
-            BuildStatus.PENDING -> "◷" to JBColor(Color(0x99, 0x99, 0x99), Color(0xAA, 0xAA, 0xAA))
+            BuildStatus.SUCCESS -> "✓" to StatusColors.SUCCESS
+            BuildStatus.FAILED -> "✗" to StatusColors.ERROR
+            BuildStatus.IN_PROGRESS -> "⟳" to StatusColors.LINK
+            BuildStatus.PENDING -> "◷" to StatusColors.INFO
             BuildStatus.UNKNOWN -> return
         }
 

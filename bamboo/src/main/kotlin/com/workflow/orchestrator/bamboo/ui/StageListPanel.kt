@@ -5,6 +5,7 @@ import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
@@ -78,7 +79,7 @@ class StageListPanel : JPanel(BorderLayout()) {
         private val spinnerIcon = AnimatedIcon.Default()
         private val headerAttributes = SimpleTextAttributes(
             SimpleTextAttributes.STYLE_BOLD,
-            JBColor(0x656D76, 0x8B949E)
+            StatusColors.SECONDARY_TEXT
         )
 
         override fun customizeCellRenderer(
