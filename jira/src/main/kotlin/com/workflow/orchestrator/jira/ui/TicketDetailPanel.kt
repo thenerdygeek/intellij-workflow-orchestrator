@@ -1,27 +1,41 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.jira.api.dto.JiraAttachment
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
 import com.workflow.orchestrator.jira.service.AttachmentDownloadService
 import com.workflow.orchestrator.jira.service.IssueDetailCache
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.image.BufferedImage
+import java.io.File
 import javax.swing.ImageIcon
 import java.awt.geom.Ellipse2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JTextPane
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
@@ -135,7 +149,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         // Lazy-loaded sections (show placeholders, fetch in background)
         if (issue.fields.attachment.isNotEmpty()) {
             addVerticalSpace(12)
-            addSectionHeader("Attachments (${issue.fields.attachment.size})")
+            addAttachmentsHeader(issue.fields.attachment)
             addAttachments(issue.fields.attachment)
         }
 
@@ -286,7 +300,53 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         addFullWidthComponent(subtaskPanel)
     }
 
-    private fun addAttachments(attachments: List<com.workflow.orchestrator.jira.api.dto.JiraAttachment>) {
+    private fun addAttachmentsHeader(attachments: List<JiraAttachment>) {
+        val headerPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+
+        headerPanel.add(JBLabel("Attachments (${attachments.size})").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(13).toFloat())
+            foreground = JBColor.foreground()
+            border = JBUI.Borders.emptyLeft(2)
+        }, BorderLayout.WEST)
+
+        val downloadAllLabel = JBLabel("Download All").apply {
+            foreground = StatusColors.LINK
+            font = JBUI.Fonts.smallFont()
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            border = JBUI.Borders.emptyRight(4)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent?) {
+                    val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
+                        .withTitle("Select Download Directory")
+                    FileChooser.chooseFile(descriptor, project, null) { chosenDir ->
+                        val targetDir = File(chosenDir.path)
+                        lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            val (results, summary) = AttachmentDownloadService(project)
+                                .downloadAll(attachments, targetDir)
+                            withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                                NotificationGroupManager.getInstance()
+                                    .getNotificationGroup("Workflow Orchestrator")
+                                    .createNotification(
+                                        "Attachments Downloaded",
+                                        summary,
+                                        NotificationType.INFORMATION
+                                    )
+                                    .notify(project)
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        headerPanel.add(downloadAllLabel, BorderLayout.EAST)
+
+        contentPanel.add(headerPanel)
+    }
+
+    private fun addAttachments(attachments: List<JiraAttachment>) {
         addVerticalSpace(4)
         val attPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4))).apply {
             isOpaque = false
@@ -310,7 +370,26 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
                     JBUI.Borders.empty(4, 8)
                 )
-                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+
+                // Top row with three-dot menu button
+                val topRow = JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(16))
+                    alignmentX = Component.LEFT_ALIGNMENT
+                }
+                val moreBtn = JBLabel(AllIcons.Actions.More).apply {
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    toolTipText = "Actions"
+                    addMouseListener(object : MouseAdapter() {
+                        override fun mouseClicked(e: MouseEvent) {
+                            showAttachmentPopupMenu(att, e.component, e.x, e.y)
+                        }
+                    })
+                }
+                topRow.add(JPanel().apply { isOpaque = false }, BorderLayout.CENTER)
+                topRow.add(moreBtn, BorderLayout.EAST)
+                add(topRow)
 
                 if (isImage) {
                     // Placeholder gray box for thumbnail
@@ -334,7 +413,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                             if (image != null) {
                                 val scaled = scaleToFit(image, thumbW, thumbH)
                                 val imageIcon = ImageIcon(scaled)
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                                withContext(kotlinx.coroutines.Dispatchers.EDT) {
                                     thumbnailLabel.icon = imageIcon
                                     thumbnailLabel.isOpaque = false
                                     thumbnailLabel.revalidate()
@@ -369,19 +448,79 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     alignmentX = Component.CENTER_ALIGNMENT
                 })
 
-                // Click to download
-                if (att.content.isNotBlank()) {
-                    addMouseListener(object : java.awt.event.MouseAdapter() {
-                        override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                            com.intellij.ide.BrowserUtil.browse(att.content)
+                // Right-click context menu
+                val popupListener = object : MouseAdapter() {
+                    override fun mousePressed(e: MouseEvent) {
+                        if (e.isPopupTrigger) showAttachmentPopupMenu(att, e.component, e.x, e.y)
+                    }
+                    override fun mouseReleased(e: MouseEvent) {
+                        if (e.isPopupTrigger) showAttachmentPopupMenu(att, e.component, e.x, e.y)
+                    }
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (!e.isPopupTrigger && e.button == MouseEvent.BUTTON1) {
+                            BrowserUtil.browse(att.content)
                         }
-                    })
+                    }
                 }
+                addMouseListener(popupListener)
             }
             attPanel.add(card)
         }
 
         addFullWidthComponent(attPanel)
+    }
+
+    private fun showAttachmentPopupMenu(att: JiraAttachment, component: Component, x: Int, y: Int) {
+        val menu = JPopupMenu()
+
+        menu.add(JMenuItem("Open in Editor").apply {
+            addActionListener {
+                lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val result = AttachmentDownloadService(project).downloadAttachment(att)
+                    if (result != null) {
+                        withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                            val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(result.file)
+                            if (vf != null) {
+                                FileEditorManager.getInstance(project).openFile(vf, true)
+                            }
+                        }
+                    }
+                }
+            }
+        })
+
+        menu.add(JMenuItem("Open in Browser").apply {
+            addActionListener {
+                BrowserUtil.browse(att.content)
+            }
+        })
+
+        menu.add(JMenuItem("Download").apply {
+            addActionListener {
+                val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
+                    .withTitle("Select Download Directory")
+                FileChooser.chooseFile(descriptor, project, null) { chosenDir ->
+                    val targetDir = File(chosenDir.path)
+                    lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val result = AttachmentDownloadService(project).downloadAttachment(att, targetDir)
+                        if (result != null) {
+                            withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                                NotificationGroupManager.getInstance()
+                                    .getNotificationGroup("Workflow Orchestrator")
+                                    .createNotification(
+                                        "Attachment Downloaded",
+                                        "${att.filename} saved to ${targetDir.absolutePath}",
+                                        NotificationType.INFORMATION
+                                    )
+                                    .notify(project)
+                            }
+                        }
+                    }
+                }
+            }
+        })
+
+        menu.show(component, x, y)
     }
 
     private fun scaleToFit(image: BufferedImage, maxW: Int, maxH: Int): java.awt.Image {
