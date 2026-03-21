@@ -377,6 +377,12 @@ class AgentCefPanel(
         callJs("hideSkillBanner()")
     }
 
+    // ── Chart.js support ──
+
+    fun appendChart(chartConfigJson: String) {
+        callJs("appendChart(${jsonStr(chartConfigJson)})")
+    }
+
     // ── ANSI, Skeleton, Toast, Table support ──
 
     fun appendAnsiOutput(text: String) {
