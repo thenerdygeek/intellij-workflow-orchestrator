@@ -66,7 +66,7 @@ class CreatePrDialog(
     // Description
     private val descriptionArea = JBTextArea(10, 50).apply {
         lineWrap = true; wrapStyleWord = true
-        font = Font("JetBrains Mono", Font.PLAIN, 12)
+        font = JBUI.Fonts.create(com.intellij.openapi.editor.colors.EditorColorsManager.getInstance().globalScheme.editorFontName, 12)
     }
     private val previewPane = JEditorPane().apply {
         isEditable = false

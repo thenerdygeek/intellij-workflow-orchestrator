@@ -26,7 +26,7 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
         border = JBUI.Borders.empty(8)
 
         val header = JBLabel("Complete Task Macro").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 14f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
         val southPanel = JPanel(BorderLayout()).apply {

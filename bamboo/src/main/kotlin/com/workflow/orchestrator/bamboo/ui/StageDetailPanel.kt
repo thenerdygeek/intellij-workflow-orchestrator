@@ -61,10 +61,10 @@ class StageDetailPanel(
     }
     private val truncationLabel = JBLabel("").apply {
         foreground = com.workflow.orchestrator.core.ui.StatusColors.WARNING
-        font = font.deriveFont(JBUI.scale(10).toFloat())
+        font = JBUI.Fonts.smallFont()
     }
     private val openInEditorButton = JButton("Open full log in editor").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
+        font = JBUI.Fonts.smallFont()
     }
 
     private val tabbedPane = JBTabbedPane().apply {

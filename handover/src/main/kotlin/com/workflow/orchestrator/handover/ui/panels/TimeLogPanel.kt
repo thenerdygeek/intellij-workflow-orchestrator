@@ -36,7 +36,7 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
         border = JBUI.Borders.empty(8)
 
         val header = JBLabel("Time Tracking").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 14f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
         val formPanel = JPanel(GridBagLayout())

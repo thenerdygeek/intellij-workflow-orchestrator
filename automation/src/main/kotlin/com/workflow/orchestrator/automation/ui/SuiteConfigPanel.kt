@@ -30,7 +30,7 @@ class SuiteConfigPanel(
         border = JBUI.Borders.emptyTop(8)
 
         val headerLabel = JBLabel("Variables & Stages").apply {
-            font = font.deriveFont(font.size + 1f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
         val contentPanel = JPanel().apply {

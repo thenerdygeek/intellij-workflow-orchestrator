@@ -23,7 +23,7 @@ class PreReviewPanel(private val project: Project) : JPanel(BorderLayout()) {
 
         val header = JPanel(BorderLayout()).apply {
             add(JBLabel("Cody Pre-Review").apply {
-                font = font.deriveFont(java.awt.Font.BOLD, 14f)
+                font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
             }, BorderLayout.WEST)
             add(analyzeButton, BorderLayout.EAST)
         }

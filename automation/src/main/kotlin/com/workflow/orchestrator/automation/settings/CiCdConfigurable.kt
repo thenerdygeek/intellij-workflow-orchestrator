@@ -301,7 +301,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
         // Title
         val titleLabel = JBLabel("Automation Suites").apply {
-            font = font.deriveFont(font.size + 2f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
             border = JBUI.Borders.emptyBottom(8)
         }
 
@@ -362,7 +362,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
             add(addBySearchPanel)
             add(JSeparator())
             add(JBLabel("Configured Suites:").apply {
-                font = font.deriveFont(font.size + 1f)
+                font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
                 border = JBUI.Borders.empty(8, 0, 4, 0)
             })
         }
@@ -503,11 +503,11 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                             val alreadyAdded = suiteRows.any { it.planKeyField.text == plan.key }
                             val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
                             row.add(JBLabel("${plan.key} — ${plan.name}").apply {
-                                font = font.deriveFont(JBUI.scale(11).toFloat())
+                                font = JBUI.Fonts.smallFont()
                             })
                             if (!alreadyAdded) {
                                 row.add(JButton("Add").apply {
-                                    font = font.deriveFont(JBUI.scale(10).toFloat())
+                                    font = JBUI.Fonts.smallFont()
                                     addActionListener {
                                         addSuiteRow(plan.name, plan.key)
                                         isEnabled = false; text = "Added"
@@ -516,14 +516,14 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                             } else {
                                 row.add(JBLabel("(already added)").apply {
                                     foreground = StatusColors.SECONDARY_TEXT
-                                    font = font.deriveFont(JBUI.scale(10).toFloat())
+                                    font = JBUI.Fonts.smallFont()
                                 })
                             }
                             searchResultsPanel.add(row)
                         }
                         searchResultsPanel.add(JBLabel("${matches.size} plan(s) found").apply {
                             foreground = StatusColors.SUCCESS
-                            font = font.deriveFont(JBUI.scale(10).toFloat())
+                            font = JBUI.Fonts.smallFont()
                             border = JBUI.Borders.emptyTop(4)
                         })
                     }

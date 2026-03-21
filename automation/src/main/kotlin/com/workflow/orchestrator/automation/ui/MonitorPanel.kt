@@ -188,7 +188,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             }
 
             add(JBLabel("$statusIcon ${entry.suiteName} #${entry.buildNumber}").apply {
-                font = font.deriveFont(Font.BOLD, 14f)
+                font = JBUI.Fonts.label().deriveFont(Font.BOLD)
                 foreground = statusColor
             }, BorderLayout.WEST)
 

@@ -13,7 +13,7 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     val commentPreview = JBTextArea(12, 40).apply {
         isEditable = false
-        font = JBUI.Fonts.create("Monospaced", 12)
+        font = JBUI.Fonts.create(com.intellij.openapi.editor.colors.EditorColorsManager.getInstance().globalScheme.editorFontName, 12)
     }
     val editButton = JButton("Edit")
     val postButton = JButton("Post Comment")
@@ -23,7 +23,7 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
         border = JBUI.Borders.empty(8)
 
         val header = JBLabel("Jira Closure Comment").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 14f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
         val buttonPanel = JPanel().apply {

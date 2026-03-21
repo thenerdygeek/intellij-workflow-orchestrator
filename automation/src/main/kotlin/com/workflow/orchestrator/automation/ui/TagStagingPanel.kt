@@ -44,7 +44,7 @@ class TagStagingPanel(
 
         add(JBLabel("Docker Tags").apply {
             border = JBUI.Borders.emptyBottom(4)
-            font = font.deriveFont(font.size + 1f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }, BorderLayout.NORTH)
 
         add(JBScrollPane(table), BorderLayout.CENTER)

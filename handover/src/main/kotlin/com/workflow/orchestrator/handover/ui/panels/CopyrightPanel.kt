@@ -23,7 +23,7 @@ class CopyrightPanel(private val project: Project) : JPanel(BorderLayout()) {
         border = JBUI.Borders.empty(8)
 
         val header = JBLabel("Copyright Header Status").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, 14f)
+            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
         val buttonPanel = JPanel().apply {
