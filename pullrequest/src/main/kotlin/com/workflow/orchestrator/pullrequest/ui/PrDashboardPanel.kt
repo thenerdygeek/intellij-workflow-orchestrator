@@ -337,17 +337,12 @@ class PrDashboardPanel(
 
     private inner class CreatePrAction : AnAction(
         "Create PR",
-        "Create a new pull request (use the Build tab for full PR creation flow)",
+        "Create a new pull request from the current branch",
         AllIcons.General.Add
     ) {
         override fun actionPerformed(e: AnActionEvent) {
-            com.intellij.notification.NotificationGroupManager.getInstance()
-                .getNotificationGroup("workflow.build")
-                .createNotification(
-                    "Create PR from the Handover tab for the full workflow, or use Bitbucket directly.",
-                    com.intellij.notification.NotificationType.INFORMATION
-                )
-                .notify(project)
+            listPanel.prList.clearSelection()
+            detailPanel.showCreateForm()
         }
     }
 

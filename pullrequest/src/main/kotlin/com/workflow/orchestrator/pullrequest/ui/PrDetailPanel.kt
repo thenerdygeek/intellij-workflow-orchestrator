@@ -34,10 +34,16 @@ import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketReviewer
+import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
+import com.workflow.orchestrator.pullrequest.service.PrListService
+import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.event.MouseAdapter
@@ -69,6 +75,7 @@ class PrDetailPanel(
         const val CARD_EMPTY = "empty"
         const val CARD_LOADING = "loading"
         const val CARD_DETAIL = "detail"
+        const val CARD_CREATE = "create"
 
         private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
         private val CARD_BG = StatusColors.CARD_BG
@@ -110,6 +117,46 @@ class PrDetailPanel(
     private val detailPanel = JPanel(BorderLayout()).apply {
         isOpaque = false
     }
+
+    // -- Create PR form components --
+    private val createPanel = JPanel(BorderLayout()).apply {
+        isOpaque = false
+    }
+    private val createSourceBranchLabel = JBLabel("").apply {
+        font = font.deriveFont(JBUI.scale(12).toFloat())
+    }
+    private val createTargetBranchCombo = ComboBox<String>().apply {
+        isEditable = false
+    }
+    private val createTitleField = JBTextField().apply {
+        emptyText.text = "PR title"
+    }
+    private val createDescriptionArea = JBTextArea().apply {
+        lineWrap = true
+        wrapStyleWord = true
+        rows = 6
+        font = font.deriveFont(JBUI.scale(12).toFloat())
+        border = JBUI.Borders.empty(8)
+    }
+    private val createReviewersPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        isOpaque = false
+    }
+    private val createAddReviewerLink = JBLabel("+ Add").apply {
+        foreground = LINK_COLOR
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+    }
+    private val createButton = JButton("Create Pull Request").apply {
+        icon = AllIcons.General.Add
+    }
+    private val createBackLabel = JBLabel("\u2190 Back to list").apply {
+        foreground = LINK_COLOR
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+        border = JBUI.Borders.emptyBottom(4)
+    }
+    private val selectedReviewerUsernames = mutableListOf<String>()
+    private val selectedReviewerDisplayNames = mutableListOf<String>()
 
     // Back navigation callback — set by PrDashboardPanel
     var onBackClicked: (() -> Unit)? = null
@@ -210,6 +257,9 @@ class PrDetailPanel(
 
         buildDetailPanel()
         add(detailPanel, CARD_DETAIL)
+
+        buildCreatePanel()
+        add(createPanel, CARD_CREATE)
 
         showEmpty()
     }
@@ -339,6 +389,412 @@ class PrDetailPanel(
                 }
             }
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Create PR form
+    // ---------------------------------------------------------------
+
+    fun showCreateForm() {
+        currentPrId = null
+        currentPr = null
+        loadJob?.cancel()
+
+        // Get current git branch
+        val currentBranch = GitRepositoryManager.getInstance(project)
+            .repositories.firstOrNull()?.currentBranch?.name ?: "unknown"
+        createSourceBranchLabel.text = currentBranch
+
+        // Auto-fill title from branch name (e.g., "PROJ-123-feature" -> "PROJ-123: ")
+        val ticketPattern = Regex("^([A-Z]+-\\d+)")
+        val match = ticketPattern.find(currentBranch)
+        createTitleField.text = if (match != null) "${match.groupValues[1]}: " else ""
+
+        // Clear previous form state
+        createDescriptionArea.text = ""
+        selectedReviewerUsernames.clear()
+        selectedReviewerDisplayNames.clear()
+        renderCreateReviewers()
+        createButton.isEnabled = true
+        createButton.text = "Create Pull Request"
+
+        // Populate target branches
+        createTargetBranchCombo.removeAllItems()
+        val settings = PluginSettings.getInstance(project).state
+        val defaultTarget = settings.defaultTargetBranch?.ifBlank { "develop" } ?: "develop"
+        createTargetBranchCombo.addItem(defaultTarget)
+
+        (layout as CardLayout).show(this, CARD_CREATE)
+
+        // Load branches from Bitbucket in background
+        scope.launch {
+            val connSettings = ConnectionSettings.getInstance().state
+            val url = connSettings.bitbucketUrl.trimEnd('/')
+            if (url.isBlank()) return@launch
+            val projectKey = settings.bitbucketProjectKey.orEmpty()
+            val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+            if (projectKey.isBlank() || repoSlug.isBlank()) return@launch
+
+            val credentialStore = CredentialStore()
+            val client = BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
+            when (val result = client.getBranches(projectKey, repoSlug)) {
+                is ApiResult.Success -> {
+                    SwingUtilities.invokeLater {
+                        val branches = result.data.map { it.displayId }
+                        createTargetBranchCombo.removeAllItems()
+                        // Put default target first if it exists
+                        if (branches.contains(defaultTarget)) {
+                            createTargetBranchCombo.addItem(defaultTarget)
+                        }
+                        for (branch in branches) {
+                            if (branch != defaultTarget && branch != currentBranch) {
+                                createTargetBranchCombo.addItem(branch)
+                            }
+                        }
+                    }
+                }
+                is ApiResult.Error -> { /* keep default */ }
+            }
+        }
+    }
+
+    private fun buildCreatePanel() {
+        val contentPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.empty(12, 16)
+        }
+
+        // Back navigation
+        val backRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(20))
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        createBackLabel.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                onBackClicked?.invoke()
+            }
+        })
+        backRow.add(createBackLabel)
+        contentPanel.add(backRow)
+
+        // Title heading
+        contentPanel.add(JBLabel("Create Pull Request").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
+            foreground = JBColor.foreground()
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.empty(8, 0)
+        })
+
+        // Source branch (read-only)
+        val sourceRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(4)
+        }
+        sourceRow.add(JBLabel("Source:").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = SECONDARY_TEXT
+        })
+        sourceRow.add(createSourceBranchLabel)
+        contentPanel.add(sourceRow)
+
+        // Target branch
+        val targetRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(32))
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(4)
+        }
+        targetRow.add(JBLabel("Target:").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = SECONDARY_TEXT
+        })
+        createTargetBranchCombo.preferredSize = Dimension(JBUI.scale(200), JBUI.scale(24))
+        targetRow.add(createTargetBranchCombo)
+        contentPanel.add(targetRow)
+
+        // Title field
+        val titleRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(40))
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(4)
+        }
+        titleRow.add(JBLabel("Title:").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = SECONDARY_TEXT
+            border = JBUI.Borders.emptyRight(8)
+        }, BorderLayout.WEST)
+        titleRow.add(createTitleField, BorderLayout.CENTER)
+        contentPanel.add(titleRow)
+
+        // Description area
+        contentPanel.add(JBLabel("Description:").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = SECONDARY_TEXT
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(4)
+        })
+        val descScroll = JBScrollPane(createDescriptionArea).apply {
+            border = JBUI.Borders.empty()
+            preferredSize = Dimension(0, JBUI.scale(120))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(200))
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        contentPanel.add(descScroll)
+
+        // Reviewers row
+        val reviewersRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.empty(8, 0, 4, 0)
+        }
+        reviewersRow.add(JBLabel("Reviewers:").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = SECONDARY_TEXT
+        })
+        reviewersRow.add(createReviewersPanel)
+        createAddReviewerLink.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                showCreateReviewerPopup(createAddReviewerLink)
+            }
+        })
+        reviewersRow.add(createAddReviewerLink)
+        contentPanel.add(reviewersRow)
+
+        // Create button
+        val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(40))
+            alignmentX = Component.LEFT_ALIGNMENT
+            border = JBUI.Borders.emptyTop(8)
+        }
+        createButton.addActionListener { submitCreatePr() }
+        buttonRow.add(createButton)
+        contentPanel.add(buttonRow)
+
+        val scrollPane = JBScrollPane(contentPanel).apply {
+            border = JBUI.Borders.empty()
+            isOpaque = false
+            viewport.isOpaque = false
+        }
+        createPanel.add(scrollPane, BorderLayout.CENTER)
+    }
+
+    private fun submitCreatePr() {
+        val title = createTitleField.text.trim()
+        if (title.isBlank()) {
+            showNotification("PR title cannot be empty")
+            return
+        }
+        val fromBranch = createSourceBranchLabel.text
+        val toBranch = createTargetBranchCombo.selectedItem as? String ?: return
+        val description = createDescriptionArea.text.trim()
+
+        createButton.isEnabled = false
+        createButton.text = "Creating..."
+
+        val settings = PluginSettings.getInstance(project).state
+        val connSettings = ConnectionSettings.getInstance().state
+        val url = connSettings.bitbucketUrl.trimEnd('/')
+        val projectKey = settings.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+
+        if (url.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
+            showNotification("Bitbucket connection not configured. Check Settings > Tools > Workflow Orchestrator.")
+            createButton.isEnabled = true
+            createButton.text = "Create Pull Request"
+            return
+        }
+
+        val reviewers = selectedReviewerUsernames.map { BitbucketReviewer(BitbucketReviewerUser(it)) }
+            .takeIf { it.isNotEmpty() }
+
+        scope.launch {
+            val credentialStore = CredentialStore()
+            val client = BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
+            when (val result = client.createPullRequest(
+                projectKey = projectKey,
+                repoSlug = repoSlug,
+                title = title,
+                description = description,
+                fromBranch = fromBranch,
+                toBranch = toBranch,
+                reviewers = reviewers
+            )) {
+                is ApiResult.Success -> {
+                    val pr = result.data
+                    val prUrl = pr.links.self.firstOrNull()?.href ?: ""
+                    // Extract ticket ID from branch name
+                    val ticketPattern = Regex("^([A-Z]+-\\d+)")
+                    val ticketId = ticketPattern.find(fromBranch)?.groupValues?.get(1) ?: ""
+
+                    // Emit PullRequestCreated event
+                    project.getService(EventBus::class.java)
+                        .emit(WorkflowEvent.PullRequestCreated(prUrl, pr.id, ticketId))
+
+                    // Refresh PR list
+                    PrListService.getInstance(project).refresh()
+
+                    SwingUtilities.invokeLater {
+                        createButton.isEnabled = true
+                        createButton.text = "Create Pull Request"
+                        // Show the newly created PR by loading it
+                        showPr(pr.id)
+                        com.intellij.notification.NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.build")
+                            .createNotification(
+                                "PR #${pr.id} created successfully",
+                                com.intellij.notification.NotificationType.INFORMATION
+                            )
+                            .notify(project)
+                    }
+                }
+                is ApiResult.Error -> {
+                    SwingUtilities.invokeLater {
+                        createButton.isEnabled = true
+                        createButton.text = "Create Pull Request"
+                        showNotification("Failed to create PR: ${result.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun renderCreateReviewers() {
+        createReviewersPanel.removeAll()
+        for (i in selectedReviewerUsernames.indices) {
+            val name = selectedReviewerDisplayNames.getOrElse(i) { selectedReviewerUsernames[i] }
+            val chipPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
+                isOpaque = false
+            }
+            chipPanel.add(JBLabel(name).apply {
+                font = font.deriveFont(JBUI.scale(11).toFloat())
+                foreground = JBColor.foreground()
+            })
+            val removeLabel = JBLabel("\u00D7").apply {
+                foreground = StatusColors.ERROR
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                toolTipText = "Remove $name"
+            }
+            val idx = i
+            removeLabel.addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    selectedReviewerUsernames.removeAt(idx)
+                    selectedReviewerDisplayNames.removeAt(idx)
+                    renderCreateReviewers()
+                }
+            })
+            chipPanel.add(removeLabel)
+            createReviewersPanel.add(chipPanel)
+        }
+        createReviewersPanel.revalidate()
+        createReviewersPanel.repaint()
+    }
+
+    private fun showCreateReviewerPopup(relativeTo: Component) {
+        val popupContent = JPanel(BorderLayout()).apply {
+            preferredSize = Dimension(JBUI.scale(260), JBUI.scale(200))
+            border = JBUI.Borders.empty(8)
+        }
+
+        val searchField = JBTextField().apply {
+            emptyText.text = "Search users..."
+        }
+
+        val userListModel = DefaultListModel<BitbucketUser>()
+        val userList = JBList(userListModel).apply {
+            cellRenderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                ): Component {
+                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                    val user = value as? BitbucketUser
+                    text = if (user != null) {
+                        val display = user.displayName.ifBlank { user.name }
+                        "$display (${user.name})"
+                    } else ""
+                    return this
+                }
+            }
+        }
+
+        popupContent.add(searchField, BorderLayout.NORTH)
+        popupContent.add(JBScrollPane(userList).apply {
+            border = JBUI.Borders.emptyTop(4)
+        }, BorderLayout.CENTER)
+
+        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(popupContent, searchField)
+            .setRequestFocus(true)
+            .setFocusable(true)
+            .setMovable(true)
+            .setTitle("Add Reviewer")
+            .createPopup()
+
+        // Debounced search
+        var searchJob: Job? = null
+        searchField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = triggerSearch()
+            override fun removeUpdate(e: DocumentEvent) = triggerSearch()
+            override fun changedUpdate(e: DocumentEvent) = triggerSearch()
+
+            private fun triggerSearch() {
+                searchJob?.cancel()
+                val query = searchField.text.trim()
+                if (query.length < 2) {
+                    userListModel.clear()
+                    return
+                }
+                searchJob = scope.launch {
+                    delay(300) // debounce
+                    val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
+                    if (url.isBlank()) return@launch
+                    val credentialStore = CredentialStore()
+                    val client = BitbucketBranchClient(
+                        baseUrl = url,
+                        tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+                    )
+                    when (val result = client.getUsers(query)) {
+                        is ApiResult.Success -> {
+                            SwingUtilities.invokeLater {
+                                userListModel.clear()
+                                result.data
+                                    .filter { it.name !in selectedReviewerUsernames }
+                                    .forEach { userListModel.addElement(it) }
+                            }
+                        }
+                        is ApiResult.Error -> { /* ignore search errors */ }
+                    }
+                }
+            }
+        })
+
+        // Click to add reviewer
+        userList.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 1) {
+                    val selected = userList.selectedValue ?: return
+                    popup.cancel()
+                    selectedReviewerUsernames.add(selected.name)
+                    selectedReviewerDisplayNames.add(selected.displayName.ifBlank { selected.name })
+                    renderCreateReviewers()
+                }
+            }
+        })
+
+        popup.showUnderneathOf(relativeTo)
     }
 
     override fun dispose() {
