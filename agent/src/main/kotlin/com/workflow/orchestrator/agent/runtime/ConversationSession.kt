@@ -275,6 +275,11 @@ class ConversationSession private constructor(
                 ))
             } catch (_: Exception) { /* best effort — index may not be available in tests */ }
 
+            // Set session directory on AgentService for subagent transcript storage
+            try {
+                agentService.currentSessionDir = session.store.sessionDirectory
+            } catch (_: Exception) {}
+
             return session
         }
 
@@ -346,6 +351,11 @@ class ConversationSession private constructor(
 
             loaded.initialized = true // system prompt already in replayed messages
             loaded.persistedMessageCount = messages.size // all messages already on disk
+
+            // Set session directory on AgentService for subagent transcript storage
+            try {
+                agentService.currentSessionDir = loaded.store.sessionDirectory
+            } catch (_: Exception) {}
 
             return loaded
         }
