@@ -14,6 +14,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import kotlinx.coroutines.*
 import com.workflow.orchestrator.core.ui.TimeFormatter
@@ -324,7 +325,7 @@ class PrDashboardPanel(
     }
 
     companion object {
-        private val SECONDARY_TEXT = JBColor(0x656D76, 0x8B949E)
-        private val BORDER_COLOR = JBColor(0xD1D9E0, 0x444D56)
+        private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
+        private val BORDER_COLOR = StatusColors.BORDER
     }
 }

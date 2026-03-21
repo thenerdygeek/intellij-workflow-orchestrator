@@ -55,8 +55,8 @@ class PrDetailPanel(
         const val CARD_DETAIL = "detail"
 
         private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
-        private val CARD_BG = JBColor(0xF7F8FA, 0x2B2D30)
-        private val BORDER_COLOR = JBColor(0xD1D9E0, 0x444D56)
+        private val CARD_BG = StatusColors.CARD_BG
+        private val BORDER_COLOR = StatusColors.BORDER
         private val LINK_COLOR = StatusColors.LINK
         private val STATUS_OPEN = StatusColors.OPEN
         private val STATUS_MERGED = StatusColors.MERGED
@@ -1081,7 +1081,7 @@ class PrDetailPanel(
             return JPanel(BorderLayout()).apply {
                 isOpaque = isSelected
                 if (isSelected) {
-                    background = JBColor(0xDEE9FC, 0x2D3548)
+                    background = UIManager.getColor("List.selectionBackground")
                 }
                 border = JBUI.Borders.empty(2, 8)
 

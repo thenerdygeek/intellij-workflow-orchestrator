@@ -312,8 +312,8 @@ class PrListPanel : JPanel(BorderLayout()) {
     companion object {
         private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
         private val LINK_COLOR = StatusColors.LINK
-        private val BRANCH_TEXT = JBColor(0x656D76, 0x768390)
-        private val SELECTION_BG = JBColor(0xDEE9FC, 0x2D3548)
+        private val BRANCH_TEXT = StatusColors.SECONDARY_TEXT
+        private val SELECTION_BG = UIManager.getColor("List.selectionBackground")
         private val STATUS_OPEN = StatusColors.OPEN
         private val STATUS_MERGED = StatusColors.MERGED
         private val STATUS_DECLINED = StatusColors.DECLINED
