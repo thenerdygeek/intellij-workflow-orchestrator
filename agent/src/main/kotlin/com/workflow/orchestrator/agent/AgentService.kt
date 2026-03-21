@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.runtime.AgentDefinitionRegistry
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.runtime.QuestionManager
 import com.workflow.orchestrator.agent.runtime.SkillManager
@@ -43,6 +44,9 @@ class AgentService(
 
     /** Skill manager for the current agent session, set by AgentController. */
     @Volatile var currentSkillManager: SkillManager? = null
+
+    /** Agent definition registry for custom subagents, set by ConversationSession. */
+    @Volatile var agentDefinitionRegistry: AgentDefinitionRegistry? = null
 
     /** Tools requested by LLM via request_tools, expanded on next iteration. */
     val pendingToolActivations = java.util.concurrent.ConcurrentLinkedQueue<String>()
