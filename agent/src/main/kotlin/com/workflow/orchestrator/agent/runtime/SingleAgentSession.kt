@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.runtime
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
+import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
@@ -12,8 +13,12 @@ import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.security.CredentialRedactor
 import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -70,6 +75,18 @@ class SingleAgentSession(
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think")
+
+        /** Read-only tools safe to execute in parallel (no side effects on project state). */
+        private val READ_ONLY_TOOLS = setOf(
+            "read_file", "search_code", "glob_files", "file_structure",
+            "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
+            "diagnostics", "git_status", "git_blame", "find_implementations",
+            "spring_context", "spring_endpoints", "spring_bean_graph",
+            "jira_get_ticket", "jira_get_comments", "jira_get_transitions",
+            "bamboo_build_status", "bamboo_get_build", "bamboo_get_test_results",
+            "sonar_issues", "sonar_quality_gate", "sonar_coverage",
+            "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health"
+        )
     }
 
     /**
@@ -367,14 +384,18 @@ class SingleAgentSession(
         val response = result.response
         val usage = response.usage
         var totalTokensUsed = totalTokensUsedBefore
-        if (usage != null) {
+        if (usage != null && usage.promptTokens > 0) {
             totalTokensUsed += usage.totalTokens
             // Reconcile heuristic token count with actual API-reported count.
             // Our character-based estimator (length/3.5) can be 20-40% off.
             // The API's prompt_tokens is authoritative — calibrate to it.
-            if (usage.promptTokens > 0) {
-                contextManager.reconcileWithActualTokens(usage.promptTokens)
-            }
+            contextManager.reconcileWithActualTokens(usage.promptTokens)
+        } else {
+            // Streaming response returned null/zero usage — estimate heuristically
+            // so budget tracking doesn't drift. Not authoritative, but better than nothing.
+            val estimatedPrompt = TokenEstimator.estimate(contextManager.getMessages())
+            val estimatedCompletion = TokenEstimator.estimate(response.choices.firstOrNull()?.message?.content ?: "")
+            totalTokensUsed += estimatedPrompt + estimatedCompletion
         }
         // Store for caller
         (result as LlmCallResult.Success).totalTokensSoFar = totalTokensUsed
@@ -489,119 +510,99 @@ class SingleAgentSession(
             )
         }
 
-        // Execute tool calls with approval gate
-        // TODO: Parallel tool execution for read-only tools (read_file, search_code, glob_files,
-        //  find_definition, find_references, type_hierarchy, call_hierarchy, diagnostics, git_status,
-        //  git_blame). Requires extracting tool execution into executeSingleToolCall() and using
-        //  coroutineScope { parallelCalls.map { async { ... } } }. Skipped for now due to deep
-        //  integration with approval gate, progress callbacks, edit tracking, and LoopGuard.
+        // Execute tool calls: read-only tools in parallel, write tools sequentially
         val toolResults = mutableListOf<Pair<String, Boolean>>() // (toolCallId, isError) for LoopGuard
 
-        for (toolCall in toolCalls) {
-            // Mid-loop cancellation check before each tool execution
+        // Split into read-only (parallel-safe) and write (sequential) tool calls
+        val (readOnlyCalls, writeCalls) = toolCalls.partition { tc ->
+            tc.function.name in READ_ONLY_TOOLS
+        }
+
+        // Execute read-only tools in parallel, collect results first
+        if (readOnlyCalls.isNotEmpty()) {
+            val parallelResults: List<Triple<ToolCall, ToolResult, Long>> = coroutineScope {
+                readOnlyCalls.map { tc ->
+                    async {
+                        if (cancelled.get()) {
+                            Triple(tc, ToolResult("Cancelled by user", "Cancelled", 0, isError = true), 0L)
+                        } else {
+                            executeSingleToolRaw(tc, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
+                        }
+                    }
+                }.awaitAll()
+            }
+            // Add results to context sequentially (ContextManager is not thread-safe)
+            for (entry in parallelResults) {
+                val tc = entry.first
+                val tr = entry.second
+                val durMs = entry.third
+                val toolName = tc.function.name
+                contextManager.addToolResult(
+                    toolCallId = tc.id,
+                    content = tr.content,
+                    summary = tr.summary
+                )
+                allArtifacts.addAll(tr.artifacts)
+                toolResults.add(tc.id to tr.isError)
+
+                if (tr.isError) {
+                    sessionTrace?.toolExecuted(toolName, durMs, tr.tokenEstimate, true, tr.summary)
+                } else {
+                    sessionTrace?.toolExecuted(toolName, durMs, tr.tokenEstimate, false)
+                }
+
+                onProgress(AgentProgress(
+                    step = "Used tool: $toolName",
+                    tokensUsed = contextManager.currentTokens,
+                    toolCallInfo = ToolCallInfo(
+                        toolName = toolName,
+                        args = tc.function.arguments.take(200),
+                        result = tr.summary,
+                        durationMs = durMs,
+                        isError = tr.isError
+                    )
+                ))
+            }
+        }
+
+        // Execute write tools sequentially
+        for (toolCall in writeCalls) {
             if (cancelled.get()) {
                 contextManager.addToolResult(toolCall.id, "Cancelled by user", "Cancelled")
                 break
             }
-
+            val (_, toolResult, toolDurationMs) = executeSingleToolRaw(toolCall, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
             val toolName = toolCall.function.name
-            val tool = tools[toolName]
 
-            if (tool == null) {
-                eventLog?.log(AgentEventType.TOOL_FAILED, "Tool not found: $toolName")
-                contextManager.addToolResult(
-                    toolCallId = toolCall.id,
-                    content = "Error: Tool '$toolName' not found. Available tools: ${tools.keys.joinToString(", ")}",
-                    summary = "Tool not found: $toolName"
-                )
-                toolResults.add(toolCall.id to true)
-                continue
-            }
+            contextManager.addToolResult(
+                toolCallId = toolCall.id,
+                content = toolResult.content,
+                summary = toolResult.summary
+            )
 
-            // Check approval gate before executing risky tools
-            if (approvalGate != null) {
-                val riskLevel = ApprovalGate.riskLevelFor(toolName)
-                eventLog?.log(AgentEventType.APPROVAL_REQUESTED, "$toolName (risk: $riskLevel)")
-                val approval = approvalGate.check(
-                    toolName = toolName,
-                    description = "$toolName(${toolCall.function.arguments.take(100)})",
-                    riskLevel = riskLevel
-                )
-                when (approval) {
-                    is ApprovalResult.Rejected -> {
-                        eventLog?.log(AgentEventType.APPROVAL_DENIED, toolName)
-                        contextManager.addToolResult(
-                            toolCallId = toolCall.id,
-                            content = "Tool call rejected by user. The user chose not to allow this action.",
-                            summary = "Rejected: $toolName"
-                        )
-                        toolResults.add(toolCall.id to true)
-                        continue
-                    }
-                    is ApprovalResult.Pending -> {
-                        contextManager.addToolResult(
-                            toolCallId = toolCall.id,
-                            content = "Tool call pending user approval. Waiting for user decision.",
-                            summary = "Pending approval: $toolName"
-                        )
-                        toolResults.add(toolCall.id to true)
-                        continue
-                    }
-                    is ApprovalResult.Approved -> {
-                        eventLog?.log(AgentEventType.APPROVAL_GRANTED, toolName)
-                    }
-                }
-            }
+            allArtifacts.addAll(toolResult.artifacts)
+            toolResults.add(toolCall.id to toolResult.isError)
 
-            // Emit pre-execution progress so users see which tool is being called
-            // while it runs (fixes blank screen during non-streaming tool calls)
-            onProgress(AgentProgress(
-                step = "Calling tool: $toolName",
-                tokensUsed = contextManager.currentTokens,
-                toolCallInfo = ToolCallInfo(
-                    toolName = toolName,
-                    args = toolCall.function.arguments.take(200),
-                    isError = false
-                )
-            ))
-
-            val toolStartMs = System.currentTimeMillis()
-            try {
-                eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${toolCall.function.arguments.take(100)})")
-                val params = json.decodeFromString<JsonObject>(toolCall.function.arguments)
-                val toolResult = tool.execute(params, project)
-                val toolDurationMs = System.currentTimeMillis() - toolStartMs
-
-                contextManager.addToolResult(
-                    toolCallId = toolCall.id,
-                    content = toolResult.content,
-                    summary = toolResult.summary
-                )
-
-                allArtifacts.addAll(toolResult.artifacts)
-                toolResults.add(toolCall.id to toolResult.isError)
-
-                // Track edited files for LoopGuard auto-verification
-                if (toolName == "edit_file" && !toolResult.isError) {
-                    editedFiles.addAll(toolResult.artifacts)
-                    if (toolResult.content.contains("Edit rejected: syntax errors")) {
-                        eventLog?.log(AgentEventType.EDIT_REJECTED_SYNTAX, toolResult.artifacts.firstOrNull() ?: "unknown")
-                    } else {
-                        eventLog?.log(AgentEventType.EDIT_APPLIED, toolResult.artifacts.firstOrNull() ?: "unknown")
-                    }
-                }
-
-                if (toolResult.isError) {
-                    eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: ${toolResult.summary}")
-                    sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, true, toolResult.summary)
+            // Track edited files for LoopGuard auto-verification
+            if (toolName == "edit_file" && !toolResult.isError) {
+                editedFiles.addAll(toolResult.artifacts)
+                if (toolResult.content.contains("Edit rejected: syntax errors")) {
+                    eventLog?.log(AgentEventType.EDIT_REJECTED_SYNTAX, toolResult.artifacts.firstOrNull() ?: "unknown")
                 } else {
-                    eventLog?.log(AgentEventType.TOOL_SUCCEEDED, toolName)
-                    sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, false)
+                    eventLog?.log(AgentEventType.EDIT_APPLIED, toolResult.artifacts.firstOrNull() ?: "unknown")
                 }
+            }
 
-                // Build rich tool call info for the UI
-                val editInfo = if (toolName == "edit_file" && !toolResult.isError) {
-                    val argsObj = params
+            if (toolResult.isError) {
+                sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, true, toolResult.summary)
+            } else {
+                sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, false)
+            }
+
+            // Build rich tool call info for the UI
+            val editInfo = if (toolName == "edit_file" && !toolResult.isError) {
+                try {
+                    val argsObj = json.decodeFromString<JsonObject>(toolCall.function.arguments)
                     ToolCallInfo(
                         toolName = toolName,
                         args = toolCall.function.arguments.take(200),
@@ -612,33 +613,24 @@ class SingleAgentSession(
                         editOldText = argsObj["old_string"]?.toString()?.removeSurrounding("\"")?.take(500),
                         editNewText = argsObj["new_string"]?.toString()?.removeSurrounding("\"")?.take(500)
                     )
-                } else {
-                    ToolCallInfo(
-                        toolName = toolName,
-                        args = toolCall.function.arguments.take(200),
-                        result = toolResult.summary,
-                        durationMs = toolDurationMs,
-                        isError = toolResult.isError
-                    )
+                } catch (_: Exception) {
+                    ToolCallInfo(toolName = toolName, args = toolCall.function.arguments.take(200), result = toolResult.summary, durationMs = toolDurationMs, isError = toolResult.isError)
                 }
-
-                onProgress(AgentProgress(
-                    step = "Used tool: $toolName",
-                    tokensUsed = contextManager.currentTokens,
-                    toolCallInfo = editInfo
-                ))
-            } catch (e: Exception) {
-                val toolDurationMs = System.currentTimeMillis() - toolStartMs
-                LOG.warn("SingleAgentSession: tool '$toolName' failed", e)
-                eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: ${e.message}")
-                sessionTrace?.toolExecuted(toolName, toolDurationMs, 0, true, e.message)
-                contextManager.addToolResult(
-                    toolCallId = toolCall.id,
-                    content = "Error executing tool '$toolName': ${e.message}",
-                    summary = "Tool error: $toolName"
+            } else {
+                ToolCallInfo(
+                    toolName = toolName,
+                    args = toolCall.function.arguments.take(200),
+                    result = toolResult.summary,
+                    durationMs = toolDurationMs,
+                    isError = toolResult.isError
                 )
-                toolResults.add(toolCall.id to true)
             }
+
+            onProgress(AgentProgress(
+                step = "Used tool: $toolName",
+                tokensUsed = contextManager.currentTokens,
+                toolCallInfo = editInfo
+            ))
         }
 
         // Trace: record iteration completion with tool list
@@ -655,6 +647,104 @@ class SingleAgentSession(
         }
 
         return null // continue loop
+    }
+
+    /**
+     * Execute a single tool call and return the raw result WITHOUT adding to context.
+     * Used by both parallel (read-only) and sequential (write) execution paths.
+     * Returns Triple(toolCall, result, durationMs).
+     */
+    private suspend fun executeSingleToolRaw(
+        toolCall: ToolCall,
+        tools: Map<String, AgentTool>,
+        project: Project,
+        approvalGate: ApprovalGate?,
+        eventLog: AgentEventLog?,
+        sessionTrace: SessionTrace?,
+        onProgress: ((AgentProgress) -> Unit)?
+    ): Triple<ToolCall, ToolResult, Long> {
+        val toolName = toolCall.function.name
+        val tool = tools[toolName]
+
+        if (tool == null) {
+            eventLog?.log(AgentEventType.TOOL_FAILED, "Tool not found: $toolName")
+            return Triple(toolCall, ToolResult(
+                content = "Error: Tool '$toolName' not found. Available tools: ${tools.keys.joinToString(", ")}",
+                summary = "Tool not found: $toolName",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            ), 0L)
+        }
+
+        // Check approval gate before executing risky tools
+        if (approvalGate != null) {
+            val riskLevel = ApprovalGate.riskLevelFor(toolName)
+            eventLog?.log(AgentEventType.APPROVAL_REQUESTED, "$toolName (risk: $riskLevel)")
+            val approval = approvalGate.check(
+                toolName = toolName,
+                description = "$toolName(${toolCall.function.arguments.take(100)})",
+                riskLevel = riskLevel
+            )
+            when (approval) {
+                is ApprovalResult.Rejected -> {
+                    eventLog?.log(AgentEventType.APPROVAL_DENIED, toolName)
+                    return Triple(toolCall, ToolResult(
+                        content = "Tool call rejected by user. The user chose not to allow this action.",
+                        summary = "Rejected: $toolName",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    ), 0L)
+                }
+                is ApprovalResult.Pending -> {
+                    return Triple(toolCall, ToolResult(
+                        content = "Tool call pending user approval. Waiting for user decision.",
+                        summary = "Pending approval: $toolName",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    ), 0L)
+                }
+                is ApprovalResult.Approved -> {
+                    eventLog?.log(AgentEventType.APPROVAL_GRANTED, toolName)
+                }
+            }
+        }
+
+        // Emit pre-execution progress
+        onProgress?.invoke(AgentProgress(
+            step = "Calling tool: $toolName",
+            tokensUsed = 0, // Don't access contextManager from parallel context
+            toolCallInfo = ToolCallInfo(
+                toolName = toolName,
+                args = toolCall.function.arguments.take(200),
+                isError = false
+            )
+        ))
+
+        val toolStartMs = System.currentTimeMillis()
+        return try {
+            eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${toolCall.function.arguments.take(100)})")
+            val params = json.decodeFromString<JsonObject>(toolCall.function.arguments)
+            val toolResult = tool.execute(params, project)
+            val toolDurationMs = System.currentTimeMillis() - toolStartMs
+
+            if (toolResult.isError) {
+                eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: ${toolResult.summary}")
+            } else {
+                eventLog?.log(AgentEventType.TOOL_SUCCEEDED, toolName)
+            }
+
+            Triple(toolCall, toolResult, toolDurationMs)
+        } catch (e: Exception) {
+            val toolDurationMs = System.currentTimeMillis() - toolStartMs
+            LOG.warn("SingleAgentSession: tool '$toolName' failed", e)
+            eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: ${e.message}")
+            Triple(toolCall, ToolResult(
+                content = "Error executing tool '$toolName': ${e.message}",
+                summary = "Tool error: $toolName",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            ), toolDurationMs)
+        }
     }
 
     /**
