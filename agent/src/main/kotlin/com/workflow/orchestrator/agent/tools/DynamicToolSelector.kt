@@ -214,8 +214,19 @@ object DynamicToolSelector {
         disabledTools: Set<String> = emptySet(),
         activatedTools: Set<String> = emptySet(),
         preferredTools: Set<String> = emptySet(),
-        projectTools: Set<String> = emptySet()
+        projectTools: Set<String> = emptySet(),
+        skillAllowedTools: Set<String>? = null
     ): List<AgentTool> {
+        // If a skill with allowed-tools is active, ONLY those tools are available
+        // This is a hard whitelist — overrides all other selection logic
+        if (skillAllowedTools != null) {
+            val allowed = skillAllowedTools.toMutableSet()
+            // Always include delegate_task and request_tools as escape hatches
+            allowed.add("request_tools")
+            allowed.add("delegate_task")
+            return allTools.filter { it.name in allowed }
+        }
+
         val lowerContext = conversationContext.lowercase()
 
         // Always include core + PSI tools

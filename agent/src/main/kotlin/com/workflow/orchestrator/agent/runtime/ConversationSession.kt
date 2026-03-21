@@ -213,7 +213,7 @@ class ConversationSession private constructor(
             // Discover skills
             val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
             skillRegistry.scan()
-            val skillManager = SkillManager(skillRegistry)
+            val skillManager = SkillManager(skillRegistry, project.basePath)
             val skillDescriptions = skillRegistry.buildDescriptionIndex()
 
             // Detect project type (Maven/Spring/JPA) — determines which tools are always included
@@ -300,7 +300,7 @@ class ConversationSession private constructor(
             // Rebuild SkillRegistry and SkillManager just like create() does
             val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
             skillRegistry.scan()
-            val skillManager = SkillManager(skillRegistry)
+            val skillManager = SkillManager(skillRegistry, project.basePath)
 
             val loaded = ConversationSession(
                 sessionId = sessionId,

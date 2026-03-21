@@ -154,4 +154,35 @@ class DynamicToolSelectorTest {
         )
         assertFalse(selected.any { it.name == "diagnostics" })
     }
+
+    @Test
+    fun `skillAllowedTools restricts to whitelist only`() {
+        val toolsWithDelegate = allTools + listOf(stubTool("delegate_task"))
+        val result = DynamicToolSelector.selectTools(
+            allTools = toolsWithDelegate,
+            conversationContext = "check jira ticket and build status",
+            skillAllowedTools = setOf("read_file", "search_code")
+        )
+        val names = result.map { it.name }.toSet()
+        assertTrue("read_file" in names, "allowed tool read_file should be present")
+        assertTrue("search_code" in names, "allowed tool search_code should be present")
+        assertTrue("delegate_task" in names, "delegate_task always included")
+        assertTrue("request_tools" in names, "request_tools always included")
+        assertFalse("edit_file" in names, "edit_file should be blocked")
+        assertFalse("run_command" in names, "run_command should be blocked")
+        assertFalse("jira_get_ticket" in names, "jira tool should be blocked despite keyword match")
+        assertFalse("bamboo_build_status" in names, "bamboo tool should be blocked despite keyword match")
+    }
+
+    @Test
+    fun `null skillAllowedTools uses normal selection`() {
+        val result = DynamicToolSelector.selectTools(
+            allTools = allTools,
+            conversationContext = "read the file",
+            skillAllowedTools = null
+        )
+        assertTrue(result.isNotEmpty())
+        // Normal selection should include core tools
+        assertTrue(result.any { it.name == "read_file" })
+    }
 }
