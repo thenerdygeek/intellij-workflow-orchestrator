@@ -47,16 +47,18 @@ class AgentDefinitionRegistry(private val project: Project) {
     enum class AgentScope { USER, PROJECT }
     enum class MemoryScope { USER, PROJECT, LOCAL }
 
-    private val agents = mutableMapOf<String, AgentDefinition>()
+    @Volatile
+    private var agents: Map<String, AgentDefinition> = emptyMap()
 
     fun scan() {
-        agents.clear()
+        val newAgents = mutableMapOf<String, AgentDefinition>()
         // User-level agents (lower priority)
         val userDir = File(System.getProperty("user.home"), ".workflow-orchestrator/agents")
-        scanDirectory(userDir, AgentScope.USER)
+        scanDirectory(userDir, AgentScope.USER, newAgents)
         // Project-level agents (higher priority — overwrites user)
         val projectDir = File(project.basePath ?: return, ".workflow/agents")
-        scanDirectory(projectDir, AgentScope.PROJECT)
+        scanDirectory(projectDir, AgentScope.PROJECT, newAgents)
+        agents = newAgents  // atomic swap
         LOG.info("AgentDefinitionRegistry: loaded ${agents.size} agent definitions")
     }
 
@@ -72,7 +74,7 @@ class AgentDefinitionRegistry(private val project: Project) {
         }
     }
 
-    private fun scanDirectory(dir: File, scope: AgentScope) {
+    private fun scanDirectory(dir: File, scope: AgentScope, target: MutableMap<String, AgentDefinition>) {
         if (!dir.isDirectory) return
         val files = dir.listFiles { f -> f.isFile && f.extension == "md" } ?: return
         for (file in files) {
@@ -82,7 +84,7 @@ class AgentDefinitionRegistry(private val project: Project) {
                 val name = frontmatter["name"] ?: file.nameWithoutExtension
                 val description = frontmatter["description"] ?: continue // required
 
-                agents[name] = AgentDefinition(
+                target[name] = AgentDefinition(
                     name = name,
                     description = description,
                     systemPrompt = body.trim(),
@@ -115,6 +117,8 @@ class AgentDefinitionRegistry(private val project: Project) {
             if (colonIdx > 0) {
                 val key = line.substring(0, colonIdx).trim()
                 val value = line.substring(colonIdx + 1).trim()
+                    .removeSurrounding("\"")
+                    .removeSurrounding("'")
                 map[key] = value
             }
         }

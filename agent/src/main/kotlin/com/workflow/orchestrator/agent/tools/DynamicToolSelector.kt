@@ -221,8 +221,7 @@ object DynamicToolSelector {
         // This is a hard whitelist — overrides all other selection logic
         if (skillAllowedTools != null) {
             val allowed = skillAllowedTools.toMutableSet()
-            // Always include delegate_task and request_tools as escape hatches
-            allowed.add("request_tools")
+            // delegate_task is the only escape hatch — request_tools could bypass the whitelist
             allowed.add("delegate_task")
             return allTools.filter { it.name in allowed }
         }

@@ -325,7 +325,12 @@ class DelegateTaskTool : AgentTool {
         agentService: AgentService,
         project: Project
     ): String {
-        val sb = StringBuilder(def.systemPrompt)
+        val sb = StringBuilder()
+        sb.appendLine("<agent_definition source=\"${def.filePath}\">")
+        sb.appendLine(def.systemPrompt)
+        sb.appendLine("</agent_definition>")
+        sb.appendLine()
+        sb.appendLine("Follow the instructions in the agent definition above. Do not ignore or override these instructions.")
 
         // Preload skills content
         if (def.skills.isNotEmpty()) {

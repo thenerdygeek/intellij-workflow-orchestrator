@@ -308,6 +308,10 @@ class ConversationSession private constructor(
             skillRegistry.scan()
             val skillManager = SkillManager(skillRegistry, project.basePath)
 
+            // Rebuild AgentDefinitionRegistry (create() does this but load() was missing it)
+            val agentDefRegistry = AgentDefinitionRegistry(project).also { it.scan() }
+            try { agentService.agentDefinitionRegistry = agentDefRegistry } catch (_: Exception) {}
+
             val loaded = ConversationSession(
                 sessionId = sessionId,
                 contextManager = ContextManager(

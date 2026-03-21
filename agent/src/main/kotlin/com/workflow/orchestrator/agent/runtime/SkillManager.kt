@@ -1,9 +1,14 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 class SkillManager(val registry: SkillRegistry, val projectBasePath: String? = null) {
+
+    companion object {
+        private val LOG = Logger.getInstance(SkillManager::class.java)
+    }
 
     data class ActiveSkill(
         val entry: SkillRegistry.SkillEntry,
@@ -100,6 +105,8 @@ class SkillManager(val registry: SkillRegistry, val projectBasePath: String? = n
         val pattern = Regex("""!`([^`]+)`""")
         val matches = pattern.findAll(content).toList()
         if (matches.isEmpty()) return content
+
+        LOG.warn("SkillManager: executing dynamic context commands from skill content (${matches.size} commands)")
 
         var result = content
         val totalDeadline = System.currentTimeMillis() + 30_000
