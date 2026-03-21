@@ -137,7 +137,7 @@ class SingleAgentSession(
             sessionTrace?.iterationStarted(iteration, contextManager.currentTokens, budgetEnforcer.utilizationPercent())
             onProgress(AgentProgress(
                 step = "Thinking... (iteration $iteration)",
-                tokensUsed = totalTokensUsed
+                tokensUsed = contextManager.currentTokens
             ))
 
             // Check for pending tool activations from request_tools
@@ -214,7 +214,7 @@ class SingleAgentSession(
                 LOG.info("SingleAgentSession: reached iteration 25, continuing (budget: ${budgetEnforcer.utilizationPercent()}%)")
                 onProgress(AgentProgress(
                     step = "Agent has been working for 25 iterations. Still making progress...",
-                    tokensUsed = totalTokensUsed
+                    tokensUsed = contextManager.currentTokens
                 ))
             }
 
@@ -429,7 +429,7 @@ class SingleAgentSession(
 
             onProgress(AgentProgress(
                 step = "Task completed",
-                tokensUsed = totalTokensUsed
+                tokensUsed = contextManager.currentTokens
             ))
 
             eventLog?.log(AgentEventType.SESSION_COMPLETED, "Completed after $iteration iterations, $totalTokensUsed tokens")
@@ -501,7 +501,7 @@ class SingleAgentSession(
             // while it runs (fixes blank screen during non-streaming tool calls)
             onProgress(AgentProgress(
                 step = "Calling tool: $toolName",
-                tokensUsed = totalTokensUsed,
+                tokensUsed = contextManager.currentTokens,
                 toolCallInfo = ToolCallInfo(
                     toolName = toolName,
                     args = toolCall.function.arguments.take(200),
@@ -568,7 +568,7 @@ class SingleAgentSession(
 
                 onProgress(AgentProgress(
                     step = "Used tool: $toolName",
-                    tokensUsed = totalTokensUsed,
+                    tokensUsed = contextManager.currentTokens,
                     toolCallInfo = editInfo
                 ))
             } catch (e: Exception) {

@@ -295,10 +295,11 @@ class ContextManager(
      */
     fun reconcileWithActualTokens(actualPromptTokens: Int) {
         if (actualPromptTokens > 0) {
-            // API's prompt_tokens includes tool definitions and overhead that
-            // are already accounted for in reservedTokens. Subtract to avoid
-            // double-counting, which would make the budget appear smaller.
-            totalTokens = (actualPromptTokens - reservedTokens).coerceAtLeast(0)
+            // The API's promptTokens IS the authoritative context size.
+            // It includes system prompt + tool definitions + all messages.
+            // No need to subtract reservedTokens — the API already counted everything.
+            // Our totalTokens should track the same thing the API tracks.
+            totalTokens = actualPromptTokens
         }
     }
 
