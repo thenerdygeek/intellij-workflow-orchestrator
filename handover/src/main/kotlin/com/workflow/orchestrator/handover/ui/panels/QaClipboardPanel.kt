@@ -42,6 +42,17 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
             add(addServiceButton, BorderLayout.EAST)
         }
 
+        copyAllButton.addActionListener {
+            val text = textArea.text
+            if (text.isNotBlank()) {
+                val content = java.awt.datatransfer.StringSelection(text)
+                java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(content, null)
+                statusLabel.text = "Copied!"
+            }
+        }
+        addServiceButton.isEnabled = false
+        addServiceButton.toolTipText = "Coming soon"
+
         val buttonPanel = JPanel().apply {
             add(copyAllButton)
         }

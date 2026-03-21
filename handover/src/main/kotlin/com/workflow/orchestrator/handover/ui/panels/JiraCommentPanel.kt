@@ -26,6 +26,13 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
             font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
+        editButton.addActionListener {
+            commentPreview.isEditable = !commentPreview.isEditable
+            editButton.text = if (commentPreview.isEditable) "Done" else "Edit"
+        }
+        postButton.isEnabled = false
+        postButton.toolTipText = "Coming soon"
+
         val buttonPanel = JPanel().apply {
             add(editButton)
             add(postButton)

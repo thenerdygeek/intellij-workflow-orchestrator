@@ -26,7 +26,10 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
     private val ticketSummaryLabel = JBLabel("")
     private val ticketStatusLabel = JBLabel("")
     private val transitionComboBox = com.intellij.openapi.ui.ComboBox<String>()
-    private val transitionButton = javax.swing.JButton("Transition")
+    private val transitionButton = javax.swing.JButton("Transition").apply {
+        isEnabled = false
+        toolTipText = "Coming soon"
+    }
     private val prStatusLabel = JBLabel("")
     private val buildStatusLabel = JBLabel("")
     private val qualityLabel = JBLabel("")

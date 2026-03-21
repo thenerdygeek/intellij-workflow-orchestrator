@@ -35,6 +35,11 @@ class CopyrightPanel(private val project: Project) : JPanel(BorderLayout()) {
             font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
         }
 
+        fixAllButton.isEnabled = false
+        fixAllButton.toolTipText = "Coming soon"
+        rescanButton.isEnabled = false
+        rescanButton.toolTipText = "Coming soon"
+
         val buttonPanel = JPanel().apply {
             add(fixAllButton)
             add(rescanButton)

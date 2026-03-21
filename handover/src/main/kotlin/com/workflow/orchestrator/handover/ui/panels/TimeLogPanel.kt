@@ -39,7 +39,10 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
     val commentField = JBTextField()
     val elapsedHintLabel = JBLabel("")
-    val logButton = JButton("Log Work")
+    val logButton = JButton("Log Work").apply {
+        isEnabled = false
+        toolTipText = "Coming soon"
+    }
     val statusLabel = JBLabel("")
 
     init {
