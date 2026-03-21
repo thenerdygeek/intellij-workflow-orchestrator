@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
@@ -39,7 +40,7 @@ class AutomationPanel(
     // Header components
     private val suiteCombo = JComboBox<SuiteComboItem>()
     private val statusLabel = JBLabel("").apply {
-        foreground = JBColor(0x1B7F37, 0xa6e3a1)
+        foreground = StatusColors.SUCCESS
     }
 
     // Sub-panels
@@ -66,7 +67,7 @@ class AutomationPanel(
             border = JBUI.Borders.empty(4, 8, 4, 8)
 
             val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-                add(JBLabel("Suite:").apply { foreground = JBColor(0x656D76, 0x6c7086) })
+                add(JBLabel("Suite:").apply { foreground = StatusColors.SECONDARY_TEXT })
                 add(suiteCombo)
                 add(statusLabel)
             }
@@ -190,7 +191,7 @@ class AutomationPanel(
                 }
 
                 statusLabel.text = if (tags.isEmpty()) "No baseline found" else "● Idle"
-                statusLabel.foreground = JBColor(0x1B7F37, 0xa6e3a1)
+                statusLabel.foreground = StatusColors.SUCCESS
             }
         }
     }
@@ -210,7 +211,7 @@ class AutomationPanel(
             if (apiClient == null) {
                 invokeLater {
                     statusLabel.text = "Bamboo not configured"
-                    statusLabel.foreground = JBColor.RED
+                    statusLabel.foreground = StatusColors.ERROR
                 }
                 return@launch
             }
@@ -222,14 +223,14 @@ class AutomationPanel(
                         val resultKey = result.data.buildResultKey
                         log.info("[Automation:UI] Build triggered: $resultKey")
                         statusLabel.text = "▶ Triggered — ${result.data.buildResultKey}"
-                        statusLabel.foreground = JBColor(0x0969DA, 0x89b4fa)
+                        statusLabel.foreground = StatusColors.LINK
                         // Switch to Monitor tab
                         tabbedPane.selectedIndex = 1
                         monitorPanel.addRun(currentSuitePlanKey, resultKey)
                     }
                     is ApiResult.Error -> {
                         statusLabel.text = "Failed: ${result.message}"
-                        statusLabel.foreground = JBColor.RED
+                        statusLabel.foreground = StatusColors.ERROR
                         log.warn("[Automation:UI] Trigger failed: ${result.message}")
                     }
                 }

@@ -4,6 +4,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import java.awt.BorderLayout
@@ -39,7 +40,7 @@ class QueueStatusPanel(
 
         alertLabel.apply {
             border = JBUI.Borders.empty(4, 8)
-            foreground = JBColor(0xE65100, 0xFFB74D)
+            foreground = StatusColors.WARNING
         }
 
         val actionBar = JPanel(FlowLayout(FlowLayout.RIGHT)).apply {

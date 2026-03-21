@@ -8,6 +8,7 @@ import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.*
@@ -310,7 +311,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
             border = JBUI.Borders.emptyBottom(12)
         }
         addByProjectPanel.add(JBLabel("Add suite by browsing Bamboo projects:").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
+            foreground = StatusColors.SECONDARY_TEXT
             border = JBUI.Borders.emptyBottom(4)
         })
 
@@ -333,7 +334,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
             border = JBUI.Borders.emptyBottom(12)
         }
         addBySearchPanel.add(JBLabel("Or find plans by name/pattern:").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
+            foreground = StatusColors.SECONDARY_TEXT
             border = JBUI.Borders.emptyBottom(4)
         })
 
@@ -475,7 +476,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
         val client = bambooClient ?: return
         searchResultsPanel.removeAll()
-        searchResultsPanel.add(JBLabel("Searching...").apply { foreground = JBColor(0x656D76, 0x6c7086) })
+        searchResultsPanel.add(JBLabel("Searching...").apply { foreground = StatusColors.SECONDARY_TEXT })
         searchResultsPanel.revalidate()
 
         scope.launch {
@@ -495,7 +496,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                     searchResultsPanel.removeAll()
                     if (matches.isEmpty()) {
                         searchResultsPanel.add(JBLabel("No plans matching '$pattern'").apply {
-                            foreground = JBColor(0x656D76, 0x585b70)
+                            foreground = StatusColors.SECONDARY_TEXT
                         })
                     } else {
                         for (plan in matches) {
@@ -514,14 +515,14 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                                 })
                             } else {
                                 row.add(JBLabel("(already added)").apply {
-                                    foreground = JBColor(0x656D76, 0x585b70)
+                                    foreground = StatusColors.SECONDARY_TEXT
                                     font = font.deriveFont(JBUI.scale(10).toFloat())
                                 })
                             }
                             searchResultsPanel.add(row)
                         }
                         searchResultsPanel.add(JBLabel("${matches.size} plan(s) found").apply {
-                            foreground = JBColor(0x1B7F37, 0xa6e3a1)
+                            foreground = StatusColors.SUCCESS
                             font = font.deriveFont(JBUI.scale(10).toFloat())
                             border = JBUI.Borders.emptyTop(4)
                         })

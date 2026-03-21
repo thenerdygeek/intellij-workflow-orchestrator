@@ -4,8 +4,10 @@ import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
@@ -175,9 +177,9 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         // Header
         val headerPanel = JPanel(BorderLayout()).apply {
             val statusColor = when (entry.status.lowercase()) {
-                "successful" -> JBColor(0x1B7F37, 0xa6e3a1)
-                "failed" -> JBColor(0xCC3333, 0xf38ba8)
-                else -> JBColor(0x0969DA, 0x89b4fa)
+                "successful" -> StatusColors.SUCCESS
+                "failed" -> StatusColors.ERROR
+                else -> StatusColors.LINK
             }
             val statusIcon = when (entry.status.lowercase()) {
                 "successful" -> "✓"
@@ -194,7 +196,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             if (entry.bambooUrl.isNotBlank()) {
                 actionsPanel.add(JButton("Open in Bamboo ↗").apply {
                     isBorderPainted = false
-                    foreground = JBColor(0x0969DA, 0x89b4fa)
+                    foreground = StatusColors.LINK
                     addActionListener { BrowserUtil.browse(entry.bambooUrl) }
                 })
             }
@@ -215,7 +217,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
         // Status + duration
         content.add(JBLabel("${entry.status} • ${entry.duration}").apply {
-            foreground = JBColor(0x656D76, 0x8B949E)
+            foreground = StatusColors.SECONDARY_TEXT
         })
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
@@ -223,11 +225,11 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         if (entry.totalTests > 0) {
             val testSummary = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(12), 0))
             testSummary.add(JBLabel("✓ ${entry.totalTests - entry.failedTests} passed").apply {
-                foreground = JBColor(0x1B7F37, 0xa6e3a1)
+                foreground = StatusColors.SUCCESS
             })
             if (entry.failedTests > 0) {
                 testSummary.add(JBLabel("✗ ${entry.failedTests} failed").apply {
-                    foreground = JBColor(0xCC3333, 0xf38ba8)
+                    foreground = StatusColors.ERROR
                 })
             }
             content.add(testSummary)
@@ -239,9 +241,9 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             val stagesPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
             for (stage in entry.stages) {
                 val chipColor = when (stage.state.lowercase()) {
-                    "successful" -> JBColor(Color(0xa6, 0xe3, 0xa1, 0x33), Color(0xa6, 0xe3, 0xa1, 0x33))
-                    "failed" -> JBColor(Color(0xf3, 0x8b, 0xa8, 0x33), Color(0xf3, 0x8b, 0xa8, 0x33))
-                    else -> JBColor(Color(0x89, 0xb4, 0xfa, 0x33), Color(0x89, 0xb4, 0xfa, 0x33))
+                    "successful" -> JBColor(ColorUtil.withAlpha(StatusColors.SUCCESS, 0.2), ColorUtil.withAlpha(StatusColors.SUCCESS, 0.2))
+                    "failed" -> JBColor(ColorUtil.withAlpha(StatusColors.ERROR, 0.2), ColorUtil.withAlpha(StatusColors.ERROR, 0.2))
+                    else -> JBColor(ColorUtil.withAlpha(StatusColors.LINK, 0.2), ColorUtil.withAlpha(StatusColors.LINK, 0.2))
                 }
                 val icon = when (stage.state.lowercase()) {
                     "successful" -> "✓"
@@ -263,18 +265,18 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         if (entry.failedTestNames.isNotEmpty()) {
             content.add(JBLabel("Failed Tests (${entry.failedTests}):").apply {
                 font = font.deriveFont(Font.BOLD)
-                foreground = JBColor(0x656D76, 0x6c7086)
+                foreground = StatusColors.SECONDARY_TEXT
             })
             content.add(Box.createVerticalStrut(JBUI.scale(4)))
             for (testName in entry.failedTestNames.take(20)) {
                 content.add(JBLabel("  ✗ $testName").apply {
-                    foreground = JBColor(0xCC3333, 0xf38ba8)
+                    foreground = StatusColors.ERROR
                     font = font.deriveFont(JBUI.scale(11).toFloat())
                 })
             }
             if (entry.failedTestNames.size > 20) {
                 content.add(JBLabel("  ... and ${entry.failedTestNames.size - 20} more").apply {
-                    foreground = JBColor(0x656D76, 0x585b70)
+                    foreground = StatusColors.SECONDARY_TEXT
                 })
             }
         }
@@ -288,7 +290,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         detailPanel.removeAll()
         detailPanel.add(JBLabel("No runs yet. Trigger a suite from the Configure tab.").apply {
             horizontalAlignment = SwingConstants.CENTER
-            foreground = JBColor(0x656D76, 0x585b70)
+            foreground = StatusColors.SECONDARY_TEXT
         }, BorderLayout.CENTER)
     }
 
@@ -332,21 +334,18 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 else -> "⟳"
             }
             val statusColor = when (entry.status.lowercase()) {
-                "successful" -> JBColor(0x1B7F37, 0xa6e3a1)
-                "failed" -> JBColor(0xCC6600, 0xf9e2af)
-                else -> JBColor(0x0969DA, 0x89b4fa)
+                "successful" -> StatusColors.SUCCESS
+                "failed" -> StatusColors.ERROR
+                else -> StatusColors.LINK
             }
 
-            text = "<html><b style='color:${colorToHex(statusColor)};'>$icon ${entry.suiteName}</b>" +
+            text = "<html><b style='color:${StatusColors.htmlColor(statusColor)};'>$icon ${entry.suiteName}</b>" +
                 "<br><span style='color:gray;'>#${entry.buildNumber} • ${entry.status}" +
                 (if (entry.failedTests > 0) " • ${entry.failedTests} failed" else "") +
                 "</span></html>"
             return this
         }
 
-        private fun colorToHex(c: JBColor): String {
-            val color = c as java.awt.Color
-            return String.format("#%02x%02x%02x", color.red, color.green, color.blue)
-        }
+        private fun colorToHex(c: JBColor): String = StatusColors.htmlColor(c)
     }
 }

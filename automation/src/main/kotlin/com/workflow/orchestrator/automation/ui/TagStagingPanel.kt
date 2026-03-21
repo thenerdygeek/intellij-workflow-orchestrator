@@ -2,8 +2,10 @@ package com.workflow.orchestrator.automation.ui
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.RegistryStatus
@@ -125,9 +127,9 @@ class TagStagingPanel(
                 if (row < model.entries.size) {
                     val entry = model.entries[row]
                     background = when {
-                        entry.isCurrentRepo -> JBColor(0xE8F5E9, 0x1B5E20)
-                        entry.isDrift -> JBColor(0xFFF3E0, 0x4E342E)
-                        entry.registryStatus == RegistryStatus.NOT_FOUND -> JBColor(0xFFEBEE, 0x4A0000)
+                        entry.isCurrentRepo -> StatusColors.SUCCESS_BG
+                        entry.isDrift -> StatusColors.WARNING_BG
+                        entry.registryStatus == RegistryStatus.NOT_FOUND -> JBColor(ColorUtil.withAlpha(StatusColors.ERROR, 0.1), ColorUtil.withAlpha(StatusColors.ERROR, 0.1))
                         else -> table.background
                     }
                 }
