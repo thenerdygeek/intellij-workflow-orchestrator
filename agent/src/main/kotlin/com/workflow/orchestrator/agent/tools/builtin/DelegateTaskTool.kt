@@ -13,6 +13,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.text.NumberFormat
 import java.util.Locale
@@ -43,7 +44,8 @@ class DelegateTaskTool : AgentTool {
     override val description =
         "Spawn a scoped worker subagent to perform a task. Worker types: coder (edits code), " +
             "analyzer (reads and analyzes code), reviewer (reviews changes), tooler (interacts with " +
-            "Jira/Bamboo/SonarQube/Bitbucket). Workers cannot delegate further."
+            "Jira/Bamboo/SonarQube/Bitbucket). Optionally specify a custom subagent by name. " +
+            "Workers cannot delegate further."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -59,6 +61,10 @@ class DelegateTaskTool : AgentTool {
             "context" to ParameterProperty(
                 type = "string",
                 description = "Relevant context for the worker, must contain at least one file path"
+            ),
+            "agent" to ParameterProperty(
+                type = "string",
+                description = "Name of a custom subagent definition to use. Uses the subagent's system prompt, tools, and model."
             )
         ),
         required = listOf("task", "worker_type", "context")
@@ -129,6 +135,18 @@ class DelegateTaskTool : AgentTool {
             )
         }
 
+        // --- 2b. Load custom agent definition (optional) ---
+        val agentName = params["agent"]?.jsonPrimitive?.contentOrNull
+        val agentDef = if (agentName != null) {
+            val registry = agentService.agentDefinitionRegistry
+            registry?.getAgent(agentName)
+                ?: return errorResult(
+                    "Error: subagent '$agentName' not found. Available: ${
+                        registry?.getAllAgents()?.joinToString { it.name } ?: "none"
+                    }"
+                )
+        } else null
+
         // --- 3. Check retry limit ---
         val filePaths = FILE_PATH_PATTERN.findAll(context).map { it.value }.toList().sorted()
         val retryKey = "$workerType:${filePaths.joinToString(",")}"
@@ -158,11 +176,39 @@ class DelegateTaskTool : AgentTool {
                 maxInputTokens = settings.state.maxInputTokens
             )
 
-            // Get worker-specific prompt and tools
-            val systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
-            val toolsForWorker = agentService.toolRegistry.getToolsForWorker(workerType)
-            val toolMap = toolsForWorker.associateBy { it.name }
-            val toolDefinitions = agentService.toolRegistry.getToolDefinitionsForWorker(workerType)
+            // Get worker-specific prompt and tools, applying custom agent definition if present
+            val systemPrompt: String
+            val toolMap: Map<String, AgentTool>
+            val toolDefinitions: List<com.workflow.orchestrator.agent.api.dto.ToolDefinition>
+            val maxIter: Int
+
+            if (agentDef != null) {
+                // Custom subagent: use its system prompt, tool restrictions, and max turns
+                systemPrompt = buildSubagentPrompt(agentDef, agentService)
+
+                val allTools = agentService.toolRegistry.getToolsForWorker(workerType)
+                val effectiveTools = run {
+                    var tools = if (agentDef.tools != null) {
+                        allTools.filter { it.name in agentDef.tools }
+                    } else {
+                        allTools.toList()
+                    }
+                    if (agentDef.disallowedTools.isNotEmpty()) {
+                        tools = tools.filter { it.name !in agentDef.disallowedTools }
+                    }
+                    tools
+                }
+                toolMap = effectiveTools.associateBy { it.name }
+                toolDefinitions = effectiveTools.map { it.toToolDefinition() }
+                maxIter = agentDef.maxTurns
+            } else {
+                // Standard worker: use built-in prompts and tool selection
+                systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
+                val toolsForWorker = agentService.toolRegistry.getToolsForWorker(workerType)
+                toolMap = toolsForWorker.associateBy { it.name }
+                toolDefinitions = agentService.toolRegistry.getToolDefinitionsForWorker(workerType)
+                maxIter = 10
+            }
 
             // Build the full task with context
             val fullTask = """
@@ -174,7 +220,7 @@ class DelegateTaskTool : AgentTool {
 
             // Execute with timeout
             val parentJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
-            val workerSession = WorkerSession(maxIterations = 10, parentJob = parentJob)
+            val workerSession = WorkerSession(maxIterations = maxIter, parentJob = parentJob)
             val workerResult: WorkerResult = withTimeout(WORKER_TIMEOUT_MS) {
                 workerSession.execute(
                     workerType = workerType,
@@ -260,6 +306,35 @@ class DelegateTaskTool : AgentTool {
         } finally {
             agentService.activeWorkerCount.decrementAndGet()
         }
+    }
+
+    /**
+     * Build a system prompt for a custom subagent, including preloaded skills.
+     */
+    private fun buildSubagentPrompt(
+        def: AgentDefinitionRegistry.AgentDefinition,
+        agentService: AgentService
+    ): String {
+        val sb = StringBuilder(def.systemPrompt)
+
+        // Preload skills content
+        if (def.skills.isNotEmpty()) {
+            val skillRegistry = agentService.currentSkillManager?.registry
+            if (skillRegistry != null) {
+                sb.appendLine("\n\n<preloaded_skills>")
+                for (skillName in def.skills) {
+                    val content = skillRegistry.getSkillContent(skillName)
+                    if (content != null) {
+                        sb.appendLine("<skill name=\"$skillName\">")
+                        sb.appendLine(content.take(10_000))
+                        sb.appendLine("</skill>")
+                    }
+                }
+                sb.appendLine("</preloaded_skills>")
+            }
+        }
+
+        return sb.toString()
     }
 
     private fun errorResult(message: String): ToolResult {

@@ -216,6 +216,10 @@ class ConversationSession private constructor(
             val skillManager = SkillManager(skillRegistry, project.basePath)
             val skillDescriptions = skillRegistry.buildDescriptionIndex(maxInputTokens)
 
+            // Discover custom subagent definitions
+            val agentDefRegistry = AgentDefinitionRegistry(project).also { it.scan() }
+            try { agentService.agentDefinitionRegistry = agentDefRegistry } catch (_: Exception) {}
+
             // Detect project type (Maven/Spring/JPA) — determines which tools are always included
             val projectTools = try {
                 DynamicToolSelector.detectProjectTools(project)
