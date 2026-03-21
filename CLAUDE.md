@@ -101,6 +101,17 @@ When asked to release:
 3. Push commits to GitHub
 4. Create a GitHub release with `gh release create` attaching the built ZIP from `build/distributions/`
 
+## Rebase Process
+
+Before rebasing with main:
+1. `git fetch origin main` — check what's new
+2. `git log --oneline --name-only HEAD..origin/main` — analyze new commits and changed files
+3. Check if new services, tools, events, or APIs were added on main that need integration with `:agent`
+4. Check for changes in `:core` service interfaces (SonarService, JiraService, etc.) that agent tools depend on
+5. Only then: `git rebase origin/main`
+6. After rebase: `./gradlew :agent:clean :agent:test --rerun --no-build-cache` + `./gradlew verifyPlugin`
+7. If new capabilities were added on main, create corresponding agent tools
+
 ## Key References
 
 - Architecture diagrams: `docs/architecture/` (open `index.html` in browser for interactive view)
