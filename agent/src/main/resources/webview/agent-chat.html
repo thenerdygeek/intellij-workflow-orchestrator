@@ -63,6 +63,10 @@ body {
   background: var(--bg);
   line-height: 1.6;
   overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -71,7 +75,9 @@ body {
 
 #chat-container {
   padding: 16px;
-  min-height: 100vh;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1027,6 +1033,229 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
   outline: 2px solid var(--link);
   outline-offset: 2px;
 }
+
+/* ═══════════════════════════════════════════════════
+   JCEF Toolbar
+   ═══════════════════════════════════════════════════ */
+.agent-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 6px 14px;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--toolbar-bg);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.tb-btn {
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 6px;
+  color: var(--fg-secondary);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.tb-btn:hover { border-color: var(--fg-muted); color: var(--fg); }
+.tb-btn.stop { color: var(--error); border-color: rgba(239,68,68,0.2); }
+.tb-btn.stop:hover { background: rgba(239,68,68,0.1); }
+.tb-btn.hidden { display: none; }
+.tb-divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; }
+.tb-overflow {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--fg-muted);
+  padding: 4px 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+.tb-overflow:hover { color: var(--fg-secondary); background: var(--hover-overlay); border-color: var(--chip-border); }
+.tb-spacer { flex: 1; }
+.tb-budget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+}
+.tb-budget.hidden { display: none; }
+.budget-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+.budget-dot.warn { background: var(--warning); }
+.budget-dot.danger { background: var(--error); }
+.budget-label { font-size: 10px; font-weight: 600; color: var(--error); margin-left: 2px; }
+
+/* Overflow dropdown */
+.overflow-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  z-index: 100;
+  min-width: 160px;
+  overflow: hidden;
+}
+.overflow-menu.visible { display: block; }
+.overflow-item {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.1s;
+}
+.overflow-item:hover { background: var(--hover-overlay-strong); color: var(--fg); }
+
+/* ═══════════════════════════════════════════════════
+   Bolt-Style Input Bar
+   ═══════════════════════════════════════════════════ */
+.input-area {
+  padding: 10px 16px 14px;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  background: var(--bg);
+}
+.input-wrapper {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 14px;
+  padding: 12px 14px 8px;
+  position: relative;
+  box-shadow: 0 0 20px rgba(59,130,246,0.04), 0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.input-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 15px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(59,130,246,0.22), transparent 40%, transparent 60%, rgba(139,92,246,0.18));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.input-wrapper:focus-within { border-color: var(--link); }
+.input-ta {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: var(--font-body);
+  outline: none;
+  resize: none;
+  line-height: 1.5;
+  min-height: 24px;
+  max-height: 200px;
+}
+.input-ta::placeholder { color: var(--fg-muted); }
+.input-ta:disabled { opacity: 0.5; }
+.input-bottom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+}
+.input-chip {
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 7px;
+  color: var(--fg-secondary);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.input-chip:hover { border-color: var(--fg-muted); color: var(--fg); }
+.input-chip.active { background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.3); color: var(--link); }
+.input-chip .model-dot { width: 6px; height: 6px; border-radius: 50%; background: #8b5cf6; }
+.send-btn {
+  margin-left: auto;
+  background: var(--link);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 0 16px rgba(59,130,246,0.25);
+  transition: all 0.15s;
+}
+.send-btn:hover { background: #2563eb; box-shadow: 0 0 24px rgba(59,130,246,0.35); }
+.send-btn:disabled { opacity: 0.4; cursor: default; box-shadow: none; pointer-events: none; }
+.input-hint { text-align: center; font-size: 10px; color: var(--fg-muted); padding: 5px 0 0; }
+
+/* Model/Skills dropdown (shared with overflow) */
+.chip-dropdown {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  z-index: 100;
+  min-width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.chip-dropdown.visible { display: block; }
+.chip-dropdown-item {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.1s;
+}
+.chip-dropdown-item:hover { background: var(--hover-overlay-strong); color: var(--fg); }
+.chip-dropdown-item.selected { color: var(--link); }
+
+/* Retry button */
+.retry-btn {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--link);
+  background: transparent;
+  color: var(--link);
+  margin-top: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+.retry-btn:hover { background: var(--link); color: white; }
 </style>
 
 <!-- Core libraries — bundled in plugin JAR, served via CefResourceSchemeHandler -->
@@ -1038,6 +1267,27 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 <link id="prism-theme" rel="stylesheet" href="lib/prism-themes/prism-one-dark.css">
 </head>
 <body>
+<!-- JCEF Toolbar -->
+<div class="agent-toolbar" id="agent-toolbar">
+  <button class="tb-btn stop hidden" id="tb-stop" onclick="if(window._cancelTask)window._cancelTask()">&#x23F9; Stop</button>
+  <button class="tb-btn" id="tb-new" onclick="if(window._newChat)window._newChat()">+ New</button>
+  <div class="tb-divider"></div>
+  <div class="tb-overflow" id="tb-overflow" onclick="toggleOverflow()">
+    &#x22EF;
+    <div class="overflow-menu" id="overflow-menu">
+      <div class="overflow-item" onclick="event.stopPropagation();closeOverflow();if(window._openToolsPanel)window._openToolsPanel()">&#x2261; Tools</div>
+      <div class="overflow-item" onclick="event.stopPropagation();closeOverflow();if(window._requestViewTrace)window._requestViewTrace()">&#x2630; Traces</div>
+      <div class="overflow-item" onclick="event.stopPropagation();closeOverflow();if(window._openSettings)window._openSettings()">&#x2699; Settings</div>
+    </div>
+  </div>
+  <div class="tb-spacer"></div>
+  <div class="tb-budget hidden" id="tb-budget">
+    <span class="budget-dot" id="budget-dot"></span>
+    <span id="budget-text">0 / 190K</span>
+  </div>
+</div>
+
+<!-- Chat Area -->
 <div id="chat-container">
   <div class="empty-state" id="empty-state">
     <div class="icon" style="font-size:28px;opacity:0.4;">&#x2726;</div>
@@ -1050,6 +1300,27 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
       <div class="prompt-btn" onclick="submitPrompt(this.dataset.prompt)" data-prompt="Run tests and fix any failures"><span style="opacity:0.6">&#x25B7;</span> Run tests and fix any failures</div>
     </div>
   </div>
+</div>
+
+<!-- Bolt-Style Input Bar -->
+<div class="input-area" id="input-area">
+  <div class="input-wrapper">
+    <textarea class="input-ta" id="chat-input" placeholder="Ask the agent to do something..." rows="1"></textarea>
+    <div class="input-bottom">
+      <div class="input-chip" id="model-chip" onclick="toggleModelDropdown()" style="position:relative;">
+        <span class="model-dot"></span>
+        <span id="model-chip-text">Model</span> &#x25BE;
+        <div class="chip-dropdown" id="model-dropdown"></div>
+      </div>
+      <div class="input-chip" id="plan-chip" onclick="togglePlan()">&#x2630; Plan</div>
+      <div class="input-chip" id="skills-chip" onclick="toggleSkillsDropdown()" style="position:relative;">
+        &#x26A1; Skills
+        <div class="chip-dropdown" id="skills-dropdown"></div>
+      </div>
+      <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled>Send &#x27A4;</button>
+    </div>
+  </div>
+  <div class="input-hint">Enter to send &middot; Shift+Enter for new line</div>
 </div>
 
 <script>
@@ -2831,6 +3102,191 @@ function setMermaidTheme(isDark) {
     if (typeof mermaid !== 'undefined' && _mermaidLoaded) {
         mermaid.initialize({ theme: isDark ? 'dark' : 'default' });
     }
+}
+
+/* ═══════════════════════════════════════════════════
+   JCEF Toolbar Functions
+   ═══════════════════════════════════════════════════ */
+function setBusy(busy) {
+  var stopBtn = document.getElementById('tb-stop');
+  if (stopBtn) stopBtn.classList.toggle('hidden', !busy);
+}
+
+function updateTokenBudget(used, max) {
+  var budgetEl = document.getElementById('tb-budget');
+  var dotEl = document.getElementById('budget-dot');
+  var textEl = document.getElementById('budget-text');
+  if (!budgetEl || !dotEl || !textEl) return;
+  if (max <= 0) { budgetEl.classList.add('hidden'); return; }
+  budgetEl.classList.remove('hidden');
+  var percent = Math.floor(used * 100 / max);
+  textEl.textContent = formatBudget(used) + ' / ' + formatBudget(max);
+  dotEl.className = 'budget-dot' + (percent >= 80 ? ' danger' : percent >= 60 ? ' warn' : '');
+  // Colorblind: show "Low" label at >80%
+  var label = budgetEl.querySelector('.budget-label');
+  if (percent >= 80) {
+    if (!label) { label = document.createElement('span'); label.className = 'budget-label'; budgetEl.appendChild(label); }
+    label.textContent = 'Low';
+  } else if (label) { label.remove(); }
+}
+
+function formatBudget(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toString();
+}
+
+function toggleOverflow() {
+  var menu = document.getElementById('overflow-menu');
+  if (menu) menu.classList.toggle('visible');
+}
+function closeOverflow() {
+  var menu = document.getElementById('overflow-menu');
+  if (menu) menu.classList.remove('visible');
+}
+// Close overflow on click outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.tb-overflow')) closeOverflow();
+});
+
+/* ═══════════════════════════════════════════════════
+   Bolt Input Bar Functions
+   ═══════════════════════════════════════════════════ */
+var _planMode = false;
+
+function sendMessage() {
+  var ta = document.getElementById('chat-input');
+  var text = ta ? ta.value.trim() : '';
+  if (!text) return;
+  // Disable send immediately to prevent double-submit
+  var sendBtn = document.getElementById('send-btn');
+  if (sendBtn) sendBtn.disabled = true;
+  ta.value = '';
+  ta.style.height = 'auto';
+  if (window._sendMessage) window._sendMessage(text);
+}
+
+// Auto-expand textarea
+var chatInput = document.getElementById('chat-input');
+if (chatInput) {
+  chatInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    var sendBtn = document.getElementById('send-btn');
+    if (sendBtn) sendBtn.disabled = !this.value.trim();
+  });
+  chatInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (window._requestFocusIde) window._requestFocusIde();
+    }
+  });
+}
+
+function setInputLocked(locked) {
+  var ta = document.getElementById('chat-input');
+  var sendBtn = document.getElementById('send-btn');
+  if (ta) { ta.disabled = locked; if (locked) ta.value = ''; }
+  if (sendBtn) sendBtn.disabled = locked;
+}
+
+function setModelName(name) {
+  var chip = document.getElementById('model-chip-text');
+  if (chip) chip.textContent = name || 'Model';
+}
+
+function togglePlan() {
+  _planMode = !_planMode;
+  var chip = document.getElementById('plan-chip');
+  if (chip) chip.classList.toggle('active', _planMode);
+  if (window._togglePlanMode) window._togglePlanMode(_planMode);
+}
+
+// Model dropdown
+function toggleModelDropdown() {
+  var dd = document.getElementById('model-dropdown');
+  if (dd) dd.classList.toggle('visible');
+  // Close skills dropdown
+  var sd = document.getElementById('skills-dropdown');
+  if (sd) sd.classList.remove('visible');
+}
+function updateModelList(models) {
+  var dd = document.getElementById('model-dropdown');
+  if (!dd) return;
+  var data = typeof models === 'string' ? JSON.parse(models) : models;
+  dd.innerHTML = data.map(function(m) {
+    return '<div class="chip-dropdown-item" onclick="selectModel(\'' + esc(m.id) + '\')">' + esc(m.name) + '</div>';
+  }).join('');
+}
+function selectModel(modelId) {
+  var dd = document.getElementById('model-dropdown');
+  if (dd) dd.classList.remove('visible');
+  if (window._changeModel) window._changeModel(modelId);
+}
+
+// Skills dropdown
+function toggleSkillsDropdown() {
+  var dd = document.getElementById('skills-dropdown');
+  if (dd) dd.classList.toggle('visible');
+  var md = document.getElementById('model-dropdown');
+  if (md) md.classList.remove('visible');
+}
+function updateSkillsList(skills) {
+  var dd = document.getElementById('skills-dropdown');
+  if (!dd) return;
+  var data = typeof skills === 'string' ? JSON.parse(skills) : skills;
+  if (data.length === 0) {
+    document.getElementById('skills-chip').style.display = 'none';
+    return;
+  }
+  document.getElementById('skills-chip').style.display = '';
+  dd.innerHTML = data.map(function(s) {
+    return '<div class="chip-dropdown-item" onclick="activateSkill(\'' + esc(s.name) + '\')">' + esc('/' + s.name) + ' — ' + esc(s.description) + '</div>';
+  }).join('');
+}
+function activateSkill(name) {
+  var dd = document.getElementById('skills-dropdown');
+  if (dd) dd.classList.remove('visible');
+  if (window._activateSkill) window._activateSkill(name);
+}
+
+// Close dropdowns on click outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#model-chip')) {
+    var md = document.getElementById('model-dropdown');
+    if (md) md.classList.remove('visible');
+  }
+  if (!e.target.closest('#skills-chip')) {
+    var sd = document.getElementById('skills-dropdown');
+    if (sd) sd.classList.remove('visible');
+  }
+});
+
+// Retry button
+function showRetryButton(lastMessage) {
+  var btn = document.createElement('div');
+  btn.className = 'message';
+  btn.innerHTML = '<button class="retry-btn" data-retry-message="' + esc(lastMessage) + '">&#x21BB; Retry last message</button>';
+  container.appendChild(btn);
+  scrollToBottom();
+}
+document.addEventListener('click', function(e) {
+  var retryBtn = e.target.closest('.retry-btn');
+  if (retryBtn && window._sendMessage) {
+    var msg = retryBtn.dataset.retryMessage;
+    retryBtn.closest('.message').remove();
+    window._sendMessage(msg);
+  }
+});
+
+// Focus input
+function focusInput() {
+  var ta = document.getElementById('chat-input');
+  if (ta) ta.focus();
 }
 </script>
 </body>
