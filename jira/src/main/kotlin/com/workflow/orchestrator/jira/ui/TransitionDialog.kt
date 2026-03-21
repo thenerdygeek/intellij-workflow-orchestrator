@@ -12,6 +12,8 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.jira.api.dto.JiraTransition
 import com.workflow.orchestrator.jira.api.dto.JiraTransitionFieldMeta
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.GridBagConstraints
@@ -26,7 +28,6 @@ class TransitionDialog(
     private val project: Project,
     private val issueKey: String,
     private val transition: JiraTransition,
-    private val scope: CoroutineScope,
     private val onTransitioned: () -> Unit
 ) : DialogWrapper(project, true) {
 
@@ -34,11 +35,13 @@ class TransitionDialog(
     private val fieldInputs = mutableMapOf<String, () -> Any?>()
     private val commentArea = JBTextArea(3, 40).apply { lineWrap = true; wrapStyleWord = true }
     private val resultLabel = JBLabel("")
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         title = "Transition $issueKey to ${transition.name}"
         setOKButtonText("Transition")
         init()
+        Disposer.register(disposable, Disposable { scope.cancel() })
     }
 
     override fun createCenterPanel(): JComponent {

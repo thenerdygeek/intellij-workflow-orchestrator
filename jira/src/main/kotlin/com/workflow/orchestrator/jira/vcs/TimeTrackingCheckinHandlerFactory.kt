@@ -13,10 +13,7 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import com.intellij.openapi.progress.runBackgroundableTask
 import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -36,7 +33,6 @@ class TimeTrackingCheckinHandlerFactory : CheckinHandlerFactory() {
 class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler() {
 
     private val log = Logger.getInstance(TimeTrackingCheckinHandler::class.java)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val credentialStore = CredentialStore()
 
     private var logTimeCheckbox: JBCheckBox? = null
@@ -108,10 +104,12 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
 
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)
 
-        scope.launch {
+        runBackgroundableTask("Logging time to $ticketId", project, false) {
             try {
                 val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
-                val result = client.postWorklog(ticketId, timeSpent)
+                val result = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    client.postWorklog(ticketId, timeSpent)
+                }
                 when (result) {
                     is com.workflow.orchestrator.core.model.ApiResult.Success ->
                         log.info("[Jira:TimeTracking] Logged $timeSpent to $ticketId")

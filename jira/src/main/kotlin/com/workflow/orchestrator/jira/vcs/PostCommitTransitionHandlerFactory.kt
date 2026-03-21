@@ -11,10 +11,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import com.intellij.openapi.progress.runBackgroundableTask
 
 /**
  * After a successful commit, suggests transitioning the Jira ticket
@@ -30,7 +27,6 @@ class PostCommitTransitionHandlerFactory : CheckinHandlerFactory() {
 class PostCommitTransitionHandler(private val project: Project) : CheckinHandler() {
 
     private val log = Logger.getInstance(PostCommitTransitionHandler::class.java)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val credentialStore = CredentialStore()
 
     override fun checkinSuccessful() {
@@ -41,17 +37,23 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
         if (baseUrl.isBlank()) return
 
-        scope.launch {
+        runBackgroundableTask("Checking Jira ticket status", project, false) {
             try {
                 val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
 
-                when (val result = client.getIssue(ticketId)) {
+                val issueResult = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    client.getIssue(ticketId)
+                }
+                when (issueResult) {
                     is ApiResult.Success -> {
-                        val currentStatus = result.data.fields.status.name
+                        val currentStatus = issueResult.data.fields.status.name
                         if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
-                            when (val transitions = client.getTransitions(ticketId)) {
+                            val transitionsResult = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                                client.getTransitions(ticketId)
+                            }
+                            when (transitionsResult) {
                                 is ApiResult.Success -> {
-                                    val inProgressTransition = transitions.data.find {
+                                    val inProgressTransition = transitionsResult.data.find {
                                         it.to.name.equals("In Progress", ignoreCase = true)
                                     }
                                     if (inProgressTransition != null) {
@@ -66,8 +68,10 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                                             notification.addAction(object : com.intellij.notification.NotificationAction("Transition") {
                                                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
                                                     notification.expire()
-                                                    scope.launch {
-                                                        client.transitionIssue(ticketId, inProgressTransition.id)
+                                                    runBackgroundableTask("Transitioning $ticketId", project, false) {
+                                                        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                                                            client.transitionIssue(ticketId, inProgressTransition.id)
+                                                        }
                                                         log.info("[Jira:PostCommit] Transitioned $ticketId to In Progress")
                                                     }
                                                 }
@@ -80,7 +84,7 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                             }
                         }
                     }
-                    is ApiResult.Error -> log.debug("[Jira:PostCommit] Could not fetch $ticketId: ${result.message}")
+                    is ApiResult.Error -> log.debug("[Jira:PostCommit] Could not fetch $ticketId: ${issueResult.message}")
                 }
             } catch (e: Exception) {
                 log.debug("[Jira:PostCommit] Error checking ticket status: ${e.message}")

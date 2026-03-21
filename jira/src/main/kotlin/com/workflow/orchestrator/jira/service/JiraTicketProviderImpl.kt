@@ -8,7 +8,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
-import kotlinx.coroutines.launch
+import com.intellij.openapi.progress.runBackgroundableTask
 import com.workflow.orchestrator.core.workflow.WorkflowIntent
 import com.workflow.orchestrator.jira.api.JiraApiClient
 
@@ -87,17 +87,16 @@ class JiraTicketProviderImpl : JiraTicketProvider {
         onTransitioned: () -> Unit
     ) {
         val client = createClient() ?: return
-        val scope = kotlinx.coroutines.CoroutineScope(
-            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
-        )
 
-        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val result = client.getTransitions(ticketId, expandFields = true)
+        runBackgroundableTask("Loading transitions for $ticketId", project, false) {
+            val result = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                client.getTransitions(ticketId, expandFields = true)
+            }
             val transitions = when (result) {
                 is ApiResult.Success -> result.data
                 is ApiResult.Error -> {
                     log.warn("[Jira:TicketProvider] Failed to get transitions for $ticketId")
-                    return@launch
+                    return@runBackgroundableTask
                 }
             }
 
@@ -109,8 +108,10 @@ class JiraTicketProviderImpl : JiraTicketProvider {
 
                 if (transitions.size == 1 && transitions[0].fields.isNullOrEmpty()) {
                     // Single transition, no required fields — execute directly
-                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        transitionTicket(ticketId, transitions[0].id)
+                    runBackgroundableTask("Transitioning $ticketId", project, false) {
+                        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                            transitionTicket(ticketId, transitions[0].id)
+                        }
                         com.intellij.openapi.application.invokeLater { onTransitioned() }
                     }
                 } else {
@@ -122,11 +123,13 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                             val hasRequiredFields = transition.fields?.any { it.value.required } == true
                             if (hasRequiredFields) {
                                 com.workflow.orchestrator.jira.ui.TransitionDialog(
-                                    project, ticketId, transition, scope, onTransitioned
+                                    project, ticketId, transition, onTransitioned
                                 ).show()
                             } else {
-                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                    transitionTicket(ticketId, transition.id)
+                                runBackgroundableTask("Transitioning $ticketId", project, false) {
+                                    kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                                        transitionTicket(ticketId, transition.id)
+                                    }
                                     com.intellij.openapi.application.invokeLater { onTransitioned() }
                                 }
                             }
