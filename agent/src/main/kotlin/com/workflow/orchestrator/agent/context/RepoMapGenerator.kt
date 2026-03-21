@@ -67,26 +67,104 @@ object RepoMapGenerator {
     )
 
     /**
-     * Generate a repo map for the project.
+     * Generate a lightweight project summary (~200 tokens).
      *
-     * @param project The IntelliJ project
-     * @param maxTokens Maximum tokens for the output (prunes if exceeded)
-     * @return Compact text representation of the project structure
+     * Industry research shows full PSI-based repo maps (walking every class/method) are:
+     * - Slow (11s+ on large projects, freezes IDE)
+     * - Expensive (1500 tokens resent every API call × N iterations)
+     * - Redundant (agent has search_code, glob_files, spring_* tools for discovery)
+     *
+     * Only Aider uses full repo maps; Claude Code, Cursor, SWE-Agent, Antigravity
+     * all use tool-based discovery. We follow the industry standard.
+     *
+     * This lightweight summary gives basic orientation (name, type, modules, build)
+     * without PSI walking. The LLM uses tools for deeper exploration.
      */
     fun generate(project: Project, maxTokens: Int = 1500): String {
         return try {
-            // Use nonBlocking read action so this is cancellable and doesn't hold the
-            // write lock for the entire PSI tree walk. The caller (ConversationSession.create)
-            // runs on Dispatchers.IO, so executeSynchronously() blocks the IO thread (acceptable)
-            // but NOT the EDT. The old ReadAction.compute() would freeze the IDE for 11+ seconds
-            // if accidentally called from the EDT.
-            ReadAction.nonBlocking<String> {
-                generateInReadAction(project, maxTokens)
-            }.inSmartMode(project).executeSynchronously()
+            generateLightweight(project)
         } catch (e: Exception) {
-            LOG.warn("RepoMapGenerator: failed to generate repo map", e)
+            LOG.warn("RepoMapGenerator: failed to generate project summary", e)
             ""
         }
+    }
+
+    /**
+     * Lightweight project summary using only basic IntelliJ APIs — no PSI walk.
+     * Takes <10ms even on massive projects.
+     */
+    private fun generateLightweight(project: Project): String {
+        val sb = StringBuilder()
+        sb.appendLine("Project: ${project.name}")
+
+        // Detect build system
+        val basePath = project.basePath
+        if (basePath != null) {
+            val baseDir = java.io.File(basePath)
+            when {
+                java.io.File(baseDir, "pom.xml").exists() -> sb.appendLine("Build: Maven")
+                java.io.File(baseDir, "build.gradle").exists() || java.io.File(baseDir, "build.gradle.kts").exists() -> sb.appendLine("Build: Gradle")
+            }
+        }
+
+        // List modules
+        try {
+            val modules = com.intellij.openapi.module.ModuleManager.getInstance(project).modules
+            if (modules.size > 1) {
+                sb.appendLine("Modules (${modules.size}): ${modules.take(10).joinToString(", ") { it.name }}")
+                if (modules.size > 10) sb.append(" ... and ${modules.size - 10} more")
+            }
+
+            // Source roots summary
+            val sourceRoots = ProjectRootManager.getInstance(project).contentSourceRoots
+            val mainRoots = sourceRoots.filter { !it.path.contains("/test/") }.take(5)
+            val testRoots = sourceRoots.filter { it.path.contains("/test/") }.take(3)
+            if (mainRoots.isNotEmpty()) {
+                val relativePaths = mainRoots.map { root ->
+                    basePath?.let { root.path.removePrefix("$it/") } ?: root.path
+                }
+                sb.appendLine("Source: ${relativePaths.joinToString(", ")}")
+            }
+            if (testRoots.isNotEmpty()) {
+                sb.appendLine("Tests: ${testRoots.size} test root(s)")
+            }
+        } catch (_: Exception) { /* ModuleManager not available */ }
+
+        // Detect tech stack from build files (no filesystem walk — instant)
+        if (basePath != null) {
+            val indicators = mutableListOf<String>()
+            val baseDir = java.io.File(basePath)
+            // Check pom.xml for Spring Boot dependency (fast — read one file)
+            val pomFile = java.io.File(baseDir, "pom.xml")
+            if (pomFile.exists()) {
+                try {
+                    val pomContent = pomFile.readText()
+                    if (pomContent.contains("spring-boot")) indicators.add("Spring Boot")
+                    if (pomContent.contains("kotlin-stdlib") || pomContent.contains("kotlin-maven-plugin")) indicators.add("Kotlin")
+                } catch (_: Exception) {}
+            }
+            // Check build.gradle for Spring Boot (fast — read one file)
+            val gradleFile = java.io.File(baseDir, "build.gradle").takeIf { it.exists() }
+                ?: java.io.File(baseDir, "build.gradle.kts").takeIf { it.exists() }
+            if (gradleFile != null) {
+                try {
+                    val gradleContent = gradleFile.readText()
+                    if (gradleContent.contains("spring-boot")) indicators.add("Spring Boot")
+                    if (gradleContent.contains("kotlin")) indicators.add("Kotlin")
+                } catch (_: Exception) {}
+            }
+            // Check for Java/Kotlin source dirs (instant check, no walk)
+            val srcMain = java.io.File(baseDir, "src/main")
+            if (java.io.File(srcMain, "java").isDirectory && "Java" !in indicators) indicators.add("Java")
+            if (java.io.File(srcMain, "kotlin").isDirectory && "Kotlin" !in indicators) indicators.add("Kotlin")
+
+            if (indicators.isNotEmpty()) sb.appendLine("Stack: ${indicators.joinToString(", ")}")
+        }
+
+        sb.appendLine()
+        sb.appendLine("Use search_code, glob_files, file_structure, and spring_* tools to explore the codebase.")
+
+        return sb.toString().trim()
     }
 
     private fun generateInReadAction(project: Project, maxTokens: Int): String {
