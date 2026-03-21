@@ -14,7 +14,8 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.MappedIssue
 import com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator
-import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 class CodyIntentionAction : IntentionAction {
 
@@ -58,21 +59,22 @@ class CodyIntentionAction : IntentionAction {
         val filePath = file.virtualFile.path
         val contextService = project.service<CodyContextService>()
 
-        @Suppress("DEPRECATION")
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            val fixContext = contextService.gatherFixContext(
-                filePath = filePath,
-                issueRange = range,
-                issueType = sonarIssue?.type?.name ?: "CODE_SMELL",
-                issueMessage = sonarIssue?.message ?: "Fix issue at cursor",
-                ruleKey = sonarIssue?.rule ?: "manual"
-            )
-            CodyEditService(project).requestFix(
-                filePath = filePath,
-                range = range,
-                instruction = fixContext.instruction,
-                contextFiles = fixContext.contextFiles
-            )
+        com.intellij.openapi.progress.runBackgroundableTask("Fixing with Cody", project) {
+            runBlocking(Dispatchers.IO) {
+                val fixContext = contextService.gatherFixContext(
+                    filePath = filePath,
+                    issueRange = range,
+                    issueType = sonarIssue?.type?.name ?: "CODE_SMELL",
+                    issueMessage = sonarIssue?.message ?: "Fix issue at cursor",
+                    ruleKey = sonarIssue?.rule ?: "manual"
+                )
+                CodyEditService(project).requestFix(
+                    filePath = filePath,
+                    range = range,
+                    instruction = fixContext.instruction,
+                    contextFiles = fixContext.contextFiles
+                )
+            }
         }
     }
 

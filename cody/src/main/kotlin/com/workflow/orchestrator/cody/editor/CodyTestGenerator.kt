@@ -17,7 +17,9 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 import com.workflow.orchestrator.sonar.service.SonarDataService
-import kotlinx.coroutines.*
+import com.intellij.openapi.progress.runBackgroundableTask
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 class CodyTestGenerator : LineMarkerProvider {
 
@@ -70,21 +72,22 @@ class CodyTestGenerator : LineMarkerProvider {
                         start = Position(line = methodStartLine - 1, character = 0),
                         end = Position(line = methodEndLine, character = 0)
                     )
-                    @Suppress("DEPRECATION")
-                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                        val contextService = project.service<CodyContextService>()
-                        val testContext = contextService.gatherTestContext(
-                            filePath = virtualFile.path,
-                            targetRange = range
-                        )
-                        // Use enriched instruction (Spring-aware test patterns) via requestFix
-                        // since requestTestGeneration doesn't accept custom instructions
-                        CodyEditService(project).requestFix(
-                            filePath = virtualFile.path,
-                            range = range,
-                            instruction = testContext.instruction,
-                            contextFiles = testContext.contextFiles
-                        )
+                    runBackgroundableTask("Generating test with Cody", project) {
+                        runBlocking(Dispatchers.IO) {
+                            val contextService = project.service<CodyContextService>()
+                            val testContext = contextService.gatherTestContext(
+                                filePath = virtualFile.path,
+                                targetRange = range
+                            )
+                            // Use enriched instruction (Spring-aware test patterns) via requestFix
+                            // since requestTestGeneration doesn't accept custom instructions
+                            CodyEditService(project).requestFix(
+                                filePath = virtualFile.path,
+                                range = range,
+                                instruction = testContext.instruction,
+                                contextFiles = testContext.contextFiles
+                            )
+                        }
                     }
                 },
                 GutterIconRenderer.Alignment.RIGHT,

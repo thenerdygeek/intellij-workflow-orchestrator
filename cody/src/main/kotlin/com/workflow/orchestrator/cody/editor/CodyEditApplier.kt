@@ -61,14 +61,16 @@ class CodyEditApplier(private val project: Project) {
     }
 
     fun applyEdits(operations: List<WorkspaceEditOperation>) {
-        WriteCommandAction.runWriteCommandAction(project, "Workflow Cody Edit", "workflow.cody.edit", {
-            for (op in operations) {
-                when (op.type) {
-                    "edit-file" -> applyEditFileOperation(op)
-                    "create-file" -> applyCreateFileOperation(op)
+        ApplicationManager.getApplication().invokeLater {
+            WriteCommandAction.runWriteCommandAction(project, "Workflow Cody Edit", "workflow.cody.edit", {
+                for (op in operations) {
+                    when (op.type) {
+                        "edit-file" -> applyEditFileOperation(op)
+                        "create-file" -> applyCreateFileOperation(op)
+                    }
                 }
-            }
-        })
+            })
+        }
     }
 
     private fun applyEditFileOperation(op: WorkspaceEditOperation) {
