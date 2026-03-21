@@ -128,6 +128,12 @@ class SprintDashboardPanel(
     private lateinit var listCardLayout: CardLayout
     private lateinit var listCardPanel: JPanel
 
+    // -- Sort/Group controls --
+    private val groupByCombo = ComboBox(arrayOf("Assignee", "Status", "Priority", "Type", "None")).apply {
+        selectedItem = "None"
+    }
+    private val sortByCombo = ComboBox(arrayOf("Default", "Priority", "Status", "Updated", "Key"))
+
     // -- State --
     private var allIssues: List<JiraIssue> = emptyList()
     private var showAllUsers: Boolean = false
@@ -223,12 +229,33 @@ class SprintDashboardPanel(
             initiallyExpanded = true
         )
 
-        // Sprint ticket list with search + empty state
+        // Sprint ticket list with search + sort/group controls + empty state
         val sprintListInner = JPanel(BorderLayout()).apply {
             isOpaque = false
         }
         searchField.preferredSize = Dimension(0, JBUI.scale(28))
-        sprintListInner.add(searchField, BorderLayout.NORTH)
+
+        // Sort/Group controls row
+        val sortGroupPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 0)
+        }
+        val groupLabel = JBLabel("Group:").apply { font = JBUI.Fonts.smallFont() }
+        val sortLabel = JBLabel("Sort:").apply { font = JBUI.Fonts.smallFont() }
+        groupByCombo.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(24))
+        sortByCombo.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(24))
+        sortGroupPanel.add(groupLabel)
+        sortGroupPanel.add(groupByCombo)
+        sortGroupPanel.add(sortLabel)
+        sortGroupPanel.add(sortByCombo)
+
+        val topControlsPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+        }
+        topControlsPanel.add(searchField, BorderLayout.NORTH)
+        topControlsPanel.add(sortGroupPanel, BorderLayout.SOUTH)
+
+        sprintListInner.add(topControlsPanel, BorderLayout.NORTH)
 
         listCardLayout = CardLayout()
         listCardPanel = JPanel(listCardLayout).apply { isOpaque = false }
@@ -331,6 +358,10 @@ class SprintDashboardPanel(
             val selectedSprint = sprintSelector.selectedItem as? JiraSprint ?: return@addActionListener
             loadSprintBySelection(selectedSprint)
         }
+
+        // Sort/group combo changes trigger filter reapply
+        groupByCombo.addActionListener { applyFilter() }
+        sortByCombo.addActionListener { applyFilter() }
 
         // Search/filter (debounced — see searchDebounce collector in init)
         searchField.addDocumentListener(object : DocumentListener {
@@ -455,28 +486,36 @@ class SprintDashboardPanel(
     private fun updateList(issues: List<JiraIssue>) {
         ticketList.clearSelection()
         listModel.clear()
-        if (showAllUsers && issues.isNotEmpty()) {
-            // Group by assignee, sorted alphabetically, unassigned last
-            val grouped = issues.groupBy { it.fields.assignee?.displayName ?: "Unassigned" }
-                .toSortedMap(compareBy {
-                    if (it == "Unassigned") "\uFFFF" else it.lowercase()
-                })
-            for ((assignee, assigneeIssues) in grouped) {
-                // Add a separator issue with the assignee name as a section header
+
+        val sortBy = sortByCombo.selectedItem as? String ?: "Default"
+        val groupBy = if (showAllUsers) {
+            groupByCombo.selectedItem as? String ?: "Assignee"
+        } else {
+            groupByCombo.selectedItem as? String ?: "None"
+        }
+
+        val sorted = sortIssues(issues, sortBy)
+        val grouped = groupIssues(sorted, groupBy)
+
+        if (groupBy != "None" && issues.isNotEmpty()) {
+            val sortedGroups = grouped.toSortedMap(compareBy {
+                if (it == "Unassigned" || it == "None" || it == "Unknown") "\uFFFF" else it.lowercase()
+            })
+            for ((groupName, groupIssues) in sortedGroups) {
                 val headerIssue = JiraIssue(
-                    id = "header-$assignee", key = "── $assignee (${assigneeIssues.size}) ──",
+                    id = "header-$groupName", key = "── $groupName (${groupIssues.size}) ──",
                     fields = JiraIssueFields(
                         summary = "",
                         status = JiraStatus(name = "")
                     )
                 )
                 listModel.addElement(headerIssue)
-                for (issue in assigneeIssues) {
+                for (issue in groupIssues) {
                     listModel.addElement(issue)
                 }
             }
         } else {
-            for (issue in issues) {
+            for (issue in sorted) {
                 listModel.addElement(issue)
             }
         }
@@ -486,6 +525,43 @@ class SprintDashboardPanel(
         } else {
             listCardLayout.show(listCardPanel, "list")
         }
+    }
+
+    private fun groupIssues(issues: List<JiraIssue>, groupBy: String): Map<String, List<JiraIssue>> {
+        return when (groupBy) {
+            "Assignee" -> issues.groupBy { it.fields.assignee?.displayName ?: "Unassigned" }
+            "Status" -> issues.groupBy { it.fields.status.name }
+            "Priority" -> issues.groupBy { it.fields.priority?.name ?: "None" }
+            "Type" -> issues.groupBy { it.fields.issuetype?.name ?: "Unknown" }
+            "None" -> mapOf("" to issues)
+            else -> mapOf("" to issues)
+        }
+    }
+
+    private fun sortIssues(issues: List<JiraIssue>, sortBy: String): List<JiraIssue> {
+        return when (sortBy) {
+            "Priority" -> issues.sortedBy { priorityOrder(it.fields.priority?.name) }
+            "Status" -> issues.sortedBy { statusOrder(it.fields.status.statusCategory?.key) }
+            "Updated" -> issues.sortedByDescending { it.fields.updated ?: "" }
+            "Key" -> issues.sortedBy { it.key }
+            else -> issues
+        }
+    }
+
+    private fun priorityOrder(name: String?): Int = when (name?.lowercase()) {
+        "highest", "blocker" -> 0
+        "high", "critical" -> 1
+        "medium" -> 2
+        "low" -> 3
+        "lowest" -> 4
+        else -> 5
+    }
+
+    private fun statusOrder(categoryKey: String?): Int = when (categoryKey) {
+        "indeterminate" -> 0  // In Progress first
+        "new" -> 1            // To Do
+        "done" -> 2           // Done last
+        else -> 3
     }
 
     private fun updateSprintHeader() {
