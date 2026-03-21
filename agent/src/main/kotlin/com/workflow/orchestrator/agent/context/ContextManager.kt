@@ -45,6 +45,8 @@ class ContextManager(
     private var planAnchor: ChatMessage? = null
     /** Dedicated skill anchor — survives compression, updated on skill activation/deactivation. */
     private var skillAnchor: ChatMessage? = null
+    /** Dedicated mention anchor — file content from @ mentions, survives compression. */
+    private var mentionAnchor: ChatMessage? = null
     private var totalTokens = 0
 
     /** Effective budget after subtracting reserved tokens (tool defs, system prompt overhead, buffer). */
@@ -77,6 +79,16 @@ class ContextManager(
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 
+    /**
+     * Set or update the anchored mention context (file content, folder trees from @ mentions).
+     * Dedicated slot separate from the messages list — always included in getMessages(),
+     * never dropped by compress().
+     */
+    fun setMentionAnchor(message: ChatMessage?) {
+        mentionAnchor = message
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
     /** Get all messages including any summary prefixes. */
     fun getMessages(): List<ChatMessage> {
         val result = mutableListOf<ChatMessage>()
@@ -91,6 +103,7 @@ class ContextManager(
 
         planAnchor?.let { result.add(it) }
         skillAnchor?.let { result.add(it) }
+        mentionAnchor?.let { result.add(it) }
 
         result.addAll(messages)
         return result
@@ -266,6 +279,7 @@ class ContextManager(
         anchoredSummaries.clear()
         planAnchor = null
         skillAnchor = null
+        mentionAnchor = null
         totalTokens = 0
     }
 
