@@ -326,6 +326,18 @@ class AgentDashboardPanel(
         menu.show(anchor, 0, anchor.height)
     }
 
+    fun setCefNavigationCallbacks(onNavigateToFile: (String, Int) -> Unit) {
+        cefPanel?.onNavigateToFile = onNavigateToFile
+    }
+
+    fun appendJiraCard(cardJson: String) {
+        cefPanel?.appendJiraCard(cardJson)
+    }
+
+    fun appendSonarBadge(badgeJson: String) {
+        cefPanel?.appendSonarBadge(badgeJson)
+    }
+
     fun setCefSkillCallbacks(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
         cefPanel?.onSkillDismissed = onDismiss
         onSkillSelected = onSelect

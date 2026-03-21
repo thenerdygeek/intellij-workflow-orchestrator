@@ -88,6 +88,35 @@ class AgentController(
         // Wire tools button — opens JCEF categorized tools panel
         dashboard.toolsButton.addActionListener { showToolsPanel() }
 
+        // Wire click-to-navigate file paths in JCEF chat output
+        dashboard.setCefNavigationCallbacks(
+            onNavigateToFile = { filePath, line ->
+                val basePath = project.basePath ?: return@setCefNavigationCallbacks
+                val fullPath = if (filePath.startsWith("/") || filePath.startsWith(basePath)) filePath
+                               else "$basePath/$filePath"
+                val file = java.io.File(fullPath)
+                if (file.exists()) {
+                    val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+                    if (vf != null) {
+                        ApplicationManager.getApplication().invokeLater {
+                            val editors = FileEditorManager.getInstance(project).openFile(vf, true)
+                            if (line > 0) {
+                                val textEditor = editors.filterIsInstance<com.intellij.openapi.fileEditor.TextEditor>().firstOrNull()
+                                textEditor?.let {
+                                    val lineIdx = maxOf(0, line - 1)
+                                    if (lineIdx < it.editor.document.lineCount) {
+                                        val offset = it.editor.document.getLineStartOffset(lineIdx)
+                                        it.editor.caretModel.moveToOffset(offset)
+                                        it.editor.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
         // Wire JCEF tool toggle callback — persists enable/disable to ToolPreferences
         dashboard.setCefToolToggleCallback { toolName, enabled ->
             try {
