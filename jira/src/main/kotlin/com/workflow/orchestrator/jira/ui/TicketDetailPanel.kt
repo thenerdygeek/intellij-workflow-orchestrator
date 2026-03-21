@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -9,10 +10,13 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
+import com.workflow.orchestrator.jira.service.AttachmentDownloadService
 import com.workflow.orchestrator.jira.service.IssueDetailCache
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.*
+import java.awt.image.BufferedImage
+import javax.swing.ImageIcon
 import java.awt.geom.Ellipse2D
 import java.awt.geom.RoundRectangle2D
 import javax.swing.BorderFactory
@@ -288,37 +292,82 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             isOpaque = false
         }
 
+        val thumbW = JBUI.scale(80)
+        val thumbH = JBUI.scale(60)
+
         for (att in attachments) {
-            val icon = when {
-                att.mimeType?.startsWith("image/") == true -> AllIcons.FileTypes.Any_type
-                att.filename.endsWith(".pdf") -> AllIcons.FileTypes.Text
-                else -> AllIcons.FileTypes.Any_type
-            }
             val sizeStr = when {
                 att.size < 1024 -> "${att.size} B"
                 att.size < 1024 * 1024 -> "${att.size / 1024} KB"
                 else -> "${"%.1f".format(att.size / (1024.0 * 1024.0))} MB"
             }
 
-            val card = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            val isImage = att.mimeType?.startsWith("image/") == true && att.thumbnail != null
+
+            val card = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 border = BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
                     JBUI.Borders.empty(4, 8)
                 )
                 cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-                add(JBLabel().apply { this.icon = icon })
-                val infoPanel = JPanel().apply {
-                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                    isOpaque = false
-                    add(JBLabel(att.filename).apply {
-                        font = font.deriveFont(JBUI.scale(11).toFloat())
-                    })
-                    add(JBLabel(sizeStr).apply {
-                        font = font.deriveFont(JBUI.scale(9).toFloat())
-                        foreground = StatusColors.SECONDARY_TEXT
+
+                if (isImage) {
+                    // Placeholder gray box for thumbnail
+                    val thumbnailLabel = JBLabel().apply {
+                        preferredSize = Dimension(thumbW, thumbH)
+                        minimumSize = Dimension(thumbW, thumbH)
+                        maximumSize = Dimension(thumbW, thumbH)
+                        horizontalAlignment = SwingConstants.CENTER
+                        verticalAlignment = SwingConstants.CENTER
+                        isOpaque = true
+                        background = JBColor(0xE8E8E8, 0x3C3C3C)
+                        icon = AllIcons.Actions.ShowAsTree // small loading placeholder icon
+                        alignmentX = Component.CENTER_ALIGNMENT
+                    }
+                    add(thumbnailLabel)
+
+                    // Lazy-load thumbnail
+                    lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val image = AttachmentDownloadService(project).downloadThumbnail(att)
+                            if (image != null) {
+                                val scaled = scaleToFit(image, thumbW, thumbH)
+                                val imageIcon = ImageIcon(scaled)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                                    thumbnailLabel.icon = imageIcon
+                                    thumbnailLabel.isOpaque = false
+                                    thumbnailLabel.revalidate()
+                                    thumbnailLabel.repaint()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            log.warn("[Jira:UI] Failed to load thumbnail for ${att.filename}", e)
+                        }
+                    }
+                } else {
+                    // Non-image: show file type icon
+                    val fileIcon = when {
+                        att.filename.endsWith(".pdf") -> AllIcons.FileTypes.Text
+                        else -> AllIcons.FileTypes.Any_type
+                    }
+                    add(JBLabel(fileIcon).apply {
+                        alignmentX = Component.CENTER_ALIGNMENT
                     })
                 }
-                add(infoPanel)
+
+                // Filename label
+                add(JBLabel(truncate(att.filename, 16)).apply {
+                    font = font.deriveFont(JBUI.scale(11).toFloat())
+                    alignmentX = Component.CENTER_ALIGNMENT
+                    if (att.filename.length > 16) toolTipText = att.filename
+                })
+                // Size label
+                add(JBLabel(sizeStr).apply {
+                    font = font.deriveFont(JBUI.scale(9).toFloat())
+                    foreground = StatusColors.SECONDARY_TEXT
+                    alignmentX = Component.CENTER_ALIGNMENT
+                })
 
                 // Click to download
                 if (att.content.isNotBlank()) {
@@ -333,6 +382,15 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
 
         addFullWidthComponent(attPanel)
+    }
+
+    private fun scaleToFit(image: BufferedImage, maxW: Int, maxH: Int): java.awt.Image {
+        val srcW = image.width
+        val srcH = image.height
+        val scale = minOf(maxW.toDouble() / srcW, maxH.toDouble() / srcH, 1.0)
+        val targetW = (srcW * scale).toInt().coerceAtLeast(1)
+        val targetH = (srcH * scale).toInt().coerceAtLeast(1)
+        return image.getScaledInstance(targetW, targetH, java.awt.Image.SCALE_SMOOTH)
     }
 
     private fun lazyLoadComments(issueKey: String) {
