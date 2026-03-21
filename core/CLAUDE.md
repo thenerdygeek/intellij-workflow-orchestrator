@@ -44,4 +44,4 @@ Wraps `PasswordSafe`. Keys scoped by `ServiceType`. All tokens stored here, neve
 
 ## StatusColors
 
-JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNING (amber), INFO (grey), LINK (blue), MERGED (purple), SECONDARY_TEXT (dim grey).
+JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNING (amber), INFO (grey), LINK (blue), MERGED (purple), SECONDARY_TEXT (dim grey), BORDER, CARD_BG, HIGHLIGHT_BG, WARNING_BG, SUCCESS_BG, INFO_BG. Includes `htmlColor(JBColor): String` utility for HTML rendering.
