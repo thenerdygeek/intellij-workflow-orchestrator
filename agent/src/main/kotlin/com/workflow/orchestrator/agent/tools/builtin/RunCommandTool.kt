@@ -67,6 +67,26 @@ class RunCommandTool : AgentTool {
             Regex("""curl\s+.*\|\s*bash"""),
             Regex("""wget\s+.*\|\s*sh"""),
             Regex("""wget\s+.*\|\s*bash"""),
+            // Git remote operations — NEVER allow
+            Regex("""git\s+push"""),
+            Regex("""git\s+fetch"""),
+            Regex("""git\s+pull"""),
+            Regex("""git\s+remote\s"""),
+            Regex("""git\s+clone\s"""),
+            // Git destructive operations
+            Regex("""git\s+reset\s+--hard"""),
+            Regex("""git\s+clean\s+-[fd]"""),
+            Regex("""git\s+rebase\s"""),
+            Regex("""git\s+merge\s"""),
+            Regex("""git\s+branch\s+-[dD]\s"""),
+            Regex("""git\s+stash\s+drop"""),
+            Regex("""--force"""),
+            Regex("""--no-verify"""),
+            // Git commands referencing remote — use git_diff/git_log instead
+            Regex("""git\s+diff\s+.*origin/"""),
+            Regex("""git\s+log\s+.*origin/"""),
+            Regex("""git\s+show\s+.*origin/"""),
+            Regex("""git\s+checkout\s+origin/"""),
         )
 
         /**

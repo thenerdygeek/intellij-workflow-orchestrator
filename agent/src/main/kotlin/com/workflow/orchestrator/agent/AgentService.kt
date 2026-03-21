@@ -177,6 +177,8 @@ class AgentService(
             // VCS / navigation tools
             register(GitStatusTool())
             register(GitBlameTool())
+            register(GitDiffTool())
+            register(GitLogTool())
             register(FindImplementationsTool())
 
             // Framework tools

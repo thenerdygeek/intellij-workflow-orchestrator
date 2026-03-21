@@ -47,8 +47,8 @@ object ToolCategoryRegistry {
             displayName = "VCS",
             color = "#06B6D4",
             badgePrefix = "GIT",
-            description = "Git status and blame",
-            tools = listOf("git_status", "git_blame")
+            description = "Git status, blame, diff, and log",
+            tools = listOf("git_status", "git_blame", "git_diff", "git_log")
         ),
         ToolCategory(
             id = "framework",
