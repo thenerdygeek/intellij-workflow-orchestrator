@@ -43,21 +43,40 @@ class AgentController(
     private val pendingUserMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
     private var sessionAutoApprove = false
     private var currentPlanFile: com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile? = null
+    private var planModeEnabled = false
 
     init {
         // Tie coroutine scope to project lifecycle — cancel when project closes
         com.intellij.openapi.util.Disposer.register(project, com.intellij.openapi.Disposable { scope.cancel() })
 
-        dashboard.onSendMessage = { message -> executeTask(message) }
-        dashboard.cancelButton.addActionListener { cancelTask() }
-        dashboard.newChatButton.addActionListener { newChat() }
-        dashboard.tracesButton.addActionListener { openLatestTrace() }
-        dashboard.settingsLink.addMouseListener(object : java.awt.event.MouseAdapter() {
-            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                com.intellij.openapi.options.ShowSettingsUtil.getInstance()
-                    .showSettingsDialog(project, "workflow.orchestrator.agent")
-            }
-        })
+        // Wire all JCEF toolbar/input callbacks via the unified bridge
+        dashboard.setCefActionCallbacks(
+            onCancel = { cancelTask() },
+            onNewChat = { newChat() },
+            onSendMessage = { text -> executeTask(text) },
+            onChangeModel = { modelId ->
+                try {
+                    val settings = AgentSettings.getInstance(project)
+                    settings.state.sourcegraphChatModel = modelId
+                    dashboard.setModelName(modelId)
+                } catch (_: Exception) {}
+            },
+            onTogglePlanMode = { enabled -> planModeEnabled = enabled },
+            onActivateSkill = { name -> executeTask("/$name") },
+            onRequestFocusIde = {
+                ApplicationManager.getApplication().invokeLater {
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project)
+                        .selectedTextEditor?.contentComponent?.requestFocusInWindow()
+                }
+            },
+            onOpenSettings = {
+                ApplicationManager.getApplication().invokeLater {
+                    com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                        .showSettingsDialog(project, "workflow.orchestrator.agent")
+                }
+            },
+            onOpenToolsPanel = { showToolsPanel() }
+        )
 
         // Wire JCEF JS→Kotlin action callbacks (undo, view-trace, example prompts)
         dashboard.setCefCallbacks(
@@ -84,9 +103,6 @@ class AgentController(
             val model = AgentSettings.getInstance(project).state.sourcegraphChatModel ?: ""
             dashboard.setModelName(model)
         } catch (_: Exception) {}
-
-        // Wire tools button — opens JCEF categorized tools panel
-        dashboard.toolsButton.addActionListener { showToolsPanel() }
 
         // Wire click-to-navigate file paths in JCEF chat output
         dashboard.setCefNavigationCallbacks(
@@ -214,7 +230,7 @@ class AgentController(
         }
 
         // If agent is already running, queue the message as intervention
-        if (currentOrchestrator != null && session != null && dashboard.cancelButton.isEnabled) {
+        if (currentOrchestrator != null && session != null) {
             pendingUserMessages.add(task)
             dashboard.appendUserMessage(task)
             dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
@@ -251,7 +267,7 @@ class AgentController(
             try {
                 // Create session off EDT (RepoMapGenerator + skill discovery + memory loading are heavy)
                 if (isNewSession) {
-                    session = ConversationSession.create(project, agentService, planMode = dashboard.isPlanMode)
+                    session = ConversationSession.create(project, agentService, planMode = planModeEnabled)
                     wireSessionCallbacks(session!!)
                 }
                 val currentSession = session!!
@@ -294,6 +310,7 @@ class AgentController(
                     System.currentTimeMillis() - sessionStartMs,
                     RichStreamingPanel.SessionStatus.FAILED)
             } finally {
+                currentOrchestrator = null
                 dashboard.setBusy(false)
                 // Persist conversation state after each turn (best effort)
                 session?.let { s ->
@@ -387,7 +404,7 @@ class AgentController(
                 QuestionSet.serializer(), questionSet
             )
             dashboard.showQuestions(json)
-            dashboard.disableChatInput()  // Disable Swing input while wizard is active
+            dashboard.setInputLocked(true)  // Lock input while wizard is active
         }
         currentSession.questionManager.onShowQuestion = { index ->
             dashboard.showQuestion(index)
@@ -400,7 +417,7 @@ class AgentController(
         }
         currentSession.questionManager.onSubmitted = {
             dashboard.enableChatInput()
-            dashboard.enableSwingChatInput()  // Re-enable Swing input
+            dashboard.setInputLocked(false)  // Unlock input
         }
 
         // Wire JCEF → QuestionManager callbacks
@@ -443,18 +460,19 @@ class AgentController(
             }
         }
 
-        // Skills toolbar
-        val userSkills = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
-            it.name to it.description
-        } ?: emptyList()
-        val scopes = currentSession.skillManager?.registry?.getUserInvocableSkills()?.map {
-            it.scope.name
-        } ?: emptyList()
-        dashboard.updateSkillsList(userSkills, scopes)
+        // Skills list — serialize to JSON for JCEF input bar
+        val skillsJson = kotlinx.serialization.json.buildJsonArray {
+            currentSession.skillManager?.registry?.getUserInvocableSkills()?.forEach { skill ->
+                add(kotlinx.serialization.json.buildJsonObject {
+                    put("name", kotlinx.serialization.json.JsonPrimitive(skill.name))
+                    put("description", kotlinx.serialization.json.JsonPrimitive(skill.description))
+                })
+            }
+        }.toString()
+        dashboard.updateSkillsList(skillsJson)
 
         dashboard.setCefSkillCallbacks(
-            onDismiss = { currentSession.skillManager?.deactivateSkill() },
-            onSelect = { name -> executeTask("/$name") }
+            onDismiss = { currentSession.skillManager?.deactivateSkill() }
         )
     }
 
@@ -592,6 +610,14 @@ class AgentController(
                 if (tracesPath != null) {
                     LOG.info("AgentController: session trace at $tracesPath")
                     dashboard.appendStatus("Debug trace saved. View via notification or at: $tracesPath", RichStreamingPanel.StatusType.INFO)
+                }
+                // Show retry button if there was a user message to retry
+                session?.let { s ->
+                    val messages = try { s.contextManager.getMessages() } catch (_: Exception) { emptyList() }
+                    val lastUserMsg = messages.lastOrNull { it.role == "user" }?.content
+                    if (!lastUserMsg.isNullOrBlank()) {
+                        dashboard.showRetryButton(lastUserMsg)
+                    }
                 }
             }
             is AgentResult.Cancelled -> {
