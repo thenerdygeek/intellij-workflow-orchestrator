@@ -176,6 +176,10 @@ class AgentDashboardPanel(
         cefPanel?.hideSkillBanner()
     }
 
+    fun setMentionSearchProvider(provider: MentionSearchProvider) {
+        cefPanel?.mentionSearchProvider = provider
+    }
+
     fun setCefNavigationCallbacks(onNavigateToFile: (String, Int) -> Unit) {
         cefPanel?.onNavigateToFile = onNavigateToFile
     }

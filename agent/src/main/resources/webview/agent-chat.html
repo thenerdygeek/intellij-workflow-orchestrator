@@ -1245,6 +1245,122 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 .chip-dropdown-item:hover { background: var(--hover-overlay-strong); color: var(--fg); }
 .chip-dropdown-item.selected { color: var(--link); }
 
+/* ═══════════════════════════════════════════════════
+   @ Mention Autocomplete
+   ═══════════════════════════════════════════════════ */
+.mention-dropdown {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  z-index: 100;
+  max-height: 280px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.mention-dropdown.visible { display: block; }
+.mention-dropdown::-webkit-scrollbar { width: 6px; }
+.mention-dropdown::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.mention-category {
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--divider-subtle);
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 12px;
+}
+.mention-item:hover, .mention-item.selected {
+  background: var(--hover-overlay-strong);
+}
+.mention-item .mention-icon {
+  font-size: 12px;
+  color: var(--fg-muted);
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.mention-item .mention-name {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-item .mention-desc {
+  color: var(--fg-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-item .mention-path {
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+/* Mention pills bar (above textarea) */
+.mention-pills {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 0 6px 0;
+}
+.mention-pills.has-items { display: flex; }
+.mention-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(59,130,246,0.1);
+  border: 1px solid rgba(59,130,246,0.2);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--link);
+  font-family: var(--font-mono);
+}
+.mention-pill .pill-remove {
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 12px;
+  margin-left: 2px;
+}
+.mention-pill .pill-remove:hover { opacity: 1; }
+.mention-pill.type-file { background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.2); color: var(--link); }
+.mention-pill.type-symbol { background: rgba(139,92,246,0.1); border-color: rgba(139,92,246,0.2); color: #a78bfa; }
+.mention-pill.type-tool { background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.2); color: #4ade80; }
+.mention-pill.type-skill { background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.2); color: #fbbf24; }
+
+/* Mention loading spinner */
+.mention-loading {
+  padding: 12px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
 /* Retry button */
 .retry-btn {
   display: inline-block;
@@ -1308,7 +1424,9 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 <!-- Bolt-Style Input Bar -->
 <div class="input-area" id="input-area">
   <div class="input-wrapper">
-    <textarea class="input-ta" id="chat-input" placeholder="Ask the agent to do something..." rows="1"></textarea>
+    <div class="mention-dropdown" id="mention-dropdown"></div>
+    <div class="mention-pills" id="mention-pills"></div>
+    <textarea class="input-ta" id="chat-input" placeholder="Ask the agent to do something... (@ to mention)" rows="1"></textarea>
     <div class="input-bottom">
       <div class="input-chip" id="model-chip" tabindex="0" role="button" onclick="toggleModelDropdown()" style="position:relative;">
         <span class="model-dot"></span>

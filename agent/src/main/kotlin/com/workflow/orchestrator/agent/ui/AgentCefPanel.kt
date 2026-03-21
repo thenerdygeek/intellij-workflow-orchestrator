@@ -11,6 +11,9 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import javax.swing.JPanel
 
@@ -61,6 +64,8 @@ class AgentCefPanel(
     private var requestFocusIdeQuery: JBCefJSQuery? = null
     private var openSettingsQuery: JBCefJSQuery? = null
     private var openToolsPanelQuery: JBCefJSQuery? = null
+    private var searchMentionsQuery: JBCefJSQuery? = null
+    var mentionSearchProvider: MentionSearchProvider? = null
     @Volatile private var pageLoaded = false
     private val pendingCalls = mutableListOf<String>()
 
@@ -253,6 +258,20 @@ class AgentCefPanel(
         openToolsPanelQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { _ -> onOpenToolsPanel?.invoke(); JBCefJSQuery.Response("ok") }
         }
+        searchMentionsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                // data format: "type:query" e.g. "file:Login" or "categories:"
+                val colonIdx = data.indexOf(':')
+                val type = if (colonIdx > 0) data.substring(0, colonIdx) else data
+                val query = if (colonIdx > 0) data.substring(colonIdx + 1) else ""
+                // Search on IO thread, callback to JS
+                GlobalScope.launch(Dispatchers.IO) {
+                    val results = mentionSearchProvider?.search(type, query) ?: "[]"
+                    callJs("receiveMentionResults(${jsonStr(results)})")
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -356,6 +375,10 @@ class AgentCefPanel(
                     openToolsPanelQuery?.let { q ->
                         val toolsJs = q.inject("'tools'")
                         js("window._openToolsPanel = function() { $toolsJs }")
+                    }
+                    searchMentionsQuery?.let { q ->
+                        val searchJs = q.inject("data")
+                        js("window._searchMentions = function(data) { $searchJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -698,6 +721,7 @@ class AgentCefPanel(
         requestFocusIdeQuery?.dispose()
         openSettingsQuery?.dispose()
         openToolsPanelQuery?.dispose()
+        searchMentionsQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -722,6 +746,7 @@ class AgentCefPanel(
         requestFocusIdeQuery = null
         openSettingsQuery = null
         openToolsPanelQuery = null
+        searchMentionsQuery = null
         browser = null
     }
 }

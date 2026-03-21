@@ -140,6 +140,8 @@ class AgentController(
             } catch (_: Exception) {}
         }
 
+        dashboard.setMentionSearchProvider(MentionSearchProvider(project))
+
         dashboard.focusInput()
     }
 
