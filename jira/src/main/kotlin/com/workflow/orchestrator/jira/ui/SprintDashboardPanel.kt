@@ -25,12 +25,15 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
+import com.workflow.orchestrator.jira.api.dto.JiraSprint
 import com.workflow.orchestrator.jira.api.dto.JiraStatus
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
 import com.workflow.orchestrator.jira.service.SprintService
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +97,16 @@ class SprintDashboardPanel(
         foreground = StatusColors.SECONDARY_TEXT
     }
     private val sprintTimeBar = SprintTimeBar()
+
+    // -- Sprint selector --
+    private val sprintSelector = ComboBox<JiraSprint>().apply {
+        renderer = SimpleListCellRenderer.create("") { sprint ->
+            sprint.name + if (sprint.state == "active") " (Active)" else ""
+        }
+        isVisible = false // Hidden until sprints are loaded
+    }
+    private var availableSprints: List<JiraSprint> = emptyList()
+    private var sprintSelectorLoading = false
 
     // -- Status bar --
     private val statusLabel = JBLabel("Ready").apply {
@@ -177,6 +190,7 @@ class SprintDashboardPanel(
         val nameRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             isOpaque = false
         }
+        nameRow.add(sprintSelector)
         nameRow.add(sprintNameLabel)
         nameRow.add(ticketCountLabel)
         sprintInfoPanel.add(nameRow)
@@ -311,6 +325,13 @@ class SprintDashboardPanel(
             }
         })
 
+        // Sprint selector change
+        sprintSelector.addActionListener {
+            if (sprintSelectorLoading) return@addActionListener
+            val selectedSprint = sprintSelector.selectedItem as? JiraSprint ?: return@addActionListener
+            loadSprintBySelection(selectedSprint)
+        }
+
         // Search/filter (debounced — see searchDebounce collector in init)
         searchField.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent) { searchDebounce.tryEmit(Unit) }
@@ -333,24 +354,102 @@ class SprintDashboardPanel(
 
         scope.launch {
             val result = sprintService.loadSprintIssues(boardId, boardType, showAllUsers, boardName)
+
+            // Load available sprints for the selector (scrum boards only)
+            val resolvedBoardId = sprintService.discoveredBoard?.id
+            val isScrumBoard = sprintService.discoveredBoard?.type == "scrum"
+            val sprints = if (isScrumBoard && resolvedBoardId != null) {
+                sprintService.loadAvailableSprints(resolvedBoardId)
+            } else {
+                emptyList()
+            }
+
             withContext(Dispatchers.EDT) {
                 when (result) {
                     is ApiResult.Success -> {
                         allIssues = result.data
                         updateList(allIssues)
                         updateSprintHeader()
+                        populateSprintSelector(sprints)
                         setLoading(false, "${allIssues.size} tickets loaded")
                         log.info("[Jira:UI] Sprint dashboard loaded ${allIssues.size} tickets")
                     }
                     is ApiResult.Error -> {
                         allIssues = emptyList()
                         updateList(emptyList())
+                        populateSprintSelector(emptyList())
                         setLoading(false, "Error: ${result.message}")
                         log.warn("[Jira:UI] Sprint load failed: ${result.message}")
                     }
                 }
             }
         }
+    }
+
+    private fun populateSprintSelector(sprints: List<JiraSprint>) {
+        availableSprints = sprints
+        sprintSelectorLoading = true
+        try {
+            sprintSelector.removeAllItems()
+            if (sprints.size > 1) {
+                for (sprint in sprints) {
+                    sprintSelector.addItem(sprint)
+                }
+                // Auto-select the active sprint
+                val activeSprint = sprintService.activeSprint
+                if (activeSprint != null) {
+                    val activeIndex = sprints.indexOfFirst { it.id == activeSprint.id }
+                    if (activeIndex >= 0) {
+                        sprintSelector.selectedIndex = activeIndex
+                    }
+                }
+                sprintSelector.isVisible = true
+                sprintNameLabel.isVisible = false // Hide label when selector is shown
+            } else {
+                sprintSelector.isVisible = false
+                sprintNameLabel.isVisible = true
+            }
+        } finally {
+            sprintSelectorLoading = false
+        }
+    }
+
+    private fun loadSprintBySelection(sprint: JiraSprint) {
+        setLoading(true, "Loading ${sprint.name}\u2026")
+
+        scope.launch {
+            val result = sprintService.loadIssuesForSprint(sprint.id, showAllUsers)
+            withContext(Dispatchers.EDT) {
+                when (result) {
+                    is ApiResult.Success -> {
+                        allIssues = result.data
+                        updateList(allIssues)
+                        updateSprintHeaderForSprint(sprint)
+                        setLoading(false, "${allIssues.size} tickets loaded")
+                        log.info("[Jira:UI] Loaded ${allIssues.size} tickets for sprint ${sprint.name}")
+                    }
+                    is ApiResult.Error -> {
+                        allIssues = emptyList()
+                        updateList(emptyList())
+                        setLoading(false, "Error: ${result.message}")
+                        log.warn("[Jira:UI] Sprint load failed for ${sprint.name}: ${result.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun updateSprintHeaderForSprint(sprint: JiraSprint) {
+        val dateRange = buildString {
+            sprint.startDate?.take(10)?.let { append(it) }
+            sprint.endDate?.take(10)?.let {
+                if (isNotEmpty()) append(" \u2192 ")
+                append(it)
+            }
+        }
+        sprintMetaLabel.text = if (dateRange.isNotEmpty()) dateRange else sprint.state
+        ticketCountLabel.text = "(${allIssues.size} tickets)"
+        sprintTimeBar.updateFromIssues(sprint, allIssues)
     }
 
     private fun updateList(issues: List<JiraIssue>) {

@@ -100,6 +100,32 @@ class SprintService(private val apiClient: JiraApiClient) {
         return issuesResult
     }
 
+    /**
+     * Load available sprints for a board: active sprint(s) first, then recent closed sprints.
+     */
+    suspend fun loadAvailableSprints(boardId: Int): List<JiraSprint> {
+        val activeResult = apiClient.getActiveSprints(boardId)
+        val closedResult = apiClient.getClosedSprints(boardId, maxResults = 5)
+
+        val active = (activeResult as? ApiResult.Success)?.data ?: emptyList()
+        val closed = (closedResult as? ApiResult.Success)?.data ?: emptyList()
+
+        // Active sprints first, then closed sorted by endDate descending
+        return active + closed.sortedByDescending { it.endDate }
+    }
+
+    /**
+     * Load issues for a specific sprint by ID (not just the active one).
+     */
+    suspend fun loadIssuesForSprint(sprintId: Int, allUsers: Boolean): ApiResult<List<JiraIssue>> {
+        val issuesResult = apiClient.getSprintIssues(sprintId, allUsers)
+        if (issuesResult is ApiResult.Success) {
+            cachedIssues = issuesResult.data
+            log.info("[Jira:Sprint] Loaded ${cachedIssues.size} issues for sprint $sprintId")
+        }
+        return issuesResult
+    }
+
     fun getCachedIssues(): List<JiraIssue> = cachedIssues
 
     private suspend fun discoverBoard(boardTypeFilter: String): JiraBoard? {
