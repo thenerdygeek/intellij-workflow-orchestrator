@@ -2,7 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves tokens by not sending all 53 tools when only a subset is needed.
+ * Saves tokens by not sending all 63 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
@@ -64,12 +64,12 @@ object DynamicToolSelector {
         "merge" to setOf("bitbucket_create_pr"),
 
         // Spring tools triggered by spring/bean/endpoint keywords
-        "spring" to setOf("spring_context", "spring_endpoints", "spring_bean_graph", "spring_config"),
+        "spring" to setOf("spring_context", "spring_endpoints", "spring_bean_graph", "spring_config", "spring_version_info", "spring_profiles", "spring_repositories", "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"),
         "bean" to setOf("spring_context", "spring_bean_graph"),
         "endpoint" to setOf("spring_endpoints"),
         "controller" to setOf("spring_endpoints"),
         "service" to setOf("spring_context"),
-        "repository" to setOf("spring_context"),
+        "repository" to setOf("spring_context", "spring_repositories"),
         "injection" to setOf("spring_bean_graph"),
         "autowired" to setOf("spring_bean_graph"),
 
@@ -103,7 +103,7 @@ object DynamicToolSelector {
 
         // Framework tools
         "config" to setOf("spring_config"),
-        "properties" to setOf("spring_config"),
+        "properties" to setOf("spring_config", "maven_properties"),
         "application.properties" to setOf("spring_config"),
         "application.yml" to setOf("spring_config"),
         "entity" to setOf("jpa_entities"),
@@ -111,9 +111,25 @@ object DynamicToolSelector {
         "jpa" to setOf("jpa_entities"),
         "hibernate" to setOf("jpa_entities"),
         "module" to setOf("project_modules"),
-        "dependency" to setOf("project_modules"),
-        "dependencies" to setOf("project_modules"),
-        "pom" to setOf("project_modules"),
+        "dependency" to setOf("maven_dependencies", "project_modules"),
+        "dependencies" to setOf("maven_dependencies", "project_modules"),
+        "pom" to setOf("maven_dependencies", "maven_properties", "maven_plugins", "project_modules"),
+
+        // Maven tools
+        "maven" to setOf("maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles"),
+        "version" to setOf("spring_version_info"),
+        "plugin" to setOf("maven_plugins"),
+        "profile" to setOf("spring_profiles", "maven_profiles"),
+
+        // Spring advanced tools
+        "security" to setOf("spring_security_config"),
+        "auth" to setOf("spring_security_config"),
+        "authentication" to setOf("spring_security_config"),
+        "authorization" to setOf("spring_security_config"),
+        "scheduled" to setOf("spring_scheduled_tasks"),
+        "cron" to setOf("spring_scheduled_tasks"),
+        "event" to setOf("spring_event_listeners"),
+        "listener" to setOf("spring_event_listeners"),
 
         // Memory tools
         "remember" to setOf("save_memory"),

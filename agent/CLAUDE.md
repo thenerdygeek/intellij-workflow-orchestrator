@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 53 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 63 tools.
 
 ## LLM API
 
@@ -32,14 +32,14 @@ AgentController (UI entry point)
 - **DelegateTaskTool** — LLM-controlled worker spawning. Fresh `WorkerSession` per delegation with scoped tools, 5-min timeout, LocalHistory rollback on failure. Max 5 workers, retry limit 2 per task.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (53 total, 9 categories)
+## Tools (63 total, 9 categories)
 
 | Category | Tools |
 |----------|-------|
 | Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task, think |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests |
 | VCS & Navigation | git_status, git_blame, find_implementations |
-| Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules |
+| Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners |
 | Jira | jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work |
 | CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results |
 | Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_project_health |

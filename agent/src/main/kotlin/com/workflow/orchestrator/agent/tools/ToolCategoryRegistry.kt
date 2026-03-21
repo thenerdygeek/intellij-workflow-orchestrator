@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 /**
- * Central registry mapping all 53 agent tools to logical categories.
+ * Central registry mapping all 63 agent tools to logical categories.
  * Used by: DynamicToolSelector (tool filtering), Tools panel UI (categorization),
  * RequestToolsTool (category activation), ToolPreferences (grouping).
  */
@@ -55,8 +55,14 @@ object ToolCategoryRegistry {
             displayName = "Spring & Framework",
             color = "#10B981",
             badgePrefix = "SPR",
-            description = "Spring beans, endpoints, bean graph, config, JPA entities, project modules",
-            tools = listOf("spring_context", "spring_endpoints", "spring_bean_graph", "spring_config", "jpa_entities", "project_modules")
+            description = "Spring beans, endpoints, bean graph, config, JPA, Maven dependencies/properties/plugins/profiles, version info, Spring profiles, repositories, security, scheduled tasks, events",
+            tools = listOf(
+                "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
+                "jpa_entities", "project_modules",
+                "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
+                "spring_version_info", "spring_profiles", "spring_repositories",
+                "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"
+            )
         ),
         ToolCategory(
             id = "jira",

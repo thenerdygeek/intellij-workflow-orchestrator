@@ -135,6 +135,20 @@ class AgentService(
             register(SpringConfigTool())
             register(JpaEntitiesTool())
             register(ProjectModulesTool())
+
+            // Maven Intelligence (Phase 3)
+            register(MavenDependenciesTool())
+            register(MavenPropertiesTool())
+            register(MavenPluginsTool())
+            register(MavenProfilesTool())
+            register(SpringVersionTool())
+
+            // Spring PSI Intelligence (Phase 3)
+            register(SpringProfilesTool())
+            register(SpringRepositoriesTool())
+            register(SpringSecurityTool())
+            register(SpringScheduledTool())
+            register(SpringEventListenersTool())
         }
     }
 
