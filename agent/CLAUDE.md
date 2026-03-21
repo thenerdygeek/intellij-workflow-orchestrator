@@ -18,7 +18,7 @@ AgentController (UI entry point)
   → ConversationSession (long-lived, owns context + plan + question managers)
     → AgentOrchestrator.executeTask()
       → SingleAgentSession.execute() (ReAct loop, max 50 iterations)
-        → BudgetEnforcer (COMPRESS at 40%, NUDGE at 60%, STRONG_NUDGE at 75%, TERMINATE at 90%)
+        → BudgetEnforcer (COMPRESS at 60%, NUDGE at 75%, STRONG_NUDGE at 85%, TERMINATE at 95%)
         → LoopGuard (loop detection, error nudges, auto-verification)
         → Tool execution with optional ApprovalGate
 ```
@@ -27,8 +27,8 @@ AgentController (UI entry point)
 
 - **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Two-threshold compression (T_max=70%, T_retained=40%). `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call (subtracts `reservedTokens` to avoid double-counting tool definition overhead). Not thread-safe — must be accessed from a single coroutine context.
-- **BudgetEnforcer** — Four-status budget monitoring: OK, COMPRESS, NUDGE, STRONG_NUDGE, TERMINATE.
+- **ContextManager** — Two-threshold compression (T_max=85%, T_retained=60%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Tool result cap: 4000 tokens (~14K chars). Not thread-safe — must be accessed from a single coroutine context.
+- **BudgetEnforcer** — Four-status budget monitoring: OK (<60%), COMPRESS (60-75%), NUDGE (75-85%), STRONG_NUDGE (85-95%), TERMINATE (>95%).
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose.
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.

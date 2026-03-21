@@ -25,18 +25,25 @@ import com.workflow.orchestrator.core.model.ApiResult
 class ContextManager(
     private val maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
     private val brain: LlmBrain? = null,
-    private val tMaxRatio: Double = 0.70,
-    private val tRetainedRatio: Double = 0.40,
-    private val toolResultMaxTokens: Int = 500,
+    private val tMaxRatio: Double = 0.85,
+    private val tRetainedRatio: Double = 0.60,
+    private val toolResultMaxTokens: Int = 4000,
     private val reservedTokens: Int = 0,
-    private val summarizer: (List<ChatMessage>) -> String = { messages ->
-        // Default summarizer: extract key points from messages
-        val content = messages.mapNotNull { it.content }.joinToString("\n")
-        if (content.length > 500) {
-            "Previous context summary: ${content.take(500)}..."
-        } else {
-            "Previous context summary: $content"
+    private val summarizer: (List<ChatMessage>) -> String = { msgs ->
+        val sb = StringBuilder("Previous conversation summary:\n")
+        for (msg in msgs) {
+            val content = msg.content ?: continue
+            when (msg.role) {
+                "user" -> sb.appendLine("- User: ${content.take(200)}")
+                "assistant" -> {
+                    if (content.length > 5) sb.appendLine("- Agent: ${content.take(300)}")
+                }
+                "tool" -> sb.appendLine("- Tool result (${content.length} chars)")
+                "system" -> {} // Skip system messages in summary
+            }
+            if (sb.length > 2000) break
         }
+        sb.toString().take(2500)
     }
 ) {
     private val messages = mutableListOf<ChatMessage>()
@@ -123,7 +130,12 @@ class ContextManager(
         }
 
         if (totalTokens > tMax) {
-            compress()
+            // Phase 1: Prune old tool results first (fast, no LLM)
+            pruneOldToolResults()
+            // Phase 2: Full compression if still over budget
+            if (totalTokens > tMax) {
+                compress()
+            }
         }
     }
 
@@ -180,6 +192,12 @@ class ContextManager(
         // to the default truncation summarizer.
         val summary = summarizeMessages(messagesToSummarize)
         anchoredSummaries.add(summary)
+        // Cap at 3 summaries — consolidate older ones
+        if (anchoredSummaries.size > 3) {
+            val consolidated = anchoredSummaries.joinToString("\n---\n")
+            anchoredSummaries.clear()
+            anchoredSummaries.add(consolidated.take(4000))
+        }
 
         // Remove compressed messages (reverse order to preserve indices)
         indicesToRemove.reversed().forEach { messages.removeAt(it) }
@@ -260,11 +278,42 @@ class ContextManager(
         }
 
         anchoredSummaries.add(summary)
+        // Cap at 3 summaries — consolidate older ones
+        if (anchoredSummaries.size > 3) {
+            val consolidated = anchoredSummaries.joinToString("\n---\n")
+            anchoredSummaries.clear()
+            anchoredSummaries.add(consolidated.take(4000))
+        }
 
         // Remove compressed messages (reverse order to preserve indices)
         indicesToRemove.reversed().forEach { messages.removeAt(it) }
 
         // Recalculate total tokens
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
+    /**
+     * Phase 1 compression: prune old tool results in-place.
+     * Protects the most recent tool results (up to protectedTokens).
+     * Older tool results are replaced with a brief marker.
+     */
+    fun pruneOldToolResults(protectedTokens: Int = 30_000) {
+        var protectedSoFar = 0
+        for (i in messages.indices.reversed()) {
+            val msg = messages[i]
+            if (msg.role != "tool") continue
+            val msgTokens = TokenEstimator.estimate(listOf(msg))
+            if (protectedSoFar + msgTokens <= protectedTokens) {
+                protectedSoFar += msgTokens
+                continue
+            }
+            val toolCallId = msg.toolCallId
+            messages[i] = ChatMessage(
+                role = "tool",
+                content = "<external_data>[Old tool result cleared to save context]</external_data>",
+                toolCallId = toolCallId
+            )
+        }
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 

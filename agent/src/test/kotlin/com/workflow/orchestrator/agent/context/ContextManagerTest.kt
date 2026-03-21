@@ -39,7 +39,7 @@ class ContextManagerTest {
 
     @Test
     fun `addToolResult compresses large results`() {
-        val largeContent = "x".repeat(5000)
+        val largeContent = "x".repeat(50000) // ~14K tokens, well over 4000 token limit
         manager.addToolResult("call-1", largeContent, "Large tool result")
 
         val messages = manager.getMessages()
@@ -200,7 +200,7 @@ class ContextManagerTest {
         // Should still have compressed using default truncation
         assertTrue(defaultManager.messageCount < 40)
         val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
-        assertTrue(summaryContent.contains("Previous context summary"), "Expected default summary, got: $summaryContent")
+        assertTrue(summaryContent.contains("Previous conversation summary"), "Expected default summary, got: $summaryContent")
     }
 
     @Test
@@ -212,6 +212,6 @@ class ContextManagerTest {
 
         val messages = manager.getMessages()
         val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
-        assertTrue(summaryContent.contains("Previous context summary"), "Expected default summary, got: $summaryContent")
+        assertTrue(summaryContent.contains("Previous conversation summary"), "Expected default summary, got: $summaryContent")
     }
 }
