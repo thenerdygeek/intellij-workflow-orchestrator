@@ -25,7 +25,7 @@ AgentController (UI entry point)
 
 ## Key Components
 
-- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation.
+- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
 - **ContextManager** — Two-threshold compression (T_max=85%, T_retained=60%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses LLM for tool result summarization, truncation for plain text. Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Tool result cap: 4000 tokens (~14K chars). Not thread-safe — must be accessed from a single coroutine context.
 - **BudgetEnforcer** — Four-status budget monitoring: OK (<60%), COMPRESS (60-75%), NUDGE (75-85%), STRONG_NUDGE (85-95%), TERMINATE (>95%).
@@ -54,6 +54,14 @@ Three layers:
 2. **RequestToolsTool** (`request_tools`) — LLM activates categories on demand (always available)
 3. **ToolPreferences** — user checkboxes in Tools panel, persisted per project
 4. **agent**, **delegate_task**, and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
+5. Tool set stabilizes per session — tools only expand across messages, never shrink
+
+## Token Management
+
+- Token display shows current context window fill (contextManager.currentTokens), not cumulative API total
+- Token reconciliation uses API's promptTokens as authoritative (no stale reservation subtraction)
+- Tool results capped at 4000 tokens (~14K chars) — enough to see most source files
+- reservedTokens recalculated when tool set changes
 
 ## Interactive UI
 
