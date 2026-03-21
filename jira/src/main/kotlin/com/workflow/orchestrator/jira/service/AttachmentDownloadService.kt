@@ -12,12 +12,17 @@ import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.jira.api.dto.JiraAttachment
 import com.workflow.orchestrator.jira.model.AttachmentDownloadResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.awt.image.BufferedImage
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
@@ -25,7 +30,14 @@ class AttachmentDownloadService(private val project: Project) {
 
     private val log = Logger.getInstance(AttachmentDownloadService::class.java)
     private val credentialStore = CredentialStore()
-    private val thumbnailCache = ConcurrentHashMap<String, BufferedImage>()
+
+    private val thumbnailCache: MutableMap<String, BufferedImage> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, BufferedImage>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, BufferedImage>?): Boolean {
+                return size > MAX_THUMBNAIL_CACHE_SIZE
+            }
+        }
+    )
 
     private val httpClient: OkHttpClient by lazy {
         HttpClientFactory.sharedPool.newBuilder()
@@ -53,6 +65,7 @@ class AttachmentDownloadService(private val project: Project) {
                 return@withContext null
             }
 
+            val isTempDownload = targetDir == null
             val dir = targetDir ?: createTempDir()
             dir.mkdirs()
 
@@ -61,36 +74,39 @@ class AttachmentDownloadService(private val project: Project) {
                 .get()
                 .build()
 
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                log.warn("[Jira:Attachment] Download failed for ${attachment.filename}: HTTP ${response.code}")
-                response.close()
-                return@withContext null
-            }
-
-            val targetFile = File(dir, attachment.filename)
-            response.body?.byteStream()?.use { input ->
-                targetFile.outputStream().use { output ->
-                    input.copyTo(output)
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    log.warn("[Jira:Attachment] Download failed for ${attachment.filename}: HTTP ${response.code}")
+                    return@withContext null
                 }
-            } ?: run {
-                log.warn("[Jira:Attachment] Empty response body for ${attachment.filename}")
-                response.close()
-                return@withContext null
+
+                val body = response.body ?: run {
+                    log.warn("[Jira:Attachment] Empty response body for ${attachment.filename}")
+                    return@withContext null
+                }
+
+                val targetFile = File(dir, attachment.filename)
+                body.byteStream().use { input ->
+                    targetFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                if (isTempDownload) {
+                    targetFile.deleteOnExit()
+                }
+
+                log.info("[Jira:Attachment] Downloaded ${attachment.filename} (${targetFile.length()} bytes)")
+
+                AttachmentDownloadResult(
+                    file = targetFile,
+                    filename = attachment.filename,
+                    mimeType = attachment.mimeType,
+                    sizeBytes = targetFile.length(),
+                    attachmentId = attachment.id,
+                    sourceUrl = url
+                )
             }
-
-            response.close()
-
-            log.info("[Jira:Attachment] Downloaded ${attachment.filename} (${targetFile.length()} bytes)")
-
-            AttachmentDownloadResult(
-                file = targetFile,
-                filename = attachment.filename,
-                mimeType = attachment.mimeType,
-                sizeBytes = targetFile.length(),
-                attachmentId = attachment.id,
-                sourceUrl = url
-            )
         } catch (e: Exception) {
             log.warn("[Jira:Attachment] Failed to download ${attachment.filename}", e)
             null
@@ -98,18 +114,19 @@ class AttachmentDownloadService(private val project: Project) {
     }
 
     /**
-     * Download all attachments. Returns results + summary message.
+     * Download all attachments in parallel (max 3 concurrent). Returns results + summary message.
      */
     suspend fun downloadAll(
         attachments: List<JiraAttachment>,
         targetDir: File
     ): Pair<List<AttachmentDownloadResult>, String> {
-        val results = mutableListOf<AttachmentDownloadResult>()
-        for (attachment in attachments) {
-            val result = downloadAttachment(attachment, targetDir)
-            if (result != null) {
-                results.add(result)
-            }
+        val results = coroutineScope {
+            val semaphore = Semaphore(3)
+            attachments.map { attachment ->
+                async {
+                    semaphore.withPermit { downloadAttachment(attachment, targetDir) }
+                }
+            }.awaitAll().filterNotNull()
         }
         val summary = "Downloaded ${results.size} of ${attachments.size} attachments to ${targetDir.absolutePath}"
         log.info("[Jira:Attachment] $summary")
@@ -132,30 +149,23 @@ class AttachmentDownloadService(private val project: Project) {
                     .get()
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    log.warn("[Jira:Attachment] Thumbnail download failed for ${attachment.filename}: HTTP ${response.code}")
-                    response.close()
-                    return@withContext null
-                }
-
-                val image = response.body?.byteStream()?.use { stream ->
-                    ImageIO.read(stream)
-                }
-                response.close()
-
-                if (image != null) {
-                    // Evict oldest entries if cache is too large
-                    if (thumbnailCache.size >= MAX_THUMBNAIL_CACHE_SIZE) {
-                        val keysToRemove = thumbnailCache.keys().toList()
-                            .take(thumbnailCache.size - MAX_THUMBNAIL_CACHE_SIZE + 1)
-                        keysToRemove.forEach { thumbnailCache.remove(it) }
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        log.warn("[Jira:Attachment] Thumbnail download failed for ${attachment.filename}: HTTP ${response.code}")
+                        return@withContext null
                     }
-                    thumbnailCache[attachment.id] = image
-                    log.info("[Jira:Attachment] Cached thumbnail for ${attachment.filename}")
-                }
 
-                image
+                    val image = response.body?.byteStream()?.use { stream ->
+                        ImageIO.read(stream)
+                    }
+
+                    if (image != null) {
+                        thumbnailCache[attachment.id] = image
+                        log.info("[Jira:Attachment] Cached thumbnail for ${attachment.filename}")
+                    }
+
+                    image
+                }
             } catch (e: Exception) {
                 log.warn("[Jira:Attachment] Failed to download thumbnail for ${attachment.filename}", e)
                 null

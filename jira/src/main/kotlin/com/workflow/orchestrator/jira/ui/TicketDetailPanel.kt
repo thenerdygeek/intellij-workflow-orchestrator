@@ -72,6 +72,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         verticalAlignment = SwingConstants.CENTER
     }
 
+    private val attachmentDownloadService: AttachmentDownloadService by lazy { AttachmentDownloadService(project) }
+
     private val quickCommentPanel = QuickCommentPanel(project).apply {
         isVisible = false
     }
@@ -319,20 +321,36 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             border = JBUI.Borders.emptyRight(4)
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent?) {
+                    val label = e?.source as? JBLabel ?: return
+                    if (!label.isEnabled) return
                     val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
                         .withTitle("Select Download Directory")
                     FileChooser.chooseFile(descriptor, project, null) { chosenDir ->
                         val targetDir = File(chosenDir.path)
+                        label.isEnabled = false
+                        label.text = "Downloading..."
+                        label.foreground = StatusColors.SECONDARY_TEXT
+                        label.cursor = Cursor.getDefaultCursor()
                         lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            val (results, summary) = AttachmentDownloadService(project)
+                            val (results, summary) = attachmentDownloadService
                                 .downloadAll(attachments, targetDir)
                             withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                                label.isEnabled = true
+                                label.text = "Download All"
+                                label.foreground = StatusColors.LINK
+                                label.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+
+                                val notificationType = when {
+                                    results.isEmpty() -> NotificationType.ERROR
+                                    results.size < attachments.size -> NotificationType.WARNING
+                                    else -> NotificationType.INFORMATION
+                                }
                                 NotificationGroupManager.getInstance()
                                     .getNotificationGroup("Workflow Orchestrator")
                                     .createNotification(
                                         "Attachments Downloaded",
                                         summary,
-                                        NotificationType.INFORMATION
+                                        notificationType
                                     )
                                     .notify(project)
                             }
@@ -409,7 +427,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     // Lazy-load thumbnail
                     lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                         try {
-                            val image = AttachmentDownloadService(project).downloadThumbnail(att)
+                            val image = attachmentDownloadService.downloadThumbnail(att)
                             if (image != null) {
                                 val scaled = scaleToFit(image, thumbW, thumbH)
                                 val imageIcon = ImageIcon(scaled)
@@ -476,7 +494,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         menu.add(JMenuItem("Open in Editor").apply {
             addActionListener {
                 lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    val result = AttachmentDownloadService(project).downloadAttachment(att)
+                    val result = attachmentDownloadService.downloadAttachment(att)
                     if (result != null) {
                         withContext(kotlinx.coroutines.Dispatchers.EDT) {
                             val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(result.file)
@@ -502,7 +520,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 FileChooser.chooseFile(descriptor, project, null) { chosenDir ->
                     val targetDir = File(chosenDir.path)
                     lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        val result = AttachmentDownloadService(project).downloadAttachment(att, targetDir)
+                        val result = attachmentDownloadService.downloadAttachment(att, targetDir)
                         if (result != null) {
                             withContext(kotlinx.coroutines.Dispatchers.EDT) {
                                 NotificationGroupManager.getInstance()
