@@ -121,8 +121,8 @@ class PrListService(private val project: Project) : Disposable {
         // Fetch PRs authored by the current user
         when (val result = client.getMyPullRequests(projectKey, repoSlug, username = username)) {
             is ApiResult.Success -> {
-                _myPrs.value = result.data
-                log.info("[PR:List] Found ${result.data.size} authored PRs")
+                _myPrs.value = result.data.values
+                log.info("[PR:List] Found ${result.data.values.size} authored PRs")
             }
             is ApiResult.Error -> {
                 log.warn("[PR:List] Failed to fetch my PRs: ${result.message}")
@@ -132,8 +132,8 @@ class PrListService(private val project: Project) : Disposable {
         // Fetch PRs where the current user is a reviewer
         when (val result = client.getReviewingPullRequests(projectKey, repoSlug, username = username)) {
             is ApiResult.Success -> {
-                _reviewingPrs.value = result.data
-                log.info("[PR:List] Found ${result.data.size} reviewing PRs")
+                _reviewingPrs.value = result.data.values
+                log.info("[PR:List] Found ${result.data.values.size} reviewing PRs")
             }
             is ApiResult.Error -> {
                 log.warn("[PR:List] Failed to fetch reviewing PRs: ${result.message}")
