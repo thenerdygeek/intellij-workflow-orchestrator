@@ -964,6 +964,7 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
     text-align: center;
 }
 .mermaid-wrapper svg { max-width: 100%; height: auto; }
+/* Mermaid — entrance animations */
 .mermaid-wrapper.animated .node,
 .mermaid-wrapper.animated .label,
 .mermaid-wrapper.animated .cluster {
@@ -1003,6 +1004,85 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
 @keyframes mermaidEdgeDraw {
     100% { stroke-dashoffset: 0; }
 }
+/* Mermaid — persistent subtle flowing edges (after entrance completes) */
+.mermaid-wrapper.flow-active .edgePath path,
+.mermaid-wrapper.flow-active .flowchart-link {
+    stroke-dasharray: 6 10;
+    stroke-dashoffset: 0;
+    animation: mermaidFlowDash 1.2s linear infinite;
+}
+@keyframes mermaidFlowDash {
+    to { stroke-dashoffset: -16; }
+}
+
+/* ── Animated Flow Diagrams (dagre layout + SVG) ── */
+.flow-diagram-wrapper {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 10px 0;
+    overflow-x: auto;
+    text-align: center;
+    position: relative;
+}
+.flow-diagram-wrapper .flow-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 12px;
+    text-align: left;
+}
+.flow-diagram-wrapper svg { max-width: 100%; }
+/* Node entrance */
+.flow-diagram-wrapper .flow-node {
+    opacity: 0;
+    animation: flowNodeIn 0.45s ease-out forwards;
+}
+@keyframes flowNodeIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.9); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Edge path draw */
+.flow-diagram-wrapper .flow-edge-path {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: flowEdgeDraw 0.6s ease-out forwards;
+}
+@keyframes flowEdgeDraw {
+    to { stroke-dashoffset: 0; }
+}
+/* Persistent flowing particles along edges */
+.flow-diagram-wrapper .flow-particle {
+    opacity: 0.85;
+}
+/* Edge labels */
+.flow-diagram-wrapper .flow-edge-label {
+    opacity: 0;
+    animation: flowNodeIn 0.3s ease-out forwards;
+}
+/* Node hover effect */
+.flow-diagram-wrapper .flow-node-bg:hover {
+    filter: brightness(1.2);
+    cursor: default;
+}
+/* Node type colors */
+.flow-node-start .flow-node-bg { fill: #1E3A5F; stroke: #3B82F6; }
+.flow-node-start .flow-node-label { fill: #93C5FD; }
+.flow-node-end .flow-node-bg { fill: #14532D; stroke: #22C55E; }
+.flow-node-end .flow-node-label { fill: #86EFAC; }
+.flow-node-process .flow-node-bg { fill: #1E293B; stroke: #64748B; }
+.flow-node-process .flow-node-label { fill: #CBD5E1; }
+.flow-node-decision .flow-node-bg { fill: #451A03; stroke: #F59E0B; }
+.flow-node-decision .flow-node-label { fill: #FDE68A; }
+.flow-node-success .flow-node-bg { fill: #14532D; stroke: #22C55E; }
+.flow-node-success .flow-node-label { fill: #86EFAC; }
+.flow-node-error .flow-node-bg { fill: #450A0A; stroke: #EF4444; }
+.flow-node-error .flow-node-label { fill: #FCA5A5; }
+.flow-node-io .flow-node-bg { fill: #083344; stroke: #06B6D4; }
+.flow-node-io .flow-node-label { fill: #67E8F9; }
+.flow-node-database .flow-node-bg { fill: #1A1033; stroke: #8B5CF6; }
+.flow-node-database .flow-node-label { fill: #C4B5FD; }
 .mermaid-loading {
     color: var(--fg-muted);
     font-size: 12px;
@@ -1693,8 +1773,12 @@ function renderMermaidBlock(code) {
             try {
                 mermaid.render('mermaid-svg-' + _mermaidCounter, code).then(function(result) {
                     el.innerHTML = result.svg;
-                    // Trigger staggered entrance animation
-                    requestAnimationFrame(function() { el.classList.add('animated'); });
+                    // Trigger staggered entrance animation, then persistent flow
+                    requestAnimationFrame(function() {
+                        el.classList.add('animated');
+                        // After entrance animations finish, add subtle flowing edges
+                        setTimeout(function() { el.classList.add('flow-active'); }, 1200);
+                    });
                 }).catch(function(err) {
                     el.innerHTML = '<div class="mermaid-loading" style="color:var(--error);">Diagram error: ' + esc(err.message || String(err)) + '</div>' +
                         '<pre class="code-block"><code>' + esc(code) + '</code></pre>';
@@ -1846,6 +1930,215 @@ function appendChart(configJson) {
     scrollToBottom();
 }
 
+/* ── Animated Flow Diagrams (dagre layout + SVG data flow) ── */
+var _dagreLoaded = false;
+var _dagrePending = [];
+
+function loadDagre(callback) {
+    if (_dagreLoaded && typeof dagre !== 'undefined') { callback(); return; }
+    _dagrePending.push(callback);
+    if (_dagrePending.length > 1) return; // already loading
+    var s = document.createElement('script');
+    s.src = 'lib/dagre.min.js';
+    s.onload = function() {
+        _dagreLoaded = true;
+        _dagrePending.forEach(function(cb) { try { cb(); } catch(_){} });
+        _dagrePending = [];
+    };
+    s.onerror = function() { _dagrePending.forEach(function(cb) { try { cb(); } catch(_){} }); _dagrePending = []; };
+    document.head.appendChild(s);
+}
+
+var _flowCounter = 0;
+
+function renderFlowDiagram(jsonStr) {
+    var flowId = 'flow-' + (++_flowCounter);
+    var html = '<div class="flow-diagram-wrapper" id="' + flowId + '"><div class="mermaid-loading">Laying out diagram...</div></div>';
+
+    setTimeout(function() {
+        loadDagre(function() {
+            var el = document.getElementById(flowId);
+            if (!el || typeof dagre === 'undefined') return;
+            try {
+                var spec = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                el.innerHTML = _buildFlowSvg(spec, flowId);
+            } catch (err) {
+                el.innerHTML = '<div class="mermaid-loading" style="color:var(--error);">Flow diagram error: ' + esc(err.message) + '</div>' +
+                    '<pre class="code-block"><code>' + esc(typeof jsonStr === 'string' ? jsonStr : JSON.stringify(jsonStr, null, 2)) + '</code></pre>';
+            }
+        });
+    }, 0);
+
+    return html;
+}
+
+function _buildFlowSvg(spec, flowId) {
+    var g = new dagre.graphlib.Graph();
+    g.setGraph({
+        rankdir: spec.direction === 'LR' ? 'LR' : 'TB',
+        nodesep: 40,
+        ranksep: 50,
+        marginx: 20,
+        marginy: 20
+    });
+    g.setDefaultEdgeLabel(function() { return {}; });
+
+    var nodes = spec.nodes || [];
+    var edges = spec.edges || [];
+    var nodeTypes = {};
+
+    // Add nodes with measured dimensions
+    nodes.forEach(function(n) {
+        var w = Math.max(120, n.label.length * 9 + 40);
+        var h = n.type === 'decision' ? 50 : 40;
+        g.setNode(n.id, { label: n.label, width: w, height: h });
+        nodeTypes[n.id] = n.type || 'process';
+    });
+
+    // Add edges
+    edges.forEach(function(e) {
+        g.setEdge(e.from, e.to, { label: e.label || '' });
+    });
+
+    // Compute layout
+    dagre.layout(g);
+
+    var graphInfo = g.graph();
+    var svgW = graphInfo.width + 40;
+    var svgH = graphInfo.height + 40;
+
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + svgW + ' ' + svgH + '" width="' + svgW + '" height="' + svgH + '">';
+
+    // Defs — arrowhead marker + glow filter
+    svg += '<defs>';
+    svg += '<marker id="arrow-' + flowId + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">';
+    svg += '<path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg-muted,#6B7280)"/>';
+    svg += '</marker>';
+    svg += '<filter id="glow-' + flowId + '"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+    svg += '</defs>';
+
+    // Render edges first (behind nodes)
+    var edgeIdx = 0;
+    g.edges().forEach(function(e) {
+        var edge = g.edge(e);
+        var points = edge.points || [];
+        if (points.length < 2) return;
+
+        // Build smooth bezier path from dagre points
+        var pathD = 'M ' + points[0].x + ' ' + points[0].y;
+        if (points.length === 2) {
+            pathD += ' L ' + points[1].x + ' ' + points[1].y;
+        } else {
+            // Use smooth curve through all points
+            for (var i = 1; i < points.length - 1; i++) {
+                var cx = (points[i].x + points[i+1].x) / 2;
+                var cy = (points[i].y + points[i+1].y) / 2;
+                pathD += ' Q ' + points[i].x + ' ' + points[i].y + ' ' + cx + ' ' + cy;
+            }
+            var last = points[points.length - 1];
+            pathD += ' L ' + last.x + ' ' + last.y;
+        }
+
+        var pathId = flowId + '-edge-' + edgeIdx;
+        var drawDelay = (0.3 + edgeIdx * 0.12).toFixed(2);
+        var particleDelay = (0.8 + edgeIdx * 0.15).toFixed(2);
+
+        // Edge path with draw animation
+        svg += '<path id="' + pathId + '" class="flow-edge-path" d="' + pathD + '" ' +
+            'fill="none" stroke="var(--fg-muted,#6B7280)" stroke-width="1.5" ' +
+            'marker-end="url(#arrow-' + flowId + ')" ' +
+            'style="animation-delay:' + drawDelay + 's"/>';
+
+        // Flowing dot particles along the edge
+        svg += '<circle class="flow-particle" r="3" fill="var(--link,#60A5FA)" filter="url(#glow-' + flowId + ')">';
+        svg += '<animateMotion dur="2s" repeatCount="indefinite" begin="' + particleDelay + 's">';
+        svg += '<mpath href="#' + pathId + '"/>';
+        svg += '</animateMotion>';
+        svg += '<animate attributeName="opacity" values="0;0.9;0.9;0" dur="2s" repeatCount="indefinite" begin="' + particleDelay + 's"/>';
+        svg += '</circle>';
+
+        // Second staggered particle for denser flow
+        var particle2Delay = (parseFloat(particleDelay) + 1).toFixed(2);
+        svg += '<circle class="flow-particle" r="2.5" fill="var(--link,#60A5FA)" opacity="0.5" filter="url(#glow-' + flowId + ')">';
+        svg += '<animateMotion dur="2s" repeatCount="indefinite" begin="' + particle2Delay + 's">';
+        svg += '<mpath href="#' + pathId + '"/>';
+        svg += '</animateMotion>';
+        svg += '<animate attributeName="opacity" values="0;0.6;0.6;0" dur="2s" repeatCount="indefinite" begin="' + particle2Delay + 's"/>';
+        svg += '</circle>';
+
+        // Edge label
+        if (edge.label) {
+            var mx = edge.x || (points[0].x + points[points.length-1].x) / 2;
+            var my = edge.y || (points[0].y + points[points.length-1].y) / 2;
+            var labelDelay = (parseFloat(drawDelay) + 0.3).toFixed(2);
+            svg += '<g class="flow-edge-label" style="animation-delay:' + labelDelay + 's">';
+            svg += '<rect x="' + (mx - edge.label.length * 3.5 - 6) + '" y="' + (my - 9) + '" ' +
+                'width="' + (edge.label.length * 7 + 12) + '" height="18" rx="4" ' +
+                'fill="var(--code-bg,#1E1E2E)" stroke="var(--border,#3F3F46)" stroke-width="0.5"/>';
+            svg += '<text x="' + mx + '" y="' + (my + 4) + '" text-anchor="middle" ' +
+                'font-size="10" font-family="var(--font-body)" fill="var(--fg-muted,#6B7280)">' +
+                _svgEsc(edge.label) + '</text>';
+            svg += '</g>';
+        }
+
+        edgeIdx++;
+    });
+
+    // Render nodes
+    var nodeIdx = 0;
+    g.nodes().forEach(function(nId) {
+        var node = g.node(nId);
+        var type = nodeTypes[nId] || 'process';
+        var delay = (0.05 + nodeIdx * 0.1).toFixed(2);
+        var x = node.x, y = node.y, w = node.width, h = node.height;
+
+        svg += '<g class="flow-node flow-node-' + type + '" style="animation-delay:' + delay + 's">';
+
+        if (type === 'decision') {
+            // Diamond shape
+            var dx = w / 2, dy = h / 2;
+            svg += '<polygon class="flow-node-bg" points="' +
+                x + ',' + (y - dy) + ' ' + (x + dx) + ',' + y + ' ' +
+                x + ',' + (y + dy) + ' ' + (x - dx) + ',' + y + '" ' +
+                'stroke-width="1.5" fill-opacity="0.6"/>';
+        } else if (type === 'database') {
+            // Cylinder shape
+            svg += '<ellipse class="flow-node-bg" cx="' + x + '" cy="' + (y - h/2 + 6) + '" rx="' + (w/2) + '" ry="6" stroke-width="1.5" fill-opacity="0.6"/>';
+            svg += '<rect class="flow-node-bg" x="' + (x - w/2) + '" y="' + (y - h/2 + 6) + '" width="' + w + '" height="' + (h - 12) + '" stroke-width="0" fill-opacity="0.6"/>';
+            svg += '<line x1="' + (x - w/2) + '" y1="' + (y - h/2 + 6) + '" x2="' + (x - w/2) + '" y2="' + (y + h/2 - 6) + '" stroke="var(--border)" stroke-width="1.5"/>';
+            svg += '<line x1="' + (x + w/2) + '" y1="' + (y - h/2 + 6) + '" x2="' + (x + w/2) + '" y2="' + (y + h/2 - 6) + '" stroke="var(--border)" stroke-width="1.5"/>';
+            svg += '<ellipse class="flow-node-bg" cx="' + x + '" cy="' + (y + h/2 - 6) + '" rx="' + (w/2) + '" ry="6" stroke-width="1.5" fill-opacity="0.6"/>';
+        } else {
+            // Rounded rectangle (default)
+            var rx = type === 'start' || type === 'end' ? 20 : 8;
+            svg += '<rect class="flow-node-bg" x="' + (x - w/2) + '" y="' + (y - h/2) + '" ' +
+                'width="' + w + '" height="' + h + '" rx="' + rx + '" ' +
+                'stroke-width="1.5" fill-opacity="0.6"/>';
+        }
+
+        // Node label
+        svg += '<text class="flow-node-label" x="' + x + '" y="' + (y + 4) + '" ' +
+            'text-anchor="middle" font-size="12" font-family="var(--font-body)" font-weight="500">' +
+            _svgEsc(node.label) + '</text>';
+
+        svg += '</g>';
+        nodeIdx++;
+    });
+
+    // Title
+    var titleHtml = '';
+    if (spec.title) {
+        titleHtml = '<div class="flow-title">' + esc(spec.title) + '</div>';
+    }
+
+    svg += '</svg>';
+    return titleHtml + svg;
+}
+
+function _svgEsc(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /* ── Interactive HTML Visualizations (sandboxed iframe) ── */
 var _vizCounter = 0;
 
@@ -1994,6 +2287,8 @@ function renderDiff2Html(diffText) {
     if (lang === 'chart' || lang === 'chartjs') { return renderChart(code); }
     // Diffs
     if (lang === 'diff' || lang === 'patch') { return renderDiff2Html(code); }
+    // Animated flow diagrams (dagre layout + SVG particles)
+    if (lang === 'flow') { return renderFlowDiagram(code); }
     // Interactive HTML visualizations (rendered in sandboxed iframe)
     if (lang === 'visualization' || lang === 'viz') { return renderInteractiveHtml(code); }
 
@@ -2399,7 +2694,7 @@ var _streamRawText = '';
 var _renderDebounce = null;
 
 // Rich block types that should show skeleton placeholders during streaming
-var _richBlockLangs = ['mermaid', 'chart', 'chartjs', 'math', 'latex', 'visualization', 'viz'];
+var _richBlockLangs = ['mermaid', 'chart', 'chartjs', 'math', 'latex', 'visualization', 'viz', 'flow'];
 
 /**
  * Detects if the streamed text has an open (unclosed) rich code block.
@@ -2451,7 +2746,8 @@ function _renderStreamingMarkdown(rawText) {
     'math': 'Rendering equation…',
     'latex': 'Rendering equation…',
     'visualization': 'Building visualization…',
-    'viz': 'Building visualization…'
+    'viz': 'Building visualization…',
+    'flow': 'Building flow diagram…'
   };
   var label = labelMap[openBlock.lang] || 'Generating visualization…';
   var iconMap = {
@@ -2461,7 +2757,8 @@ function _renderStreamingMarkdown(rawText) {
     'math': '∑',
     'latex': '∑',
     'visualization': '◉',
-    'viz': '◉'
+    'viz': '◉',
+    'flow': '◈'
   };
   var icon = iconMap[openBlock.lang] || '◈';
 

@@ -296,28 +296,55 @@ class PromptAssembler(
 
         val RENDERING_RULES = """
             <rendering>
-            Your responses are rendered in a rich UI that supports interactive visualizations.
-            Use these formats when they genuinely improve understanding — not for decoration.
+            Your responses are rendered in a rich UI that supports animated, interactive visualizations.
+            All diagrams and charts are animated — never produce static visuals. Use these formats
+            when they genuinely improve understanding.
 
             SUPPORTED FORMATS:
 
-            1. Mermaid Diagrams — use ```mermaid code blocks for:
-               - Architecture/flow explanations, dependency graphs, state machines, sequence diagrams
-               - Supported types: flowchart, sequence, classDiagram, erDiagram, gantt, gitGraph, stateDiagram
-               - Syntax rules: do NOT use quotation marks in node labels, avoid parentheses in labels, use <br/> for line breaks
+            1. Animated Flow Diagrams (PREFERRED for flows/pipelines/architecture) — use ```flow code blocks:
+               - Data flows, request pipelines, authentication flows, CI/CD pipelines, architecture
+               - Output a JSON object with nodes, edges, and optional title/direction
+               - The renderer auto-layouts with dagre and adds animated flowing particles along edges
+               - Nodes appear with staggered entrance animation, edges draw themselves, then
+                 glowing dots continuously flow along the paths showing data movement
+
+               Node types: start, end, process, decision, success, error, io, database
+               Direction: "TB" (top-to-bottom, default) or "LR" (left-to-right)
 
                Example:
-               ```mermaid
-               flowchart TD
-                 A[Read File] --> B{Has Errors?}
-                 B -- Yes --> C[Fix Errors]
-                 B -- No --> D[Done]
+               ```flow
+               {
+                 "title": "Authentication Flow",
+                 "direction": "TB",
+                 "nodes": [
+                   {"id": "1", "label": "HTTP Request", "type": "start"},
+                   {"id": "2", "label": "Parse Headers", "type": "process"},
+                   {"id": "3", "label": "Valid Token?", "type": "decision"},
+                   {"id": "4", "label": "Load User", "type": "database"},
+                   {"id": "5", "label": "Return 200", "type": "success"},
+                   {"id": "6", "label": "Return 401", "type": "error"}
+                 ],
+                 "edges": [
+                   {"from": "1", "to": "2", "label": "JWT"},
+                   {"from": "2", "to": "3"},
+                   {"from": "3", "to": "4", "label": "yes"},
+                   {"from": "3", "to": "6", "label": "no"},
+                   {"from": "4", "to": "5"}
+                 ]
+               }
                ```
 
-            2. Interactive Charts — use ```chart code blocks with Chart.js JSON config for:
+            2. Mermaid Diagrams — use ```mermaid code blocks for:
+               - Class diagrams, ER diagrams, Gantt charts, git graphs, state diagrams
+               - These render with animated node entrance + flowing edges automatically
+               - Syntax rules: no quotation marks in labels, no parentheses, use <br/> for breaks
+               - Prefer ```flow over ```mermaid for flowcharts and sequence-like diagrams
+
+            3. Interactive Charts — use ```chart code blocks with Chart.js JSON config for:
                - Numeric comparisons, trends, distributions, metrics breakdowns
+               - Charts animate automatically with staggered bar/point entrance
                - Supported types: bar, line, pie, doughnut, radar, polarArea
-               - Output must be valid JSON matching Chart.js configuration schema
 
                Example:
                ```chart
@@ -335,26 +362,28 @@ class PromptAssembler(
                }
                ```
 
-            3. LaTeX Math — use ${'$'}...${'$'} for inline math and ${'$'}${'$'}...${'$'}${'$'} for block equations when:
-               - Explaining algorithms with mathematical notation
-               - Showing complexity analysis (e.g., ${'$'}O(n \log n)${'$'})
-               - Expressing formulas or equations
+            4. Custom Visualizations — use ```visualization code blocks for:
+               - Fully custom animated HTML/CSS/JS rendered in sandboxed iframe
+               - Use when no other format fits (custom layouts, interactive elements)
+               - Theme CSS variables available: --bg, --fg, --accent, --border
+               - Keep self-contained, no external dependencies
 
-            4. Diff Display — use ```diff code blocks for:
-               - Showing proposed changes before applying them
-               - Explaining what changed between versions
-               - Lines starting with + are additions, - are deletions
+            5. LaTeX Math — use ${'$'}...${'$'} for inline, ${'$'}${'$'}...${'$'}${'$'} for block equations
+
+            6. Diff Display — use ```diff code blocks for before/after comparisons
 
             WHEN TO USE EACH:
-            - Explaining architecture, flow, or relationships → mermaid diagram
-            - Presenting numeric data, metrics, or comparisons with 3+ items → chart
-            - Showing code changes or before/after → diff block
-            - Mathematical formulas or complexity → LaTeX
-            - Simple lists or short explanations → plain markdown (don't over-visualize)
+            - Data flows, pipelines, request paths, architecture → ```flow (animated particles)
+            - Class/ER/state/Gantt diagrams → ```mermaid (animated entrance + flowing edges)
+            - Numeric data, metrics, comparisons → ```chart (animated bars/lines)
+            - Fully custom interactive content → ```visualization
+            - Math notation → LaTeX
+            - Code changes → diff
+            - Simple explanations → plain markdown (don't over-visualize)
 
             WHEN NOT TO USE:
             - Don't create a chart for 1-2 data points — use text
-            - Don't create a mermaid diagram for a single linear step — use a list
+            - Don't create a flow diagram for a single step — use a list
             - Don't use these formats inside tool call arguments
             - Don't force visualizations when the user asked a yes/no question
             </rendering>
@@ -371,6 +400,10 @@ class PromptAssembler(
             - Report what you changed and verify it works before declaring the task complete.
             - If you call the same tool 3 times with the same arguments, try a different approach.
             - If a tool call returns an error, address the error before continuing with other actions.
+            - After completing a task, suggest 1-3 concrete, contextual next steps the user might want to take.
+              These should be specific to what was just done (e.g., "Run tests for the changed module",
+              "Check SonarQube for new issues", "Create a PR for these changes"). Never use generic
+              filler like "Let me know if you need help." Make the suggestions actionable and relevant.
             </rules>
         """.trimIndent()
     }
