@@ -1,6 +1,13 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.invokeAndWaitIfNeeded
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
@@ -8,16 +15,18 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 
 class EditFileTool : AgentTool {
     override val name = "edit_file"
-    override val description = "Perform an exact string replacement in a file. The old_string must match exactly once in the file."
+    override val description = "Perform an exact string replacement in a file. The old_string must match exactly once unless replace_all is true."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path"),
             "old_string" to ParameterProperty(type = "string", description = "The exact text to find and replace. Must be unique in the file."),
-            "new_string" to ParameterProperty(type = "string", description = "The replacement text.")
+            "new_string" to ParameterProperty(type = "string", description = "The replacement text."),
+            "replace_all" to ParameterProperty(type = "boolean", description = "Replace all occurrences of old_string instead of requiring a unique match. Default: false.")
         ),
         required = listOf("path", "old_string", "new_string")
     )
@@ -30,16 +39,23 @@ class EditFileTool : AgentTool {
             ?: return ToolResult("Error: 'old_string' parameter required", "Error: missing old_string", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val newString = params["new_string"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'new_string' parameter required", "Error: missing new_string", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        val replaceAll = params["replace_all"]?.jsonPrimitive?.boolean ?: false
 
         val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
         if (pathError != null) return pathError
+        val resolvedPath = path!!
 
-        val file = java.io.File(path!!)
-        if (!file.exists() || !file.isFile) {
-            return ToolResult("Error: File not found: $path", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        // Try VFS-backed path first (undo support, sees unsaved changes), fall back to java.io.File
+        val vFile = findVirtualFile(resolvedPath)
+        val file = java.io.File(resolvedPath)
+
+        if (vFile == null && (!file.exists() || !file.isFile)) {
+            return ToolResult("Error: File not found: $resolvedPath", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        val content = file.readText(Charsets.UTF_8)
+        // Read content: prefer Document (sees unsaved editor changes), then VFS, then java.io.File
+        val content = readFileContent(vFile, file)
+
         val occurrences = countOccurrences(content, oldString)
 
         if (occurrences == 0) {
@@ -51,54 +67,169 @@ class EditFileTool : AgentTool {
             )
         }
 
-        if (occurrences > 1) {
+        if (occurrences > 1 && !replaceAll) {
             return ToolResult(
-                "Error: old_string found $occurrences times in $rawPath. Provide a larger, unique string with more context.",
+                "Error: old_string found $occurrences times in $rawPath. Provide a larger, unique string with more context or use replace_all=true.",
                 "Error: old_string not unique ($occurrences occurrences)",
                 5,
                 isError = true
             )
         }
 
-        // Apply the edit
-        // NOTE: Approval is handled by ApprovalGate in SingleAgentSession BEFORE
-        // this tool executes. No need for tool-level approval check.
-        val newContent = content.replace(oldString, newString)
+        // Compute new content for syntax validation and fallback writes
+        val newContent = if (replaceAll) content.replace(oldString, newString)
+        else content.replaceFirst(oldString, newString)
 
-        // Syntax validation gate: reject edits that introduce syntax errors
-        val extension = path.substringAfterLast('.', "").lowercase()
+        // Syntax validation gate: warn about syntax errors but don't block
+        val extension = resolvedPath.substringAfterLast('.', "").lowercase()
+        var syntaxWarning: String? = null
         if (extension in setOf("kt", "java")) {
             try {
-                val errors = SyntaxValidator.validate(project, path, newContent)
+                val errors = SyntaxValidator.validate(project, resolvedPath, newContent)
                 if (errors.isNotEmpty()) {
-                    // WARN: apply the edit but warn about syntax errors
-                    // Multi-step refactors require intermediate invalid states
                     val errorDetails = errors.joinToString("\n") { "  Line ${it.line}:${it.column}: ${it.message}" }
-                    // Still write the file (don't block)
-                    file.writeText(newContent, Charsets.UTF_8)
-                    val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath"
-                    return ToolResult(
-                        content = "$summary\nWARNING: This edit introduced ${errors.size} syntax error(s). You should fix these:\n$errorDetails",
-                        summary = "$summary (${errors.size} syntax warnings)",
-                        tokenEstimate = TokenEstimator.estimate(summary + errorDetails),
-                        artifacts = listOf(path),
-                        isError = false // NOT an error — edit was applied
-                    )
+                    syntaxWarning = "WARNING: This edit introduced ${errors.size} syntax error(s). You should fix these:\n$errorDetails"
                 }
             } catch (_: Exception) {
                 // Syntax validation unavailable (e.g., no PSI in test) — proceed without gate
             }
         }
 
-        file.writeText(newContent, Charsets.UTF_8)
+        // Apply the edit: try Document API (undo-aware), then VFS, then direct file I/O
+        val written = writeViaDocument(vFile, project, rawPath, oldString, newString, replaceAll)
+            || writeViaVfs(vFile, project, newContent)
+            || writeViaFileIo(file, newContent)
 
-        val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath"
+        if (!written) {
+            return ToolResult(
+                "Error: Failed to write to $rawPath",
+                "Error: write failed",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        val occurrenceSuffix = if (replaceAll && occurrences > 1) " ($occurrences occurrences)" else ""
+        val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath$occurrenceSuffix"
+
+        if (syntaxWarning != null) {
+            return ToolResult(
+                content = "$summary\n$syntaxWarning",
+                summary = "$summary (${syntaxWarning.count { it == '\n' }} syntax warnings)",
+                tokenEstimate = TokenEstimator.estimate(summary + syntaxWarning),
+                artifacts = listOf(resolvedPath),
+                isError = false // NOT an error — edit was applied
+            )
+        }
+
         return ToolResult(
             content = summary,
             summary = summary,
             tokenEstimate = TokenEstimator.estimate(summary),
-            artifacts = listOf(path)
+            artifacts = listOf(resolvedPath)
         )
+    }
+
+    /**
+     * Find VirtualFile via LocalFileSystem. Returns null if VFS is unavailable (e.g., unit tests).
+     */
+    private fun findVirtualFile(resolvedPath: String): VirtualFile? {
+        return try {
+            if (ApplicationManager.getApplication() == null) return null
+            LocalFileSystem.getInstance().findFileByPath(resolvedPath)
+                ?: LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Read file content. Prefers Document (sees unsaved editor changes), then VFS, then java.io.File.
+     */
+    private suspend fun readFileContent(vFile: VirtualFile?, file: java.io.File): String {
+        if (vFile != null) {
+            try {
+                return readAction {
+                    val document = FileDocumentManager.getInstance().getDocument(vFile)
+                    document?.text ?: String(vFile.contentsToByteArray(), vFile.charset)
+                }
+            } catch (_: Exception) {
+                // readAction unavailable — fall through to java.io.File
+            }
+        }
+        return file.readText(Charsets.UTF_8)
+    }
+
+    /**
+     * Write via Document API + WriteCommandAction. Provides undo support and immediate editor sync.
+     * Returns true if write succeeded via Document.
+     */
+    private fun writeViaDocument(
+        vFile: VirtualFile?,
+        project: Project,
+        rawPath: String,
+        oldString: String,
+        newString: String,
+        replaceAll: Boolean
+    ): Boolean {
+        if (vFile == null) return false
+        return try {
+            var success = false
+            invokeAndWaitIfNeeded {
+                WriteCommandAction.runWriteCommandAction(project, "Agent: edit $rawPath", null, Runnable {
+                    val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@Runnable
+                    if (replaceAll) {
+                        // Replace all occurrences from end to preserve offsets
+                        var text = document.text
+                        var offset = text.lastIndexOf(oldString)
+                        while (offset >= 0) {
+                            document.replaceString(offset, offset + oldString.length, newString)
+                            text = document.text
+                            offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1
+                        }
+                    } else {
+                        val offset = document.text.indexOf(oldString)
+                        if (offset >= 0) {
+                            document.replaceString(offset, offset + oldString.length, newString)
+                        }
+                    }
+                    success = true
+                })
+            }
+            success
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Write via VFS setBinaryContent inside WriteCommandAction.
+     * Used when Document is null (file not open in editor).
+     */
+    private fun writeViaVfs(vFile: VirtualFile?, project: Project, newContent: String): Boolean {
+        if (vFile == null) return false
+        return try {
+            invokeAndWaitIfNeeded {
+                WriteCommandAction.runWriteCommandAction(project) {
+                    vFile.setBinaryContent(newContent.toByteArray(vFile.charset))
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Final fallback: direct java.io.File write. Used in test environments without full IDE.
+     */
+    private fun writeViaFileIo(file: java.io.File, newContent: String): Boolean {
+        return try {
+            file.writeText(newContent, Charsets.UTF_8)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun countOccurrences(text: String, search: String): Int {

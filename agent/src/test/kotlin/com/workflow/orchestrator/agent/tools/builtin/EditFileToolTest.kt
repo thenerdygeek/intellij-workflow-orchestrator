@@ -79,6 +79,46 @@ class EditFileToolTest {
     }
 
     @Test
+    fun `execute replaces all occurrences when replace_all is true`() = runTest {
+        val tmpFile = File(tempDir.toFile(), "test.txt").apply {
+            writeText("val a = 1\nval b = 1\nval c = 1")
+        }
+        val tool = EditFileTool()
+        val params = buildJsonObject {
+            put("path", tmpFile.absolutePath)
+            put("old_string", "val")
+            put("new_string", "var")
+            put("replace_all", true)
+        }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError, "Error: ${result.content}")
+        val newContent = tmpFile.readText()
+        assertEquals("var a = 1\nvar b = 1\nvar c = 1", newContent)
+        assertTrue(result.content.contains("3 occurrences"))
+    }
+
+    @Test
+    fun `execute with replace_all false still requires unique match`() = runTest {
+        val tmpFile = File(tempDir.toFile(), "test.txt").apply {
+            writeText("foo bar foo")
+        }
+        val tool = EditFileTool()
+        val params = buildJsonObject {
+            put("path", tmpFile.absolutePath)
+            put("old_string", "foo")
+            put("new_string", "baz")
+            put("replace_all", false)
+        }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("2 times"))
+    }
+
+    @Test
     fun `execute returns error for missing file`() = runTest {
         val tool = EditFileTool()
         val params = buildJsonObject {
