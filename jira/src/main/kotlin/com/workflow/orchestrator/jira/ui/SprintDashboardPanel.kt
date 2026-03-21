@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
@@ -56,7 +57,7 @@ class SprintDashboardPanel(
     private val sprintService: SprintService,
     private val activeTicketService: ActiveTicketService,
     private val branchingService: BranchingService
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(SprintDashboardPanel::class.java)
 
@@ -743,6 +744,10 @@ class SprintDashboardPanel(
     // ---------------------------------------------------------------
     // Constants
     // ---------------------------------------------------------------
+
+    override fun dispose() {
+        scope.cancel()
+    }
 
     companion object {
         private val PROGRESS_BG = JBColor(0xE8EAED, 0x3D4043)

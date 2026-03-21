@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.healthcheck
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
@@ -10,7 +11,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.filterIsInstance
 
 @Service(Service.Level.PROJECT)
-class HealthCheckService(private val project: Project) {
+class HealthCheckService(private val project: Project) : Disposable {
 
     private val sonarGateCheck = SonarGateCheck()
 
@@ -121,6 +122,10 @@ class HealthCheckService(private val project: Project) {
         )
 
         return HealthCheckResult(passed, results, durationMs = durationMs)
+    }
+
+    override fun dispose() {
+        scope.cancel()
     }
 
     companion object {
