@@ -32,14 +32,30 @@ data class WorkerResult(
  *   if no tool_calls, return final response.
  *
  * Max iterations: 10 to prevent infinite loops.
+ *
+ * Supports optional transcript recording for resume capability.
+ * Pass a [transcriptStore] and [agentId] to persist all messages to JSONL.
  */
 class WorkerSession(
     private val maxIterations: Int = 10,
-    private val parentJob: kotlinx.coroutines.Job? = null
+    private val parentJob: kotlinx.coroutines.Job? = null,
+    private val transcriptStore: WorkerTranscriptStore? = null,
+    val agentId: String = WorkerTranscriptStore.generateAgentId()
 ) {
     companion object {
         private val LOG = Logger.getInstance(WorkerSession::class.java)
         private val json = Json { ignoreUnknownKeys = true }
+    }
+
+    /**
+     * Record a message to the transcript store if available.
+     */
+    private fun recordMessage(role: String, content: String?, toolCallId: String? = null) {
+        transcriptStore?.appendMessage(agentId, WorkerTranscriptStore.TranscriptMessage(
+            role = role,
+            content = content,
+            toolCallId = toolCallId
+        ))
     }
 
     /**
@@ -69,8 +85,39 @@ class WorkerSession(
 
         // Initialize context with system prompt and task
         contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
-        contextManager.addMessage(ChatMessage(role = "user", content = task))
+        recordMessage("system", systemPrompt)
 
+        contextManager.addMessage(ChatMessage(role = "user", content = task))
+        recordMessage("user", task)
+
+        return runReactLoop(tools, toolDefinitions, brain, contextManager, project)
+    }
+
+    /**
+     * Execute the ReAct loop from an already-populated ContextManager.
+     * Used for resume — the context already contains the previous conversation.
+     */
+    suspend fun executeFromContext(
+        tools: Map<String, AgentTool>,
+        toolDefinitions: List<ToolDefinition>,
+        brain: LlmBrain,
+        contextManager: ContextManager,
+        project: Project
+    ): WorkerResult {
+        LOG.info("WorkerSession: resuming agent $agentId from existing context")
+        return runReactLoop(tools, toolDefinitions, brain, contextManager, project)
+    }
+
+    /**
+     * Core ReAct loop shared by [execute] and [executeFromContext].
+     */
+    private suspend fun runReactLoop(
+        tools: Map<String, AgentTool>,
+        toolDefinitions: List<ToolDefinition>,
+        brain: LlmBrain,
+        contextManager: ContextManager,
+        project: Project
+    ): WorkerResult {
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
 
@@ -107,6 +154,7 @@ class WorkerSession(
 
                     // Add assistant message to context
                     contextManager.addAssistantMessage(message)
+                    recordMessage("assistant", message.content)
 
                     if (toolCalls.isNullOrEmpty()) {
                         // No tool calls — final response
@@ -142,11 +190,13 @@ class WorkerSession(
 
                         if (tool == null) {
                             val availableTools = tools.keys.joinToString(", ")
+                            val errorContent = "Error: Tool '$toolName' is not available. Available tools: $availableTools. Please use one of these."
                             contextManager.addToolResult(
                                 toolCallId = toolCall.id,
-                                content = "Error: Tool '$toolName' is not available. Available tools: $availableTools. Please use one of these.",
+                                content = errorContent,
                                 summary = "Tool not found: $toolName"
                             )
+                            recordMessage("tool", errorContent, toolCallId = toolCall.id)
                             continue
                         }
 
@@ -159,15 +209,18 @@ class WorkerSession(
                                 content = toolResult.content,
                                 summary = toolResult.summary
                             )
+                            recordMessage("tool", toolResult.content, toolCallId = toolCall.id)
 
                             allArtifacts.addAll(toolResult.artifacts)
                         } catch (e: Exception) {
                             LOG.warn("WorkerSession: tool '$toolName' failed", e)
+                            val errorContent = "Error executing tool '$toolName': ${e.message}"
                             contextManager.addToolResult(
                                 toolCallId = toolCall.id,
-                                content = "Error executing tool '$toolName': ${e.message}",
+                                content = errorContent,
                                 summary = "Tool error: $toolName"
                             )
+                            recordMessage("tool", errorContent, toolCallId = toolCall.id)
                         }
                     }
                 }

@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.ContextManager
@@ -11,8 +12,9 @@ import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.text.NumberFormat
@@ -21,8 +23,10 @@ import java.util.Locale
 /**
  * Spawns a subagent to handle a task autonomously, matching Claude Code's Agent tool design.
  *
- * Only two required parameters: description and prompt. The subagent_type defaults to
- * general-purpose if omitted, or can reference a built-in type or custom agent definition.
+ * Supports three lifecycle operations beyond basic spawn:
+ * - **Resume:** Reload a previous agent's transcript and continue execution
+ * - **Background:** Launch an agent in a detached coroutine, return immediately
+ * - **Kill:** Cancel a running background agent via its agentId
  *
  * Only available to ORCHESTRATOR-level sessions (the main agent).
  * Workers cannot spawn further agents, preventing nested delegation.
@@ -65,7 +69,11 @@ class SpawnAgentTool : AgentTool {
             "- reviewer: Code review and analysis (read-only)\n" +
             "- tooler: Integration tools (Jira, Bamboo, SonarQube, Bitbucket)\n" +
             "Or specify any custom agent defined in .workflow/agents/\n\n" +
-            "If subagent_type is omitted, defaults to general-purpose."
+            "If subagent_type is omitted, defaults to general-purpose.\n\n" +
+            "Lifecycle:\n" +
+            "- Resume: agent(resume='agentId', prompt='continue with...') — continues a previous agent\n" +
+            "- Background: agent(run_in_background=true, ...) — returns immediately, notifies on completion\n" +
+            "- Kill: agent(kill='agentId') — cancels a running background agent"
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -85,6 +93,18 @@ class SpawnAgentTool : AgentTool {
             "model" to ParameterProperty(
                 type = "string",
                 description = "Optional model override: sonnet, opus, haiku. If omitted, inherits from parent or agent definition."
+            ),
+            "resume" to ParameterProperty(
+                type = "string",
+                description = "Agent ID to resume from a previous execution. The agent continues with its full previous context preserved."
+            ),
+            "run_in_background" to ParameterProperty(
+                type = "boolean",
+                description = "Set to true to run the agent in the background. Returns immediately with the agent ID. You will be notified when it completes."
+            ),
+            "kill" to ParameterProperty(
+                type = "string",
+                description = "Agent ID to kill. Cancels a running background agent."
             )
         ),
         required = listOf("description", "prompt")
@@ -93,25 +113,49 @@ class SpawnAgentTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        // --- 1. Parse parameters (only description + prompt required) ---
+        // --- 0. Get services early (needed by all paths) ---
+        val agentService: AgentService
+        try {
+            agentService = AgentService.getInstance(project)
+        } catch (e: Exception) {
+            LOG.warn("SpawnAgentTool: failed to get AgentService", e)
+            return errorResult("Error: Agent services not available: ${e.message}")
+        }
+
+        // --- 0a. Kill check (no description/prompt required) ---
+        val killId = params["kill"]?.jsonPrimitive?.contentOrNull
+        if (killId != null) {
+            val killed = agentService.killWorker(killId)
+            return if (killed) {
+                ToolResult("Agent '$killId' has been killed.", "Killed agent $killId", 20)
+            } else {
+                errorResult("Agent '$killId' not found or not running. Active: ${agentService.listBackgroundWorkers().joinToString { it.agentId }}")
+            }
+        }
+
+        // --- 1. Parse parameters (description + prompt required for spawn/resume) ---
         val description = params["description"]?.jsonPrimitive?.contentOrNull
             ?: return errorResult("Error: 'description' parameter required")
 
         val prompt = params["prompt"]?.jsonPrimitive?.contentOrNull
             ?: return errorResult("Error: 'prompt' parameter required")
 
+        // --- 1a. Resume check ---
+        val resumeId = params["resume"]?.jsonPrimitive?.contentOrNull
+        if (resumeId != null) {
+            return executeResume(resumeId, prompt, project, agentService)
+        }
+
         val subagentType = params["subagent_type"]?.jsonPrimitive?.contentOrNull
         val modelOverride = params["model"]?.jsonPrimitive?.contentOrNull
 
-        // --- 2. Get services ---
-        val agentService: AgentService
+        // --- 2. Get remaining services ---
         val settings: AgentSettings
         try {
-            agentService = AgentService.getInstance(project)
             settings = AgentSettings.getInstance(project)
         } catch (e: Exception) {
-            LOG.warn("SpawnAgentTool: failed to get services", e)
-            return errorResult("Error: Agent services not available: ${e.message}")
+            LOG.warn("SpawnAgentTool: failed to get settings", e)
+            return errorResult("Error: Agent settings not available: ${e.message}")
         }
 
         // --- 3. Check resource limits ---
@@ -140,19 +184,15 @@ class SpawnAgentTool : AgentTool {
         val customAgent = registry?.getAgent(resolvedType)
 
         if (customAgent != null) {
-            // Custom agent definition found
             agentDef = customAgent
-            // Custom agents run as ORCHESTRATOR type (full capability) unless their tools suggest otherwise
             workerType = WorkerType.ORCHESTRATOR
             maxIter = customAgent.maxTurns
         } else if (resolvedType in BUILT_IN_AGENTS) {
-            // Built-in agent type
             agentDef = null
             val builtIn = BUILT_IN_AGENTS[resolvedType]!!
             workerType = builtIn.workerType
             maxIter = DEFAULT_MAX_ITERATIONS
         } else {
-            // Unknown agent type — return error with available options
             val availableBuiltIn = BUILT_IN_AGENTS.keys.joinToString(", ")
             val availableCustom = registry?.getAllAgents()?.joinToString(", ") { it.name } ?: "none"
             return errorResult(
@@ -162,7 +202,28 @@ class SpawnAgentTool : AgentTool {
             )
         }
 
-        // --- 5. Spawn worker ---
+        // --- 4a. Background check ---
+        val runInBackground = params["run_in_background"]?.jsonPrimitive?.booleanOrNull ?: false
+        if (runInBackground) {
+            return executeBackground(
+                agentId = WorkerTranscriptStore.generateAgentId(),
+                description = description,
+                prompt = prompt,
+                subagentType = resolvedType,
+                agentDef = agentDef,
+                workerType = workerType,
+                maxIter = maxIter,
+                project = project,
+                agentService = agentService,
+                settings = settings
+            )
+        }
+
+        // --- 5. Foreground spawn ---
+        val agentId = WorkerTranscriptStore.generateAgentId()
+        val sessionDir = agentService.currentSessionDir
+        val transcriptStore = if (sessionDir != null) WorkerTranscriptStore(sessionDir) else null
+
         agentService.activeWorkerCount.incrementAndGet()
 
         // Create rollback checkpoint
@@ -175,54 +236,23 @@ class SpawnAgentTool : AgentTool {
         eventLog.log(AgentEventType.WORKER_SPAWNED, "type=$resolvedType, description=$description")
 
         try {
-            // Fresh context manager for the worker
             val contextManager = ContextManager(
                 maxInputTokens = settings.state.maxInputTokens
             )
 
-            // Get worker-specific prompt and tools
-            val systemPrompt: String
-            val toolMap: Map<String, AgentTool>
-            val toolDefinitions: List<com.workflow.orchestrator.agent.api.dto.ToolDefinition>
-
-            if (agentDef != null) {
-                // Custom subagent: use its system prompt, tool restrictions, and max turns
-                systemPrompt = buildSubagentPrompt(agentDef, agentService, project)
-
-                val allTools = agentService.toolRegistry.getToolsForWorker(workerType)
-                val allRegisteredTools = agentService.toolRegistry.allTools()
-                val effectiveTools = run {
-                    var tools = if (agentDef.tools != null) {
-                        allTools.filter { it.name in agentDef.tools }
-                    } else {
-                        allTools.toList()
-                    }
-                    if (agentDef.disallowedTools.isNotEmpty()) {
-                        tools = tools.filter { it.name !in agentDef.disallowedTools }
-                    }
-                    // Auto-enable read_file/edit_file for memory-enabled agents
-                    if (agentDef.memory != null) {
-                        val memoryTools = listOf("read_file", "edit_file")
-                        val missingTools = memoryTools.filter { name -> tools.none { it.name == name } }
-                        if (missingTools.isNotEmpty()) {
-                            tools = tools + allRegisteredTools.filter { it.name in missingTools }
-                        }
-                    }
-                    tools
-                }
-                toolMap = effectiveTools.associateBy { it.name }
-                toolDefinitions = effectiveTools.map { it.toToolDefinition() }
-            } else {
-                // Standard built-in worker: use built-in prompts and tool selection
-                systemPrompt = OrchestratorPrompts.getSystemPrompt(workerType)
-                val toolsForWorker = agentService.toolRegistry.getToolsForWorker(workerType)
-                toolMap = toolsForWorker.associateBy { it.name }
-                toolDefinitions = agentService.toolRegistry.getToolDefinitionsForWorker(workerType)
-            }
+            val systemPrompt = resolveSystemPrompt(agentDef, resolvedType, agentService, project)
+            val toolsForWorker = resolveTools(agentDef, resolvedType, agentService)
+            val toolMap = toolsForWorker.associateBy { it.name }
+            val toolDefinitions = toolsForWorker.map { it.toToolDefinition() }
 
             // Execute with timeout
-            val parentJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
-            val workerSession = WorkerSession(maxIterations = maxIter, parentJob = parentJob)
+            val parentJob = currentCoroutineContext()[Job]
+            val workerSession = WorkerSession(
+                maxIterations = maxIter,
+                parentJob = parentJob,
+                transcriptStore = transcriptStore,
+                agentId = agentId
+            )
             val workerResult: WorkerResult = withTimeout(WORKER_TIMEOUT_MS) {
                 workerSession.execute(
                     workerType = workerType,
@@ -239,6 +269,17 @@ class SpawnAgentTool : AgentTool {
             // Track tokens
             agentService.totalSessionTokens.addAndGet(workerResult.tokensUsed.toLong())
 
+            // Persist transcript metadata
+            transcriptStore?.saveMetadata(WorkerTranscriptStore.WorkerMetadata(
+                agentId = agentId,
+                subagentType = resolvedType,
+                description = description,
+                status = if (workerResult.isError) "failed" else "completed",
+                tokensUsed = workerResult.tokensUsed,
+                summary = workerResult.summary,
+                completedAt = System.currentTimeMillis()
+            ))
+
             if (workerResult.isError) {
                 // Worker failed — rollback
                 rollbackManager.rollbackToCheckpoint(checkpointId)
@@ -247,7 +288,8 @@ class SpawnAgentTool : AgentTool {
 
                 return ToolResult(
                     content = "Agent ($resolvedType) failed: ${workerResult.content}\n\n" +
-                        "File changes have been rolled back.",
+                        "File changes have been rolled back.\n" +
+                        "Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))",
                     summary = "Agent '$description' failed: ${workerResult.summary}",
                     tokenEstimate = workerResult.tokensUsed,
                     isError = true
@@ -266,6 +308,7 @@ class SpawnAgentTool : AgentTool {
                 content = "Agent ($resolvedType) completed: $description\n" +
                     "Summary: ${workerResult.summary}\n" +
                     "Tokens used: $formattedTokens\n" +
+                    "Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))\n" +
                     if (workerResult.artifacts.isNotEmpty())
                         "Files modified: ${workerResult.artifacts}\n\n" +
                             "Note: The above files were modified by the agent. " +
@@ -276,15 +319,17 @@ class SpawnAgentTool : AgentTool {
                 artifacts = workerResult.artifacts
             )
 
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+        } catch (e: TimeoutCancellationException) {
             // Timeout — rollback
             rollbackManager.rollbackToCheckpoint(checkpointId)
             eventLog.log(AgentEventType.WORKER_TIMED_OUT, "timeout=${WORKER_TIMEOUT_MS}ms")
             eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
+            transcriptStore?.updateStatus(agentId, "failed", summary = "Timed out after ${WORKER_TIMEOUT_MS / 1000}s")
 
             return ToolResult(
                 content = "Error: Agent ($resolvedType) timed out after ${WORKER_TIMEOUT_MS / 1000} seconds. " +
-                    "File changes have been rolled back. Consider breaking the task into smaller pieces.",
+                    "File changes have been rolled back. Consider breaking the task into smaller pieces.\n" +
+                    "Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))",
                 summary = "Agent '$description' timed out after ${WORKER_TIMEOUT_MS / 1000}s",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
@@ -295,10 +340,12 @@ class SpawnAgentTool : AgentTool {
             rollbackManager.rollbackToCheckpoint(checkpointId)
             eventLog.log(AgentEventType.WORKER_FAILED, "exception=${e.message}")
             eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
+            transcriptStore?.updateStatus(agentId, "failed", summary = e.message)
 
             return ToolResult(
                 content = "Error: Agent ($resolvedType) failed: ${e.message}\n" +
-                    "File changes have been rolled back.",
+                    "File changes have been rolled back.\n" +
+                    "Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))",
                 summary = "Agent '$description' error: ${e.message?.take(100)}",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
@@ -306,6 +353,258 @@ class SpawnAgentTool : AgentTool {
         } finally {
             agentService.activeWorkerCount.decrementAndGet()
         }
+    }
+
+    /**
+     * Resume execution of a previous agent from its saved transcript.
+     * Reconstructs the full conversation context and continues with a new prompt.
+     */
+    private suspend fun executeResume(
+        agentId: String,
+        newPrompt: String,
+        project: Project,
+        agentService: AgentService
+    ): ToolResult {
+        val sessionDir = agentService.currentSessionDir
+            ?: return errorResult("Error: no active session directory for transcript storage")
+        val transcriptStore = WorkerTranscriptStore(sessionDir)
+        val metadata = transcriptStore.loadMetadata(agentId)
+            ?: return errorResult("Error: agent '$agentId' not found. Available: ${transcriptStore.listWorkers().joinToString { it.agentId }}")
+
+        val transcript = transcriptStore.loadTranscript(agentId)
+        if (transcript.isEmpty()) {
+            return errorResult("Error: agent '$agentId' has no transcript to resume from")
+        }
+
+        // Reconstruct context from transcript
+        val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+        val contextManager = ContextManager(
+            maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
+        )
+
+        // Replay previous messages into context
+        val chatMessages = transcriptStore.toChatMessages(transcript)
+        for (msg in chatMessages) {
+            contextManager.addMessage(msg)
+        }
+
+        // Add the new prompt as a user message
+        contextManager.addMessage(ChatMessage(role = "user", content = newPrompt))
+        transcriptStore.appendMessage(agentId, WorkerTranscriptStore.TranscriptMessage(
+            role = "user", content = newPrompt
+        ))
+
+        // Resolve tools from metadata
+        val agentDef = agentService.agentDefinitionRegistry?.getAgent(metadata.subagentType)
+        val toolsForWorker = resolveTools(agentDef, metadata.subagentType, agentService)
+        val toolMap = toolsForWorker.associateBy { it.name }
+        val toolDefinitions = toolsForWorker.map { it.toToolDefinition() }
+
+        // Resume execution
+        val workerSession = WorkerSession(
+            maxIterations = agentDef?.maxTurns ?: DEFAULT_MAX_ITERATIONS,
+            parentJob = currentCoroutineContext()[Job],
+            transcriptStore = transcriptStore,
+            agentId = agentId
+        )
+
+        agentService.activeWorkerCount.incrementAndGet()
+        try {
+            val result = withTimeout(WORKER_TIMEOUT_MS) {
+                workerSession.executeFromContext(
+                    tools = toolMap,
+                    toolDefinitions = toolDefinitions,
+                    brain = agentService.brain,
+                    contextManager = contextManager,
+                    project = project
+                )
+            }
+
+            transcriptStore.updateStatus(agentId, if (result.isError) "failed" else "completed",
+                summary = result.summary, tokensUsed = result.tokensUsed)
+            agentService.totalSessionTokens.addAndGet(result.tokensUsed.toLong())
+
+            return ToolResult(
+                content = "Resumed agent '$agentId' completed.\n\nResult: ${result.summary}\n" +
+                    "Agent ID: $agentId (can resume again)",
+                summary = "Resumed agent completed: ${result.summary.take(100)}",
+                tokenEstimate = result.tokensUsed
+            )
+        } catch (e: Exception) {
+            transcriptStore.updateStatus(agentId, "failed", summary = e.message)
+            return errorResult("Resumed agent '$agentId' failed: ${e.message}")
+        } finally {
+            agentService.activeWorkerCount.decrementAndGet()
+        }
+    }
+
+    /**
+     * Launch an agent in a detached coroutine for background execution.
+     * Returns immediately with the agentId. The parent is notified on completion
+     * via [AgentService.onBackgroundWorkerCompleted].
+     */
+    private fun executeBackground(
+        agentId: String,
+        description: String,
+        prompt: String,
+        subagentType: String,
+        agentDef: AgentDefinitionRegistry.AgentDefinition?,
+        workerType: WorkerType,
+        maxIter: Int,
+        project: Project,
+        agentService: AgentService,
+        settings: AgentSettings
+    ): ToolResult {
+        val sessionDir = agentService.currentSessionDir
+        val transcriptStore = if (sessionDir != null) WorkerTranscriptStore(sessionDir) else null
+
+        // Save initial metadata
+        transcriptStore?.saveMetadata(WorkerTranscriptStore.WorkerMetadata(
+            agentId = agentId,
+            subagentType = subagentType,
+            description = description
+        ))
+
+        // Launch in detached coroutine
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val job = scope.launch {
+            agentService.activeWorkerCount.incrementAndGet()
+            try {
+                val contextManager = ContextManager(
+                    maxInputTokens = settings.state.maxInputTokens
+                )
+
+                val toolsForWorker = resolveTools(agentDef, subagentType, agentService)
+                val toolMap = toolsForWorker.associateBy { it.name }
+                val toolDefinitions = toolsForWorker.map { it.toToolDefinition() }
+
+                val systemPrompt = resolveSystemPrompt(agentDef, subagentType, agentService, project)
+
+                val workerSession = WorkerSession(
+                    maxIterations = maxIter,
+                    transcriptStore = transcriptStore,
+                    agentId = agentId
+                )
+
+                val result = withTimeout(WORKER_TIMEOUT_MS) {
+                    workerSession.execute(
+                        workerType = workerType,
+                        systemPrompt = systemPrompt,
+                        task = prompt,
+                        tools = toolMap,
+                        toolDefinitions = toolDefinitions,
+                        brain = agentService.brain,
+                        contextManager = contextManager,
+                        project = project
+                    )
+                }
+
+                // Update metadata
+                transcriptStore?.updateStatus(agentId, if (result.isError) "failed" else "completed",
+                    summary = result.summary, tokensUsed = result.tokensUsed)
+                agentService.totalSessionTokens.addAndGet(result.tokensUsed.toLong())
+
+                // Notify parent
+                val bgWorker = agentService.backgroundWorkers[agentId]
+                bgWorker?.status = if (result.isError) "failed" else "completed"
+                agentService.onBackgroundWorkerCompleted?.invoke(
+                    agentId,
+                    "Background agent '$agentId' ($subagentType) ${if (result.isError) "failed" else "completed"}.\n" +
+                        "Summary: ${result.summary}\nAgent ID: $agentId (can resume)",
+                    result.isError
+                )
+            } catch (e: CancellationException) {
+                transcriptStore?.updateStatus(agentId, "killed")
+                val bgWorker = agentService.backgroundWorkers[agentId]
+                bgWorker?.status = "killed"
+            } catch (e: Exception) {
+                LOG.warn("SpawnAgentTool: background agent '$agentId' failed", e)
+                transcriptStore?.updateStatus(agentId, "failed", summary = e.message)
+                agentService.onBackgroundWorkerCompleted?.invoke(
+                    agentId, "Background agent '$agentId' failed: ${e.message}", true
+                )
+            } finally {
+                agentService.activeWorkerCount.decrementAndGet()
+                agentService.backgroundWorkers.remove(agentId)
+            }
+        }
+
+        // Track the background worker
+        agentService.backgroundWorkers[agentId] = AgentService.BackgroundWorker(
+            agentId = agentId,
+            job = job,
+            subagentType = subagentType,
+            description = description
+        )
+
+        return ToolResult(
+            content = "Agent '$agentId' ($subagentType) launched in background.\n" +
+                "Description: $description\n" +
+                "You will be notified when it completes. Continue with other work.\n" +
+                "To kill: agent(kill='$agentId')\n" +
+                "Agent ID: $agentId",
+            summary = "Background agent $agentId launched: $description",
+            tokenEstimate = 50
+        )
+    }
+
+    // --- Helper methods to avoid duplication across foreground/background/resume ---
+
+    /**
+     * Resolve the tools available for a given agent definition and type.
+     */
+    private fun resolveTools(
+        agentDef: AgentDefinitionRegistry.AgentDefinition?,
+        subagentType: String,
+        agentService: AgentService
+    ): List<AgentTool> {
+        val workerType = resolveWorkerType(subagentType)
+        return if (agentDef != null) {
+            val allTools = agentService.toolRegistry.getToolsForWorker(workerType)
+            val allRegisteredTools = agentService.toolRegistry.allTools()
+            var tools = if (agentDef.tools != null) {
+                allTools.filter { it.name in agentDef.tools }
+            } else {
+                allTools.toList()
+            }
+            if (agentDef.disallowedTools.isNotEmpty()) {
+                tools = tools.filter { it.name !in agentDef.disallowedTools }
+            }
+            // Auto-enable read_file/edit_file for memory-enabled agents
+            if (agentDef.memory != null) {
+                val memoryTools = listOf("read_file", "edit_file")
+                val missingTools = memoryTools.filter { name -> tools.none { it.name == name } }
+                if (missingTools.isNotEmpty()) {
+                    tools = tools + allRegisteredTools.filter { it.name in missingTools }
+                }
+            }
+            tools
+        } else {
+            agentService.toolRegistry.getToolsForWorker(workerType).toList()
+        }
+    }
+
+    /**
+     * Resolve the system prompt for a given agent definition and type.
+     */
+    private fun resolveSystemPrompt(
+        agentDef: AgentDefinitionRegistry.AgentDefinition?,
+        subagentType: String,
+        agentService: AgentService,
+        project: Project
+    ): String {
+        return if (agentDef != null) {
+            buildSubagentPrompt(agentDef, agentService, project)
+        } else {
+            OrchestratorPrompts.getSystemPrompt(resolveWorkerType(subagentType))
+        }
+    }
+
+    /**
+     * Resolve the WorkerType for a given subagent type string.
+     */
+    private fun resolveWorkerType(subagentType: String): WorkerType {
+        return BUILT_IN_AGENTS[subagentType]?.workerType ?: WorkerType.ORCHESTRATOR
     }
 
     /**
