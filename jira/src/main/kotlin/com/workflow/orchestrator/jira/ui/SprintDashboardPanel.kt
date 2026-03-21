@@ -45,7 +45,6 @@ import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
-import java.awt.geom.RoundRectangle2D
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -94,7 +93,7 @@ class SprintDashboardPanel(
         font = font.deriveFont(JBUI.scale(11).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
     }
-    private val progressBar = SprintProgressBar()
+    private val sprintTimeBar = SprintTimeBar()
 
     // -- Status bar --
     private val statusLabel = JBLabel("Ready").apply {
@@ -184,9 +183,8 @@ class SprintDashboardPanel(
         sprintInfoPanel.add(sprintMetaLabel.apply { alignmentX = Component.LEFT_ALIGNMENT })
         sprintHeaderPanel.add(sprintInfoPanel, BorderLayout.CENTER)
 
-        // Progress bar
-        progressBar.preferredSize = Dimension(0, JBUI.scale(6))
-        sprintHeaderPanel.add(progressBar, BorderLayout.SOUTH)
+        // Sprint time bar (time remaining + ticket breakdown)
+        sprintHeaderPanel.add(sprintTimeBar, BorderLayout.SOUTH)
 
         topPanel.add(sprintHeaderPanel, BorderLayout.CENTER)
 
@@ -415,7 +413,7 @@ class SprintDashboardPanel(
             sprintMetaLabel.text = ""
             ticketCountLabel.text = ""
         }
-        progressBar.updateFromIssues(allIssues)
+        sprintTimeBar.updateFromIssues(sprint, allIssues)
     }
 
     private fun setLoading(loading: Boolean, message: String) {
@@ -673,89 +671,6 @@ class SprintDashboardPanel(
     }
 
     // ---------------------------------------------------------------
-    // Sprint progress bar (custom painted)
-    // ---------------------------------------------------------------
-
-    /**
-     * Horizontal bar showing proportions of tickets by status category:
-     * green = done, blue = in-progress, gray = todo.
-     */
-    private class SprintProgressBar : JPanel() {
-        private var doneRatio: Float = 0f
-        private var inProgressRatio: Float = 0f
-        private var todoRatio: Float = 1f
-
-        init {
-            isOpaque = false
-            preferredSize = Dimension(0, JBUI.scale(6))
-            minimumSize = Dimension(0, JBUI.scale(6))
-        }
-
-        fun updateFromIssues(issues: List<JiraIssue>) {
-            if (issues.isEmpty()) {
-                doneRatio = 0f
-                inProgressRatio = 0f
-                todoRatio = 1f
-            } else {
-                val total = issues.size.toFloat()
-                val done = issues.count { it.fields.status.statusCategory?.key == "done" }
-                val inProgress = issues.count { it.fields.status.statusCategory?.key == "indeterminate" }
-                val todo = issues.size - done - inProgress
-                doneRatio = done / total
-                inProgressRatio = inProgress / total
-                todoRatio = todo / total
-            }
-            repaint()
-        }
-
-        override fun paintComponent(g: Graphics) {
-            super.paintComponent(g)
-            val g2 = g.create() as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-
-            val barHeight = height.toFloat()
-            val barWidth = width.toFloat()
-            val cornerRadius = barHeight / 2
-
-            // Background
-            g2.color = PROGRESS_BG
-            g2.fill(RoundRectangle2D.Float(0f, 0f, barWidth, barHeight, cornerRadius, cornerRadius))
-
-            // Clip to rounded rect for segment painting
-            g2.clip = java.awt.geom.Area(
-                RoundRectangle2D.Float(0f, 0f, barWidth, barHeight, cornerRadius, cornerRadius)
-            )
-
-            var x = 0f
-
-            // Done segment (green)
-            if (doneRatio > 0f) {
-                val segW = barWidth * doneRatio
-                g2.color = StatusColors.SUCCESS
-                g2.fillRect(x.toInt(), 0, segW.toInt().coerceAtLeast(1), height)
-                x += segW
-            }
-
-            // In-progress segment (blue)
-            if (inProgressRatio > 0f) {
-                val segW = barWidth * inProgressRatio
-                g2.color = StatusColors.LINK
-                g2.fillRect(x.toInt(), 0, segW.toInt().coerceAtLeast(1), height)
-                x += segW
-            }
-
-            // Todo segment (gray) — fills remaining space
-            if (todoRatio > 0f) {
-                val segW = barWidth * todoRatio
-                g2.color = StatusColors.INFO
-                g2.fillRect(x.toInt(), 0, segW.toInt().coerceAtLeast(1), height)
-            }
-
-            g2.dispose()
-        }
-    }
-
-    // ---------------------------------------------------------------
     // Constants
     // ---------------------------------------------------------------
 
@@ -763,7 +678,5 @@ class SprintDashboardPanel(
         scope.cancel()
     }
 
-    companion object {
-        private val PROGRESS_BG = JBColor(0xE8EAED, 0x3D4043)
-    }
+    companion object
 }
