@@ -964,6 +964,45 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
     text-align: center;
 }
 .mermaid-wrapper svg { max-width: 100%; height: auto; }
+.mermaid-wrapper.animated .node,
+.mermaid-wrapper.animated .label,
+.mermaid-wrapper.animated .cluster {
+    opacity: 0;
+    animation: mermaidNodeIn 0.5s ease-out forwards;
+}
+.mermaid-wrapper.animated .edgePath path,
+.mermaid-wrapper.animated .flowchart-link {
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: mermaidEdgeDraw 0.8s ease-out forwards;
+}
+.mermaid-wrapper.animated .edgeLabel {
+    opacity: 0;
+    animation: mermaidNodeIn 0.4s ease-out 0.6s forwards;
+}
+.mermaid-wrapper.animated .node:nth-child(1) { animation-delay: 0.05s; }
+.mermaid-wrapper.animated .node:nth-child(2) { animation-delay: 0.12s; }
+.mermaid-wrapper.animated .node:nth-child(3) { animation-delay: 0.19s; }
+.mermaid-wrapper.animated .node:nth-child(4) { animation-delay: 0.26s; }
+.mermaid-wrapper.animated .node:nth-child(5) { animation-delay: 0.33s; }
+.mermaid-wrapper.animated .node:nth-child(6) { animation-delay: 0.40s; }
+.mermaid-wrapper.animated .node:nth-child(7) { animation-delay: 0.47s; }
+.mermaid-wrapper.animated .node:nth-child(8) { animation-delay: 0.54s; }
+.mermaid-wrapper.animated .edgePath:nth-child(1) path { animation-delay: 0.25s; }
+.mermaid-wrapper.animated .edgePath:nth-child(2) path { animation-delay: 0.35s; }
+.mermaid-wrapper.animated .edgePath:nth-child(3) path { animation-delay: 0.45s; }
+.mermaid-wrapper.animated .edgePath:nth-child(4) path { animation-delay: 0.55s; }
+.mermaid-wrapper.animated .edgePath:nth-child(5) path { animation-delay: 0.65s; }
+.mermaid-wrapper.animated .edgePath:nth-child(6) path { animation-delay: 0.75s; }
+.mermaid-wrapper.animated .edgePath:nth-child(7) path { animation-delay: 0.85s; }
+.mermaid-wrapper.animated .edgePath:nth-child(8) path { animation-delay: 0.95s; }
+@keyframes mermaidNodeIn {
+    0% { opacity: 0; transform: scale(0.85) translateY(6px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes mermaidEdgeDraw {
+    100% { stroke-dashoffset: 0; }
+}
 .mermaid-loading {
     color: var(--fg-muted);
     font-size: 12px;
@@ -982,6 +1021,44 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
     position: relative;
 }
 .chart-wrapper canvas { max-width: 100%; }
+
+/* Interactive HTML Visualizations (sandboxed iframes) */
+.viz-wrapper {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 10px 0;
+    overflow: hidden;
+    position: relative;
+    background: var(--code-bg);
+}
+.viz-wrapper iframe {
+    width: 100%;
+    border: none;
+    min-height: 300px;
+    background: transparent;
+    display: block;
+}
+.viz-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: var(--tool-bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--fg-muted);
+}
+.viz-toolbar-label { font-weight: 500; }
+.viz-toolbar button {
+    background: var(--chip-bg);
+    border: 1px solid var(--chip-border);
+    border-radius: 5px;
+    color: var(--fg-secondary);
+    font-size: 10px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+.viz-toolbar button:hover { border-color: var(--fg-muted); color: var(--fg); }
 
 /* Tabbed Content */
 .tab-container { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -1161,17 +1238,21 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
    ═══════════════════════════════════════════════════ */
 /* Working Indicator */
 .working-indicator {
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
   padding: 0 6px 6px 0;
+  height: 0;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  overflow: hidden;
+  transition: opacity 0.25s ease, height 0.25s ease;
+  pointer-events: none;
 }
 .working-indicator.visible {
-  display: flex;
+  height: 22px;
   opacity: 1;
+  pointer-events: auto;
 }
 .working-dot {
   width: 4px;
@@ -1193,6 +1274,32 @@ code[class*="language-"] { background: transparent; font-family: var(--font-mono
   font-weight: 500;
   margin-left: 4px;
   font-family: var(--font-body);
+  position: relative;
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+.working-text::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--link) 45%,
+    rgba(139,92,246,0.9) 55%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: textGlowSweep 3s ease-in-out infinite;
+}
+@keyframes textGlowSweep {
+  0% { background-position: 200% center; }
+  45% { background-position: -50% center; }
+  50% { background-position: -50% center; }
+  55% { background-position: -50% center; }
+  100% { background-position: 200% center; }
 }
 
 .input-area {
@@ -1586,6 +1693,8 @@ function renderMermaidBlock(code) {
             try {
                 mermaid.render('mermaid-svg-' + _mermaidCounter, code).then(function(result) {
                     el.innerHTML = result.svg;
+                    // Trigger staggered entrance animation
+                    requestAnimationFrame(function() { el.classList.add('animated'); });
                 }).catch(function(err) {
                     el.innerHTML = '<div class="mermaid-loading" style="color:var(--error);">Diagram error: ' + esc(err.message || String(err)) + '</div>' +
                         '<pre class="code-block"><code>' + esc(code) + '</code></pre>';
@@ -1700,6 +1809,24 @@ function renderChart(configJson) {
             if (!canvas || typeof Chart === 'undefined') return;
             try {
                 var config = typeof configJson === 'string' ? JSON.parse(configJson) : configJson;
+                // Inject smooth entrance animations if not already specified
+                if (!config.options) config.options = {};
+                if (!config.options.animation) {
+                    config.options.animation = {
+                        duration: 800,
+                        easing: 'easeOutQuart',
+                        delay: function(ctx) {
+                            return ctx.dataIndex * 80 + ctx.datasetIndex * 200;
+                        }
+                    };
+                }
+                // Theme-aware defaults
+                if (!config.options.plugins) config.options.plugins = {};
+                if (!config.options.plugins.legend) {
+                    config.options.plugins.legend = {
+                        labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--fg').trim() || '#ccc' }
+                    };
+                }
                 new Chart(canvas, config);
             } catch (err) {
                 canvas.parentElement.innerHTML = '<div style="color:var(--error);font-size:12px;">Chart error: ' + esc(err.message) + '</div>';
@@ -1717,6 +1844,68 @@ function appendChart(configJson) {
     el.innerHTML = renderChart(configJson);
     container.appendChild(el);
     scrollToBottom();
+}
+
+/* ── Interactive HTML Visualizations (sandboxed iframe) ── */
+var _vizCounter = 0;
+
+function renderInteractiveHtml(code) {
+    var vizId = 'viz-' + (++_vizCounter);
+    // Detect if code contains animation/SVG/canvas keywords for the label
+    var hasAnim = /animation|@keyframes|transition|requestAnimationFrame|canvas|svg/i.test(code);
+    var label = hasAnim ? 'Interactive Visualization' : 'HTML Preview';
+
+    var html =
+        '<div class="viz-wrapper" id="' + vizId + '">' +
+            '<div class="viz-toolbar">' +
+                '<span class="viz-toolbar-label">&#x25C8; ' + label + '</span>' +
+                '<button onclick="toggleVizCode(\'' + vizId + '\')">View Source</button>' +
+            '</div>' +
+            '<iframe sandbox="allow-scripts" id="' + vizId + '-frame"></iframe>' +
+            '<pre class="viz-source" id="' + vizId + '-source" style="display:none;margin:0;padding:12px;font-size:11px;max-height:300px;overflow:auto;background:var(--code-bg);"><code>' + esc(code) + '</code></pre>' +
+        '</div>';
+
+    // Inject theme-aware styles and the HTML content into the iframe after DOM insert
+    setTimeout(function() {
+        var iframe = document.getElementById(vizId + '-frame');
+        if (!iframe) return;
+        var cs = getComputedStyle(document.documentElement);
+        var bg = cs.getPropertyValue('--bg').trim() || '#1e1e1e';
+        var fg = cs.getPropertyValue('--fg').trim() || '#d4d4d4';
+        var accent = cs.getPropertyValue('--link').trim() || '#3b82f6';
+        var border = cs.getPropertyValue('--border').trim() || '#333';
+
+        // Build the iframe document with theme variables injected
+        var iframeContent = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+            '<style>' +
+                ':root { --bg: ' + bg + '; --fg: ' + fg + '; --accent: ' + accent + '; --border: ' + border + '; }' +
+                'body { margin: 0; padding: 16px; background: ' + bg + '; color: ' + fg + '; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; overflow: hidden; }' +
+                '* { box-sizing: border-box; }' +
+            '</style></head><body>' + code + '</body></html>';
+
+        var doc = iframe.contentDocument || iframe.contentWindow.document;
+        doc.open();
+        doc.write(iframeContent);
+        doc.close();
+
+        // Auto-resize iframe to fit content
+        var resizeIframe = function() {
+            try {
+                var h = doc.documentElement.scrollHeight || doc.body.scrollHeight;
+                iframe.style.height = Math.min(Math.max(h, 200), 600) + 'px';
+            } catch(_) {}
+        };
+        setTimeout(resizeIframe, 100);
+        setTimeout(resizeIframe, 500);
+        setTimeout(resizeIframe, 1500);
+    }, 0);
+
+    return html;
+}
+
+function toggleVizCode(vizId) {
+    var src = document.getElementById(vizId + '-source');
+    if (src) src.style.display = src.style.display === 'none' ? 'block' : 'none';
 }
 
 /* ── diff2html Side-by-Side Diffs (lazy-loaded) ── */
@@ -1805,6 +1994,8 @@ function renderDiff2Html(diffText) {
     if (lang === 'chart' || lang === 'chartjs') { return renderChart(code); }
     // Diffs
     if (lang === 'diff' || lang === 'patch') { return renderDiff2Html(code); }
+    // Interactive HTML visualizations (rendered in sandboxed iframe)
+    if (lang === 'visualization' || lang === 'viz') { return renderInteractiveHtml(code); }
 
     // Regular code — Prism.js highlighting
     var langLabel = lang ? '<div class="code-lang">' + esc(lang) + '</div>' : '';
@@ -2174,17 +2365,22 @@ var _workingPhrases = [
 ];
 var _workingInterval = null;
 
+function _setWorkingText(textEl, phrase) {
+  textEl.textContent = phrase;
+  textEl.setAttribute('data-text', phrase);
+}
+
 function showWorkingIndicator() {
   var el = document.getElementById('working-indicator');
   var textEl = document.getElementById('working-text');
   if (!el) return;
-  textEl.textContent = _workingPhrases[0];
+  _setWorkingText(textEl, _workingPhrases[0]);
   el.classList.add('visible');
   var idx = 0;
   clearInterval(_workingInterval);
   _workingInterval = setInterval(function() {
     idx = (idx + 1) % _workingPhrases.length;
-    if (textEl) textEl.textContent = _workingPhrases[idx];
+    if (textEl) _setWorkingText(textEl, _workingPhrases[idx]);
   }, 3000);
 }
 
@@ -2203,7 +2399,7 @@ var _streamRawText = '';
 var _renderDebounce = null;
 
 // Rich block types that should show skeleton placeholders during streaming
-var _richBlockLangs = ['mermaid', 'chart', 'chartjs', 'math', 'latex'];
+var _richBlockLangs = ['mermaid', 'chart', 'chartjs', 'math', 'latex', 'visualization', 'viz'];
 
 /**
  * Detects if the streamed text has an open (unclosed) rich code block.
@@ -2253,7 +2449,9 @@ function _renderStreamingMarkdown(rawText) {
     'chart': 'Generating chart…',
     'chartjs': 'Generating chart…',
     'math': 'Rendering equation…',
-    'latex': 'Rendering equation…'
+    'latex': 'Rendering equation…',
+    'visualization': 'Building visualization…',
+    'viz': 'Building visualization…'
   };
   var label = labelMap[openBlock.lang] || 'Generating visualization…';
   var iconMap = {
@@ -2261,7 +2459,9 @@ function _renderStreamingMarkdown(rawText) {
     'chart': '◧',
     'chartjs': '◧',
     'math': '∑',
-    'latex': '∑'
+    'latex': '∑',
+    'visualization': '◉',
+    'viz': '◉'
   };
   var icon = iconMap[openBlock.lang] || '◈';
 
@@ -2377,11 +2577,32 @@ function appendToolCall(toolName, args, statusStr) {
   scrollToBottom();
 }
 
-function updateToolResult(result, durationMs) {
-  // Find the last tool card and update its status from running to success
+function updateToolResult(result, durationMs, toolName) {
+  // Find the correct tool card — match by tool name with RUNNING spinner, fall back to last card
   var toolCards = container.querySelectorAll('.tool-card');
   if (toolCards.length === 0) return;
-  var lastCard = toolCards[toolCards.length - 1];
+  var lastCard = null;
+  if (toolName) {
+    // Find the first RUNNING card matching this tool name
+    for (var i = 0; i < toolCards.length; i++) {
+      var spinner = toolCards[i].querySelector('.tool-status-icon.running');
+      var target = toolCards[i].querySelector('.tool-target');
+      if (spinner && target && target.textContent.indexOf(toolName.replace(/_/g, ' ')) >= 0) {
+        lastCard = toolCards[i];
+        break;
+      }
+    }
+  }
+  // Fall back to last card with a running spinner, then absolute last
+  if (!lastCard) {
+    for (var j = toolCards.length - 1; j >= 0; j--) {
+      if (toolCards[j].querySelector('.tool-status-icon.running')) {
+        lastCard = toolCards[j];
+        break;
+      }
+    }
+  }
+  if (!lastCard) lastCard = toolCards[toolCards.length - 1];
 
   var parentMsg = lastCard.closest('.message');
   if (parentMsg && parentMsg._timerInterval) {

@@ -620,7 +620,7 @@ class AgentController(
                     dashboard.appendEditDiff(toolInfo.editFilePath, toolInfo.editOldText, toolInfo.editNewText, !toolInfo.isError)
                 } else {
                     val status = if (toolInfo.isError) RichStreamingPanel.ToolCallStatus.FAILED else RichStreamingPanel.ToolCallStatus.SUCCESS
-                    dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs)
+                    dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs, toolInfo.toolName)
                 }
 
                 // Track files in working set
