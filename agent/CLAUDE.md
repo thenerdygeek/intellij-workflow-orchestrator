@@ -212,10 +212,22 @@ JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 - ansi_up — ANSI terminal colors in command output
 
 **Lazy-loaded (on first use):**
-- Mermaid.js (~250KB) — Diagrams from ```mermaid code blocks (flowchart, sequence, class, ER, Gantt, git graph)
+- dagre.js (~284KB) — Graph layout engine for ```flow animated data flow diagrams
+- Mermaid.js (~250KB) — Diagrams from ```mermaid code blocks (animated entrance + flowing edges)
 - KaTeX (~320KB) — LaTeX math from $...$ and $$...$$ expressions
-- Chart.js (~65KB) — Interactive charts from ```chart JSON configs
+- Chart.js (~65KB) — Interactive animated charts from ```chart JSON configs
 - diff2html (~40KB) — Side-by-side diffs from ```diff code blocks
+
+**Animated visualization formats (all have animations — no static output):**
+- ```flow — Animated data flow diagrams: dagre-laid-out SVG with node entrance, edge draw, and glowing particle dots that continuously flow along paths (via SVG `<animateMotion>`). LLM outputs JSON `{nodes, edges, title, direction}`.
+- ```mermaid — Staggered node entrance + edge draw animation, then persistent subtle flowing dash animation on all edges after entrance completes.
+- ```chart — Chart.js with injected `easeOutQuart` animation, staggered per data point (80ms) and dataset (200ms).
+- ```visualization / ```viz — Custom HTML/CSS/JS in sandboxed iframe with theme variables.
+- ```diff / ```patch — Side-by-side diffs via diff2html.
+
+**Streaming-aware rendering:** Open (unclosed) rich code blocks during streaming show skeleton placeholders instead of raw syntax. `_detectOpenRichBlock()` tracks fence pairs; `_renderStreamingMarkdown()` renders completed content normally and shows shimmer skeleton for in-progress blocks.
+
+**Working indicator:** Bouncing dots + rotating text ("Working", "Thinking", "Analyzing"...) above input bar. Shows on sendMessage(), hides on first token/tool call.
 
 **IDE-native features:**
 - Click-to-navigate file paths (opens file at line in IDE editor)
