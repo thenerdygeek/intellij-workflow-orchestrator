@@ -115,6 +115,22 @@ Three layers:
 **Description budget:** 2% of context window (max 16K chars). Excess skills hidden with warning.
 **Context fork:** Skills with `context: fork` execute in a fresh `WorkerSession` with scoped tools, returning a summary to the orchestrator.
 
+## Agent Tool (Subagent Management)
+
+The `agent` tool spawns, resumes, and manages subagent workers:
+
+**Spawn:** `agent(description="...", prompt="...", subagent_type="coder")`
+**Background:** `agent(description="...", prompt="...", run_in_background=true)` — returns immediately with agentId
+**Resume:** `agent(resume="agentId", prompt="continue with authorization module")` — continues with full previous context
+**Kill:** `agent(kill="agentId")` — cancels a running background agent
+
+**Transcript persistence:** All worker conversations are saved to `{sessionDir}/subagents/agent-{id}.jsonl`. Resume reconstructs the full conversation context from the transcript.
+
+**Background notifications:** When a background agent completes, the parent is notified via a system message injected into the conversation context (`<background_agent_completed>` tag) and a UI status message in the chat panel.
+
+**Built-in types:** general-purpose, explorer, coder, reviewer, tooler
+**Custom types:** Any agent defined in `.workflow/agents/{name}.md`
+
 ## Custom Subagents
 
 User-definable agent definitions via markdown files with YAML frontmatter:

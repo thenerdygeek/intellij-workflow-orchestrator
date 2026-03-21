@@ -521,6 +521,25 @@ class AgentController(
         dashboard.setCefSkillCallbacks(
             onDismiss = { currentSession.skillManager?.deactivateSkill() }
         )
+
+        // Wire background worker completion notification
+        val agentSvc = try { AgentService.getInstance(project) } catch (_: Exception) { null }
+        agentSvc?.onBackgroundWorkerCompleted = { agentId, resultMessage, isError ->
+            SwingUtilities.invokeLater {
+                if (isError) {
+                    dashboard.appendError("Background agent $agentId: $resultMessage")
+                } else {
+                    dashboard.appendStatus(resultMessage, RichStreamingPanel.StatusType.SUCCESS)
+                }
+                // Inject into LLM context so it knows about the completion
+                session?.contextManager?.addMessage(
+                    com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                        role = "system",
+                        content = "<background_agent_completed agent_id=\"$agentId\">\n$resultMessage\n</background_agent_completed>"
+                    )
+                )
+            }
+        }
     }
 
     /**
