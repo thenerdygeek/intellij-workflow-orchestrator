@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.context
 
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.PsiClass
@@ -74,9 +75,14 @@ object RepoMapGenerator {
      */
     fun generate(project: Project, maxTokens: Int = 1500): String {
         return try {
-            ReadAction.compute<String, Exception> {
+            // Use nonBlocking read action so this is cancellable and doesn't hold the
+            // write lock for the entire PSI tree walk. The caller (ConversationSession.create)
+            // runs on Dispatchers.IO, so executeSynchronously() blocks the IO thread (acceptable)
+            // but NOT the EDT. The old ReadAction.compute() would freeze the IDE for 11+ seconds
+            // if accidentally called from the EDT.
+            ReadAction.nonBlocking<String> {
                 generateInReadAction(project, maxTokens)
-            }
+            }.inSmartMode(project).executeSynchronously()
         } catch (e: Exception) {
             LOG.warn("RepoMapGenerator: failed to generate repo map", e)
             ""
