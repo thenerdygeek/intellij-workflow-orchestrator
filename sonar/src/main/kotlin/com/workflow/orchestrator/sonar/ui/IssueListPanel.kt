@@ -243,64 +243,75 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     }
 }
 
-private class IssueListCellRenderer : ListCellRenderer<MappedIssue> {
+private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
+    private val mainLabel = JBLabel()
+    private val detailLabel = JBLabel()
+
+    companion object {
+        private val SMALL_FONT by lazy { com.intellij.util.ui.JBFont.small() }
+    }
+
+    init {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(4, 8)
+        add(mainLabel)
+        add(detailLabel.apply { font = SMALL_FONT })
+    }
+
     override fun getListCellRendererComponent(
         list: JList<out MappedIssue>, value: MappedIssue,
         index: Int, isSelected: Boolean, cellHasFocus: Boolean
     ): Component {
-        val panel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(4, 8)
-            isOpaque = isSelected
-            if (isSelected) {
-                background = list.selectionBackground
-            }
+        // Severity color — htmlColor resolves JBColor for current theme at render time
+        val severityColor = when (value.severity) {
+            IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> StatusColors.ERROR
+            IssueSeverity.MAJOR, IssueSeverity.MINOR -> StatusColors.WARNING
+            IssueSeverity.INFO -> StatusColors.INFO
         }
-        val color = when (value.severity) {
-            IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> StatusColors.htmlColor(StatusColors.ERROR)
-            IssueSeverity.MAJOR -> StatusColors.htmlColor(StatusColors.WARNING)
-            IssueSeverity.MINOR -> StatusColors.htmlColor(StatusColors.WARNING)
-            IssueSeverity.INFO -> StatusColors.htmlColor(StatusColors.INFO)
-        }
+        val htmlColor = StatusColors.htmlColor(severityColor as JBColor)
         val typeStr = value.type.name.replace("_", " ")
         val fileName = java.io.File(value.filePath).name
 
         // Main line: severity dot + type + severity + message + file:line
-        val mainLabel = JBLabel("<html><font color='$color'>\u25CF</font> $typeStr " +
-            "<font color='$color'>${value.severity}</font>  ${value.message} \u2014 $fileName:${value.startLine}</html>")
-        if (isSelected) {
-            mainLabel.foreground = list.selectionForeground
-        }
-        panel.add(mainLabel)
+        mainLabel.text = "<html><font color='$htmlColor'>\u25CF</font> $typeStr " +
+            "<font color='$htmlColor'>${value.severity}</font>  ${value.message} \u2014 $fileName:${value.startLine}</html>"
+        mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
 
         // Detail line: effort + age
-        val detailParts = mutableListOf<String>()
-        value.effort?.let { detailParts.add("$it to fix") }
-        value.creationDate?.let { dateStr ->
-            try {
-                val instant = Instant.parse(dateStr)
-                val relativeTime = TimeFormatter.relative(instant.toEpochMilli())
-                if (relativeTime.isNotEmpty()) detailParts.add(relativeTime)
-            } catch (_: Exception) {
-                // Sonar dates may be in different format (2024-03-15T14:32:00+0000)
-                // Silently skip if unparseable
+        val effort = value.effort
+        val creationDate = value.creationDate
+        if (effort != null || creationDate != null) {
+            val sb = StringBuilder("  ")
+            if (effort != null) sb.append(effort).append(" to fix")
+            if (creationDate != null) {
+                try {
+                    val relativeTime = TimeFormatter.relative(Instant.parse(creationDate).toEpochMilli())
+                    if (relativeTime.isNotEmpty()) {
+                        if (effort != null) sb.append(" \u2022 ")
+                        sb.append(relativeTime)
+                    }
+                } catch (_: Exception) {
+                    // Sonar dates may be in different format — skip if unparseable
+                }
             }
-        }
-        if (detailParts.isNotEmpty()) {
-            val dimColor = if (isSelected) list.selectionForeground else
-                JBUI.CurrentTheme.Label.disabledForeground()
-            val detailLabel = JBLabel("  ${detailParts.joinToString(" \u2022 ")}").apply {
-                font = font.deriveFont(font.size2D - 1f)
-                foreground = dimColor
-            }
-            panel.add(detailLabel)
+            detailLabel.text = sb.toString()
+            detailLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+            detailLabel.isVisible = true
+        } else {
+            detailLabel.isVisible = false
         }
 
-        panel.toolTipText = buildString {
+        // Selection background
+        isOpaque = true
+        background = if (isSelected) list.selectionBackground else list.background
+
+        // Tooltip
+        toolTipText = buildString {
             append("[${value.rule}] ${value.message} \u2014 ${value.filePath}:${value.startLine}")
             value.effort?.let { append(" | Effort: $it") }
             append(" | Status: ${value.status}")
         }
-        return panel
+
+        return this
     }
 }
