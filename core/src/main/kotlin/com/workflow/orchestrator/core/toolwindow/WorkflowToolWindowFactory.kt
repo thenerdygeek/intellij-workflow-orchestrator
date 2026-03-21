@@ -3,6 +3,8 @@ package com.workflow.orchestrator.core.toolwindow
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.actionSystem.*
+import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAware
@@ -11,8 +13,22 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.content.ContentFactory
+import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.StatusColors
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.filterIsInstance
+import java.awt.BorderLayout
+import java.awt.Cursor
+import java.awt.FlowLayout
+import java.awt.Font
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.JPanel
 
 class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
 
@@ -22,6 +38,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         buildTabs(project, toolWindow)
         setupTitleActions(project, toolWindow)
         setupGearActions(project, toolWindow)
+        setupActiveTicketBar(project, toolWindow)
 
         // Rebuild tabs when the tool window is shown, so settings changes take effect
         project.messageBus.connect(toolWindow.disposable)
@@ -44,6 +61,84 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                     }
                 }
             })
+    }
+
+    // ---------------------------------------------------------------
+    // Active ticket header bar (visible across all tabs)
+    // ---------------------------------------------------------------
+
+    private fun setupActiveTicketBar(project: Project, toolWindow: ToolWindow) {
+        val ticketLabel = JBLabel().apply {
+            font = JBUI.Fonts.label().deriveFont(Font.BOLD)
+        }
+        val summaryLabel = JBLabel().apply {
+            foreground = StatusColors.SECONDARY_TEXT
+        }
+
+        val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            add(JBLabel(AllIcons.Nodes.Tag))
+            add(ticketLabel)
+            add(summaryLabel)
+        }
+
+        val bar = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(3, 8)
+            background = StatusColors.INFO_BG
+            isVisible = false
+            add(leftPanel, BorderLayout.CENTER)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent?) {
+                    // Switch to Sprint tab (index 0)
+                    val cm = toolWindow.contentManager
+                    val sprintTab = cm.contents.firstOrNull { it.displayName == "Sprint" }
+                    if (sprintTab != null) {
+                        cm.setSelectedContent(sprintTab)
+                    }
+                }
+            })
+        }
+
+        // Add the bar above the tool window content
+        val twComponent = toolWindow.component
+        twComponent.add(bar, BorderLayout.NORTH)
+
+        // Initialize from persisted settings
+        val settings = PluginSettings.getInstance(project)
+        val activeId = settings.state.activeTicketId
+        if (!activeId.isNullOrBlank()) {
+            ticketLabel.text = activeId
+            summaryLabel.text = settings.state.activeTicketSummary ?: ""
+            bar.isVisible = true
+        }
+
+        // Subscribe to TicketChanged events
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val eventBus = project.service<EventBus>()
+
+        scope.launch {
+            eventBus.events.filterIsInstance<WorkflowEvent.TicketChanged>().collect { event ->
+                invokeLater {
+                    if (event.ticketId.isNotBlank()) {
+                        ticketLabel.text = event.ticketId
+                        summaryLabel.text = event.ticketSummary
+                        bar.isVisible = true
+                    } else {
+                        bar.isVisible = false
+                    }
+                    bar.parent?.revalidate()
+                    bar.parent?.repaint()
+                }
+            }
+        }
+
+        // Cancel coroutine scope when tool window is disposed
+        toolWindow.disposable.let { disposable ->
+            com.intellij.openapi.util.Disposer.register(disposable) {
+                scope.cancel()
+            }
+        }
     }
 
     // ---------------------------------------------------------------
