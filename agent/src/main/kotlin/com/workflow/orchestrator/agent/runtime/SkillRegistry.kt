@@ -101,9 +101,11 @@ class SkillRegistry(
         skills.values.filter { !it.disableModelInvocation }.sortedBy { it.name }
 
     fun buildDescriptionIndex(): String {
-        val sorted = skills.values.sortedBy { it.name }
-        if (sorted.isEmpty()) return "No skills available."
-        return "Available skills:\n" + sorted.joinToString("\n") { "- /${it.name} — ${it.description}" }
+        // Only show auto-discoverable skills (disable-model-invocation: false)
+        // Skills with disable-model-invocation: true must be completely hidden from LLM context
+        val discoverable = getAutoDiscoverableSkills()
+        if (discoverable.isEmpty()) return "No skills available."
+        return "Available skills:\n" + discoverable.joinToString("\n") { "- /${it.name} — ${it.description}" }
     }
 
     private fun scanDirectory(dir: File, scope: SkillScope) {
