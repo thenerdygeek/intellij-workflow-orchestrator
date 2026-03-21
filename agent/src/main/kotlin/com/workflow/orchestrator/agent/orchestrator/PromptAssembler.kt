@@ -84,10 +84,13 @@ class PromptAssembler(
         // 12. @ Mention context guidance
         sections.add(MENTION_RULES)
 
-        // 13. Efficiency constraints (prevents 13-iteration exploration for simple questions)
+        // 13. Rich output rendering capabilities
+        sections.add(RENDERING_RULES)
+
+        // 14. Efficiency constraints (prevents 13-iteration exploration for simple questions)
         sections.add(EFFICIENCY_RULES)
 
-        // 14. Rules and Constraints (including anti-loop)
+        // 15. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -289,6 +292,72 @@ class PromptAssembler(
             - When you have enough information to answer a question, STOP exploring and answer immediately.
             - Do not read files "just to be thorough" — read files only when you need specific information you don't yet have.
             </efficiency>
+        """.trimIndent()
+
+        val RENDERING_RULES = """
+            <rendering>
+            Your responses are rendered in a rich UI that supports interactive visualizations.
+            Use these formats when they genuinely improve understanding — not for decoration.
+
+            SUPPORTED FORMATS:
+
+            1. Mermaid Diagrams — use ```mermaid code blocks for:
+               - Architecture/flow explanations, dependency graphs, state machines, sequence diagrams
+               - Supported types: flowchart, sequence, classDiagram, erDiagram, gantt, gitGraph, stateDiagram
+               - Syntax rules: do NOT use quotation marks in node labels, avoid parentheses in labels, use <br/> for line breaks
+
+               Example:
+               ```mermaid
+               flowchart TD
+                 A[Read File] --> B{Has Errors?}
+                 B -- Yes --> C[Fix Errors]
+                 B -- No --> D[Done]
+               ```
+
+            2. Interactive Charts — use ```chart code blocks with Chart.js JSON config for:
+               - Numeric comparisons, trends, distributions, metrics breakdowns
+               - Supported types: bar, line, pie, doughnut, radar, polarArea
+               - Output must be valid JSON matching Chart.js configuration schema
+
+               Example:
+               ```chart
+               {
+                 "type": "bar",
+                 "data": {
+                   "labels": ["Module A", "Module B", "Module C"],
+                   "datasets": [{
+                     "label": "Test Coverage %",
+                     "data": [85, 72, 94],
+                     "backgroundColor": ["#4caf50", "#ff9800", "#2196f3"]
+                   }]
+                 },
+                 "options": { "scales": { "y": { "beginAtZero": true, "max": 100 } } }
+               }
+               ```
+
+            3. LaTeX Math — use ${'$'}...${'$'} for inline math and ${'$'}${'$'}...${'$'}${'$'} for block equations when:
+               - Explaining algorithms with mathematical notation
+               - Showing complexity analysis (e.g., ${'$'}O(n \log n)${'$'})
+               - Expressing formulas or equations
+
+            4. Diff Display — use ```diff code blocks for:
+               - Showing proposed changes before applying them
+               - Explaining what changed between versions
+               - Lines starting with + are additions, - are deletions
+
+            WHEN TO USE EACH:
+            - Explaining architecture, flow, or relationships → mermaid diagram
+            - Presenting numeric data, metrics, or comparisons with 3+ items → chart
+            - Showing code changes or before/after → diff block
+            - Mathematical formulas or complexity → LaTeX
+            - Simple lists or short explanations → plain markdown (don't over-visualize)
+
+            WHEN NOT TO USE:
+            - Don't create a chart for 1-2 data points — use text
+            - Don't create a mermaid diagram for a single linear step — use a list
+            - Don't use these formats inside tool call arguments
+            - Don't force visualizations when the user asked a yes/no question
+            </rendering>
         """.trimIndent()
 
         val RULES = """

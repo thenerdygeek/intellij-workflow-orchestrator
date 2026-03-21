@@ -148,6 +148,7 @@ class SingleAgentSession(
         val editedFiles = mutableListOf<String>()
         var nudgeEmitted = false
         var strongNudgeEmitted = false
+        var lastWarningPercent = 0
 
         // Track current tool definitions (may be reduced on context_length_exceeded)
         var activeToolDefs = toolDefinitions
@@ -252,10 +253,11 @@ class SingleAgentSession(
                 ))
             }
 
-            // 5a: Inject context budget warning when >50% full (like Claude Code's <system_warning>)
+            // 5a: Inject context budget warning at 10% thresholds past 50% (50%, 60%, 70%, 80%, 90%)
             val maxInputTokens = contextManager.effectiveMaxInputTokens
             val usedPercent = if (maxInputTokens > 0) ((contextManager.currentTokens.toDouble() / maxInputTokens) * 100).toInt() else 0
-            if (usedPercent > 50) {
+            if (usedPercent > 50 && usedPercent / 10 > lastWarningPercent / 10) {
+                lastWarningPercent = usedPercent
                 val remaining = maxInputTokens - contextManager.currentTokens
                 contextManager.addMessage(ChatMessage(
                     role = "system",
@@ -522,18 +524,30 @@ class SingleAgentSession(
             tc.function.name in READ_ONLY_TOOLS
         }
 
-        // Doom loop detection: check each tool call before execution
+        // Doom loop detection: check each tool call before execution, skip if detected
+        val doomSkipped = mutableSetOf<String>() // toolCallIds skipped due to doom loop
         for (tc in toolCalls) {
             val doomMessage = loopGuard.checkDoomLoop(tc.function.name, tc.function.arguments)
             if (doomMessage != null) {
-                contextManager.addMessage(ChatMessage(role = "system", content = "<system_warning>$doomMessage</system_warning>"))
+                // SKIP execution — don't waste time on a doom loop call
+                contextManager.addToolResult(tc.id, doomMessage, "Doom loop detected — execution skipped")
+                doomSkipped.add(tc.id)
+                toolResults.add(tc.id to true)
+                onProgress(AgentProgress(
+                    step = "Skipped tool: ${tc.function.name} (doom loop detected)",
+                    tokensUsed = contextManager.currentTokens
+                ))
             }
         }
 
+        // Filter out doom-loop-skipped calls from both parallel and sequential batches
+        val activeReadOnlyCalls = readOnlyCalls.filter { it.id !in doomSkipped }
+        val activeWriteCalls = writeCalls.filter { it.id !in doomSkipped }
+
         // Execute read-only tools in parallel, collect results first
-        if (readOnlyCalls.isNotEmpty()) {
+        if (activeReadOnlyCalls.isNotEmpty()) {
             val parallelResults: List<Triple<ToolCall, ToolResult, Long>> = coroutineScope {
-                readOnlyCalls.map { tc ->
+                activeReadOnlyCalls.map { tc ->
                     async {
                         if (cancelled.get()) {
                             Triple(tc, ToolResult("Cancelled by user", "Cancelled", 0, isError = true), 0L)
@@ -578,7 +592,7 @@ class SingleAgentSession(
         }
 
         // Execute write tools sequentially
-        for (toolCall in writeCalls) {
+        for (toolCall in activeWriteCalls) {
             if (cancelled.get()) {
                 contextManager.addToolResult(toolCall.id, "Cancelled by user", "Cancelled")
                 break
