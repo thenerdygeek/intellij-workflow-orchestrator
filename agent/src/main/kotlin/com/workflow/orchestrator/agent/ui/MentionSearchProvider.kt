@@ -31,6 +31,7 @@ class MentionSearchProvider(private val project: Project) {
             when (type) {
                 "categories" -> buildCategoriesJson()
                 "file" -> searchFiles(query)
+                "folder" -> searchFolders(query)
                 "symbol" -> searchSymbols(query)
                 "tool" -> searchTools(query)
                 "skill" -> searchSkills(query)
@@ -48,6 +49,12 @@ class MentionSearchProvider(private val project: Project) {
             put("icon", JsonPrimitive("[F]"))
             put("label", JsonPrimitive("File"))
             put("hint", JsonPrimitive("Search project files"))
+        })
+        add(buildJsonObject {
+            put("type", JsonPrimitive("folder"))
+            put("icon", JsonPrimitive("[D]"))
+            put("label", JsonPrimitive("Folder"))
+            put("hint", JsonPrimitive("Search project directories"))
         })
         add(buildJsonObject {
             put("type", JsonPrimitive("symbol"))
@@ -108,6 +115,46 @@ class MentionSearchProvider(private val project: Project) {
                         put("desc", JsonPrimitive(relativePath.substringBeforeLast('/')))
                     })
                 }
+            }
+        }
+    }
+
+    private fun searchFolders(query: String): String {
+        val lowerQuery = query.lowercase()
+        val results = mutableListOf<JsonObject>()
+        val basePath = project.basePath ?: return "[]"
+
+        try {
+            val roots = ProjectRootManager.getInstance(project).contentSourceRoots
+            for (root in roots) {
+                if (results.size >= MAX_RESULTS) break
+                collectFolders(root, lowerQuery, basePath, results)
+            }
+        } catch (_: Exception) {}
+
+        return JsonArray(results).toString()
+    }
+
+    private fun collectFolders(
+        dir: com.intellij.openapi.vfs.VirtualFile,
+        query: String,
+        basePath: String,
+        results: MutableList<JsonObject>
+    ) {
+        if (results.size >= MAX_RESULTS) return
+        if (dir.name.startsWith(".") || dir.name == "node_modules" || dir.name == "build" || dir.name == "out") return
+        val relativePath = dir.path.removePrefix("$basePath/")
+        if (query.isBlank() || dir.name.lowercase().contains(query) || relativePath.lowercase().contains(query)) {
+            results.add(buildJsonObject {
+                put("type", JsonPrimitive("folder"))
+                put("name", JsonPrimitive(dir.name + "/"))
+                put("value", JsonPrimitive(relativePath))
+                put("desc", JsonPrimitive(relativePath))
+            })
+        }
+        for (child in dir.children) {
+            if (child.isDirectory && results.size < MAX_RESULTS) {
+                collectFolders(child, query, basePath, results)
             }
         }
     }

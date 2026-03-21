@@ -176,6 +176,10 @@ class AgentDashboardPanel(
         cefPanel?.hideSkillBanner()
     }
 
+    fun setCefMentionCallbacks(onSendWithMentions: (String, String) -> Unit) {
+        cefPanel?.onSendMessageWithMentions = onSendWithMentions
+    }
+
     fun setMentionSearchProvider(provider: MentionSearchProvider) {
         cefPanel?.mentionSearchProvider = provider
     }

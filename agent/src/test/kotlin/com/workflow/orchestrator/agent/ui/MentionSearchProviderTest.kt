@@ -14,13 +14,14 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `categories returns all 4 types`() {
+    fun `categories returns all 5 types`() {
         val provider = MentionSearchProvider(project)
         val json = provider.search("categories", "")
         val arr = Json.parseToJsonElement(json).jsonArray
-        assertEquals(4, arr.size)
+        assertEquals(5, arr.size)
         val types = arr.map { it.jsonObject["type"]?.jsonPrimitive?.content }
         assertTrue("file" in types)
+        assertTrue("folder" in types)
         assertTrue("symbol" in types)
         assertTrue("tool" in types)
         assertTrue("skill" in types)
