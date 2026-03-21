@@ -7,7 +7,8 @@ package com.workflow.orchestrator.agent.context
  */
 object ToolResultCompressor {
 
-    private const val DEFAULT_MAX_TOKENS = 500
+    // 4000 tokens (~14K chars) — enough to see most of a typical source file
+    private const val DEFAULT_MAX_TOKENS = 4000
     private const val TRUNCATION_MARKER = "\n... [truncated — full result offloaded to cache]"
 
     /**

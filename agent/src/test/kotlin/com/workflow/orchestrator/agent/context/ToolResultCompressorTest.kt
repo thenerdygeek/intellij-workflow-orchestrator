@@ -8,7 +8,7 @@ class ToolResultCompressorTest {
     @Test
     fun `short content passes through unchanged`() {
         val content = "File read: 5 lines"
-        val result = ToolResultCompressor.compress(content, "Read 5 lines", maxTokens = 500)
+        val result = ToolResultCompressor.compress(content, "Read 5 lines", maxTokens = 4000)
         assertEquals(content, result)
     }
 
