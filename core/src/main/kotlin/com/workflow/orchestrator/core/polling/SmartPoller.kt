@@ -73,7 +73,8 @@ class SmartPoller(
             scope.launch {
                 try {
                     action()
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     // Swallow; normal polling will handle errors
                 }
             }

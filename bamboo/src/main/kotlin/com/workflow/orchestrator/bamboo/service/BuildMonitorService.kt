@@ -233,6 +233,7 @@ class BuildMonitorService : Disposable {
                 } else null
             } else null
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             log.debug("[Bamboo:Monitor] Failed to check for newer builds: ${e.message}")
             null
         }

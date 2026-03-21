@@ -229,6 +229,7 @@ class CodyChatService(private val project: Project) {
                     log.info("[Cody:Chat] didOpen: $filePath (${content.length} chars)")
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 log.warn("[Cody:Chat] Failed to open context file $filePath: ${e.message}")
             }
         }

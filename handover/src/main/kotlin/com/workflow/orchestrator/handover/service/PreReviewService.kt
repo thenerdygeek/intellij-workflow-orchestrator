@@ -92,6 +92,7 @@ class PreReviewService {
             log.debug("[Handover:Review] Enriched prompt includes ${fileAnnotations.size} file annotations")
             buildAnnotatedPrompt(diff, fileAnnotations)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             log.warn("[Handover:Review] Enrichment failed, falling back to plain prompt: ${e.message}")
             buildReviewPrompt(diff)
         }

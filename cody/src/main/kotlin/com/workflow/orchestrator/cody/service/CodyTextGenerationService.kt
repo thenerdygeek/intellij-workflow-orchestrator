@@ -40,6 +40,7 @@ class CodyTextGenerationService : TextGenerationService {
 
             response.messages.lastOrNull { it.speaker == "assistant" }?.text
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             log.warn("[Cody:TextGen] Text generation failed: ${e.message}")
             null
         }
@@ -69,6 +70,7 @@ class CodyTextGenerationService : TextGenerationService {
                 targetBranch = targetBranch
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             log.warn("[Cody:TextGen] PR description chain failed: ${e.message}")
             null
         }
