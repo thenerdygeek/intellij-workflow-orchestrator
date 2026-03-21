@@ -1703,9 +1703,62 @@ class PrDetailPanel(
             border = JBUI.Borders.emptyTop(20)
         }
 
+        // Comment input bar
+        private val commentField = JBTextField().apply {
+            emptyText.text = "Add a comment..."
+        }
+        private val sendCommentButton = JButton(AllIcons.Actions.Execute).apply {
+            toolTipText = "Post comment"
+            putClientProperty("JButton.buttonType", "borderless")
+        }
+        private val commentInputPanel = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 8)
+            add(commentField, BorderLayout.CENTER)
+            add(sendCommentButton, BorderLayout.EAST)
+        }
+
         init {
             isOpaque = false
             add(emptyLabel, BorderLayout.CENTER)
+            add(commentInputPanel, BorderLayout.SOUTH)
+
+            val submitComment = {
+                val text = commentField.text.trim()
+                val prId = currentPrId
+                if (text.isNotBlank() && prId != null) {
+                    commentField.isEnabled = false
+                    sendCommentButton.isEnabled = false
+                    scope.launch {
+                        val result = PrActionService.getInstance(project).addComment(prId, text)
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> {
+                                    commentField.text = ""
+                                    commentField.isEnabled = true
+                                    sendCommentButton.isEnabled = true
+                                    refreshActivities()
+                                }
+                                is ApiResult.Error -> {
+                                    commentField.isEnabled = true
+                                    sendCommentButton.isEnabled = true
+                                    log.warn("[PR:Activity] Comment failed: ${result.message}")
+                                    com.intellij.notification.NotificationGroupManager.getInstance()
+                                        .getNotificationGroup("Workflow Orchestrator")
+                                        .createNotification(
+                                            "Failed to post comment: ${result.message}",
+                                            com.intellij.notification.NotificationType.ERROR
+                                        )
+                                        .notify(project)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            commentField.addActionListener { submitComment() }
+            sendCommentButton.addActionListener { submitComment() }
         }
 
         private fun navigateToFile(relativePath: String, line: Int) {
