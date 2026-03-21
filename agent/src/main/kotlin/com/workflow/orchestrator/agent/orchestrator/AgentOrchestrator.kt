@@ -130,7 +130,7 @@ class AgentOrchestrator(
             val prefs = try { com.workflow.orchestrator.agent.settings.ToolPreferences.getInstance(project) } catch (_: Exception) { null }
             val disabledTools = prefs?.getDisabledTools() ?: emptySet()
             val preferredTools = session.skillManager?.getPreferredTools() ?: emptySet()
-            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext, disabledTools = disabledTools, preferredTools = preferredTools)
+            val selectedTools = DynamicToolSelector.selectTools(session.tools.values, toolContext, disabledTools = disabledTools, preferredTools = preferredTools, projectTools = session.projectTools)
             allTools = selectedTools.associateBy { it.name }
             allToolDefs = selectedTools.map { it.toToolDefinition() }
             contextManager = session.contextManager
