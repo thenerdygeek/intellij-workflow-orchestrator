@@ -18,11 +18,17 @@ import java.awt.GridBagLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 
+enum class TriggerMode {
+    STAGE,
+    FULL_BUILD
+}
+
 class ManualStageDialog(
     private val project: Project,
     private val planKey: String,
-    private val stageName: String,
-    private val scope: CoroutineScope
+    private val stageName: String = "",
+    private val scope: CoroutineScope,
+    private val triggerMode: TriggerMode = TriggerMode.STAGE
 ) : DialogWrapper(project) {
 
     private val bambooService = project.getService(BambooService::class.java)
@@ -31,7 +37,14 @@ class ManualStageDialog(
     private var isLoading = true
 
     init {
-        title = "Run Stage: $stageName"
+        title = when (triggerMode) {
+            TriggerMode.FULL_BUILD -> "Trigger Build"
+            TriggerMode.STAGE -> "Run Stage: $stageName"
+        }
+        setOKButtonText(when (triggerMode) {
+            TriggerMode.FULL_BUILD -> "Trigger"
+            TriggerMode.STAGE -> "OK"
+        })
         init()
         // Load variables asynchronously after dialog is shown
         scope.launch {
@@ -115,7 +128,10 @@ class ManualStageDialog(
         }
 
         scope.launch {
-            bambooService.triggerStage(planKey, vars, stageName)
+            when (triggerMode) {
+                TriggerMode.FULL_BUILD -> bambooService.triggerBuild(planKey, vars)
+                TriggerMode.STAGE -> bambooService.triggerStage(planKey, vars, stageName)
+            }
         }
 
         super.doOKAction()

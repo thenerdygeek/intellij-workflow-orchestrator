@@ -681,6 +681,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             override fun getActionUpdateThread() = ActionUpdateThread.BGT
         })
 
+        group.add(object : AnAction("Trigger Build", "Trigger a new build with custom variables", AllIcons.Actions.Execute) {
+            override fun actionPerformed(e: AnActionEvent) {
+                val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
+                if (planKey.isBlank()) return
+                openTriggerDialog(planKey)
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
+        })
+
         group.add(Separator.getInstance())
 
         // Local Maven build actions
@@ -829,6 +838,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private fun triggerManualStage(stageName: String) {
         val planKey = settings.state.bambooPlanKey.orEmpty()
         ManualStageDialog(project, planKey, stageName, scope).show()
+    }
+
+    private fun openTriggerDialog(planKey: String) {
+        ManualStageDialog(project, planKey, scope = scope, triggerMode = TriggerMode.FULL_BUILD).show()
     }
 
     private fun formatDurationSeconds(seconds: Long): String {
