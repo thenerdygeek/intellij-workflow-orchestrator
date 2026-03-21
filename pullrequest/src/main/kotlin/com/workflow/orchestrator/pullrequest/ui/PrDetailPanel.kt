@@ -57,6 +57,7 @@ import java.util.*
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.event.HyperlinkEvent
 
 /**
  * Right panel in the PR dashboard showing detailed PR information.
@@ -1624,13 +1625,16 @@ class PrDetailPanel(
     // ---------------------------------------------------------------
 
     private inner class DescriptionSubPanel : JPanel(BorderLayout()) {
-        private val descriptionArea = JBTextArea().apply {
-            lineWrap = true
-            wrapStyleWord = true
+        private val descriptionPane = JEditorPane().apply {
+            contentType = "text/html"
             isEditable = false
-            font = font.deriveFont(JBUI.scale(12).toFloat())
+            isOpaque = false
             border = JBUI.Borders.empty(8)
-            background = CARD_BG
+            addHyperlinkListener { e ->
+                if (e.eventType == HyperlinkEvent.EventType.ACTIVATED) {
+                    BrowserUtil.browse(e.url)
+                }
+            }
         }
         private val editArea = JBTextArea().apply {
             lineWrap = true
@@ -1686,9 +1690,9 @@ class PrDetailPanel(
                 }
                 add(buttonRow, BorderLayout.SOUTH)
             } else {
-                descriptionArea.text = description
-                descriptionArea.caretPosition = 0
-                add(JBScrollPane(descriptionArea).apply {
+                descriptionPane.text = markdownToHtml(description)
+                descriptionPane.caretPosition = 0
+                add(JBScrollPane(descriptionPane).apply {
                     border = JBUI.Borders.empty()
                     preferredSize = Dimension(0, JBUI.scale(200))
                 }, BorderLayout.CENTER)
@@ -1727,6 +1731,28 @@ class PrDetailPanel(
 
         private fun exitEditMode() {
             showDescription(currentDescription)
+        }
+
+        private fun markdownToHtml(md: String): String {
+            var html = md
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace(Regex("^### (.+)$", RegexOption.MULTILINE), "<h4>$1</h4>")
+                .replace(Regex("^## (.+)$", RegexOption.MULTILINE), "<h3>$1</h3>")
+                .replace(Regex("^# (.+)$", RegexOption.MULTILINE), "<h2>$1</h2>")
+                .replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
+                .replace(Regex("\\*(.+?)\\*"), "<i>$1</i>")
+                .replace(Regex("`(.+?)`"), "<code>$1</code>")
+                .replace(Regex("((?:^- .+\n?)+)", RegexOption.MULTILINE)) { match ->
+                    "<ul>" + match.value.replace(Regex("^- (.+)$", RegexOption.MULTILINE), "<li>$1</li>") + "</ul>"
+                }
+                .replace(Regex("\\[(.+?)\\]\\((.+?)\\)"), "<a href='$2'>$1</a>")
+                .replace("\n\n", "<br><br>")
+
+            val bgColor = StatusColors.htmlColor(CARD_BG)
+            val textColor = StatusColors.htmlColor(SECONDARY_TEXT)
+            return "<html><body style='font-family: sans-serif; color: $textColor;'>$html</body></html>"
         }
 
         private fun saveDescription() {
