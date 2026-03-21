@@ -32,6 +32,10 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketUser
+import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import kotlinx.coroutines.*
@@ -41,6 +45,8 @@ import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
 import java.util.*
 import javax.swing.*
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 
 /**
  * Right panel in the PR dashboard showing detailed PR information.
@@ -136,6 +142,14 @@ class PrDetailPanel(
         font = font.deriveFont(JBUI.scale(11).toFloat())
         foreground = SECONDARY_TEXT
     }
+    private val reviewersPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        isOpaque = false
+    }
+    private val addReviewerLink = JBLabel("+ Add").apply {
+        foreground = LINK_COLOR
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+    }
     private val buildStatusBadgeContainer = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
         isOpaque = false
     }
@@ -153,6 +167,10 @@ class PrDetailPanel(
     private val declineButton = JButton("Decline").apply {
         icon = AllIcons.Actions.Cancel
         mnemonic = java.awt.event.KeyEvent.VK_D
+    }
+    private val needsWorkButton = JButton("Needs Work").apply {
+        icon = AllIcons.General.Warning
+        mnemonic = java.awt.event.KeyEvent.VK_N
     }
     private val openInBrowserButton = JButton("Open in Browser").apply {
         icon = AllIcons.General.Web
@@ -231,6 +249,7 @@ class PrDetailPanel(
                 currentPr = prDetail
                 renderPrHeader(prId, prDetail.title, prDetail.state,
                     prDetail.fromRef, prDetail.toRef)
+                renderReviewers(prDetail)
                 descriptionSubPanel.showDescription(prDetail.description)
                 selectToggle(descriptionToggle)
                 (layout as CardLayout).show(this@PrDetailPanel, CARD_DETAIL)
@@ -365,13 +384,15 @@ class PrDetailPanel(
         contentPanel.add(headerSection)
 
         // Reviewers row
-        val reviewersRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+        val reviewersRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(24))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
             alignmentX = Component.LEFT_ALIGNMENT
             border = JBUI.Borders.emptyBottom(4)
         }
         reviewersRow.add(reviewersLabel)
+        reviewersRow.add(reviewersPanel)
+        reviewersRow.add(addReviewerLink)
         contentPanel.add(reviewersRow)
 
         // Build status row
@@ -392,6 +413,7 @@ class PrDetailPanel(
             border = JBUI.Borders.emptyBottom(8)
         }
         actionsRow.add(approveButton)
+        actionsRow.add(needsWorkButton)
         actionsRow.add(mergeButton)
         actionsRow.add(declineButton)
         actionsRow.add(openInBrowserButton)
@@ -497,6 +519,7 @@ class PrDetailPanel(
                             SwingUtilities.invokeLater {
                                 mergeButton.isEnabled = false
                                 approveButton.isEnabled = false
+                                needsWorkButton.isEnabled = false
                                 declineButton.isEnabled = false
                             }
                         } catch (e: Exception) {
@@ -528,6 +551,7 @@ class PrDetailPanel(
                     SwingUtilities.invokeLater {
                         mergeButton.isEnabled = false
                         approveButton.isEnabled = false
+                        needsWorkButton.isEnabled = false
                         declineButton.isEnabled = false
                     }
                 } catch (e: Exception) {
@@ -540,6 +564,42 @@ class PrDetailPanel(
                 }
             }
         }
+
+        needsWorkButton.addActionListener {
+            val prId = currentPrId ?: return@addActionListener
+            val pr = currentPr ?: return@addActionListener
+            // Determine current user from the PR author or settings
+            val currentUser = pr.author?.user?.name
+            if (currentUser.isNullOrBlank()) {
+                showNotification("Cannot determine current user for Needs Work")
+                return@addActionListener
+            }
+            scope.launch {
+                try {
+                    val result = PrActionService.getInstance(project).setNeedsWork(prId, currentUser)
+                    SwingUtilities.invokeLater {
+                        when (result) {
+                            is ApiResult.Success -> {
+                                needsWorkButton.text = "Needs Work Set"
+                                needsWorkButton.isEnabled = false
+                                refreshCurrentPr()
+                            }
+                            is ApiResult.Error -> showNotification("Needs Work failed: ${result.message}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    SwingUtilities.invokeLater {
+                        showNotification("Needs Work failed: ${e.message}")
+                    }
+                }
+            }
+        }
+
+        addReviewerLink.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                showAddReviewerPopup(addReviewerLink)
+            }
+        })
 
         openInBrowserButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
@@ -625,21 +685,212 @@ class PrDetailPanel(
         val isOpen = state.equals("OPEN", ignoreCase = true)
         approveButton.isEnabled = isOpen
         approveButton.text = "Approve"
+        needsWorkButton.isEnabled = isOpen
         mergeButton.isEnabled = isOpen
         declineButton.isEnabled = isOpen
+        addReviewerLink.isVisible = isOpen
     }
 
     private fun renderReviewers(pr: BitbucketPrDetail) {
+        reviewersPanel.removeAll()
+        val isOpen = pr.state.equals("OPEN", ignoreCase = true)
+
         if (pr.reviewers.isEmpty()) {
             reviewersLabel.text = "No reviewers assigned"
+            reviewersPanel.revalidate()
+            reviewersPanel.repaint()
             return
         }
-        val reviewerText = pr.reviewers.joinToString(", ") { reviewer ->
+
+        reviewersLabel.text = "Reviewers:"
+
+        for (reviewer in pr.reviewers) {
             val name = reviewer.user.displayName.ifBlank { reviewer.user.name }
-            val statusIcon = if (reviewer.approved) "\u2713" else "\u25CB"
-            "$statusIcon $name"
+            val statusIcon = when {
+                reviewer.approved -> "\u2713"
+                reviewer.status.equals("NEEDS_WORK", ignoreCase = true) -> "\u2718"
+                else -> "\u25CB"
+            }
+            val statusColor = when {
+                reviewer.approved -> APPROVED_COLOR
+                reviewer.status.equals("NEEDS_WORK", ignoreCase = true) -> StatusColors.WARNING
+                else -> SECONDARY_TEXT
+            }
+
+            val chipPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
+                isOpaque = false
+            }
+            chipPanel.add(JBLabel("$statusIcon $name").apply {
+                font = font.deriveFont(JBUI.scale(11).toFloat())
+                foreground = statusColor
+            })
+
+            // Add remove "x" link for open PRs
+            if (isOpen) {
+                val removeLabel = JBLabel("\u00D7").apply {
+                    foreground = StatusColors.ERROR
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                    toolTipText = "Remove $name"
+                }
+                val reviewerUsername = reviewer.user.name
+                removeLabel.addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        val confirm = com.intellij.openapi.ui.Messages.showYesNoDialog(
+                            this@PrDetailPanel,
+                            "Remove reviewer '$name' from this PR?",
+                            "Remove Reviewer",
+                            com.intellij.openapi.ui.Messages.getWarningIcon()
+                        )
+                        if (confirm != com.intellij.openapi.ui.Messages.YES) return
+                        val prId = currentPrId ?: return
+                        scope.launch {
+                            val result = PrActionService.getInstance(project).removeReviewer(prId, reviewerUsername)
+                            SwingUtilities.invokeLater {
+                                when (result) {
+                                    is ApiResult.Success -> refreshCurrentPr()
+                                    is ApiResult.Error -> showNotification("Failed to remove reviewer: ${result.message}")
+                                }
+                            }
+                        }
+                    }
+                })
+                chipPanel.add(removeLabel)
+            }
+
+            reviewersPanel.add(chipPanel)
         }
-        reviewersLabel.text = "Reviewers: $reviewerText"
+
+        reviewersPanel.revalidate()
+        reviewersPanel.repaint()
+    }
+
+    /**
+     * Re-fetch the current PR and re-render reviewers.
+     */
+    private fun refreshCurrentPr() {
+        val prId = currentPrId ?: return
+        scope.launch {
+            val detailService = PrDetailService.getInstance(project)
+            val prDetail = detailService.getDetail(prId)
+            if (prDetail != null) {
+                SwingUtilities.invokeLater {
+                    if (currentPrId != prId) return@invokeLater
+                    currentPr = prDetail
+                    renderReviewers(prDetail)
+                }
+            }
+        }
+    }
+
+    private fun showNotification(message: String) {
+        com.intellij.notification.NotificationGroupManager.getInstance()
+            .getNotificationGroup("workflow.build")
+            .createNotification(message, com.intellij.notification.NotificationType.ERROR)
+            .notify(project)
+    }
+
+    /**
+     * Shows a popup with user search for adding reviewers.
+     * Debounces input by 300ms, queries BitbucketBranchClient.getUsers().
+     */
+    private fun showAddReviewerPopup(relativeTo: Component) {
+        val popupContent = JPanel(BorderLayout()).apply {
+            preferredSize = Dimension(JBUI.scale(260), JBUI.scale(200))
+            border = JBUI.Borders.empty(8)
+        }
+
+        val searchField = JBTextField().apply {
+            emptyText.text = "Search users..."
+        }
+
+        val userListModel = DefaultListModel<BitbucketUser>()
+        val userList = JBList(userListModel).apply {
+            cellRenderer = object : DefaultListCellRenderer() {
+                override fun getListCellRendererComponent(
+                    list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+                ): Component {
+                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                    val user = value as? BitbucketUser
+                    text = if (user != null) {
+                        val display = user.displayName.ifBlank { user.name }
+                        "$display (${user.name})"
+                    } else ""
+                    return this
+                }
+            }
+        }
+
+        popupContent.add(searchField, BorderLayout.NORTH)
+        popupContent.add(JBScrollPane(userList).apply {
+            border = JBUI.Borders.emptyTop(4)
+        }, BorderLayout.CENTER)
+
+        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(popupContent, searchField)
+            .setRequestFocus(true)
+            .setFocusable(true)
+            .setMovable(true)
+            .setTitle("Add Reviewer")
+            .createPopup()
+
+        // Debounced search
+        var searchJob: Job? = null
+        searchField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = triggerSearch()
+            override fun removeUpdate(e: DocumentEvent) = triggerSearch()
+            override fun changedUpdate(e: DocumentEvent) = triggerSearch()
+
+            private fun triggerSearch() {
+                searchJob?.cancel()
+                val query = searchField.text.trim()
+                if (query.length < 2) {
+                    userListModel.clear()
+                    return
+                }
+                searchJob = scope.launch {
+                    delay(300) // debounce
+                    val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
+                    if (url.isBlank()) return@launch
+                    val credentialStore = CredentialStore()
+                    val client = BitbucketBranchClient(
+                        baseUrl = url,
+                        tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+                    )
+                    when (val result = client.getUsers(query)) {
+                        is ApiResult.Success -> {
+                            SwingUtilities.invokeLater {
+                                userListModel.clear()
+                                result.data.forEach { userListModel.addElement(it) }
+                            }
+                        }
+                        is ApiResult.Error -> { /* ignore search errors */ }
+                    }
+                }
+            }
+        })
+
+        // Click to add reviewer
+        userList.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 1) {
+                    val selected = userList.selectedValue ?: return
+                    val prId = currentPrId ?: return
+                    popup.cancel()
+                    scope.launch {
+                        val result = PrActionService.getInstance(project).addReviewer(prId, selected.name)
+                        SwingUtilities.invokeLater {
+                            when (result) {
+                                is ApiResult.Success -> refreshCurrentPr()
+                                is ApiResult.Error -> showNotification("Failed to add reviewer: ${result.message}")
+                            }
+                        }
+                    }
+                }
+            }
+        })
+
+        popup.showUnderneathOf(relativeTo)
     }
 
     private fun createStatusBadge(status: String): JPanel {

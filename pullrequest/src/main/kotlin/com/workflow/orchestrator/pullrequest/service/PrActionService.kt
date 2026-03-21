@@ -295,6 +295,113 @@ class PrActionService(private val project: Project) {
     }
 
     /**
+     * Add a reviewer to a pull request.
+     * Fetches current PR state, adds the user to reviewers, and PUT updates.
+     */
+    suspend fun addReviewer(prId: Int, username: String): ApiResult<Unit> {
+        val client = getClient()
+            ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
+        if (!isConfigured())
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
+
+        log.info("[PR:Action] Adding reviewer '$username' to PR #$prId")
+
+        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
+        val existingPr = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ApiResult.Error(currentPr.type, "Failed to fetch PR: ${currentPr.message}")
+        }
+
+        // Check if already a reviewer
+        if (existingPr.reviewers.any { it.user.name == username }) {
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "'$username' is already a reviewer")
+        }
+
+        val updatedReviewers = existingPr.reviewers.map {
+            BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+        } + BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = username))
+
+        val updateRequest = BitbucketPrUpdateRequest(
+            title = existingPr.title,
+            description = existingPr.description ?: "",
+            version = existingPr.version,
+            reviewers = updatedReviewers
+        )
+        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] Reviewer '$username' added to PR #$prId")
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to add reviewer '$username' to PR #$prId: ${result.message}")
+                ApiResult.Error(result.type, result.message)
+            }
+        }
+    }
+
+    /**
+     * Remove a reviewer from a pull request.
+     * Fetches current PR state, removes the user from reviewers, and PUT updates.
+     */
+    suspend fun removeReviewer(prId: Int, username: String): ApiResult<Unit> {
+        val client = getClient()
+            ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
+        if (!isConfigured())
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
+
+        log.info("[PR:Action] Removing reviewer '$username' from PR #$prId")
+
+        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
+        val existingPr = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ApiResult.Error(currentPr.type, "Failed to fetch PR: ${currentPr.message}")
+        }
+
+        val updatedReviewers = existingPr.reviewers
+            .filter { it.user.name != username }
+            .map { BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name)) }
+
+        val updateRequest = BitbucketPrUpdateRequest(
+            title = existingPr.title,
+            description = existingPr.description ?: "",
+            version = existingPr.version,
+            reviewers = updatedReviewers
+        )
+        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] Reviewer '$username' removed from PR #$prId")
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to remove reviewer '$username' from PR #$prId: ${result.message}")
+                ApiResult.Error(result.type, result.message)
+            }
+        }
+    }
+
+    /**
+     * Set a reviewer's status to NEEDS_WORK on a pull request.
+     */
+    suspend fun setNeedsWork(prId: Int, username: String): ApiResult<Unit> {
+        val client = getClient()
+            ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
+        if (!isConfigured())
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
+
+        log.info("[PR:Action] Setting NEEDS_WORK for '$username' on PR #$prId")
+        return when (val result = client.setReviewerStatus(projectKey(), repoSlug(), prId, username, "NEEDS_WORK")) {
+            is ApiResult.Success -> {
+                log.info("[PR:Action] Reviewer '$username' set to NEEDS_WORK on PR #$prId")
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                log.warn("[PR:Action] Failed to set NEEDS_WORK for '$username' on PR #$prId: ${result.message}")
+                ApiResult.Error(result.type, result.message)
+            }
+        }
+    }
+
+    /**
      * Reply to an existing comment on a pull request.
      */
     suspend fun replyToComment(prId: Int, parentCommentId: Int, text: String): ApiResult<Unit> {
