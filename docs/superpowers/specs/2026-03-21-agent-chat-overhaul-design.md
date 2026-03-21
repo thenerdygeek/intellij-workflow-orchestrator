@@ -82,7 +82,7 @@ Position: Fixed at top of chat panel. Height: ~36px.
 - **New** — Creates new chat session. Calls `_newChat()`.
 - **Divider** — 1px vertical line separating primary actions from overflow.
 - **⋯ Overflow** — Dropdown menu containing: Tools, Traces, Settings. Each calls its respective bridge.
-- **Token budget** — Right-aligned. Format: `● 24.5K / 190K`. Dot color: green (<60%), yellow (60-80%), red (>80%). Hidden when no session active.
+- **Token budget** — Right-aligned. Format: `● 24.5K / 190K`. Dot color: green (<60%), yellow (60-80%), red (>80%). At >80%, also show text label "Low" next to the budget for colorblind accessibility (color alone must not be the only indicator). Hidden when no session active.
 
 **Light mode:** Background `#f8fafc`, border `#e2e8f0`, text `#475569`.
 
@@ -122,13 +122,25 @@ Position: Fixed at bottom of chat panel. Auto-expands from 60px to 200px max.
 - **Model selector** — Shows current model with colored dot. Click opens dropdown with available models. Selection calls `_changeModel(modelId)`.
 - **Plan chip** — Toggle. Active state: blue background + border. Calls `_togglePlanMode(enabled)`.
 - **Skills chip** — Click opens dropdown of available skills. Selection calls `_activateSkill(name)`.
-- **Send button** — Blue with glow shadow. Calls `_sendMessage(text)`. Disabled when textarea is empty.
+- **Send button** — Blue with glow shadow. Calls `_sendMessage(text)`. Disabled states:
+  - Empty textarea: `opacity: 0.4; cursor: default; box-shadow: none; pointer-events: none`
+  - After click (pre-busy): Immediately disabled in JS before bridge call returns (prevents double-submit)
+  - Agent busy (`setBusy(true)`): same disabled visual
 
-**Hint line:** "Enter to send · Shift+Enter for new line" — 10px muted text below the wrapper.
+**Hint line:** "Enter to send · Shift+Enter for new line" — 10px muted text below the wrapper. Color: `var(--fg-muted)` in both themes.
 
 ### 3. Chat Area
 
-Position: Scrollable area between toolbar and input bar. `flex: 1; overflow-y: auto`.
+Position: Scrollable area between toolbar and input bar. The overall page uses a flex column layout:
+
+```css
+body { display: flex; flex-direction: column; height: 100vh; }
+.toolbar { flex-shrink: 0; position: sticky; top: 0; z-index: 10; }
+.chat-area { flex: 1; overflow-y: auto; }
+.input-area { flex-shrink: 0; position: sticky; bottom: 0; z-index: 20; }
+```
+
+This ensures toolbar and input stay anchored while chat scrolls between them. No content is hidden behind fixed elements.
 
 All existing components are retained with audit fixes applied:
 
@@ -183,7 +195,28 @@ All `rgba(255,255,255,x)` replaced with CSS variables injected from Kotlin:
 | `--chip-bg` | `rgba(255,255,255,0.03)` | `rgba(0,0,0,0.03)` |
 | `--chip-border` | `rgba(255,255,255,0.07)` | `#e2e8f0` |
 
-### 5. Accessibility
+### 5. Z-Index Scale & Interaction Rules
+
+**Z-index scale (consistent across all components):**
+
+| Layer | z-index | Elements |
+|-------|---------|----------|
+| Base content | 0 | Chat messages, tool cards, diffs |
+| Sticky toolbar | 10 | Top toolbar, skill banner |
+| Sticky input | 20 | Bottom input bar |
+| Dropdowns | 100 | Model selector, skills dropdown, overflow menu |
+| Overlays | 1000 | Tools panel, tool detail panel |
+| Toasts | 2000 | Toast notifications |
+
+**Dropdown positioning:** Model selector, skills dropdown, and overflow menu dropdowns are positioned absolutely relative to their trigger chip/button, opening upward (for input bar) or downward (for toolbar). Each dropdown has `z-index: 100` and a click-outside listener to dismiss.
+
+**Interaction rules (all interactive elements):**
+- All clickable elements (buttons, chips, close icons, tool headers, options, links) must have `cursor: pointer`
+- Hover states use `color`, `opacity`, `background`, `border-color` transitions only — **no `scale` or `transform` on hover** (causes layout shift)
+- Active/pressed state: `opacity: 0.85` (no `scale(0.95)` — layout shift in a dense IDE panel is jarring)
+- Transitions: `150ms` for micro-interactions (hover, focus), `200ms` for state changes (expand/collapse), `300ms` for enter/exit animations (toast, fadeIn)
+
+### 6. Accessibility
 
 **`prefers-reduced-motion`:**
 ```css
@@ -208,7 +241,7 @@ outline-offset: 2px;
 - Escape in textarea returns focus to IDE editor
 - Enter in textarea sends message (Shift+Enter for newline)
 
-### 6. Kotlin Side Changes
+### 7. Kotlin Side Changes
 
 **`AgentDashboardPanel.kt`:**
 - **Remove fields:** `chatInput`, `sendButton`, `cancelButton`, `newChatButton`, `planModeToggle`, `toolsButton`, `skillsButton`, `tracesButton`, `settingsLink`, `modelLabel`, `tokenWidget`, `savedChatInputText`
@@ -259,7 +292,7 @@ outline-offset: 2px;
 - Add right-click context menu with Resume/Delete
 - Add tooltip on entries
 
-### 7. Overflow Menu Implementation
+### 8. Overflow Menu Implementation
 
 The `_openOverflowMenu()` JS→Kotlin bridge is handled **entirely in JS** — the HTML renders a dropdown menu positioned below the ⋯ button. Each menu item calls a specific bridge:
 
