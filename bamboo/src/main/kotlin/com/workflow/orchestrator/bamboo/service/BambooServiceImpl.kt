@@ -11,6 +11,8 @@ import com.workflow.orchestrator.core.model.bamboo.BuildStageData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.model.bamboo.FailedTestData
 import com.workflow.orchestrator.core.model.bamboo.ArtifactData
+import com.workflow.orchestrator.core.model.bamboo.PlanBranchData
+import com.workflow.orchestrator.core.model.bamboo.PlanData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 import com.workflow.orchestrator.core.services.BambooService
@@ -476,6 +478,228 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                 ToolResult(
                     data = emptyList(),
                     summary = "Error fetching recent builds for $planKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getPlans(): ToolResult<List<PlanData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch plans.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getPlans()) {
+            is ApiResult.Success -> {
+                val data = result.data.map { dto ->
+                    PlanData(
+                        key = dto.key,
+                        name = dto.name,
+                        projectKey = dto.key.substringBefore("-"),
+                        projectName = "",
+                        enabled = dto.enabled
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Found ${data.size} plan(s): ${data.joinToString { it.key }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch plans: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching plans: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getProjectPlans(projectKey: String): ToolResult<List<PlanData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch plans for project $projectKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getProjectPlans(projectKey)) {
+            is ApiResult.Success -> {
+                val data = result.data.map { dto ->
+                    PlanData(
+                        key = dto.key,
+                        name = dto.name,
+                        projectKey = projectKey,
+                        projectName = "",
+                        enabled = dto.enabled
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Project $projectKey has ${data.size} plan(s): ${data.joinToString { it.key }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch plans for project $projectKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching plans for project $projectKey: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                            "Verify the project key is correct."
+                        else -> "Check Bamboo connection in Settings."
+                    }
+                )
+            }
+        }
+    }
+
+    override suspend fun searchPlans(query: String): ToolResult<List<PlanData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot search plans.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.searchPlans(query)) {
+            is ApiResult.Success -> {
+                val data = result.data.map { entity ->
+                    PlanData(
+                        key = entity.key,
+                        name = entity.planName,
+                        projectKey = entity.key.substringBefore("-"),
+                        projectName = entity.projectName,
+                        enabled = true
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Search '$query' found ${data.size} plan(s): ${data.joinToString { it.key }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to search plans with query '$query': ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error searching plans: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getPlanBranches(planKey: String): ToolResult<List<PlanBranchData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch branches for $planKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getBranches(planKey)) {
+            is ApiResult.Success -> {
+                val data = result.data.map { dto ->
+                    PlanBranchData(
+                        key = dto.key,
+                        name = dto.name,
+                        enabled = dto.enabled
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Plan $planKey has ${data.size} branch(es): ${data.joinToString { it.name }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch branches for $planKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching branches for $planKey: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                            "Verify the plan key is correct."
+                        else -> "Check Bamboo connection in Settings."
+                    }
+                )
+            }
+        }
+    }
+
+    override suspend fun getRunningBuilds(planKey: String): ToolResult<List<BuildResultData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch running builds for $planKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getRunningAndQueuedBuilds(planKey)) {
+            is ApiResult.Success -> {
+                val builds = result.data.map { dto ->
+                    BuildResultData(
+                        planKey = dto.plan?.key ?: dto.key.substringBeforeLast("-"),
+                        buildNumber = dto.buildNumber,
+                        state = dto.state.ifBlank { dto.lifeCycleState },
+                        durationSeconds = dto.buildDurationInSeconds,
+                        buildResultKey = dto.buildResultKey.ifBlank { dto.key },
+                        buildRelativeTime = dto.buildRelativeTime,
+                        stages = dto.stages.stage.map { stage ->
+                            BuildStageData(
+                                name = stage.name,
+                                state = stage.state.ifBlank { stage.lifeCycleState },
+                                durationSeconds = stage.buildDurationInSeconds
+                            )
+                        }
+                    )
+                }
+                ToolResult.success(
+                    data = builds,
+                    summary = "Found ${builds.size} running/queued build(s) for $planKey"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch running builds for $planKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching running builds for $planKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getBuildVariables(resultKey: String): ToolResult<List<PlanVariableData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch build variables for $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getBuildVariables(resultKey)) {
+            is ApiResult.Success -> {
+                val data = result.data.entries.map { PlanVariableData(name = it.key, value = it.value) }
+                ToolResult.success(
+                    data = data,
+                    summary = "Build $resultKey has ${data.size} variable(s): ${data.joinToString { it.name }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch build variables for $resultKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching build variables for $resultKey: ${result.message}",
                     isError = true,
                     hint = "Check Bamboo connection in Settings."
                 )

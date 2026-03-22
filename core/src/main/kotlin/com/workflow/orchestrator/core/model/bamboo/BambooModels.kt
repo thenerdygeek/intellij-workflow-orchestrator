@@ -81,3 +81,25 @@ data class ArtifactData(
     val shared: Boolean = false,
     val size: Long = 0
 )
+
+/**
+ * A Bamboo build plan.
+ */
+@Serializable
+data class PlanData(
+    val key: String,
+    val name: String,
+    val projectKey: String,
+    val projectName: String,
+    val enabled: Boolean = true
+)
+
+/**
+ * A branch of a Bamboo build plan.
+ */
+@Serializable
+data class PlanBranchData(
+    val key: String,
+    val name: String,
+    val enabled: Boolean = true
+)

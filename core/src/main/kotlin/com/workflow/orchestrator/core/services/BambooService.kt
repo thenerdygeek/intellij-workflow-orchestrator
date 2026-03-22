@@ -2,8 +2,10 @@ package com.workflow.orchestrator.core.services
 
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
-import com.workflow.orchestrator.core.model.bamboo.TestResultsData
+import com.workflow.orchestrator.core.model.bamboo.PlanBranchData
+import com.workflow.orchestrator.core.model.bamboo.PlanData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
+import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 
 /**
  * Bamboo operations used by both UI panels and AI agent.
@@ -51,4 +53,22 @@ interface BambooService {
 
     /** Get recent build results for a plan. */
     suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10): ToolResult<List<BuildResultData>>
+
+    /** List all plans visible to the authenticated user. */
+    suspend fun getPlans(): ToolResult<List<PlanData>>
+
+    /** List plans belonging to a specific project. */
+    suspend fun getProjectPlans(projectKey: String): ToolResult<List<PlanData>>
+
+    /** Search plans by name or key. */
+    suspend fun searchPlans(query: String): ToolResult<List<PlanData>>
+
+    /** List branches for a plan. */
+    suspend fun getPlanBranches(planKey: String): ToolResult<List<PlanBranchData>>
+
+    /** Get running and queued builds for a plan. */
+    suspend fun getRunningBuilds(planKey: String): ToolResult<List<BuildResultData>>
+
+    /** Get variables used in a specific build result. */
+    suspend fun getBuildVariables(resultKey: String): ToolResult<List<PlanVariableData>>
 }
