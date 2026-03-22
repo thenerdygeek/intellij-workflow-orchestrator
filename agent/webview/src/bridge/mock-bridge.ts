@@ -124,15 +124,50 @@ export function simulateTheme(isDark: boolean): void {
   w.setMermaidTheme?.(isDark);
 }
 
+export async function simulateStreaming(): Promise<void> {
+  const w = window as any;
+
+  const sampleText = `# Analysis Complete
+
+Here's what I found in the codebase:
+
+1. **Authentication** is handled via Bearer tokens stored in PasswordSafe
+2. The \`HttpClientFactory\` manages connection pooling
+
+\`\`\`kotlin
+class AuthService(private val credentials: CredentialStore) {
+    suspend fun authenticate(): Token {
+        return credentials.getToken("service-key")
+    }
+}
+\`\`\`
+
+> Note: All API calls use \`suspend fun\` on \`Dispatchers.IO\`
+
+| Module | Status |
+|--------|--------|
+| core | Ready |
+| jira | In progress |
+`;
+
+  const tokens = sampleText.split(/(?<=\s)/);
+  for (const token of tokens) {
+    w.appendToken?.(token);
+    await new Promise(r => setTimeout(r, 20 + Math.random() * 30));
+  }
+  w.endStream?.();
+}
+
 export function installMockBridge(): void {
   const w = window as any;
-  w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme };
+  w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming };
   console.log(
     '%c[Mock Bridge] Dev mode active. Available simulations:\n' +
     '  __mock.simulateAgentResponse()\n' +
     '  __mock.simulatePlan()\n' +
     '  __mock.simulateQuestions()\n' +
     '  __mock.simulateToolCalls()\n' +
+    '  __mock.simulateStreaming()\n' +
     '  __mock.simulateTheme(true|false)',
     'color: #60a5fa; font-weight: bold'
   );

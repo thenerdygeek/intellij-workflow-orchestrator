@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { Message } from '@/bridge/types';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 
 interface MessageCardProps {
   message: Message;
@@ -47,9 +48,7 @@ export const MessageCard = memo(function MessageCard({
           </div>
         )}
 
-        <div className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">
-          {content}
-        </div>
+        <MarkdownRenderer content={content} isStreaming={isStreaming} />
 
         {isStreaming && (
           <span className="inline-block h-4 w-[2px] translate-y-[2px] bg-[var(--fg)] animate-[cursor-blink_530ms_step-end_infinite]" />
