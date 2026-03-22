@@ -18,7 +18,7 @@ class BitbucketSetReviewerStatusTool : AgentTool {
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
             "username" to ParameterProperty(type = "string", description = "Reviewer username"),
             "status" to ParameterProperty(type = "string", description = "Review status: 'APPROVED', 'NEEDS_WORK', or 'UNAPPROVED'"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("pr_id", "username", "status")
     )

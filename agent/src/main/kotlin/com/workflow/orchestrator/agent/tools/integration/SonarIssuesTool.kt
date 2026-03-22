@@ -17,7 +17,7 @@ class SonarIssuesTool : AgentTool {
         properties = mapOf(
             "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')"),
             "file" to ParameterProperty(type = "string", description = "Optional: filter by relative file path (e.g., 'src/main/java/com/example/MyService.java')"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("project_key")
     )

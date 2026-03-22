@@ -17,7 +17,7 @@ class BitbucketCreateBranchTool : AgentTool {
         properties = mapOf(
             "name" to ParameterProperty(type = "string", description = "New branch name (e.g., feature/PROJ-123-fix-auth)"),
             "start_point" to ParameterProperty(type = "string", description = "Start point: branch name, tag, or commit hash to branch from"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("name", "start_point")
     )

@@ -17,7 +17,7 @@ class BambooRecentBuildsTool : AgentTool {
         properties = mapOf(
             "plan_key" to ParameterProperty(type = "string", description = "Bamboo plan key (e.g., PROJ-PLAN)"),
             "max_results" to ParameterProperty(type = "string", description = "Maximum number of results to return (default: 10)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("plan_key")
     )

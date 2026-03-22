@@ -171,11 +171,33 @@ class AgentOrchestrator(
                 RepoMapGenerator.generate(project, maxTokens = 1500)
             } catch (_: Exception) { "" }
 
+            val repoContext = try {
+                val pluginSettings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                val repos = pluginSettings.getRepos()
+                if (repos.size > 1) {
+                    buildString {
+                        appendLine("This project has ${repos.size} configured repositories:")
+                        repos.forEach { repo ->
+                            val primary = if (repo.isPrimary) " (primary)" else ""
+                            val services = buildList {
+                                if (!repo.bambooPlanKey.isNullOrBlank()) add("Bamboo: ${repo.bambooPlanKey}")
+                                if (!repo.sonarProjectKey.isNullOrBlank()) add("Sonar: ${repo.sonarProjectKey}")
+                                if (!repo.bitbucketProjectKey.isNullOrBlank() && !repo.bitbucketRepoSlug.isNullOrBlank())
+                                    add("Bitbucket: ${repo.bitbucketProjectKey}/${repo.bitbucketRepoSlug}")
+                            }.joinToString(", ")
+                            appendLine("- ${repo.name}$primary — $services")
+                        }
+                        appendLine("\nUse repo_name parameter on Bitbucket, Bamboo, and Sonar tools to target a specific repo.")
+                    }
+                } else null
+            } catch (_: Exception) { null }
+
             val promptAssembler = PromptAssembler(toolRegistry)
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
                 projectName = project.name,
                 projectPath = project.basePath,
-                repoMapContext = repoMap.ifBlank { null }
+                repoMapContext = repoMap.ifBlank { null },
+                repoContext = repoContext
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
             val reservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER

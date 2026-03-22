@@ -18,7 +18,7 @@ class BitbucketReplyToCommentTool : AgentTool {
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
             "parent_comment_id" to ParameterProperty(type = "string", description = "ID of the comment to reply to (numeric)"),
             "text" to ParameterProperty(type = "string", description = "Reply text (supports Markdown)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("pr_id", "parent_comment_id", "text")
     )

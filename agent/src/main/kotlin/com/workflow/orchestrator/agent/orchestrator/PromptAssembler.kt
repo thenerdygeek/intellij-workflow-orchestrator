@@ -26,7 +26,8 @@ class PromptAssembler(
         memoryContext: String? = null,
         skillDescriptions: String? = null,
         agentDescriptions: String? = null,
-        planMode: Boolean = false
+        planMode: Boolean = false,
+        repoContext: String? = null
     ): String {
         val sections = mutableListOf<String>()
 
@@ -41,6 +42,11 @@ class PromptAssembler(
         if (projectName != null || frameworkInfo != null) {
             val ctx = buildProjectContext(projectName, projectPath, frameworkInfo)
             sections.add("<project_context>\n$ctx\n</project_context>")
+        }
+
+        // 3b. Repository Context (multi-repo awareness)
+        if (!repoContext.isNullOrBlank()) {
+            sections.add("<project_repositories>\n$repoContext\n</project_repositories>")
         }
 
         // 4. Repo Map (PSI-generated, only if available)
@@ -418,6 +424,7 @@ class PromptAssembler(
             - Be precise and minimal in edits. Don't rewrite entire files when a targeted change suffices.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - Report what you changed and verify it works before declaring the task complete.
+            - When the project has multiple repositories, always specify repo_name on Bitbucket, Bamboo, and Sonar tools to target the correct repo. Use bitbucket_list_repos to discover available repositories and their names. Omitting repo_name defaults to the primary repository.
             - Use git_* tools for ALL git operations (git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list, git_blame). NEVER use run_command for git — dangerous git commands are blocked.
             - NEVER assume branch names. Check git_branches first to find the actual base branch (it may not be 'main').
             - NEVER reference remote refs (origin/, upstream/) in any git operation. All git tools work on local refs only.

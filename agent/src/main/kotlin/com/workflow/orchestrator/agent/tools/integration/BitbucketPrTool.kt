@@ -19,7 +19,7 @@ class BitbucketPrTool : AgentTool {
             "description" to ParameterProperty(type = "string", description = "Pull request description (details of what changed and why)"),
             "from_branch" to ParameterProperty(type = "string", description = "Source branch name (e.g., 'feature/PROJ-123-fix-auth')"),
             "to_branch" to ParameterProperty(type = "string", description = "Target branch name. Optional, defaults to 'master'"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("title", "description", "from_branch")
     )

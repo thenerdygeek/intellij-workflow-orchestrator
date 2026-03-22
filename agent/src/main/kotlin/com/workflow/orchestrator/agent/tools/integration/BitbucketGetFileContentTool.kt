@@ -17,7 +17,7 @@ class BitbucketGetFileContentTool : AgentTool {
         properties = mapOf(
             "file_path" to ParameterProperty(type = "string", description = "File path relative to repository root"),
             "at_ref" to ParameterProperty(type = "string", description = "Git ref to read from (branch name, tag, or commit hash)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("file_path", "at_ref")
     )

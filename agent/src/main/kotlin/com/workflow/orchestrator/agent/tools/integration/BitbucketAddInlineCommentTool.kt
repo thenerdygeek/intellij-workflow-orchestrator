@@ -20,7 +20,7 @@ class BitbucketAddInlineCommentTool : AgentTool {
             "line" to ParameterProperty(type = "string", description = "Line number to comment on"),
             "line_type" to ParameterProperty(type = "string", description = "Line type: 'ADDED', 'REMOVED', or 'CONTEXT'"),
             "text" to ParameterProperty(type = "string", description = "Comment text (supports Markdown)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("pr_id", "file_path", "line", "line_type", "text")
     )

@@ -19,7 +19,7 @@ class BitbucketMergePrTool : AgentTool {
             "strategy" to ParameterProperty(type = "string", description = "Merge strategy: 'merge-commit', 'squash', or 'ff-only' (optional)"),
             "delete_source_branch" to ParameterProperty(type = "string", description = "Delete source branch after merge: 'true' or 'false' (default: false)"),
             "commit_message" to ParameterProperty(type = "string", description = "Custom merge commit message (optional)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("pr_id")
     )

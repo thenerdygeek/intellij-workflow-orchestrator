@@ -16,7 +16,7 @@ class BitbucketGetPrChangesTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("pr_id")
     )

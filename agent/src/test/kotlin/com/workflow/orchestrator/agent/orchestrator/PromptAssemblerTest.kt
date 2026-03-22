@@ -194,6 +194,36 @@ class PromptAssemblerTest {
         assertFalse(prompt.contains("<repo_map>"), "Should not have repo_map section for null input")
     }
 
+    // --- Multi-repo awareness ---
+
+    @Test
+    fun `repo context is included when provided`() {
+        val repoCtx = "This project has 2 configured repositories:\n- backend (primary) — Bamboo: PROJ-BACK"
+        val prompt = assembler.buildSingleAgentPrompt(repoContext = repoCtx)
+
+        assertTrue(prompt.contains("<project_repositories>"), "Should contain project_repositories section")
+        assertTrue(prompt.contains("backend (primary)"), "Should contain repo details")
+    }
+
+    @Test
+    fun `blank repo context is not included`() {
+        val prompt = assembler.buildSingleAgentPrompt(repoContext = "")
+        assertFalse(prompt.contains("<project_repositories>"), "Should not have project_repositories for blank input")
+    }
+
+    @Test
+    fun `null repo context is not included`() {
+        val prompt = assembler.buildSingleAgentPrompt(repoContext = null)
+        assertFalse(prompt.contains("<project_repositories>"), "Should not have project_repositories for null input")
+    }
+
+    @Test
+    fun `rules contain multi-repo guidance`() {
+        val prompt = assembler.buildSingleAgentPrompt()
+        assertTrue(prompt.contains("multiple repositories"), "Should contain multi-repo rule")
+        assertTrue(prompt.contains("bitbucket_list_repos"), "Should mention bitbucket_list_repos for discovery")
+    }
+
     // --- Anti-loop rules ---
 
     @Test

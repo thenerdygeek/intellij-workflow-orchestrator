@@ -18,7 +18,7 @@ class SonarIssuesPagedTool : AgentTool {
             "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')"),
             "page" to ParameterProperty(type = "string", description = "Page number (default: 1)"),
             "page_size" to ParameterProperty(type = "string", description = "Results per page, max 500 (default: 100)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
         ),
         required = listOf("project_key")
     )
