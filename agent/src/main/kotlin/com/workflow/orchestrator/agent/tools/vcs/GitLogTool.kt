@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.context.ToolOutputStore
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -95,8 +96,7 @@ class GitLogTool : AgentTool {
                 }
 
                 val truncated = if (output.length > MAX_OUTPUT_CHARS) {
-                    output.take(MAX_OUTPUT_CHARS) +
-                        "\n\n[Output truncated at $MAX_OUTPUT_CHARS characters. Use 'max_count' or 'path' to narrow results.]"
+                    ToolOutputStore.middleTruncate(output, MAX_OUTPUT_CHARS)
                 } else {
                     output
                 }

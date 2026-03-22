@@ -21,6 +21,20 @@ class ToolOutputStore(private val sessionDir: File?) {
         private val LOG = Logger.getInstance(ToolOutputStore::class.java)
         const val MAX_LINES = 2000
         const val MAX_CHARS = 50 * 1024  // ~50K characters
+
+        /**
+         * Middle-truncate content, keeping the first [headRatio] and last (1-headRatio) portions.
+         * This preserves error messages, exit codes, and summaries that appear at the end of output.
+         */
+        fun middleTruncate(content: String, maxChars: Int, headRatio: Double = 0.6): String {
+            if (content.length <= maxChars) return content
+            val headChars = (maxChars * headRatio).toInt()
+            val tailChars = maxChars - headChars - 200 // reserve 200 for the marker
+            val omitted = content.length - headChars - tailChars
+            return content.take(headChars) +
+                "\n\n[... $omitted characters omitted from middle. Showing first $headChars + last $tailChars chars ...]\n\n" +
+                content.takeLast(tailChars)
+        }
     }
 
     private val outputDir: File? get() = sessionDir?.let { File(it, "tool-outputs").also { d -> d.mkdirs() } }
