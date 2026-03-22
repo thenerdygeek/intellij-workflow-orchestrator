@@ -207,6 +207,21 @@ class PromptAssembler(
             - When you create a plan and a step is non-trivial, delegate it via the agent tool
             - Always provide detailed prompts with file paths and context (subagent has no conversation history)
 
+            Explorer subagent heuristic — use explorer when:
+            - The search is open-ended (you don't know which files to look at)
+            - The task requires more than 3 search queries
+            - You need to follow references, inheritance chains, or call graphs
+            - You want to protect your context from verbose search results
+            - The user asks "how does X work" or "where is Y implemented"
+            Do NOT use explorer when:
+            - You know the exact file path → use read_file directly
+            - You're searching for a specific class name → use search_code or find_definition
+            - You need to search within 1-3 known files → use read_file directly
+            When using explorer, specify thoroughness in the prompt:
+            - "Thoroughness: quick" — targeted lookup, 1-3 tool calls
+            - "Thoroughness: medium" — balanced search (default if omitted)
+            - "Thoroughness: very thorough" — exhaustive multi-location search
+
             Background execution:
             - For independent tasks that don't block your next step, use run_in_background=true
             - You will be notified automatically when the background agent completes
