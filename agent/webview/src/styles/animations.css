@@ -1,0 +1,181 @@
+/*
+ * Consolidated animation keyframes, utility classes, and motion preferences.
+ * All keyframes previously in index.css are centralized here.
+ */
+
+/* ============================================================
+   KEYFRAMES
+   ============================================================ */
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes thinking-shimmer {
+  0% { transform: translateX(-150%); }
+  50% { transform: translateX(300%); }
+  100% { transform: translateX(-150%); }
+}
+
+@keyframes streaming-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes overlay-open {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes scroll-button-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(200%); }
+  100% { transform: translateX(-100%); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(1px); }
+}
+
+@keyframes flowDash {
+  from { stroke-dashoffset: 18; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+
+/* ============================================================
+   ANIMATION UTILITY CLASSES
+   ============================================================ */
+
+.animate-message-enter {
+  animation: message-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-thinking-shimmer {
+  animation: thinking-shimmer 2s linear infinite;
+}
+
+.animate-streaming-cursor {
+  animation: streaming-cursor-blink 530ms steps(1) infinite;
+}
+
+.animate-overlay-open {
+  animation: overlay-open 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-overlay-close {
+  animation: overlay-open 220ms cubic-bezier(0.4, 0, 1, 1) reverse both;
+}
+
+.animate-scroll-button {
+  animation: scroll-button-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+
+/* ============================================================
+   TRANSITION UTILITY CLASSES
+   ============================================================ */
+
+.transition-tool-expand {
+  transition: max-height 320ms cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 220ms ease-out;
+}
+
+.transition-rich-block-enter {
+  transition: opacity 220ms ease-out,
+              transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.transition-status-icon {
+  transition: color 150ms ease-out,
+              transform 150ms ease-out;
+}
+
+
+/* ============================================================
+   INTERACTIVE FEEDBACK
+   ============================================================ */
+
+.press-feedback:active {
+  transform: scale(0.97);
+  transition: transform 100ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent, #60a5fa);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+
+/* ============================================================
+   REDUCED MOTION
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
