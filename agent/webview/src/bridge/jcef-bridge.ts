@@ -1,0 +1,214 @@
+import type {
+  ToolCallStatus,
+  StatusType,
+  SessionStatus,
+} from './types';
+
+// Zustand store accessors — set by initBridge() after stores are created
+type StoreAccessors = {
+  getChatStore: () => any;
+  getThemeStore: () => any;
+  getSettingsStore: () => any;
+};
+
+let stores: StoreAccessors | null = null;
+
+export function isJcefEnvironment(): boolean {
+  return typeof (window as any)._sendMessage === 'function';
+}
+
+// ═══ Kotlin → JS bridge functions (42 + 2 theme = 44 total) ═══
+
+const bridgeFunctions: Record<string, (...args: any[]) => void> = {
+  startSession(task: string) {
+    stores?.getChatStore().startSession(task);
+  },
+  appendUserMessage(text: string) {
+    stores?.getChatStore().addMessage('user', text);
+  },
+  endStream() {
+    stores?.getChatStore().endStream();
+  },
+  completeSession(status: string, tokensUsed: number, durationMs: number, iterations: number, filesModified: string[]) {
+    stores?.getChatStore().completeSession({
+      status: status as SessionStatus, tokensUsed, durationMs, iterations,
+      filesModified: filesModified || [],
+    });
+  },
+  appendToken(token: string) {
+    stores?.getChatStore().appendToken(token);
+  },
+  appendToolCall(toolName: string, args: string, status: string) {
+    stores?.getChatStore().addToolCall(toolName, args, status as ToolCallStatus);
+  },
+  updateToolResult(result: string, durationMs: number, toolName: string) {
+    stores?.getChatStore().updateToolCall(toolName, 'COMPLETED', result, durationMs);
+  },
+  appendDiff(filePath: string, oldLines: string[], newLines: string[], accepted: boolean | null) {
+    stores?.getChatStore().addDiff({ filePath, oldLines, newLines, accepted });
+  },
+  appendStatus(message: string, type: string) {
+    stores?.getChatStore().addStatus(message, type as StatusType);
+  },
+  appendThinking(text: string) {
+    stores?.getChatStore().addThinking(text);
+  },
+  clearChat() {
+    stores?.getChatStore().clearChat();
+  },
+  showToolsPanel(toolsJson: string) {
+    stores?.getChatStore().showToolsPanel(toolsJson);
+  },
+  closeToolsPanel() {
+    stores?.getChatStore().hideToolsPanel();
+  },
+  renderPlan(planJson: string) {
+    const plan = JSON.parse(planJson);
+    stores?.getChatStore().setPlan(plan);
+  },
+  updatePlanStep(stepId: string, status: string) {
+    stores?.getChatStore().updatePlanStep(stepId, status);
+  },
+  showQuestions(questionsJson: string) {
+    const questions = JSON.parse(questionsJson);
+    stores?.getChatStore().showQuestions(questions);
+  },
+  showQuestion(index: number) {
+    stores?.getChatStore().showQuestion(index);
+  },
+  showQuestionSummary(summaryJson: string) {
+    const summary = JSON.parse(summaryJson);
+    stores?.getChatStore().showQuestionSummary(summary);
+  },
+  enableChatInput() {
+    stores?.getChatStore().setInputLocked(false);
+  },
+  setBusy(busy: boolean) {
+    stores?.getChatStore().setBusy(busy);
+  },
+  setInputLocked(locked: boolean) {
+    stores?.getChatStore().setInputLocked(locked);
+  },
+  updateTokenBudget(used: number, max: number) {
+    stores?.getChatStore().updateTokenBudget(used, max);
+  },
+  setModelName(name: string) {
+    stores?.getChatStore().setModelName(name);
+  },
+  updateSkillsList(skillsJson: string) {
+    const skills = JSON.parse(skillsJson);
+    stores?.getChatStore().updateSkillsList(skills);
+  },
+  showRetryButton(lastMessage: string) {
+    stores?.getChatStore().showRetryButton(lastMessage);
+  },
+  focusInput() {
+    stores?.getChatStore().focusInput();
+  },
+  showSkillBanner(name: string) {
+    stores?.getChatStore().showSkillBanner(name);
+  },
+  hideSkillBanner() {
+    stores?.getChatStore().hideSkillBanner();
+  },
+  appendChart(chartConfigJson: string) {
+    stores?.getChatStore().addChart(chartConfigJson);
+  },
+  appendAnsiOutput(text: string) {
+    stores?.getChatStore().addAnsiOutput(text);
+  },
+  showSkeleton() {
+    stores?.getChatStore().showSkeleton();
+  },
+  hideSkeleton() {
+    stores?.getChatStore().hideSkeleton();
+  },
+  showToast(message: string, type: string, durationMs: number) {
+    stores?.getChatStore().showToast(message, type, durationMs);
+  },
+  appendTabs(tabsJson: string) {
+    stores?.getChatStore().addTabs(tabsJson);
+  },
+  appendTimeline(itemsJson: string) {
+    stores?.getChatStore().addTimeline(itemsJson);
+  },
+  appendProgressBar(percent: number, type: string) {
+    stores?.getChatStore().addProgressBar(percent, type);
+  },
+  appendJiraCard(cardJson: string) {
+    stores?.getChatStore().addJiraCard(cardJson);
+  },
+  appendSonarBadge(badgeJson: string) {
+    stores?.getChatStore().addSonarBadge(badgeJson);
+  },
+  receiveMentionResults(resultsJson: string) {
+    const results = JSON.parse(resultsJson);
+    stores?.getChatStore().receiveMentionResults(results);
+  },
+  applyTheme(vars: Record<string, string>) {
+    stores?.getThemeStore().applyTheme(JSON.stringify(vars));
+  },
+  setPrismTheme(isDark: boolean) {
+    stores?.getThemeStore().setIsDark(isDark);
+  },
+  setMermaidTheme(isDark: boolean) {
+    stores?.getThemeStore().setIsDark(isDark);
+  },
+};
+
+// ═══ JS → Kotlin bridge wrappers (26 total) ═══
+
+function callKotlin(fnName: string, ...args: any[]): void {
+  const fn = (window as any)[fnName];
+  if (typeof fn === 'function') {
+    fn(...args);
+  } else {
+    console.log(`[bridge:dev] ${fnName}(${args.map(a => JSON.stringify(a)).join(', ')})`);
+  }
+}
+
+export const kotlinBridge = {
+  requestUndo(): void { callKotlin('_requestUndo'); },
+  requestViewTrace(): void { callKotlin('_requestViewTrace'); },
+  submitPrompt(text: string): void { callKotlin('_submitPrompt', text); },
+  approvePlan(): void { callKotlin('_approvePlan'); },
+  revisePlan(comments: string): void { callKotlin('_revisePlan', comments); },
+  toggleTool(toolName: string, enabled: boolean): void { callKotlin('_toggleTool', `${toolName}:${enabled ? '1' : '0'}`); },
+  questionAnswered(questionId: string, selectedOptionsJson: string): void { callKotlin('_questionAnswered', questionId, selectedOptionsJson); },
+  questionSkipped(questionId: string): void { callKotlin('_questionSkipped', questionId); },
+  chatAboutOption(questionId: string, optionLabel: string, message: string): void { callKotlin('_chatAboutOption', questionId, optionLabel, message); },
+  questionsSubmitted(): void { callKotlin('_questionsSubmitted'); },
+  questionsCancelled(): void { callKotlin('_questionsCancelled'); },
+  editQuestion(questionId: string): void { callKotlin('_editQuestion', questionId); },
+  deactivateSkill(): void { callKotlin('_deactivateSkill'); },
+  navigateToFile(filePath: string, line?: number): void {
+    const path = line && line > 0 ? `${filePath}:${line}` : filePath;
+    callKotlin('_navigateToFile', path);
+  },
+  cancelTask(): void { callKotlin('_cancelTask'); },
+  newChat(): void { callKotlin('_newChat'); },
+  sendMessage(text: string): void { callKotlin('_sendMessage', text); },
+  changeModel(modelId: string): void { callKotlin('_changeModel', modelId); },
+  togglePlanMode(enabled: boolean): void { callKotlin('_togglePlanMode', enabled); },
+  activateSkill(name: string): void { callKotlin('_activateSkill', name); },
+  requestFocusIde(): void { callKotlin('_requestFocusIde'); },
+  openSettings(): void { callKotlin('_openSettings'); },
+  openToolsPanel(): void { callKotlin('_openToolsPanel'); },
+  searchMentions(type: string, query: string): void { callKotlin('_searchMentions', `${type}:${query}`); },
+  sendMessageWithMentions(text: string, mentionsJson: string): void {
+    const payload = JSON.stringify({ text, mentions: JSON.parse(mentionsJson) });
+    callKotlin('_sendMessageWithMentions', payload);
+  },
+};
+
+// ═══ Initialization ═══
+
+export function initBridge(storeAccessors: StoreAccessors): void {
+  stores = storeAccessors;
+  const bridge: Record<string, (...args: any[]) => void> = {};
+  for (const [name, fn] of Object.entries(bridgeFunctions)) {
+    (window as any)[name] = fn;
+    bridge[name] = fn;
+  }
+  (window as any).__bridge = bridge;
+}
