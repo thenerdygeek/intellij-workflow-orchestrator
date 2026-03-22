@@ -103,6 +103,10 @@ class ContextManager(
     private var skillAnchor: ChatMessage? = null
     /** Dedicated mention anchor — file content from @ mentions, survives compression. */
     private var mentionAnchor: ChatMessage? = null
+    /** Dedicated facts anchor — compression-proof structured knowledge from FactsStore. */
+    private var factsAnchor: ChatMessage? = null
+    /** Facts store for recording verified findings that survive compression. */
+    var factsStore: FactsStore? = null
     private var totalTokens = 0
 
     /** Effective budget after subtracting reserved tokens (tool defs, system prompt overhead, buffer). */
@@ -158,6 +162,21 @@ class ContextManager(
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 
+    /**
+     * Update the facts anchor from the current FactsStore state.
+     * Called after each fact is recorded to keep the anchor in sync.
+     * The facts anchor is a compression-proof system message containing
+     * all verified facts from the session.
+     */
+    fun updateFactsAnchor() {
+        val store = factsStore ?: return
+        val contextStr = store.toContextString()
+        factsAnchor = if (contextStr.isNotEmpty()) {
+            ChatMessage(role = "system", content = contextStr)
+        } else null
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
     /** Get all messages including any summary prefixes. */
     fun getMessages(): List<ChatMessage> {
         val result = mutableListOf<ChatMessage>()
@@ -173,6 +192,7 @@ class ContextManager(
         planAnchor?.let { result.add(it) }
         skillAnchor?.let { result.add(it) }
         mentionAnchor?.let { result.add(it) }
+        factsAnchor?.let { result.add(it) }
 
         result.addAll(messages)
         return result
@@ -443,6 +463,15 @@ critical for continuing the task.
      */
     private fun findToolCallMetadata(toolResultIndex: Int): ToolCallMeta? {
         val toolCallId = messages[toolResultIndex].toolCallId ?: return null
+        return findToolCallMetadata(toolResultIndex, toolCallId)
+    }
+
+    /**
+     * Walk backward from a tool result message index to find the assistant message
+     * containing the tool_call that triggered it (matched by explicit toolCallId).
+     */
+    private fun findToolCallMetadata(toolResultIndex: Int, toolCallId: String?): ToolCallMeta? {
+        if (toolCallId == null) return null
         for (j in (toolResultIndex - 1) downTo 0) {
             val candidate = messages[j]
             if (candidate.role != "assistant") continue
@@ -455,6 +484,30 @@ critical for continuing the task.
             }
         }
         return null
+    }
+
+    /**
+     * Tier 2 compression: keep first 20 + last 5 lines of a tool result.
+     * For medium-age results that are outside the full-protection window but
+     * inside the compressed-protection window. Preserves key context (headers,
+     * signatures, final output) while dropping the middle.
+     */
+    private fun compressToolResult(content: String?, meta: ToolCallMeta?): String {
+        val raw = (content ?: "")
+            .removePrefix("<external_data>").removePrefix("\n")
+            .removeSuffix("</external_data>").removeSuffix("\n")
+        val lines = raw.lines()
+        if (lines.size <= 30) return raw
+        val head = lines.take(20).joinToString("\n")
+        val tail = lines.takeLast(5).joinToString("\n")
+        val omitted = lines.size - 25
+        return buildString {
+            appendLine("[Compressed tool result — ${lines.size} lines, showing first 20 + last 5]")
+            if (meta != null) appendLine("Tool: ${meta.toolName}")
+            appendLine(head)
+            appendLine("\n[... $omitted lines omitted ...]")
+            appendLine(tail)
+        }.trimEnd()
     }
 
     /**
@@ -542,37 +595,59 @@ critical for continuing the task.
     }
 
     /**
-     * Phase 1 compression: prune old tool results in-place.
-     * Protects the most recent tool results (up to protectedTokens).
-     * Older tool results are replaced with a metadata-rich placeholder
-     * containing tool name, arguments, content preview, and recovery hints.
+     * Phase 1 compression: prune old tool results in-place with 3-tier degradation.
+     *
+     * Walking backward from the most recent messages:
+     * - **Tier 1 (FULL):** Within [protectedTokens] — kept as-is.
+     * - **Tier 2 (COMPRESSED):** Within [compressedProtectionTokens] — first 20 + last 5 lines kept.
+     * - **Tier 3 (METADATA):** Beyond both windows — replaced with rich placeholder
+     *   containing tool name, arguments, content preview, and recovery hints.
+     *
+     * Small results (< [PRUNE_MINIMUM_TOKENS]) and protected tools are never degraded.
      */
-    fun pruneOldToolResults(protectedTokens: Int = 40_000) {
-        var protectedSoFar = 0
+    fun pruneOldToolResults(
+        protectedTokens: Int = 40_000,
+        compressedProtectionTokens: Int = 60_000
+    ) {
+        var fullProtected = 0
+        var compressedProtected = 0
         for (i in messages.indices.reversed()) {
             val msg = messages[i]
             if (msg.role != "tool") continue
             val msgTokens = TokenEstimator.estimate(listOf(msg))
-            if (protectedSoFar + msgTokens <= protectedTokens) {
-                protectedSoFar += msgTokens
+
+            // Tier 1: FULL — within full protection window
+            if (fullProtected + msgTokens <= protectedTokens) {
+                fullProtected += msgTokens
                 continue
             }
-            // Skip small results — not worth the info loss for tiny outputs like git_status
+
+            // Skip small results and protected tools at all tiers
             if (msgTokens < PRUNE_MINIMUM_TOKENS) continue
-
             val toolCallId = msg.toolCallId
-            val meta = findToolCallMetadata(i)
-
-            // Never prune results from protected tools (subagents, plans, etc.)
+            val meta = findToolCallMetadata(i, toolCallId)
             if (meta != null && meta.toolName in PROTECTED_TOOLS) {
-                protectedSoFar += msgTokens // Count toward protected budget but don't prune
+                fullProtected += msgTokens
                 continue
             }
 
-            val placeholder = buildRichPlaceholder(msg.content, meta, toolCallId)
+            // Tier 2: COMPRESSED — within compressed protection window
+            if (compressedProtected + msgTokens <= compressedProtectionTokens) {
+                compressedProtected += msgTokens
+                val compressed = compressToolResult(msg.content, meta)
+                messages[i] = ChatMessage(
+                    role = "tool",
+                    content = "<external_data>$compressed</external_data>",
+                    toolCallId = toolCallId
+                )
+                continue
+            }
+
+            // Tier 3: METADATA — full replacement with rich placeholder
+            val richPlaceholder = buildRichPlaceholder(msg.content, meta, toolCallId)
             messages[i] = ChatMessage(
                 role = "tool",
-                content = placeholder,
+                content = richPlaceholder,
                 toolCallId = toolCallId
             )
         }

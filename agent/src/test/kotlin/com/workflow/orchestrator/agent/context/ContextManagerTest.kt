@@ -250,8 +250,8 @@ class ContextManagerTest {
             cm.addMessage(ChatMessage(role = "assistant", content = "Response $i " + "y".repeat(500)))
         }
 
-        // Force prune with a small protection window
-        cm.pruneOldToolResults(protectedTokens = 0)
+        // Force prune with zero protection windows (skip straight to Tier 3 metadata)
+        cm.pruneOldToolResults(protectedTokens = 0, compressedProtectionTokens = 0)
 
         val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-read-1" }
         val content = toolMsg.content!!
@@ -282,7 +282,7 @@ class ContextManagerTest {
             cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
         }
 
-        cm.pruneOldToolResults(protectedTokens = 0)
+        cm.pruneOldToolResults(protectedTokens = 0, compressedProtectionTokens = 0)
 
         val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-search-1" }
         val content = toolMsg.content!!
@@ -321,7 +321,7 @@ class ContextManagerTest {
             cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
         }
 
-        cm.pruneOldToolResults(protectedTokens = 0)
+        cm.pruneOldToolResults(protectedTokens = 0, compressedProtectionTokens = 0)
 
         val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-disk-1" }
         val content = toolMsg.content!!
@@ -354,7 +354,7 @@ class ContextManagerTest {
             cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
         }
 
-        cm.pruneOldToolResults(protectedTokens = 0)
+        cm.pruneOldToolResults(protectedTokens = 0, compressedProtectionTokens = 0)
 
         val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-search-2" }
         val content = toolMsg.content!!
@@ -479,7 +479,7 @@ class ContextManagerTest {
         }
 
         // Prune with zero protection window — everything outside window is eligible
-        cm.pruneOldToolResults(protectedTokens = 0)
+        cm.pruneOldToolResults(protectedTokens = 0, compressedProtectionTokens = 0)
 
         // Agent result should be intact (protected tool type)
         val agentMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-agent-1" }
@@ -521,6 +521,35 @@ class ContextManagerTest {
     }
 
     @Test
+    fun `pruneOldToolResults uses tiered compression - compressed tier keeps head and tail`() {
+        val cm = ContextManager(maxInputTokens = 10000, tMaxRatio = 0.90, tRetainedRatio = 0.50)
+        cm.addMessage(ChatMessage(role = "system", content = "System"))
+
+        val largeContent = (1..100).joinToString("\n") { "Line $it: code content here for testing purposes" }
+        cm.addMessage(ChatMessage(role = "assistant", content = null,
+            toolCalls = listOf(ToolCall(id = "c1", type = "function",
+                function = FunctionCall(name = "read_file", arguments = """{"path": "/src/Big.kt"}""")))))
+        cm.addMessage(ChatMessage(role = "tool",
+            content = "<external_data>\n$largeContent\n</external_data>",
+            toolCallId = "c1"))
+
+        for (i in 1..20) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i ${"X".repeat(200)}"))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Reply $i ${"Y".repeat(200)}"))
+        }
+
+        // Full protection = 500 (c1 outside), compressed protection = 5000 (c1 inside)
+        cm.pruneOldToolResults(protectedTokens = 500, compressedProtectionTokens = 5000)
+
+        val toolMsg = cm.getMessages().first { it.toolCallId == "c1" }
+        val content = toolMsg.content!!
+        assertTrue(content.contains("Line 1:"), "Compressed tier should preserve first lines")
+        assertTrue(content.contains("Line 100:") || content.contains("Line 99:"), "Should preserve last lines")
+        assertFalse(content.contains("Line 50:"), "Should NOT have middle lines")
+        assertTrue(content.contains("omitted") || content.contains("Compressed"), "Should indicate truncation")
+    }
+
+    @Test
     fun `pruneOldToolResults truncates long arguments at 300 chars`() {
         val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
 
@@ -544,7 +573,7 @@ class ContextManagerTest {
             cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
         }
 
-        cm.pruneOldToolResults(protectedTokens = 0)
+        cm.pruneOldToolResults(protectedTokens = 0, compressedProtectionTokens = 0)
 
         val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-long-args" }
         val content = toolMsg.content!!
