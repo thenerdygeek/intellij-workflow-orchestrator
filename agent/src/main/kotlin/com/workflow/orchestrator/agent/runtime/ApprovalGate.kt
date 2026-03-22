@@ -104,6 +104,10 @@ class ApprovalGate(
             "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
             "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
 
+            // Runtime & Debug read-only
+            "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
+            "list_breakpoints", "get_debug_state", "get_stack_frames", "get_variables",
+
             // Enterprise read-only (Bitbucket)
             "bitbucket_get_pr_commits", "bitbucket_get_file_content",
             "bitbucket_get_branches", "bitbucket_get_my_prs",
@@ -144,7 +148,14 @@ class ApprovalGate(
             "refactor_rename",
             "bitbucket_update_pr_title", "bitbucket_update_pr_description",
             "bitbucket_remove_reviewer",
-            "jira_transition"
+            "jira_transition",
+
+            // Debug tools (operate within approved session context)
+            "add_breakpoint", "remove_breakpoint",
+            "evaluate_expression",
+            "debug_step_over", "debug_step_into", "debug_step_out",
+            "debug_resume", "debug_pause", "debug_run_to_cursor",
+            "create_run_config", "modify_run_config"
         )
 
         // Everything else is HIGH: run_command, bitbucket_create_pr, bitbucket_merge_pr,

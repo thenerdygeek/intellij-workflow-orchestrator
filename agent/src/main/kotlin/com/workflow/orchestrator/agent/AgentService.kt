@@ -13,10 +13,13 @@ import com.workflow.orchestrator.agent.runtime.QuestionManager
 import com.workflow.orchestrator.agent.runtime.SkillManager
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.*
+import com.workflow.orchestrator.agent.tools.config.*
+import com.workflow.orchestrator.agent.tools.debug.*
 import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.psi.*
+import com.workflow.orchestrator.agent.tools.runtime.*
 import com.workflow.orchestrator.agent.tools.vcs.*
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
@@ -223,6 +226,31 @@ class AgentService(
             register(ListQuickFixesTool())
             register(CompileModuleTool())
             register(RunTestsTool())
+
+            // Runtime & Debug tools
+            val debugController = AgentDebugController()
+            register(GetRunConfigurationsTool())
+            register(GetRunningProcessesTool())
+            register(GetRunOutputTool())
+            register(GetTestResultsTool())
+            register(AddBreakpointTool(debugController))
+            register(RemoveBreakpointTool())
+            register(ListBreakpointsTool())
+            register(StartDebugSessionTool(debugController))
+            register(GetDebugStateTool(debugController))
+            register(DebugStepOverTool(debugController))
+            register(DebugStepIntoTool(debugController))
+            register(DebugStepOutTool(debugController))
+            register(DebugResumeTool(debugController))
+            register(DebugPauseTool(debugController))
+            register(DebugRunToCursorTool(debugController))
+            register(DebugStopTool(debugController))
+            register(EvaluateExpressionTool(debugController))
+            register(GetStackFramesTool(debugController))
+            register(GetVariablesTool(debugController))
+            register(CreateRunConfigTool())
+            register(ModifyRunConfigTool())
+            register(DeleteRunConfigTool())
 
             // VCS / navigation tools
             register(GitStatusTool())

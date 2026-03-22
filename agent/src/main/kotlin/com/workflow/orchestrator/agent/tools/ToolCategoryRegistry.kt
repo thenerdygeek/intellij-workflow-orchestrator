@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 /**
- * Central registry mapping all 63 agent tools to logical categories.
+ * Central registry mapping all 86 agent tools to logical categories.
  * Used by: DynamicToolSelector (tool filtering), Tools panel UI (categorization),
  * RequestToolsTool (category activation), ToolPreferences (grouping).
  */
@@ -100,6 +100,22 @@ object ToolCategoryRegistry {
             tools = listOf(
                 "sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
                 "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"
+            )
+        ),
+        ToolCategory(
+            id = "runtime_debug",
+            displayName = "Runtime & Debug",
+            color = "#E91E63",
+            badgePrefix = "DBG",
+            description = "Run output, test results, breakpoints, interactive debugging, expression evaluation, run configuration management",
+            tools = listOf(
+                "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
+                "add_breakpoint", "remove_breakpoint", "list_breakpoints",
+                "start_debug_session", "get_debug_state",
+                "debug_step_over", "debug_step_into", "debug_step_out",
+                "debug_resume", "debug_pause", "debug_run_to_cursor", "debug_stop",
+                "evaluate_expression", "get_stack_frames", "get_variables",
+                "create_run_config", "modify_run_config", "delete_run_config"
             )
         ),
         ToolCategory(

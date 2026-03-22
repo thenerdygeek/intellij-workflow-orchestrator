@@ -2,7 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves tokens by not sending all 63 tools when only a subset is needed.
+ * Saves tokens by not sending all 86 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
@@ -74,6 +74,23 @@ object DynamicToolSelector {
         "source line" to setOf("sonar_source_lines"),
         "measures" to setOf("sonar_project_measures"),
 
+        // Runtime & Debug tools
+        "debug" to setOf("add_breakpoint", "remove_breakpoint", "list_breakpoints", "start_debug_session", "get_debug_state", "debug_step_over", "debug_step_into", "debug_step_out", "debug_resume", "debug_pause", "debug_run_to_cursor", "debug_stop", "evaluate_expression", "get_stack_frames", "get_variables", "get_run_configurations", "create_run_config"),
+        "breakpoint" to setOf("add_breakpoint", "remove_breakpoint", "list_breakpoints"),
+        "step over" to setOf("debug_step_over", "get_debug_state", "get_variables"),
+        "step into" to setOf("debug_step_into", "get_debug_state", "get_variables"),
+        "step through" to setOf("debug_step_over", "debug_step_into", "debug_step_out", "start_debug_session"),
+        "test result" to setOf("get_test_results", "get_run_output"),
+        "test output" to setOf("get_test_results", "get_run_output"),
+        "test fail" to setOf("get_test_results", "run_tests"),
+        "run config" to setOf("get_run_configurations", "create_run_config", "modify_run_config"),
+        "run configuration" to setOf("get_run_configurations", "create_run_config", "modify_run_config"),
+        "console" to setOf("get_run_output", "get_running_processes"),
+        "log output" to setOf("get_run_output"),
+        "evaluate" to setOf("evaluate_expression"),
+        "stack trace" to setOf("get_stack_frames"),
+        "stack frame" to setOf("get_stack_frames"),
+
         // Bitbucket tools triggered by PR/pull request keywords
         "bitbucket" to setOf("bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment", "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status", "bitbucket_get_file_content", "bitbucket_add_reviewer", "bitbucket_update_pr_title", "bitbucket_get_branches", "bitbucket_create_branch", "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_approve_pr", "bitbucket_merge_pr", "bitbucket_decline_pr", "bitbucket_update_pr_description", "bitbucket_add_pr_comment", "bitbucket_check_merge_status", "bitbucket_remove_reviewer"),
         "pull request" to setOf("bitbucket_create_pr", "bitbucket_get_pr_detail", "bitbucket_get_pr_commits", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_approve_pr", "bitbucket_merge_pr"),
@@ -103,7 +120,7 @@ object DynamicToolSelector {
         "import" to setOf("optimize_imports"),
         "imports" to setOf("optimize_imports"),
         "inspection" to setOf("run_inspections"),
-        "inspect" to setOf("run_inspections"),
+        "inspect" to setOf("run_inspections", "get_variables", "get_stack_frames", "get_debug_state"),
         "lint" to setOf("run_inspections"),
         "rename" to setOf("refactor_rename"),
         "refactor" to setOf("refactor_rename"),
