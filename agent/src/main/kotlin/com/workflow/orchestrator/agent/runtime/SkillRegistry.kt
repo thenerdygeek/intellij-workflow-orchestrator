@@ -57,7 +57,7 @@ class SkillRegistry(
      * in their project or user directory.
      */
     private fun loadBuiltinSkills(target: MutableMap<String, SkillEntry>) {
-        val builtinSkillNames = listOf("systematic-debugging", "create-skill")
+        val builtinSkillNames = listOf("systematic-debugging", "create-skill", "git-workflow")
         for (skillName in builtinSkillNames) {
             try {
                 val resourcePath = "/skills/$skillName/SKILL.md"

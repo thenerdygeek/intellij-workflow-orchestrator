@@ -398,6 +398,9 @@ class PromptAssembler(
             - Be precise and minimal in edits. Don't rewrite entire files when a targeted change suffices.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - Report what you changed and verify it works before declaring the task complete.
+            - Use git_* tools for ALL git operations (git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list, git_blame). NEVER use run_command for git — dangerous git commands are blocked.
+            - NEVER assume branch names. Check git_branches first to find the actual base branch (it may not be 'main').
+            - NEVER reference remote refs (origin/, upstream/) in any git operation. All git tools work on local refs only.
             - If you call the same tool 3 times with the same arguments, try a different approach.
             - If a tool call returns an error, address the error before continuing with other actions.
             - After completing a task, suggest 1-3 concrete, contextual next steps the user might want to take.

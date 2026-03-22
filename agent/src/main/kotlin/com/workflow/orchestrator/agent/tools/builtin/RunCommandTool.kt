@@ -67,27 +67,58 @@ class RunCommandTool : AgentTool {
             Regex("""curl\s+.*\|\s*bash"""),
             Regex("""wget\s+.*\|\s*sh"""),
             Regex("""wget\s+.*\|\s*bash"""),
-            // Git remote operations — NEVER allow
-            Regex("""git\s+push"""),
-            Regex("""git\s+fetch"""),
-            Regex("""git\s+pull"""),
-            Regex("""git\s+remote\s"""),
-            Regex("""git\s+clone\s"""),
-            // Git destructive operations
-            Regex("""git\s+reset\s+--hard"""),
-            Regex("""git\s+clean\s+-[fd]"""),
-            Regex("""git\s+rebase\s"""),
-            Regex("""git\s+merge\s"""),
-            Regex("""git\s+branch\s+-[dD]\s"""),
-            Regex("""git\s+stash\s+drop"""),
-            Regex("""--force"""),
-            Regex("""--no-verify"""),
-            // Git commands referencing remote — use git_diff/git_log instead
-            Regex("""git\s+diff\s+.*origin/"""),
-            Regex("""git\s+log\s+.*origin/"""),
-            Regex("""git\s+show\s+.*origin/"""),
-            Regex("""git\s+checkout\s+origin/"""),
         )
+
+        /** Safe read-only git sub-commands allowed via run_command. */
+        private val SAFE_GIT_SUBCOMMANDS = setOf(
+            "log", "diff", "show", "status", "blame", "shortlog",
+            "rev-parse", "config", "branch", "tag", "stash list",
+            "ls-files", "cat-file", "rev-list", "merge-base",
+            "name-rev", "describe", "reflog", "for-each-ref",
+            "check-ignore", "ls-tree", "worktree list", "version"
+        )
+
+        /** Dangerous flags blocked in ANY git command. */
+        private val DANGEROUS_GIT_FLAGS = listOf(
+            "--force", "-f", "--hard", "--no-verify",
+            "--delete", "-D", "--set-upstream"
+        )
+
+        /**
+         * Check if a git command is safe to execute.
+         * Returns null if safe, or an error message if blocked.
+         */
+        fun checkGitCommand(command: String): String? {
+            val trimmed = command.trim()
+            if (!trimmed.startsWith("git ") && !trimmed.startsWith("git\t")) return null // Not a git command
+
+            // Extract the git sub-command (e.g., "log" from "git log --oneline")
+            val parts = trimmed.removePrefix("git").trim().split("\\s+".toRegex(), limit = 2)
+            val subCommand = parts.firstOrNull() ?: return "Error: empty git command"
+
+            // Block remote ref references in any git command
+            if (trimmed.contains("origin/") || trimmed.contains("upstream/")) {
+                return "Error: Remote refs (origin/, upstream/) are blocked for safety. Use git_diff, git_log, or git_show_file tools with local refs instead."
+            }
+
+            // Check if sub-command is in the safe list
+            val isSafe = SAFE_GIT_SUBCOMMANDS.any { safe ->
+                subCommand == safe || (safe.contains(" ") && trimmed.removePrefix("git").trim().startsWith(safe))
+            }
+
+            if (!isSafe) {
+                return "Error: 'git $subCommand' is blocked for safety. Allowed read-only git commands: ${SAFE_GIT_SUBCOMMANDS.joinToString(", ")}. For write operations, use the appropriate IDE tools."
+            }
+
+            // Check for dangerous flags even in safe sub-commands
+            for (flag in DANGEROUS_GIT_FLAGS) {
+                if (trimmed.contains(" $flag") || trimmed.contains("=$flag")) {
+                    return "Error: Flag '$flag' is blocked for safety in git commands."
+                }
+            }
+
+            return null // Safe to execute
+        }
 
         /**
          * Check if a command is on the allowlist (safe to run without approval).
@@ -115,6 +146,17 @@ class RunCommandTool : AgentTool {
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val command = params["command"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
+        // Smart git command filter — allowlist approach
+        val gitBlockReason = checkGitCommand(command)
+        if (gitBlockReason != null) {
+            return ToolResult(
+                gitBlockReason,
+                "Error: git command blocked",
+                5,
+                isError = true
+            )
+        }
 
         // Hard-blocked commands are never allowed — destructive with no recovery
         if (isHardBlocked(command)) {
