@@ -42,7 +42,7 @@ class DeleteRunConfigTool : AgentTool {
             )
 
         // Safety check: only allow deletion of agent-created configs
-        if (!configName.contains("[Agent]")) {
+        if (!configName.startsWith("[Agent]")) {
             return ToolResult(
                 "Cannot delete '$configName': only agent-created configurations (containing [Agent] in name) can be deleted. " +
                     "This is a safety constraint to protect user-created configurations.",

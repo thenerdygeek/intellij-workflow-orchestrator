@@ -152,7 +152,6 @@ class ApprovalGate(
 
             // Debug tools (operate within approved session context)
             "add_breakpoint", "remove_breakpoint",
-            "evaluate_expression",
             "debug_step_over", "debug_step_into", "debug_step_out",
             "debug_resume", "debug_pause", "debug_run_to_cursor",
             "create_run_config", "modify_run_config"

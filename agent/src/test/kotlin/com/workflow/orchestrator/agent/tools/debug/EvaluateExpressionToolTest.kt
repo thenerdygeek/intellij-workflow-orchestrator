@@ -152,20 +152,13 @@ class EvaluateExpressionToolTest {
         }
 
         @Test
-        fun `passes frame_index to controller`() = runTest {
-            coEvery { controller.evaluate(session, "x", 2) } returns EvaluationResult(
-                expression = "x",
-                result = "42",
-                type = "int"
-            )
-
+        fun `rejects non-zero frame_index`() = runTest {
             val result = tool.execute(buildJsonObject {
                 put("expression", "x")
                 put("frame_index", 2)
             }, project)
-            assertFalse(result.isError)
-            assertTrue(result.content.contains("Result: 42"))
-            coVerify { controller.evaluate(session, "x", 2) }
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Only the top frame (#0) is currently supported"))
         }
 
         @Test

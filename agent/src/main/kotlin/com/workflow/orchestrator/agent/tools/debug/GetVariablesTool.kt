@@ -60,6 +60,15 @@ class GetVariablesTool(
             )
         }
 
+        if (frameIndex > 0) {
+            return ToolResult(
+                "Error: Only the top frame (#0) is currently supported for variable inspection. Use frame_index=0 or omit it.",
+                "Error",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         val session = controller.getSession(sessionId)
             ?: return ToolResult(
                 "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
@@ -78,24 +87,8 @@ class GetVariablesTool(
         }
 
         return try {
-            // Resolve the target frame
-            val frame = if (frameIndex == 0) {
-                session.currentStackFrame
-            } else {
-                // Need to get frames to find the requested index
-                val frames = controller.getStackFrames(session, frameIndex + 1)
-                if (frames.size <= frameIndex) {
-                    return ToolResult(
-                        "Frame #$frameIndex not available (only ${frames.size} frames on stack).",
-                        "Frame not found",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
-                }
-                // For non-zero indices, fall back to current frame since getStackFrames
-                // returns FrameInfo DTOs (not XStackFrame references)
-                session.currentStackFrame
-            }
+            // frameIndex > 0 is rejected above, so we always use the top frame
+            val frame = session.currentStackFrame
 
             if (frame == null) {
                 return ToolResult(

@@ -13,10 +13,11 @@ import org.junit.jupiter.api.Test
 class AddBreakpointToolTest {
     private lateinit var controller: AgentDebugController
     private lateinit var tool: AddBreakpointTool
+    private val mockProject = mockk<Project>(relaxed = true)
 
     @BeforeEach
     fun setUp() {
-        controller = AgentDebugController()
+        controller = AgentDebugController(mockProject)
         tool = AddBreakpointTool(controller)
     }
 

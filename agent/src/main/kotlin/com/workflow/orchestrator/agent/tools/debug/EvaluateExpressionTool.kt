@@ -70,6 +70,15 @@ class EvaluateExpressionTool(
             )
         }
 
+        if (frameIndex > 0) {
+            return ToolResult(
+                "Error: Only the top frame (#0) is currently supported for expression evaluation. Use frame_index=0 or omit it.",
+                "Error",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         val session = controller.getSession(sessionId)
             ?: return ToolResult(
                 "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",

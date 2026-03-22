@@ -23,6 +23,7 @@ import com.workflow.orchestrator.agent.tools.runtime.*
 import com.workflow.orchestrator.agent.tools.vcs.*
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
+import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,13 @@ class AgentService(
     )
 
     val backgroundWorkers = java.util.concurrent.ConcurrentHashMap<String, BackgroundWorker>()
+
+    /** Shared debug controller — registered with Disposer for proper lifecycle management. */
+    val debugController: AgentDebugController by lazy {
+        AgentDebugController(project).also {
+            Disposer.register(this, it)
+        }
+    }
 
     /**
      * Callback invoked when a background worker completes.
@@ -228,7 +236,6 @@ class AgentService(
             register(RunTestsTool())
 
             // Runtime & Debug tools
-            val debugController = AgentDebugController()
             register(GetRunConfigurationsTool())
             register(GetRunningProcessesTool())
             register(GetRunOutputTool())

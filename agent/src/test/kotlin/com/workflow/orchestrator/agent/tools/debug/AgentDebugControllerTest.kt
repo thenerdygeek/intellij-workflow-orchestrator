@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.debug
 
+import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XSourcePosition
@@ -17,10 +18,11 @@ import org.junit.jupiter.api.Test
 class AgentDebugControllerTest {
 
     private lateinit var controller: AgentDebugController
+    private val mockProject = mockk<Project>(relaxed = true)
 
     @BeforeEach
     fun setup() {
-        controller = AgentDebugController()
+        controller = AgentDebugController(mockProject)
     }
 
     @AfterEach

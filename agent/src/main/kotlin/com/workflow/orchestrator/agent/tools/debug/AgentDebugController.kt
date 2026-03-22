@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.project.Project
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugSessionListener
@@ -23,12 +24,13 @@ import kotlin.coroutines.resume
  * All debug tools delegate to this controller for session management,
  * stack frame resolution, variable inspection, and expression evaluation.
  */
-class AgentDebugController : Disposable {
+class AgentDebugController(private val project: Project) : Disposable {
 
     private val sessionCounter = AtomicInteger(0)
     private val sessions = ConcurrentHashMap<String, XDebugSession>()
     private val pauseFlows = ConcurrentHashMap<String, MutableSharedFlow<DebugPauseEvent>>()
     private val agentBreakpoints = ConcurrentHashMap.newKeySet<XLineBreakpoint<*>>()
+    @Volatile
     private var activeSessionId: String? = null
 
     /**
@@ -347,7 +349,21 @@ class AgentDebugController : Disposable {
 
     override fun dispose() {
         stopAllSessions()
-        removeAgentBreakpoints()
+        // Actually remove breakpoints from the IDE debugger
+        try {
+            val bpManager = XDebuggerManager.getInstance(project).breakpointManager
+            agentBreakpoints.forEach { bp ->
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    bpManager.removeBreakpoint(bp as XLineBreakpoint<Nothing>)
+                } catch (_: Exception) {
+                    // Breakpoint may already be removed
+                }
+            }
+        } catch (_: Exception) {
+            // Project may already be disposed
+        }
+        agentBreakpoints.clear()
     }
 
     companion object {
