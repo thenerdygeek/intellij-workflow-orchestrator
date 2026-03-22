@@ -18,9 +18,9 @@ class BudgetEnforcerTest {
     }
 
     @Test
-    fun `returns OK when token usage is just under 60 percent`() {
+    fun `returns OK when token usage is just under 80 percent`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 89_999 // just under 60%
+        every { contextManager.currentTokens } returns 119_999 // just under 80%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.OK, enforcer.check())
@@ -29,7 +29,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns COMPRESS when token usage is at compression threshold`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 90_000 // exactly 60%
+        every { contextManager.currentTokens } returns 120_000 // exactly 80%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
@@ -38,7 +38,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns COMPRESS when between compression and nudge thresholds`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 100_000 // ~67% — between 60% and 75%
+        every { contextManager.currentTokens } returns 125_000 // ~83% — between 80% and 88%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
@@ -47,7 +47,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns NUDGE when token usage reaches nudge threshold`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 112_500 // 75% — at nudge threshold
+        every { contextManager.currentTokens } returns 132_000 // 88% — at nudge threshold
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
@@ -56,7 +56,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns NUDGE when between nudge and strong nudge thresholds`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 120_000 // 80% — between 75% and 85%
+        every { contextManager.currentTokens } returns 136_000 // ~91% — between 88% and 93%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
@@ -65,7 +65,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns STRONG_NUDGE when token usage reaches strong nudge threshold`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 127_500 // 85% — at strong nudge threshold
+        every { contextManager.currentTokens } returns 139_500 // 93% — at strong nudge threshold
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.STRONG_NUDGE, enforcer.check())
@@ -74,7 +74,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns STRONG_NUDGE when between strong nudge and terminate thresholds`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 135_000 // 90% — between 85% and 95%
+        every { contextManager.currentTokens } returns 143_000 // ~95% — between 93% and 97%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.STRONG_NUDGE, enforcer.check())
@@ -83,7 +83,7 @@ class BudgetEnforcerTest {
     @Test
     fun `returns TERMINATE when token usage reaches terminate threshold`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 142_500 // 95% — at terminate threshold
+        every { contextManager.currentTokens } returns 145_500 // 97% — at terminate threshold
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.TERMINATE, enforcer.check())
@@ -121,9 +121,9 @@ class BudgetEnforcerTest {
         val contextManager = mockk<ContextManager>()
         every { contextManager.currentTokens } returns 6_500
 
-        // With a small budget of 8000, 6500 tokens is 81.25% → NUDGE (between 75% and 85%)
+        // With a small budget of 8000, 6500 tokens is 81.25% → COMPRESS (between 80% and 88%)
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 8_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
+        assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
     }
 
     @Test
@@ -135,8 +135,55 @@ class BudgetEnforcerTest {
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 146_000)
         assertEquals(BudgetEnforcer.BudgetStatus.OK, enforcer.check())
 
-        // But with effectiveBudget=80_000, 50K = 62.5% → COMPRESS (between 60% and 75%)
-        val smallEnforcer = BudgetEnforcer(contextManager, effectiveBudget = 80_000)
+        // But with effectiveBudget=60_000, 50K = 83.3% → COMPRESS (between 80% and 88%)
+        val smallEnforcer = BudgetEnforcer(contextManager, effectiveBudget = 60_000)
         assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, smallEnforcer.check())
+    }
+
+    // --- New tests with budget=10,000 for boundary precision ---
+
+    @Test
+    fun `small budget - OK just below compression threshold`() {
+        val contextManager = mockk<ContextManager>()
+        every { contextManager.currentTokens } returns 7_999 // just under 80% of 10K
+
+        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
+        assertEquals(BudgetEnforcer.BudgetStatus.OK, enforcer.check())
+    }
+
+    @Test
+    fun `small budget - COMPRESS at exactly 80 percent`() {
+        val contextManager = mockk<ContextManager>()
+        every { contextManager.currentTokens } returns 8_000 // exactly 80% of 10K
+
+        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
+        assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
+    }
+
+    @Test
+    fun `small budget - NUDGE at exactly 88 percent`() {
+        val contextManager = mockk<ContextManager>()
+        every { contextManager.currentTokens } returns 8_800 // exactly 88% of 10K
+
+        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
+        assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
+    }
+
+    @Test
+    fun `small budget - STRONG_NUDGE at exactly 93 percent`() {
+        val contextManager = mockk<ContextManager>()
+        every { contextManager.currentTokens } returns 9_300 // exactly 93% of 10K
+
+        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
+        assertEquals(BudgetEnforcer.BudgetStatus.STRONG_NUDGE, enforcer.check())
+    }
+
+    @Test
+    fun `small budget - TERMINATE at exactly 97 percent`() {
+        val contextManager = mockk<ContextManager>()
+        every { contextManager.currentTokens } returns 9_700 // exactly 97% of 10K
+
+        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
+        assertEquals(BudgetEnforcer.BudgetStatus.TERMINATE, enforcer.check())
     }
 }

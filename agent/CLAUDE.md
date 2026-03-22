@@ -18,7 +18,7 @@ AgentController (UI entry point)
   → ConversationSession (long-lived, owns context + plan + question managers)
     → AgentOrchestrator.executeTask()
       → SingleAgentSession.execute() (ReAct loop, max 50 iterations)
-        → BudgetEnforcer (COMPRESS at 60%, NUDGE at 75%, STRONG_NUDGE at 85%, TERMINATE at 95%)
+        → BudgetEnforcer (COMPRESS at 80%, NUDGE at 88%, STRONG_NUDGE at 93%, TERMINATE at 97%)
         → LoopGuard (loop detection, error nudges, auto-verification)
         → Tool execution with optional ApprovalGate
 ```
@@ -27,8 +27,8 @@ AgentController (UI entry point)
 
 - **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Two-threshold compression (T_max=85%, T_retained=60%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses structured compaction template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
-- **BudgetEnforcer** — Four-status budget monitoring: OK (<60%), COMPRESS (60-75%), NUDGE (75-85%), STRONG_NUDGE (85-95%), TERMINATE (>95%).
+- **ContextManager** — Two-threshold compression (T_max=93%, T_retained=70%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses structured compaction template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
+- **BudgetEnforcer** — Four-status budget monitoring: OK (<80%), COMPRESS (80-88%), NUDGE (88-93%), STRONG_NUDGE (93-97%), TERMINATE (>97%).
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose.
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
@@ -61,7 +61,7 @@ Three layers:
 - **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). No premature compression — LLM sees everything on first read. Full content saved to disk for re-reads after pruning.
 - **Phase 1 compression**: Prune old tool results (protect last 30K tokens)
 - **Phase 2 compression**: Structured LLM summary (Goal/Discoveries/Accomplished/Files template)
-- **Compression trigger**: 85% of effective budget
+- **Compression trigger**: 93% of effective budget
 - **System messages**: Old LoopGuard/budget warnings compressible (only original system prompt protected)
 
 ## Tool Execution

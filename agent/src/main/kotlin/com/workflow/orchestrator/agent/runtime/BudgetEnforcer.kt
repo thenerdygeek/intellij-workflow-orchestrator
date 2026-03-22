@@ -8,11 +8,11 @@ import com.workflow.orchestrator.agent.context.ContextManager
  *
  * Thresholds (relative to effectiveBudget — already accounting for reserved tokens like
  * tool definitions, system prompt overhead, and safety buffer):
- * - OK: under 60% — proceed normally
- * - COMPRESS: 60%-75% — trigger context compression
- * - NUDGE: 75%-85% — inject nudge into system prompt suggesting delegation or wrap-up
- * - STRONG_NUDGE: 85%-95% — inject strong nudge urging immediate delegation or conclusion
- * - TERMINATE: over 95% — hard stop, context is exhausted
+ * - OK: under 80% — proceed normally
+ * - COMPRESS: 80%-88% — trigger context compression
+ * - NUDGE: 88%-93% — inject nudge into system prompt suggesting delegation or wrap-up
+ * - STRONG_NUDGE: 93%-97% — inject strong nudge urging immediate delegation or conclusion
+ * - TERMINATE: over 97% — hard stop, context is exhausted
  */
 class BudgetEnforcer(
     private val contextManager: ContextManager,
@@ -20,10 +20,10 @@ class BudgetEnforcer(
 ) {
     companion object {
         private val LOG = Logger.getInstance(BudgetEnforcer::class.java)
-        private const val COMPRESSION_RATIO = 0.60   // Match tRetainedRatio
-        private const val NUDGE_RATIO = 0.75
-        private const val STRONG_NUDGE_RATIO = 0.85  // Match tMaxRatio
-        private const val TERMINATE_RATIO = 0.95     // Leave only 5% emergency buffer
+        private const val COMPRESSION_RATIO = 0.80   // Was 0.60 — aligned with OpenCode (~85%)
+        private const val NUDGE_RATIO = 0.88         // Was 0.75
+        private const val STRONG_NUDGE_RATIO = 0.93  // Was 0.85 — match tMaxRatio
+        private const val TERMINATE_RATIO = 0.97     // Was 0.95 — leave only 3% emergency buffer
     }
 
     private val compressionThreshold = (effectiveBudget * COMPRESSION_RATIO).toInt()

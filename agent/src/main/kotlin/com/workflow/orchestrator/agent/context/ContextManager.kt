@@ -25,8 +25,8 @@ import com.workflow.orchestrator.core.model.ApiResult
 class ContextManager(
     private val maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
     private val brain: LlmBrain? = null,
-    private val tMaxRatio: Double = 0.85,
-    private val tRetainedRatio: Double = 0.60,
+    private val tMaxRatio: Double = 0.93,
+    private val tRetainedRatio: Double = 0.70,
     private val toolResultMaxTokens: Int = 4000,
     private var reservedTokens: Int = 0,
     private val summarizer: (List<ChatMessage>) -> String = { msgs ->
