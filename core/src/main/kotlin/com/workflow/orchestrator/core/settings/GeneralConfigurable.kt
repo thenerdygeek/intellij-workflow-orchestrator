@@ -5,24 +5,21 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.table.JBTable
+import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
-import com.workflow.orchestrator.core.bitbucket.BitbucketProject
-import com.workflow.orchestrator.core.bitbucket.BitbucketRepo
-import com.workflow.orchestrator.core.bitbucket.GitRemoteParser
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.runBlocking
-import javax.swing.DefaultComboBoxModel
-import javax.swing.JComboBox
-import javax.swing.JComponent
-import javax.swing.JLabel
-import javax.swing.JPasswordField
-import javax.swing.SwingUtilities
+import javax.swing.*
+import javax.swing.table.DefaultTableModel
 
 /**
  * Merged "General" settings page combining:
@@ -51,31 +48,28 @@ class GeneralConfigurable(
     // Guard against false modification during initial token load
     private var isInitializing = true
 
-    // --- Repository state (from RepositoryConfigurable) ---
-    private val projectKeyModel = DefaultComboBoxModel<String>()
-    private val repoSlugModel = DefaultComboBoxModel<String>()
-    private var projectKeyCombo: JComboBox<String>? = null
-    private var repoSlugCombo: JComboBox<String>? = null
+    // --- Repository table state ---
+    private val repoTableColumnNames = arrayOf("Name", "Bitbucket", "Bamboo Plan", "SonarQube", "Primary")
+    private val repoTableModel = object : DefaultTableModel(repoTableColumnNames, 0) {
+        override fun getColumnClass(columnIndex: Int): Class<*> =
+            if (columnIndex == 4) java.lang.Boolean::class.java else String::class.java
+
+        override fun isCellEditable(row: Int, column: Int): Boolean = false
+    }
+    private var repoTable: JBTable? = null
     private val repoStatusLabel = JBLabel("")
-    private var fetchedProjects: List<BitbucketProject> = emptyList()
-    private var fetchedRepos: List<BitbucketRepo> = emptyList()
+
+    // In-memory working copy of repos for the table (applied on save)
+    private val editedRepos = mutableListOf<RepoConfig>()
 
     override fun getId(): String = "workflow.orchestrator.general"
     override fun getDisplayName(): String = "General"
 
     override fun createComponent(): JComponent {
-        val currentProjectKey = pluginSettings.state.bitbucketProjectKey.orEmpty()
-        val currentRepoSlug = pluginSettings.state.bitbucketRepoSlug.orEmpty()
-
-        // Pre-populate repo combo models with current values
-        if (currentProjectKey.isNotBlank()) {
-            projectKeyModel.addElement(currentProjectKey)
-            projectKeyModel.selectedItem = currentProjectKey
-        }
-        if (currentRepoSlug.isNotBlank()) {
-            repoSlugModel.addElement(currentRepoSlug)
-            repoSlugModel.selectedItem = currentRepoSlug
-        }
+        // Load existing repos into working copy
+        editedRepos.clear()
+        editedRepos.addAll(pluginSettings.getRepos())
+        refreshRepoTable()
 
         isInitializing = true
 
@@ -84,7 +78,7 @@ class GeneralConfigurable(
             connectionsSection()
 
             // ========== Section 2: Repository ==========
-            repositorySection(currentProjectKey, currentRepoSlug)
+            repositorySection()
 
             // ========== Section 3: Module Visibility ==========
             moduleVisibilitySection()
@@ -92,11 +86,6 @@ class GeneralConfigurable(
         dialogPanel = innerPanel
 
         isInitializing = false
-
-        // Auto-detect repo on first open if not configured
-        if (currentProjectKey.isBlank() && currentRepoSlug.isBlank()) {
-            autoDetectRepo()
-        }
 
         return JBScrollPane(innerPanel).apply {
             border = null
@@ -107,12 +96,22 @@ class GeneralConfigurable(
         // Credential changes
         if (pendingTokens.isNotEmpty() || pendingNexusPassword != null || pendingNexusUsername != null || pendingBitbucketUsername != null) return true
 
-        // Repository changes
-        val currentProjectKey = pluginSettings.state.bitbucketProjectKey.orEmpty()
-        val currentRepoSlug = pluginSettings.state.bitbucketRepoSlug.orEmpty()
-        val selectedProject = projectKeyCombo?.selectedItem as? String ?: ""
-        val selectedRepo = repoSlugCombo?.selectedItem as? String ?: ""
-        if (selectedProject != currentProjectKey || selectedRepo != currentRepoSlug) return true
+        // Repository table changes
+        val savedRepos = pluginSettings.getRepos()
+        if (editedRepos.size != savedRepos.size) return true
+        for (i in editedRepos.indices) {
+            val edited = editedRepos[i]
+            val saved = savedRepos[i]
+            if (edited.name != saved.name ||
+                edited.bitbucketProjectKey != saved.bitbucketProjectKey ||
+                edited.bitbucketRepoSlug != saved.bitbucketRepoSlug ||
+                edited.bambooPlanKey != saved.bambooPlanKey ||
+                edited.sonarProjectKey != saved.sonarProjectKey ||
+                edited.dockerTagKey != saved.dockerTagKey ||
+                edited.defaultTargetBranch != saved.defaultTargetBranch ||
+                edited.isPrimary != saved.isPrimary
+            ) return true
+        }
 
         // Dialog panel bindings (module toggles, etc.)
         return dialogPanel?.isModified() ?: false
@@ -146,22 +145,45 @@ class GeneralConfigurable(
         }
         pendingBitbucketUsername = null
 
-        // Save repository settings
-        pluginSettings.state.bitbucketProjectKey = (projectKeyCombo?.selectedItem as? String).orEmpty()
-        pluginSettings.state.bitbucketRepoSlug = (repoSlugCombo?.selectedItem as? String).orEmpty()
-        log.info("[Settings:General] Saved project='${pluginSettings.state.bitbucketProjectKey}', repo='${pluginSettings.state.bitbucketRepoSlug}'")
+        // Save repository table to settings
+        pluginSettings.state.repos.clear()
+        for (repo in editedRepos) {
+            val copy = RepoConfig().apply {
+                name = repo.name ?: ""
+                bitbucketProjectKey = repo.bitbucketProjectKey ?: ""
+                bitbucketRepoSlug = repo.bitbucketRepoSlug ?: ""
+                bambooPlanKey = repo.bambooPlanKey ?: ""
+                sonarProjectKey = repo.sonarProjectKey ?: ""
+                dockerTagKey = repo.dockerTagKey ?: ""
+                defaultTargetBranch = repo.defaultTargetBranch ?: "develop"
+                localVcsRootPath = repo.localVcsRootPath ?: ""
+                isPrimary = repo.isPrimary
+            }
+            pluginSettings.state.repos.add(copy)
+        }
+
+        // Sync primary repo's scalar fields for backward compatibility
+        val primary = editedRepos.find { it.isPrimary } ?: editedRepos.firstOrNull()
+        pluginSettings.state.bitbucketProjectKey = primary?.bitbucketProjectKey ?: ""
+        pluginSettings.state.bitbucketRepoSlug = primary?.bitbucketRepoSlug ?: ""
+        pluginSettings.state.bambooPlanKey = primary?.bambooPlanKey ?: ""
+        pluginSettings.state.sonarProjectKey = primary?.sonarProjectKey ?: ""
+        pluginSettings.state.dockerTagKey = primary?.dockerTagKey ?: ""
+        pluginSettings.state.defaultTargetBranch = primary?.defaultTargetBranch ?: "develop"
+
+        log.info("[Settings:General] Saved ${editedRepos.size} repos, primary='${primary?.displayLabel}'")
     }
 
     override fun reset() {
         dialogPanel?.reset()
-        projectKeyCombo?.selectedItem = pluginSettings.state.bitbucketProjectKey.orEmpty()
-        repoSlugCombo?.selectedItem = pluginSettings.state.bitbucketRepoSlug.orEmpty()
+        editedRepos.clear()
+        editedRepos.addAll(pluginSettings.getRepos())
+        refreshRepoTable()
     }
 
     override fun disposeUIResources() {
         dialogPanel = null
-        projectKeyCombo = null
-        repoSlugCombo = null
+        repoTable = null
     }
 
     // ========== Connections Section ==========
@@ -459,146 +481,180 @@ class GeneralConfigurable(
 
     // ========== Repository Section ==========
 
-    private fun Panel.repositorySection(currentProjectKey: String, currentRepoSlug: String) {
+    private fun Panel.repositorySection() {
         collapsibleGroup("Repository") {
             row {
-                comment("Configure which Bitbucket project and repository this IDE project maps to.")
-            }
-
-            row("Project Key:") {
-                projectKeyCombo = comboBox(projectKeyModel)
-                    .applyToComponent {
-                        isEditable = true
-                        addActionListener {
-                            val selected = selectedItem as? String ?: ""
-                            if (selected.isNotBlank() && fetchedProjects.isNotEmpty()) {
-                                loadRepos(selected)
-                            }
-                        }
-                    }
-                    .comment("Bitbucket project key (e.g., MYPROJ)")
-                    .component
-            }
-
-            row("Repository:") {
-                repoSlugCombo = comboBox(repoSlugModel)
-                    .applyToComponent {
-                        isEditable = true
-                    }
-                    .comment("Repository slug (e.g., my-service)")
-                    .component
+                comment("Configure which repositories this IDE project maps to. The primary repo is used as default context.")
             }
 
             row {
-                button("Auto-detect from Git Remote") {
-                    autoDetectRepo()
+                val table = JBTable(repoTableModel).apply {
+                    setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+                    preferredScrollableViewportSize = JBUI.size(600, 120)
+                    tableHeader.reorderingAllowed = false
+                    columnModel.getColumn(4).preferredWidth = JBUI.scale(60)
+                    columnModel.getColumn(4).maxWidth = JBUI.scale(70)
                 }
-                button("Fetch from Bitbucket") {
-                    loadProjects()
-                }
+                repoTable = table
+                val scrollPane = JBScrollPane(table)
+                cell(scrollPane)
+                    .align(AlignX.FILL)
+            }
+
+            row {
+                button("Add") { onAddRepo() }
+                button("Edit") { onEditRepo() }
+                button("Remove") { onRemoveRepo() }
+                button("Auto-Detect") { onAutoDetectRepos() }
                 cell(repoStatusLabel)
             }
         }
     }
 
-    private fun autoDetectRepo() {
-        repoStatusLabel.text = "Detecting from git remote..."
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val result = GitRemoteParser.detectFromProject(project)
-            SwingUtilities.invokeLater {
-                if (result != null) {
-                    val (projKey, repoSlug) = result
-                    if (projectKeyModel.getIndexOf(projKey) < 0) {
-                        projectKeyModel.addElement(projKey)
-                    }
-                    projectKeyCombo?.selectedItem = projKey
-
-                    if (repoSlugModel.getIndexOf(repoSlug) < 0) {
-                        repoSlugModel.addElement(repoSlug)
-                    }
-                    repoSlugCombo?.selectedItem = repoSlug
-
-                    repoStatusLabel.text = "Detected: $projKey / $repoSlug"
-                } else {
-                    repoStatusLabel.text = "Could not detect from git remote"
-                }
-            }
+    private fun refreshRepoTable() {
+        repoTableModel.rowCount = 0
+        for (repo in editedRepos) {
+            repoTableModel.addRow(
+                arrayOf<Any>(
+                    repo.name ?: "",
+                    "${repo.bitbucketProjectKey ?: ""}/${repo.bitbucketRepoSlug ?: ""}",
+                    repo.bambooPlanKey ?: "",
+                    repo.sonarProjectKey ?: "",
+                    repo.isPrimary
+                )
+            )
         }
     }
 
-    private fun loadProjects() {
-        val bitbucketUrl = connSettings.state.bitbucketUrl.trimEnd('/')
-        if (bitbucketUrl.isBlank()) {
-            repoStatusLabel.text = "Configure Bitbucket URL in Connections first"
+    private fun onAddRepo() {
+        val dialog = RepoConfigDialog(project, null)
+        if (dialog.showAndGet()) {
+            val newRepo = dialog.toRepoConfig()
+            if (newRepo.isPrimary) {
+                editedRepos.forEach { it.isPrimary = false }
+            }
+            editedRepos.add(newRepo)
+            refreshRepoTable()
+        }
+    }
+
+    private fun onEditRepo() {
+        val selectedRow = repoTable?.selectedRow ?: -1
+        if (selectedRow < 0 || selectedRow >= editedRepos.size) {
+            repoStatusLabel.text = "Select a row to edit"
             return
         }
+        val existing = editedRepos[selectedRow]
+        val dialog = RepoConfigDialog(project, existing)
+        if (dialog.showAndGet()) {
+            val updated = dialog.toRepoConfig()
+            updated.localVcsRootPath = existing.localVcsRootPath ?: ""
+            if (updated.isPrimary) {
+                editedRepos.forEach { it.isPrimary = false }
+            }
+            editedRepos[selectedRow] = updated
+            refreshRepoTable()
+            repoTable?.setRowSelectionInterval(selectedRow, selectedRow)
+        }
+    }
 
-        repoStatusLabel.text = "Fetching projects..."
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+    private fun onRemoveRepo() {
+        val selectedRow = repoTable?.selectedRow ?: -1
+        if (selectedRow < 0 || selectedRow >= editedRepos.size) {
+            repoStatusLabel.text = "Select a row to remove"
+            return
+        }
+        val repo = editedRepos[selectedRow]
+        val answer = Messages.showYesNoDialog(
+            project,
+            "Remove repository '${repo.displayLabel}' from configuration?",
+            "Remove Repository",
+            Messages.getQuestionIcon()
         )
+        if (answer == Messages.YES) {
+            editedRepos.removeAt(selectedRow)
+            refreshRepoTable()
+            repoStatusLabel.text = "Removed '${repo.displayLabel}'"
+        }
+    }
 
-        runBackgroundableTask("Fetching Bitbucket projects", project, false) {
-            val result = runBlocking { client.getProjects() }
+    private fun onAutoDetectRepos() {
+        repoStatusLabel.text = "Detecting repositories from VCS roots..."
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val resolver = RepoContextResolver.getInstance(project)
+            val detected = resolver.autoDetectRepos()
             SwingUtilities.invokeLater {
-                when (result) {
-                    is ApiResult.Success -> {
-                        fetchedProjects = result.data
-                        val currentSelection = projectKeyCombo?.selectedItem as? String
-                        projectKeyModel.removeAllElements()
-                        for (proj in result.data) {
-                            projectKeyModel.addElement(proj.key)
-                        }
-                        if (currentSelection != null && projectKeyModel.getIndexOf(currentSelection) >= 0) {
-                            projectKeyCombo?.selectedItem = currentSelection
-                        }
-                        repoStatusLabel.text = "Found ${result.data.size} projects"
-
-                        // If a project is selected, also load its repos
-                        val selected = projectKeyCombo?.selectedItem as? String
-                        if (!selected.isNullOrBlank()) {
-                            loadRepos(selected)
-                        }
+                if (detected.isEmpty()) {
+                    repoStatusLabel.text = "No repositories detected from git remotes"
+                    return@invokeLater
+                }
+                var added = 0
+                for (repo in detected) {
+                    val alreadyExists = editedRepos.any {
+                        it.bitbucketProjectKey.equals(repo.bitbucketProjectKey, ignoreCase = true) &&
+                            it.bitbucketRepoSlug.equals(repo.bitbucketRepoSlug, ignoreCase = true)
                     }
-                    is ApiResult.Error -> {
-                        repoStatusLabel.text = "Failed: ${result.message}"
+                    if (!alreadyExists) {
+                        if (repo.isPrimary && editedRepos.any { it.isPrimary }) {
+                            repo.isPrimary = false
+                        }
+                        editedRepos.add(repo)
+                        added++
                     }
+                }
+                refreshRepoTable()
+                repoStatusLabel.text = if (added > 0) {
+                    "Added $added new repo(s) from ${detected.size} detected"
+                } else {
+                    "All ${detected.size} detected repos already configured"
                 }
             }
         }
     }
 
-    private fun loadRepos(projectKey: String) {
-        val bitbucketUrl = connSettings.state.bitbucketUrl.trimEnd('/')
-        if (bitbucketUrl.isBlank()) return
+    // ========== Repo Config Dialog ==========
 
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
+    private class RepoConfigDialog(
+        project: Project,
+        private val existing: RepoConfig?
+    ) : DialogWrapper(project, false) {
 
-        runBackgroundableTask("Fetching Bitbucket repos", project, false) {
-            val result = runBlocking { client.getRepos(projectKey) }
-            SwingUtilities.invokeLater {
-                when (result) {
-                    is ApiResult.Success -> {
-                        fetchedRepos = result.data
-                        val currentSelection = repoSlugCombo?.selectedItem as? String
-                        repoSlugModel.removeAllElements()
-                        for (repo in result.data) {
-                            repoSlugModel.addElement(repo.slug)
-                        }
-                        if (currentSelection != null && repoSlugModel.getIndexOf(currentSelection) >= 0) {
-                            repoSlugCombo?.selectedItem = currentSelection
-                        }
-                        repoStatusLabel.text = "Found ${result.data.size} repos in $projectKey"
-                    }
-                    is ApiResult.Error -> {
-                        repoStatusLabel.text = "Failed to load repos: ${result.message}"
-                    }
-                }
+        private val nameField = JBTextField(existing?.name ?: "", 30)
+        private val bbProjectField = JBTextField(existing?.bitbucketProjectKey ?: "", 30)
+        private val bbRepoField = JBTextField(existing?.bitbucketRepoSlug ?: "", 30)
+        private val bambooField = JBTextField(existing?.bambooPlanKey ?: "", 30)
+        private val sonarField = JBTextField(existing?.sonarProjectKey ?: "", 30)
+        private val dockerField = JBTextField(existing?.dockerTagKey ?: "", 30)
+        private val branchField = JBTextField(existing?.defaultTargetBranch ?: "develop", 30)
+        private val primaryCheckbox = JCheckBox("Primary repository", existing?.isPrimary ?: false)
+
+        init {
+            title = if (existing != null) "Edit Repository" else "Add Repository"
+            init()
+        }
+
+        override fun createCenterPanel(): JComponent {
+            return panel {
+                row("Name:") { cell(nameField).align(AlignX.FILL) }
+                row("Bitbucket Project Key:") { cell(bbProjectField).align(AlignX.FILL) }
+                row("Bitbucket Repo Slug:") { cell(bbRepoField).align(AlignX.FILL) }
+                row("Bamboo Plan Key:") { cell(bambooField).align(AlignX.FILL) }
+                row("SonarQube Project Key:") { cell(sonarField).align(AlignX.FILL) }
+                row("Docker Tag Key:") { cell(dockerField).align(AlignX.FILL) }
+                row("Default Target Branch:") { cell(branchField).align(AlignX.FILL) }
+                row { cell(primaryCheckbox) }
             }
+        }
+
+        fun toRepoConfig(): RepoConfig = RepoConfig().apply {
+            name = nameField.text.trim()
+            bitbucketProjectKey = bbProjectField.text.trim()
+            bitbucketRepoSlug = bbRepoField.text.trim()
+            bambooPlanKey = bambooField.text.trim()
+            sonarProjectKey = sonarField.text.trim()
+            dockerTagKey = dockerField.text.trim()
+            defaultTargetBranch = branchField.text.trim().ifBlank { "develop" }
+            isPrimary = primaryCheckbox.isSelected
         }
     }
 
