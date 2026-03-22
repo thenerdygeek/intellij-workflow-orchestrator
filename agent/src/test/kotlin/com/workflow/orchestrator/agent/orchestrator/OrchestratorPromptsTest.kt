@@ -44,6 +44,49 @@ class OrchestratorPromptsTest {
     }
 
     @Test
+    fun `explorer prompt contains thoroughness calibration`() {
+        val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.ANALYZER)
+        assertTrue(prompt.contains("quick"), "Should mention quick thoroughness")
+        assertTrue(prompt.contains("medium"), "Should mention medium thoroughness")
+        assertTrue(prompt.contains("very thorough"), "Should mention very thorough thoroughness")
+    }
+
+    @Test
+    fun `explorer prompt contains PSI tool guidance`() {
+        val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.ANALYZER)
+        assertTrue(prompt.contains("find_definition"), "Should guide PSI usage")
+        assertTrue(prompt.contains("find_references"), "Should guide PSI usage")
+        assertTrue(prompt.contains("type_hierarchy"), "Should guide PSI usage")
+        assertTrue(prompt.contains("spring_endpoints"), "Should guide Spring tools")
+    }
+
+    @Test
+    fun `explorer prompt enforces read-only role`() {
+        val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.ANALYZER)
+        assertTrue(prompt.contains("read-only"), "Should state read-only")
+        assertTrue(prompt.contains("FIND"), "Should have FIND emphasis")
+        assertFalse(prompt.contains("edit_file"), "Should not mention edit_file")
+        assertFalse(prompt.contains("run_command"), "Should not mention run_command")
+    }
+
+    @Test
+    fun `explorer prompt has structured output format`() {
+        val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.ANALYZER)
+        assertTrue(prompt.contains("Files Found") || prompt.contains("files_found"),
+            "Should have files found section")
+        assertTrue(prompt.contains("Key Findings") || prompt.contains("key_findings"),
+            "Should have key findings section")
+    }
+
+    @Test
+    fun `explorer prompt stays under token budget`() {
+        val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.ANALYZER)
+        // ~4 chars per token, budget is 1500 tokens = ~6000 chars
+        assertTrue(prompt.length < 6000,
+            "Explorer prompt should be under ~1500 tokens (${prompt.length} chars)")
+    }
+
+    @Test
     fun `REVIEWER prompt contains review`() {
         val prompt = OrchestratorPrompts.getSystemPrompt(WorkerType.REVIEWER).lowercase()
         assertTrue(
