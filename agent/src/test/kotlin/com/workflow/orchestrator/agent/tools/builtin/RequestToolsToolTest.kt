@@ -99,11 +99,10 @@ class RequestToolsToolTest {
     @Test
     fun `filters disabled tools from activation`() = runTest {
         val prefs = mockk<ToolPreferences>()
-        every { prefs.isToolEnabled("jira_get_ticket") } returns true
+        // Default: enable all tools, then selectively disable specific ones
+        every { prefs.isToolEnabled(any()) } returns true
         every { prefs.isToolEnabled("jira_get_transitions") } returns false
-        every { prefs.isToolEnabled("jira_transition") } returns true
         every { prefs.isToolEnabled("jira_comment") } returns false
-        every { prefs.isToolEnabled("jira_get_comments") } returns true
         every { prefs.isToolEnabled("jira_log_work") } returns false
         mockkStatic(ToolPreferences::class)
         every { ToolPreferences.getInstance(project) } returns prefs

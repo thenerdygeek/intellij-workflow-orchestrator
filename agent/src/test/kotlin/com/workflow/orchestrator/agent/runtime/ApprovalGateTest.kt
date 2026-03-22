@@ -160,7 +160,7 @@ class ApprovalGateTest {
             "read_file", "search_code", "find_references", "find_definition",
             "type_hierarchy", "call_hierarchy", "file_structure",
             "spring_context", "spring_endpoints", "spring_bean_graph",
-            "diagnostics", "jira_get_ticket", "bamboo_build", "sonar_issues"
+            "diagnostics", "jira_get_ticket", "bamboo_build_status", "sonar_issues"
         )
 
         for (tool in readOnlyTools) {

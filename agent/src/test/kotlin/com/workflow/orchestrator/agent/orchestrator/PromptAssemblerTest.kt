@@ -159,9 +159,9 @@ class PromptAssemblerTest {
 
         val prompt = emptyAssembler.buildSingleAgentPrompt()
         assertTrue(prompt.contains("<available_tools>"), "Should still have tools section")
-        // The tools section should be empty between tags
-        val toolsSection = prompt.substringAfter("<available_tools>\n").substringBefore("\n</available_tools>")
-        assertTrue(toolsSection.isBlank(), "Tools section should be empty")
+        // The tool list itself should be empty (the section may still contain usage notes)
+        val toolsSection = prompt.substringAfter("<available_tools>\n").substringBefore("\n\nNote:")
+        assertTrue(toolsSection.isBlank(), "Tool list should be empty")
     }
 
     // --- Step 2/5: Repo map injection ---

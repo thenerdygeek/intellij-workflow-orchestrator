@@ -58,11 +58,23 @@ Three layers:
 
 ## Context Management
 
-- **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). No premature compression — LLM sees everything on first read. Full content saved to disk for re-reads after pruning.
-- **Phase 1 compression**: Prune old tool results (protect last 30K tokens)
-- **Phase 2 compression**: Structured LLM summary (Goal/Discoveries/Accomplished/Files template)
-- **Compression trigger**: 93% of effective budget
-- **System messages**: Old LoopGuard/budget warnings compressible (only original system prompt protected)
+- **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). Full content saved to disk for re-reads after pruning.
+- **Facts Store**: Compression-proof append-only log of verified findings (FILE_READ, EDIT_MADE, CODE_PATTERN, ERROR_FOUND, COMMAND_RESULT, DISCOVERY). Injected as `factsAnchor`. Deduped by (type, path), capped at 50 entries. Think tool also records DISCOVERY facts.
+- **Phase 0 (smart pruning)**: Deduplication (keep latest file read, respects edit boundaries), error purging (truncate failed tool args after 4 turns), write superseding (compact writes confirmed by subsequent reads). Zero information loss.
+- **Phase 1 (tiered tool result pruning)**: Three tiers:
+  - FULL: within 40K protection window — kept intact
+  - COMPRESSED: within 60K window — first 20 + last 5 lines kept
+  - METADATA: beyond both — rich placeholder (tool name, args, preview, disk path, recovery hint)
+  - Protected tools (agent, delegate_task, create_plan, etc.) are NEVER pruned
+  - Minimum savings threshold: skip results under 200 tokens
+- **Phase 2 (summarization)**: Structured LLM summary (Goal/Discoveries/Accomplished/Files template) with [APPROX] markers. Fallback summarizer preserves first 10 lines of tool results (8K char cap).
+- **Compression boundary**: After any compression, a `[CONTEXT COMPRESSED]` marker warns LLM earlier content is approximate.
+- **Compression trigger**: 93% of effective budget (auto-compress in addMessage)
+- **Budget thresholds**: OK (<80%), COMPRESS (80-88%), NUDGE (88-93%), STRONG_NUDGE (93-97%), TERMINATE (>97%)
+- **Middle-truncation**: Command and git output keeps first 60% + last 40%, truncating verbose middle.
+- **System messages**: Old LoopGuard/budget warnings compressible, capped at 2 active warnings
+- **Orphan protection**: When compression drops an assistant tool_call, its tool result is also dropped
+- **Re-read tracking**: Cleared after pruning events so agent can re-read pruned files
 
 ## Tool Execution
 
