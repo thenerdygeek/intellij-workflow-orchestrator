@@ -1,7 +1,7 @@
 ---
 name: systematic-debugging
 description: Use when encountering any bug, test failure, build failure, or unexpected behavior — before proposing fixes. Enforces root-cause investigation with IDE-level diagnostics.
-preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, git_status, git_blame, think, run_tests, compile_module]
+preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, git_status, git_blame, think, run_tests, compile_module, get_test_results, get_run_output, get_running_processes]
 ---
 
 # Systematic Debugging
@@ -45,12 +45,15 @@ Complete each phase before proceeding to the next.
 **BEFORE attempting ANY fix:**
 
 1. **Read Error Messages Carefully**
+   - Use `get_test_results` to get structured test failures (assertion messages, stack traces per test)
+   - Use `get_run_output` to check application logs for errors (filter with `ERROR|WARN|Exception`)
    - Use `diagnostics` tool to get IDE-level error analysis (PSI errors, unresolved references, compiler warnings)
    - Don't skip past errors — read stack traces completely
    - Note line numbers, file paths, error codes
 
 2. **Reproduce Consistently**
-   - Use `run_tests` to run the failing test in isolation
+   - Use `get_running_processes` to check if the application is already running
+   - Use `run_tests` to run the failing test in isolation (now returns structured results)
    - Use `compile_module` to verify compilation errors
    - Can you trigger it reliably? What are the exact steps?
 
@@ -77,6 +80,29 @@ Complete each phase before proceeding to the next.
    - Use `find_references` to trace the call chain
    - Add diagnostic logging at component boundaries if needed
    - Run once to gather evidence showing WHERE it breaks
+
+### Escalation: Do You Need the Debugger?
+
+After Phase 1 investigation, decide your next approach:
+
+**Stay with static analysis (default path) when:**
+- Error message + stack trace clearly points to the bug
+- The bug is in logic you can read and reason about
+- A log statement or assertion would confirm the hypothesis
+- The fix is obvious from code reading
+
+**Escalate to interactive debugging when:**
+- The bug depends on runtime state you can't determine from code reading alone
+- You need to inspect what value a variable actually holds at a specific execution point
+- The call chain is too complex to trace statically (e.g., Spring proxies, AOP, dynamic dispatch)
+- You suspect a race condition, timing issue, or ordering problem
+- Previous static analysis (Phase 1) didn't reveal the root cause
+- You need to verify what a method actually returns vs. what you expect
+
+**If escalating:** activate the `interactive-debugging` skill, then return here for Phase 2 after.
+
+Most bugs (>80%) are solvable with static analysis. Reserve the debugger for the cases where
+you genuinely need to observe runtime state.
 
 ### Phase 2: Pattern Analysis
 
@@ -121,7 +147,7 @@ Complete each phase before proceeding to the next.
 
 4. **When You Don't Know**
    - Say "I don't understand X"
-   - Use `delegate_task` to spawn an analyzer worker to investigate a specific aspect while you continue
+   - Use `agent` to spawn an explorer subagent to investigate a specific aspect while you continue
    - Check SonarQube for related issues: use `sonar_issues` filtered to the affected file
 
 ### Phase 4: Implementation
@@ -177,7 +203,7 @@ If you catch yourself thinking:
 
 | Phase | Primary Tools | Purpose |
 |-------|--------------|---------|
-| 1. Root Cause | `diagnostics`, `git_blame`, `find_references`, `search_code`, `think` | Understand WHAT and WHY |
+| 1. Root Cause | `get_test_results`, `get_run_output`, `diagnostics`, `git_blame`, `find_references`, `search_code`, `think` | Understand WHAT and WHY |
 | 2. Pattern | `search_code`, `read_file`, `find_definition`, `type_hierarchy`, `think` | Find working patterns |
 | 3. Hypothesis | `think`, `run_tests`, `compile_module`, `diagnostics` | Test theory minimally |
 | 4. Implementation | `edit_file`, `run_tests`, `compile_module`, `diagnostics`, `sonar_issues` | Fix and verify |
