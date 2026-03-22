@@ -164,11 +164,10 @@ class QualityDashboardPanel(
                 val selectedRepo = sonarRepos[selectedIndex]
                 val newProjectKey = selectedRepo.sonarProjectKey.orEmpty()
                 if (newProjectKey.isNotBlank()) {
-                    // Update the settings so SonarDataService picks up the new project key
-                    settings.state.sonarProjectKey = newProjectKey
+                    // Use refreshForProject to avoid mutating persisted settings
                     statusLabel.text = "Switching to $newProjectKey..."
                     loadingIcon.isVisible = true
-                    dataService.refresh()
+                    dataService.refreshForProject(newProjectKey)
                 }
             }
         }

@@ -294,6 +294,7 @@ class PrListPanel : JPanel(BorderLayout()) {
             font = font.deriveFont(JBUI.scale(10).toFloat())
             foreground = SECONDARY_TEXT
         }
+        private var bottomRowInitialized = false
 
         init {
             headerPanel.add(headerLabel, BorderLayout.WEST)
@@ -338,25 +339,37 @@ class PrListPanel : JPanel(BorderLayout()) {
 
             statusBadgePanel.update(value.status)
 
-            bottomRow.removeAll()
+            // Add all labels once, then toggle visibility instead of removeAll/add
+            if (!bottomRowInitialized) {
+                bottomRow.add(authorLabel)
+                bottomRow.add(branchLabel)
+                bottomRow.add(reviewerLabel)
+                bottomRow.add(timeLabel)
+                bottomRowInitialized = true
+            }
+
             authorLabel.text = value.authorName
-            bottomRow.add(authorLabel)
+            authorLabel.isVisible = true
 
             branchLabel.text = "${truncate(value.fromBranch, 20)} \u2192 ${truncate(value.toBranch, 20)}"
             branchLabel.toolTipText = if (value.fromBranch.length > 20 || value.toBranch.length > 20) {
                 "${value.fromBranch} \u2192 ${value.toBranch}"
             } else null
-            bottomRow.add(branchLabel)
+            branchLabel.isVisible = true
 
             if (value.reviewerCount > 0) {
                 reviewerLabel.text = "${value.reviewerCount} reviewers"
-                bottomRow.add(reviewerLabel)
+                reviewerLabel.isVisible = true
+            } else {
+                reviewerLabel.isVisible = false
             }
             if (value.updatedDate > 0) {
                 val (relativeText, absoluteText) = TimeFormatter.relativeWithTooltip(value.updatedDate)
                 timeLabel.text = relativeText
                 timeLabel.toolTipText = absoluteText
-                bottomRow.add(timeLabel)
+                timeLabel.isVisible = true
+            } else {
+                timeLabel.isVisible = false
             }
 
             return prPanel
@@ -366,14 +379,23 @@ class PrListPanel : JPanel(BorderLayout()) {
         private class RepoBadgePanel : JPanel() {
             private var badgeText: String = ""
 
+            companion object {
+                private val BADGE_FONT by lazy { JBUI.Fonts.smallFont().deriveFont(Font.BOLD, JBUI.scale(9).toFloat()) }
+                private var cachedFontMetrics: FontMetrics? = null
+            }
+
             init {
                 isOpaque = false
                 border = JBUI.Borders.emptyRight(4)
             }
 
+            private fun getBadgeFontMetrics(): FontMetrics {
+                return cachedFontMetrics ?: getFontMetrics(BADGE_FONT).also { cachedFontMetrics = it }
+            }
+
             fun update(repoName: String) {
                 badgeText = repoName
-                val fm = getFontMetrics(font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat()))
+                val fm = getBadgeFontMetrics()
                 val textW = fm.stringWidth(badgeText)
                 preferredSize = Dimension(textW + JBUI.scale(10), fm.height + JBUI.scale(4))
             }
@@ -395,7 +417,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
                 ))
                 g2.color = JBColor.WHITE
-                g2.font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
+                g2.font = BADGE_FONT
                 val fm = g2.fontMetrics
                 val textX = (width - fm.stringWidth(badgeText)) / 2
                 val textY = (height + fm.ascent - fm.descent) / 2
@@ -409,8 +431,17 @@ class PrListPanel : JPanel(BorderLayout()) {
             private var badgeColor: Color = SECONDARY_TEXT
             private var badgeText: String = ""
 
+            companion object {
+                private val BADGE_FONT by lazy { JBUI.Fonts.smallFont().deriveFont(Font.BOLD, JBUI.scale(9).toFloat()) }
+                private var cachedFontMetrics: FontMetrics? = null
+            }
+
             init {
                 isOpaque = false
+            }
+
+            private fun getBadgeFontMetrics(): FontMetrics {
+                return cachedFontMetrics ?: getFontMetrics(BADGE_FONT).also { cachedFontMetrics = it }
             }
 
             fun update(status: String) {
@@ -421,7 +452,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     "DECLINED" -> STATUS_DECLINED
                     else -> SECONDARY_TEXT
                 }
-                val fm = getFontMetrics(font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat()))
+                val fm = getBadgeFontMetrics()
                 val textW = fm.stringWidth(badgeText)
                 preferredSize = Dimension(textW + JBUI.scale(10), fm.height + JBUI.scale(4))
             }
@@ -443,7 +474,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
                 ))
                 g2.color = JBColor.WHITE
-                g2.font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
+                g2.font = BADGE_FONT
                 val fm = g2.fontMetrics
                 val textX = (width - fm.stringWidth(badgeText)) / 2
                 val textY = (height + fm.ascent - fm.descent) / 2

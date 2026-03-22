@@ -40,10 +40,10 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     private fun resolvePlanKey(planKey: String?, repoName: String?): String? {
         if (!planKey.isNullOrBlank()) return planKey
         if (repoName != null) {
-            val repo = PluginSettings.getInstance(project).getRepoByName(repoName)
+            val repo = settings.getRepoByName(repoName)
             if (repo != null && !repo.bambooPlanKey.isNullOrBlank()) return repo.bambooPlanKey
         }
-        val primary = PluginSettings.getInstance(project).getPrimaryRepo()
+        val primary = settings.getPrimaryRepo()
         if (primary != null && !primary.bambooPlanKey.isNullOrBlank()) return primary.bambooPlanKey
         return settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
     }

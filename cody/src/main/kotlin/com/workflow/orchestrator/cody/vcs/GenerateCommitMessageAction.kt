@@ -53,6 +53,9 @@ class GenerateCommitMessageAction : AnAction(
 
         log.info("[Cody:CommitMsg] Generate commit message triggered")
 
+        // Resolve the target repo on EDT (before launching background work)
+        val targetRepo = resolveTargetRepo(project)
+
         // Run as a backgroundable task with progress in the status bar.
         // Uses runBlocking inside the background thread (NOT EDT — safe per project rules).
         ProgressManager.getInstance().run(object : Task.Backgroundable(
@@ -66,7 +69,7 @@ class GenerateCommitMessageAction : AnAction(
 
                 try {
                     // runBlocking is safe here — we're on a background thread, not EDT
-                    val message = runBlocking { generateMessage(project) }
+                    val message = runBlocking { generateMessage(project, targetRepo) }
 
                     if (indicator.isCanceled) {
                         log.info("[Cody:CommitMsg] Generation cancelled by user")
@@ -106,13 +109,13 @@ class GenerateCommitMessageAction : AnAction(
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
-    private suspend fun generateMessage(project: Project): String? {
+    private suspend fun generateMessage(project: Project, targetRepo: git4idea.repo.GitRepository? = null): String? {
         return try {
             val settings = PluginSettings.getInstance(project)
             val ticketId = settings.state.activeTicketId.orEmpty()
 
             // Get the actual git diff
-            val diff = getGitDiff(project)
+            val diff = getGitDiff(project, targetRepo)
             if (diff.isNullOrBlank()) {
                 log.warn("[Cody:CommitMsg] No diff found")
                 return null
@@ -159,7 +162,7 @@ class GenerateCommitMessageAction : AnAction(
             } catch (_: Exception) { "" }
 
             // Fetch recent commits for context + style
-            val recentCommits = getRecentCommits(project)
+            val recentCommits = getRecentCommits(project, targetRepo)
 
             // Gather PSI code intelligence for changed files
             val codeContext = buildCodeContext(project)
@@ -231,8 +234,8 @@ class GenerateCommitMessageAction : AnAction(
         } ?: repos.firstOrNull()
     }
 
-    private fun getGitDiff(project: Project): String? {
-        val repo = resolveTargetRepo(project) ?: return null
+    private fun getGitDiff(project: Project, preResolvedRepo: git4idea.repo.GitRepository? = null): String? {
+        val repo = preResolvedRepo ?: resolveTargetRepo(project) ?: return null
         val root = repo.root
 
         // Try staged changes first (what would be committed)
@@ -262,9 +265,9 @@ class GenerateCommitMessageAction : AnAction(
      * This gives Cody content awareness (what was recently changed)
      * plus style reference (how commit messages are formatted).
      */
-    private fun getRecentCommits(project: Project): List<String> {
+    private fun getRecentCommits(project: Project, preResolvedRepo: git4idea.repo.GitRepository? = null): List<String> {
         return try {
-            val repo = resolveTargetRepo(project) ?: return emptyList()
+            val repo = preResolvedRepo ?: resolveTargetRepo(project) ?: return emptyList()
             // Get message + file names in one call: --name-only shows files after each commit
             val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
                 addParameters("--format=COMMIT_START%n%s", "--name-only", "-5", "--no-merges")

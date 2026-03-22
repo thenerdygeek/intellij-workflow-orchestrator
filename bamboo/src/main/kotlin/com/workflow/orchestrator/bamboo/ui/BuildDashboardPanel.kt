@@ -40,11 +40,13 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.FlowLayout
@@ -199,14 +201,25 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
+    @Volatile private var cachedBitbucketClient: BitbucketBranchClient? = null
+    @Volatile private var cachedBitbucketUrl: String? = null
+
+    private fun getOrCreateBitbucketClient(url: String): BitbucketBranchClient {
+        if (url != cachedBitbucketUrl || cachedBitbucketClient == null) {
+            cachedBitbucketUrl = url
+            cachedBitbucketClient = BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
+        }
+        return cachedBitbucketClient!!
+    }
+
     private suspend fun detectPlanKeyFromBuildStatus(commitId: String): String? {
         val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
         if (bitbucketUrl.isBlank()) return null
 
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
+        val client = getOrCreateBitbucketClient(bitbucketUrl)
 
         return when (val result = client.getBuildStatuses(commitId)) {
             is ApiResult.Success -> {
@@ -233,7 +246,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private suspend fun checkDivergence(remoteCommit: String) {
         try {
             val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repoConfig = withContext(Dispatchers.EDT) { resolver.resolveFromCurrentEditor() } ?: resolver.getPrimary()
             val repos = GitRepositoryManager.getInstance(project).repositories
             val repo = (if (repoConfig?.localVcsRootPath != null) {
                 repos.find { it.root.path == repoConfig.localVcsRootPath }

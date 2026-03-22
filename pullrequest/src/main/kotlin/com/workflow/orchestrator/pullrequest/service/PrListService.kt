@@ -136,22 +136,29 @@ class PrListService(private val project: Project) : Disposable {
             listOf(Triple(projectKey, repoSlug, repoSlug))
         }
 
-        val allMyPrs = mutableListOf<BitbucketPrDetail>()
-        val allReviewingPrs = mutableListOf<BitbucketPrDetail>()
+        // Fetch PRs from all repos in parallel
+        val allMyPrs: List<BitbucketPrDetail>
+        val allReviewingPrs: List<BitbucketPrDetail>
 
-        for ((projectKey, repoSlug, repoName) in repoEntries) {
-            log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
+        coroutineScope {
+            val results = repoEntries.map { (projectKey, repoSlug, repoName) ->
+                async {
+                    log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
 
-            // Fetch PRs authored by the current user (paginated)
-            val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
-            // Tag each PR with its source repo name
-            myResults.forEach { it.repoName = repoName }
-            allMyPrs.addAll(myResults)
+                    // Fetch PRs authored by the current user (paginated)
+                    val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
+                    myResults.forEach { it.repoName = repoName }
 
-            // Fetch PRs where the current user is a reviewer (paginated)
-            val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
-            reviewResults.forEach { it.repoName = repoName }
-            allReviewingPrs.addAll(reviewResults)
+                    // Fetch PRs where the current user is a reviewer (paginated)
+                    val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
+                    reviewResults.forEach { it.repoName = repoName }
+
+                    Pair(myResults, reviewResults)
+                }
+            }.awaitAll()
+
+            allMyPrs = results.flatMap { it.first }
+            allReviewingPrs = results.flatMap { it.second }
         }
 
         _myPrs.value = allMyPrs

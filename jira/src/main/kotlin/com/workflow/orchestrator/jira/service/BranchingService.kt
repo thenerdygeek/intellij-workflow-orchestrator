@@ -8,10 +8,13 @@ import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.application.EDT
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.branch.GitBrancher
 import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class BranchingService(
     private val project: Project,
@@ -91,7 +94,7 @@ class BranchingService(
 
         try {
             val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repoConfig = withContext(Dispatchers.EDT) { resolver.resolveFromCurrentEditor() } ?: resolver.getPrimary()
             val repo = if (repoConfig?.localVcsRootPath != null) {
                 repositories.find { it.root.path == repoConfig.localVcsRootPath }
             } else {
@@ -184,7 +187,7 @@ class BranchingService(
         try {
             // Fetch from remote to get the new branch
             val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repoConfig = withContext(Dispatchers.EDT) { resolver.resolveFromCurrentEditor() } ?: resolver.getPrimary()
             val repo = if (repoConfig?.localVcsRootPath != null) {
                 repositories.find { it.root.path == repoConfig.localVcsRootPath }
             } else {

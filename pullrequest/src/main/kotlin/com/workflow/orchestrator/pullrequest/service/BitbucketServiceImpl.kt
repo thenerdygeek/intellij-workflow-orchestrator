@@ -48,11 +48,11 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
 
     private fun resolveRepo(repoName: String?): Pair<String, String>? {
         if (repoName != null) {
-            val repo = PluginSettings.getInstance(project).getRepoByName(repoName)
+            val repo = settings.getRepoByName(repoName)
             if (repo != null && repo.isConfigured) return Pair(repo.bitbucketProjectKey!!, repo.bitbucketRepoSlug!!)
         }
         // Fall back to primary repo
-        val primary = PluginSettings.getInstance(project).getPrimaryRepo()
+        val primary = settings.getPrimaryRepo()
         if (primary != null && primary.isConfigured) return Pair(primary.bitbucketProjectKey!!, primary.bitbucketRepoSlug!!)
         // Final fallback to legacy scalar settings
         val pk = settings.state.bitbucketProjectKey.orEmpty()
@@ -62,7 +62,7 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
     }
 
     override suspend fun listRepos(): ToolResult<List<RepoInfo>> {
-        val repos = PluginSettings.getInstance(project).getRepos()
+        val repos = settings.getRepos()
         val repoInfos = repos.filter { it.isConfigured }.map {
             RepoInfo(it.name ?: "", it.bitbucketProjectKey ?: "", it.bitbucketRepoSlug ?: "", it.isPrimary)
         }

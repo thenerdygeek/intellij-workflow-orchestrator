@@ -129,6 +129,16 @@ class SonarDataService(private val project: Project) : Disposable {
     }
 
     /**
+     * Refresh Sonar data for a specific project key without mutating persisted settings.
+     * Used by the repo selector in QualityDashboardPanel to switch between projects transiently.
+     */
+    fun refreshForProject(projectKey: String) {
+        if (projectKey.isBlank()) return
+        val client = apiClient ?: return
+        scope.launch { refreshWith(client, projectKey, currentBranch) }
+    }
+
+    /**
      * Switch between new code and overall mode.
      * No API call — just flips the cached view. EDT-safe (updates state flow only).
      */

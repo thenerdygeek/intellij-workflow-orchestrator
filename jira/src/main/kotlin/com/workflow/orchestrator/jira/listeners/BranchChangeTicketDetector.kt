@@ -28,6 +28,20 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
     private val log = Logger.getInstance(BranchChangeTicketDetector::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val credentialStore = CredentialStore()
+    @Volatile private var cachedClient: JiraApiClient? = null
+    @Volatile private var cachedJiraUrl: String? = null
+
+    private fun getOrCreateClient(jiraUrl: String): JiraApiClient {
+        if (jiraUrl != cachedJiraUrl || cachedClient == null) {
+            cachedJiraUrl = jiraUrl
+            cachedClient = JiraApiClient(
+                baseUrl = jiraUrl.trimEnd('/'),
+                tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
+            )
+        }
+        return cachedClient!!
+    }
 
     init {
         Disposer.register(project, this)
@@ -70,11 +84,7 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
         // Fetch ticket details from Jira in background, then show confirmation popup
         scope.launch {
-            val credentialStore = CredentialStore()
-            val apiClient = JiraApiClient(
-                baseUrl = jiraUrl.trimEnd('/'),
-                tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
-            )
+            val apiClient = getOrCreateClient(jiraUrl)
 
             val result = apiClient.getIssue(ticketId)
             if (result is ApiResult.Success) {
