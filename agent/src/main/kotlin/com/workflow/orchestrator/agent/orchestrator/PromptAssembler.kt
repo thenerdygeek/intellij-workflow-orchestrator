@@ -87,10 +87,13 @@ class PromptAssembler(
         // 13. Rich output rendering capabilities
         sections.add(RENDERING_RULES)
 
-        // 14. Efficiency constraints (prevents 13-iteration exploration for simple questions)
+        // 14. Context management awareness (anti-hallucination)
+        sections.add(CONTEXT_MANAGEMENT_RULES)
+
+        // 15. Efficiency constraints (prevents 13-iteration exploration for simple questions)
         sections.add(EFFICIENCY_RULES)
 
-        // 15. Rules and Constraints (including anti-loop)
+        // 16. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -292,6 +295,19 @@ class PromptAssembler(
             - When you have enough information to answer a question, STOP exploring and answer immediately.
             - Do not read files "just to be thorough" — read files only when you need specific information you don't yet have.
             </efficiency>
+        """.trimIndent()
+
+        val CONTEXT_MANAGEMENT_RULES = """
+            <context_management>
+            Your conversation history may be compressed during long tasks to stay within the context window.
+            When this happens:
+            - Old tool results are replaced with metadata placeholders (tool name, args, preview)
+            - Earlier messages may be summarized — details could be approximate
+            - ALWAYS re-read a file before editing it, even if you believe you know its contents
+            - If a tool result shows "[Tool result pruned]", use the original tool to re-read
+            - Treat information from compressed summaries as a starting point — verify before acting on specifics
+            - File paths in summaries are reliable; line numbers and code snippets may be stale
+            </context_management>
         """.trimIndent()
 
         val RENDERING_RULES = """
