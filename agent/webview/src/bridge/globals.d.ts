@@ -1,0 +1,32 @@
+export {};
+
+declare global {
+  interface Window {
+    _sendMessage?: (text: string) => void;
+    _sendMessageWithMentions?: (payload: string) => void;
+    _searchMentions?: (data: string) => void;
+    _cancelTask?: () => void;
+    _newChat?: () => void;
+    _requestUndo?: () => void;
+    _requestViewTrace?: () => void;
+    _openSettings?: () => void;
+    _openToolsPanel?: () => void;
+    _changeModel?: (modelId: string) => void;
+    _togglePlanMode?: (enabled: boolean) => void;
+    _navigateToFile?: (path: string) => void;
+    _requestFocusIde?: () => void;
+    _submitPrompt?: (text: string) => void;
+    _approvePlan?: () => void;
+    _revisePlan?: (comments: string) => void;
+    _toggleTool?: (data: string) => void;
+    _questionAnswered?: (qid: string, opts: string) => void;
+    _questionSkipped?: (qid: string) => void;
+    _chatAboutOption?: (qid: string, label: string, msg: string) => void;
+    _questionsSubmitted?: () => void;
+    _questionsCancelled?: () => void;
+    _editQuestion?: (qid: string) => void;
+    _deactivateSkill?: () => void;
+    _activateSkill?: (name: string) => void;
+    __mock?: Record<string, (...args: any[]) => any>;
+  }
+}
