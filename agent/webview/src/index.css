@@ -42,6 +42,12 @@ code, pre, .font-mono {
   100% { transform: translateX(-100%); }
 }
 
+@keyframes thinking-shimmer {
+  0% { transform: translateX(-150%); }
+  50% { transform: translateX(300%); }
+  100% { transform: translateX(-150%); }
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-2px); }
