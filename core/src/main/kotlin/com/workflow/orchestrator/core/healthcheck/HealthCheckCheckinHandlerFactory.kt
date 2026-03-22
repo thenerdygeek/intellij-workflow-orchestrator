@@ -10,6 +10,7 @@ import com.intellij.openapi.vcs.checkin.VcsCheckinHandlerFactory
 import com.workflow.orchestrator.core.healthcheck.checks.HealthCheckContext
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.GitVcs
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.runBlocking
@@ -35,8 +36,11 @@ class HealthCheckCheckinHandler(
 
         if (!settings.healthCheckEnabled || mode == "off") return ReturnResult.COMMIT
 
-        val currentBranch = GitRepositoryManager.getInstance(project)
-            .repositories.firstOrNull()?.currentBranchName ?: ""
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val gitRepos = GitRepositoryManager.getInstance(project).repositories
+        val targetRepo = gitRepos.find { it.root.path == repoConfig?.localVcsRootPath } ?: gitRepos.firstOrNull()
+        val currentBranch = targetRepo?.currentBranchName ?: ""
 
         val changedFiles = panel.selectedChanges
             .mapNotNull { it.virtualFile }

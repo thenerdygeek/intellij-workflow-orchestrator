@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.core.ai.TextGenerationService
 import com.workflow.orchestrator.core.bitbucket.PrService
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
@@ -171,10 +172,20 @@ object PrDescriptionGenerator {
         }
     }
 
+    private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? {
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        return if (repoConfig?.localVcsRootPath != null) {
+            repos.find { it.root.path == repoConfig.localVcsRootPath }
+        } else {
+            repos.firstOrNull()
+        } ?: repos.firstOrNull()
+    }
+
     private fun getCommitMessages(project: Project, source: String, target: String): List<String> {
         return try {
-            val repos = GitRepositoryManager.getInstance(project).repositories
-            val repo = repos.firstOrNull() ?: return emptyList()
+            val repo = resolveTargetRepo(project) ?: return emptyList()
             val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.LOG)
             handler.addParameters("--oneline", "$target..$source")
             val result = Git.getInstance().runCommand(handler)
@@ -189,8 +200,7 @@ object PrDescriptionGenerator {
 
     private fun getDiffBetweenBranches(project: Project, source: String, target: String): String? {
         return try {
-            val repos = GitRepositoryManager.getInstance(project).repositories
-            val repo = repos.firstOrNull() ?: return null
+            val repo = resolveTargetRepo(project) ?: return null
             val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
             handler.addParameters("$target...$source", "--no-color")
             val result = Git.getInstance().runCommand(handler)

@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 import java.awt.BorderLayout
 import java.awt.Color
@@ -91,8 +92,11 @@ class CurrentWorkSection(
             isOpaque = false
         }
 
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
         val repos = GitRepositoryManager.getInstance(project).repositories
-        val currentBranch = repos.firstOrNull()?.currentBranchName ?: ""
+        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        val currentBranch = targetRepo?.currentBranchName ?: ""
         if (currentBranch.isNotBlank()) {
             branchLabel.text = currentBranch
             branchLabel.icon = AllIcons.Vcs.Branch

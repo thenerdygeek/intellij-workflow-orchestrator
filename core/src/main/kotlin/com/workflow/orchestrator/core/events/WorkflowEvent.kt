@@ -132,7 +132,9 @@ sealed class WorkflowEvent {
 
     /** Emitted when the git branch changes (via BranchChangeListener). */
     data class BranchChanged(
-        val branchName: String
+        val branchName: String,
+        val projectKey: String? = null,
+        val repoSlug: String? = null
     ) : WorkflowEvent()
 
     /** Emitted when a PR is selected in the PR dashboard. */

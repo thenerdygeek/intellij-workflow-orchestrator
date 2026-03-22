@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.bitbucket
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 
 /**
@@ -46,7 +47,13 @@ object GitRemoteParser {
                 log.info("[Core:GitRemote] No git repositories found in project")
                 return null
             }
-            val repo = repos.first()
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repo = if (repoConfig?.localVcsRootPath != null) {
+                repos.find { it.root.path == repoConfig.localVcsRootPath }
+            } else {
+                repos.firstOrNull()
+            } ?: repos.firstOrNull() ?: return null
             val origin = repo.remotes.find { it.name == "origin" } ?: repo.remotes.firstOrNull()
             if (origin == null) {
                 log.info("[Core:GitRemote] No git remotes found")

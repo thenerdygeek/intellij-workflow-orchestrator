@@ -21,6 +21,7 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -265,8 +266,7 @@ class PrBar(
      * then shows the dialog on EDT.
      */
     private fun openCreatePrDialog() {
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val currentBranch = repos.firstOrNull()?.currentBranchName ?: return
+        val currentBranch = resolveCurrentBranch() ?: return
         val ticketId = settings.state.activeTicketId.orEmpty()
         val prService = PrService.getInstance(project)
         val defaultReviewers = prService.buildDefaultReviewers().map { it.user.name }
@@ -336,8 +336,7 @@ class PrBar(
         }
         isVisible = true
 
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val currentBranch = repos.firstOrNull()?.currentBranchName ?: run {
+        val currentBranch = resolveCurrentBranch() ?: run {
             log.warn("[Build:PrBar] No Git branch detected")
             return
         }
@@ -408,6 +407,14 @@ class PrBar(
         else -> StatusColors.htmlColor(StatusColors.INFO)
     }
 
+    private fun resolveCurrentBranch(): String? {
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        return targetRepo?.currentBranchName
+    }
+
     private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     private fun onSubmitPr() {
@@ -421,8 +428,7 @@ class PrBar(
         val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
         val projectKey = settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val fromBranch = repos.firstOrNull()?.currentBranchName ?: ""
+        val fromBranch = resolveCurrentBranch() ?: ""
         val toBranch = settings.state.defaultTargetBranch?.ifBlank { "develop" } ?: "develop"
 
         submitButton.isEnabled = false
@@ -471,8 +477,7 @@ class PrBar(
     }
 
     private fun onRegenerateDescription() {
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val branch = repos.firstOrNull()?.currentBranchName ?: ""
+        val branch = resolveCurrentBranch() ?: ""
         val ticketId = settings.state.activeTicketId.orEmpty()
         val ticketSummary = settings.state.activeTicketSummary.orEmpty()
         val prService = PrService.getInstance(project)
@@ -483,11 +488,8 @@ class PrBar(
         scope.launch {
             val changedFiles = withContext(Dispatchers.IO) {
                 try {
-                    val repo = repos.firstOrNull()
-                    repo?.let {
-                        val changes = com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project).allChanges
-                        changes.mapNotNull { it.virtualFile }
-                    } ?: emptyList()
+                    val changes = com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project).allChanges
+                    changes.mapNotNull { it.virtualFile }
                 } catch (_: Exception) { emptyList() }
             }
 

@@ -152,13 +152,22 @@ class AutomationPanel(
             // Auto-replace current repo's docker tag
             val dockerTagKey = settings.state.dockerTagKey.orEmpty()
             val updatedTags = if (dockerTagKey.isNotBlank()) {
-                // Get current branch via reflection to avoid git4idea dependency
+                // Get current branch via RepoContextResolver + reflection to avoid git4idea dependency
                 val branch = try {
+                    val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+                    val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
                     val gitRepoManager = Class.forName("git4idea.repo.GitRepositoryManager")
                     val getInstance = gitRepoManager.getMethod("getInstance", Project::class.java)
                     val manager = getInstance.invoke(null, project)
                     val repos = gitRepoManager.getMethod("getRepositories").invoke(manager) as List<*>
-                    val repo = repos.firstOrNull()
+                    val targetRepo = if (repoConfig?.localVcsRootPath != null) {
+                        repos.find { repo ->
+                            val root = repo?.javaClass?.getMethod("getRoot")?.invoke(repo)
+                            val path = root?.javaClass?.getMethod("getPath")?.invoke(root) as? String
+                            path == repoConfig.localVcsRootPath
+                        }
+                    } else repos.firstOrNull()
+                    val repo = targetRepo ?: repos.firstOrNull()
                     repo?.javaClass?.getMethod("getCurrentBranchName")?.invoke(repo) as? String ?: ""
                 } catch (_: Exception) { "" }
                 val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()

@@ -43,6 +43,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
@@ -412,8 +413,11 @@ class PrDetailPanel(
         loadJob?.cancel()
 
         // Get current git branch
-        val currentBranch = GitRepositoryManager.getInstance(project)
-            .repositories.firstOrNull()?.currentBranch?.name ?: "unknown"
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val gitRepos = GitRepositoryManager.getInstance(project).repositories
+        val targetRepo = gitRepos.find { it.root.path == repoConfig?.localVcsRootPath } ?: gitRepos.firstOrNull()
+        val currentBranch = targetRepo?.currentBranch?.name ?: "unknown"
         createSourceBranchLabel.text = currentBranch
 
         // Auto-fill title from branch name (e.g., "PROJ-123-feature" -> "PROJ-123: ")

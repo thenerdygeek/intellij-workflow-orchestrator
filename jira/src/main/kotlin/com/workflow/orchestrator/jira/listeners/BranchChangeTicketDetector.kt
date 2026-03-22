@@ -12,7 +12,9 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.jira.api.JiraApiClient
+import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.ui.TicketDetectionPopup
 import com.intellij.openapi.application.invokeLater
@@ -36,6 +38,18 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
     }
 
     override fun branchHasChanged(branchName: String) {
+        // Filter: only process branch changes for configured repos
+        val gitRepos = GitRepositoryManager.getInstance(project).repositories
+        val changedRepo = gitRepos.find { it.currentBranchName == branchName }
+        if (changedRepo != null) {
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromGitRepo(changedRepo)
+            if (repoConfig == null || !repoConfig.isConfigured) {
+                log.debug("[Jira:Branch] Skipping unconfigured repo for branch '$branchName'")
+                return
+            }
+        }
+
         val ticketId = ActiveTicketService.extractTicketIdFromBranch(branchName) ?: run {
             log.debug("[Jira:Branch] No ticket ID detected in branch '$branchName'")
             return

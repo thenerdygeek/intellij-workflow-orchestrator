@@ -36,6 +36,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -226,8 +227,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private suspend fun checkDivergence(remoteCommit: String) {
         try {
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
             val repos = GitRepositoryManager.getInstance(project).repositories
-            val repo = repos.firstOrNull() ?: return
+            val repo = (if (repoConfig?.localVcsRootPath != null) {
+                repos.find { it.root.path == repoConfig.localVcsRootPath }
+            } else repos.firstOrNull()) ?: repos.firstOrNull() ?: return
             val localHead = repo.currentRevision ?: return
 
             if (localHead == remoteCommit) {
@@ -462,8 +467,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun getCurrentBranch(): String? {
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.getPrimary()
         val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.firstOrNull()?.currentBranchName
+        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        return targetRepo?.currentBranchName
     }
 
     /** Load build history for the current plan key */

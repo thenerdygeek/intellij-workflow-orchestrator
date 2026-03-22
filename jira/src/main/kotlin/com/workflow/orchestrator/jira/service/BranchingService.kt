@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.branch.GitBrancher
 import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
@@ -89,7 +90,13 @@ class BranchingService(
         }
 
         try {
-            val repo = repositories.first()
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repo = if (repoConfig?.localVcsRootPath != null) {
+                repositories.find { it.root.path == repoConfig.localVcsRootPath }
+            } else {
+                repositories.firstOrNull()
+            } ?: repositories.firstOrNull()!!
             val git = Git.getInstance()
 
             // Fetch to update remote tracking refs (safe, doesn't touch local branches)
@@ -105,7 +112,7 @@ class BranchingService(
                 GitBrancher.getInstance(project).checkout(
                     branchName,
                     false,
-                    repositories,
+                    listOf(repo),
                     null
                 )
                 log.info("[Jira:Branch] Checked out existing local branch '$branchName'")
@@ -114,7 +121,7 @@ class BranchingService(
                 GitBrancher.getInstance(project).checkoutNewBranchStartingFrom(
                     branchName,
                     "origin/$branchName",
-                    repositories,
+                    listOf(repo),
                     null
                 )
                 log.info("[Jira:Branch] Checked out remote branch '$branchName' as new local tracking branch")
@@ -176,7 +183,13 @@ class BranchingService(
 
         try {
             // Fetch from remote to get the new branch
-            val repo = repositories.first()
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repo = if (repoConfig?.localVcsRootPath != null) {
+                repositories.find { it.root.path == repoConfig.localVcsRootPath }
+            } else {
+                repositories.firstOrNull()
+            } ?: repositories.firstOrNull()!!
             val git = Git.getInstance()
             val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
             if (!fetchResult.success()) {
@@ -187,7 +200,7 @@ class BranchingService(
             GitBrancher.getInstance(project).checkoutNewBranchStartingFrom(
                 branchName,
                 "origin/$branchName",
-                repositories,
+                listOf(repo),
                 null
             )
             log.info("[Jira:Branch] Checked out '$branchName' locally")

@@ -20,6 +20,7 @@ import com.workflow.orchestrator.cody.protocol.Position
 import com.workflow.orchestrator.cody.service.CodyChatService
 import com.workflow.orchestrator.cody.service.PsiContextEnricher
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
@@ -219,8 +220,19 @@ class GenerateCommitMessageAction : AnAction(
      * Get the git diff for uncommitted changes.
      * Tries staged diff first, falls back to unstaged diff.
      */
+    private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? {
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        return if (repoConfig?.localVcsRootPath != null) {
+            repos.find { it.root.path == repoConfig.localVcsRootPath }
+        } else {
+            repos.firstOrNull()
+        } ?: repos.firstOrNull()
+    }
+
     private fun getGitDiff(project: Project): String? {
-        val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull() ?: return null
+        val repo = resolveTargetRepo(project) ?: return null
         val root = repo.root
 
         // Try staged changes first (what would be committed)
@@ -252,7 +264,7 @@ class GenerateCommitMessageAction : AnAction(
      */
     private fun getRecentCommits(project: Project): List<String> {
         return try {
-            val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull() ?: return emptyList()
+            val repo = resolveTargetRepo(project) ?: return emptyList()
             // Get message + file names in one call: --name-only shows files after each commit
             val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
                 addParameters("--format=COMMIT_START%n%s", "--name-only", "-5", "--no-merges")

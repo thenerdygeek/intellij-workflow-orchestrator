@@ -5,6 +5,8 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.BranchChangeListener
+import com.workflow.orchestrator.core.settings.RepoContextResolver
+import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,8 +36,20 @@ class BranchChangedEventEmitter(private val project: Project) : BranchChangeList
     override fun branchHasChanged(branchName: String) {
         log.info("[Core:Events] Git branch changed to '$branchName', emitting BranchChanged event")
         scope.launch {
+            val resolver = RepoContextResolver.getInstance(project)
+            val gitRepos = GitRepositoryManager.getInstance(project).repositories
+            val changedRepo = gitRepos.find { it.currentBranchName == branchName }
+            val repoConfig = if (changedRepo != null) {
+                resolver.resolveFromGitRepo(changedRepo)
+            } else {
+                resolver.getPrimary()
+            }
             project.getService(EventBus::class.java)
-                .emit(WorkflowEvent.BranchChanged(branchName))
+                .emit(WorkflowEvent.BranchChanged(
+                    branchName = branchName,
+                    projectKey = repoConfig?.bitbucketProjectKey,
+                    repoSlug = repoConfig?.bitbucketRepoSlug
+                ))
         }
     }
 

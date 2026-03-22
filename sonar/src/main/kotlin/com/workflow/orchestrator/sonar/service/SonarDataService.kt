@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.sonar.api.SonarApiClient
 import com.workflow.orchestrator.sonar.model.*
 import git4idea.repo.GitRepositoryManager
@@ -63,8 +64,11 @@ class SonarDataService(private val project: Project) : Disposable {
     }
 
     private val currentBranch: String get() {
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
         val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.firstOrNull()?.currentBranchName ?: (settings.state.defaultTargetBranch ?: "develop")
+        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        return targetRepo?.currentBranchName ?: (settings.state.defaultTargetBranch ?: "develop")
     }
 
     init {
