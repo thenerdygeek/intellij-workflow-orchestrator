@@ -5,11 +5,15 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.sonar.CoverageData
+import com.workflow.orchestrator.core.model.sonar.PagedIssuesData
+import com.workflow.orchestrator.core.model.sonar.ProjectMeasuresData
 import com.workflow.orchestrator.core.model.sonar.QualityCondition
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
 import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
+import com.workflow.orchestrator.core.model.sonar.SonarBranchData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
+import com.workflow.orchestrator.core.model.sonar.SourceLineData
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.sonar.api.SonarApiClient
@@ -320,6 +324,226 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     summary = "SonarQube connection failed: ${result.message}",
                     isError = true,
                     hint = "Check URL and token in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getBranches(projectKey: String): ToolResult<List<SonarBranchData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "SonarQube not configured. Cannot fetch branches.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getBranches(projectKey)) {
+            is ApiResult.Success -> {
+                val branches = result.data.map { dto ->
+                    SonarBranchData(
+                        name = dto.name,
+                        isMain = dto.isMain,
+                        type = dto.type,
+                        qualityGateStatus = dto.status?.qualityGateStatus?.ifBlank { null }
+                    )
+                }
+
+                val mainBranch = branches.find { it.isMain }
+                val summary = buildString {
+                    append("${branches.size} branch(es) for $projectKey")
+                    mainBranch?.let { b ->
+                        append("\nMain: ${b.name}")
+                        b.qualityGateStatus?.let { append(" (QG: $it)") }
+                    }
+                    val nonMain = branches.filter { !it.isMain }
+                    if (nonMain.isNotEmpty()) {
+                        append("\nOther: ${nonMain.joinToString(", ") { it.name }}")
+                    }
+                }
+
+                ToolResult.success(data = branches, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch branches for $projectKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching branches for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and project key."
+                )
+            }
+        }
+    }
+
+    override suspend fun getProjectMeasures(
+        projectKey: String,
+        branch: String?
+    ): ToolResult<ProjectMeasuresData> {
+        val api = client ?: return ToolResult(
+            data = ProjectMeasuresData(null, null, null, null, null, null, null),
+            summary = "SonarQube not configured. Cannot fetch project measures.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        val metricKeys = "reliability_rating,security_rating,sqale_rating,coverage,duplicated_lines_density,sqale_debt_ratio,ncloc"
+        return when (val result = api.getProjectMeasures(projectKey, branch, metricKeys)) {
+            is ApiResult.Success -> {
+                val measures = result.data.associate { it.metric to it.value }
+
+                // SonarQube ratings: 1=A, 2=B, 3=C, 4=D, 5=E
+                fun ratingToGrade(value: String?): String? = when (value?.toDoubleOrNull()?.toInt()) {
+                    1 -> "A"; 2 -> "B"; 3 -> "C"; 4 -> "D"; 5 -> "E"; else -> value
+                }
+
+                val data = ProjectMeasuresData(
+                    reliability = ratingToGrade(measures["reliability_rating"]),
+                    security = ratingToGrade(measures["security_rating"]),
+                    maintainability = ratingToGrade(measures["sqale_rating"]),
+                    coverage = measures["coverage"]?.toDoubleOrNull(),
+                    duplications = measures["duplicated_lines_density"]?.toDoubleOrNull(),
+                    technicalDebt = measures["sqale_debt_ratio"],
+                    linesOfCode = measures["ncloc"]?.toLongOrNull()
+                )
+
+                val branchLabel = branch?.let { " ($it)" } ?: ""
+                val summary = buildString {
+                    append("Project measures for $projectKey$branchLabel")
+                    data.reliability?.let { append("\nReliability: $it") }
+                    data.security?.let { append(" | Security: $it") }
+                    data.maintainability?.let { append(" | Maintainability: $it") }
+                    data.coverage?.let { append("\nCoverage: ${"%.1f".format(it)}%") }
+                    data.duplications?.let { append(" | Duplications: ${"%.1f".format(it)}%") }
+                    data.linesOfCode?.let { append(" | LoC: $it") }
+                }
+
+                ToolResult.success(data = data, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch project measures for $projectKey: ${result.message}")
+                ToolResult(
+                    data = ProjectMeasuresData(null, null, null, null, null, null, null),
+                    summary = "Error fetching project measures for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and project key."
+                )
+            }
+        }
+    }
+
+    override suspend fun getSourceLines(
+        componentKey: String,
+        from: Int?,
+        to: Int?
+    ): ToolResult<List<SourceLineData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "SonarQube not configured. Cannot fetch source lines.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getSourceLines(componentKey, from, to)) {
+            is ApiResult.Success -> {
+                val lines = result.data.map { dto ->
+                    SourceLineData(
+                        line = dto.line,
+                        code = dto.code,
+                        coverageStatus = when {
+                            dto.lineHits == null -> null
+                            dto.lineHits > 0 -> "covered"
+                            else -> "uncovered"
+                        },
+                        conditions = dto.conditions,
+                        coveredConditions = dto.coveredConditions
+                    )
+                }
+
+                val covered = lines.count { it.coverageStatus == "covered" }
+                val uncovered = lines.count { it.coverageStatus == "uncovered" }
+                val rangeLabel = if (from != null || to != null) " (L${from ?: 1}-${to ?: "end"})" else ""
+                val summary = buildString {
+                    append("${lines.size} source lines for $componentKey$rangeLabel")
+                    if (covered + uncovered > 0) {
+                        append("\nCovered: $covered | Uncovered: $uncovered")
+                    }
+                }
+
+                ToolResult.success(data = lines, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch source lines for $componentKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching source lines for $componentKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and component key."
+                )
+            }
+        }
+    }
+
+    override suspend fun getIssuesPaged(
+        projectKey: String,
+        page: Int,
+        pageSize: Int
+    ): ToolResult<PagedIssuesData> {
+        val api = client ?: return ToolResult(
+            data = PagedIssuesData(emptyList(), 0, page, pageSize),
+            summary = "SonarQube not configured. Cannot fetch issues.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getIssuesWithPaging(projectKey)) {
+            is ApiResult.Success -> {
+                val allIssues = result.data.issues.map { dto ->
+                    SonarIssueData(
+                        key = dto.key,
+                        rule = dto.rule,
+                        severity = dto.severity,
+                        message = dto.message,
+                        component = dto.component,
+                        line = dto.textRange?.startLine,
+                        status = dto.status,
+                        type = dto.type
+                    )
+                }
+
+                // Apply client-side paging over the fetched results
+                val startIndex = (page - 1) * pageSize
+                val pagedIssues = allIssues.drop(startIndex).take(pageSize)
+                val total = result.data.paging.total
+
+                val data = PagedIssuesData(
+                    issues = pagedIssues,
+                    total = total,
+                    page = page,
+                    pageSize = pageSize
+                )
+
+                val bySeverity = pagedIssues.groupBy { it.severity }
+                val summary = buildString {
+                    append("$total total issues for $projectKey (page $page, showing ${pagedIssues.size})")
+                    if (bySeverity.isNotEmpty()) {
+                        append("\n")
+                        val counts = listOf("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")
+                            .mapNotNull { sev ->
+                                bySeverity[sev]?.let { "$sev: ${it.size}" }
+                            }
+                        append(counts.joinToString(" | "))
+                    }
+                }
+
+                ToolResult.success(data = data, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch paged issues for $projectKey: ${result.message}")
+                ToolResult(
+                    data = PagedIssuesData(emptyList(), 0, page, pageSize),
+                    summary = "Error fetching issues for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and project key."
                 )
             }
         }

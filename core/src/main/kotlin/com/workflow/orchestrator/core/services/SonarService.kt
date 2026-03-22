@@ -1,10 +1,14 @@
 package com.workflow.orchestrator.core.services
 
 import com.workflow.orchestrator.core.model.sonar.CoverageData
+import com.workflow.orchestrator.core.model.sonar.PagedIssuesData
+import com.workflow.orchestrator.core.model.sonar.ProjectMeasuresData
 import com.workflow.orchestrator.core.model.sonar.QualityGateData
 import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
+import com.workflow.orchestrator.core.model.sonar.SonarBranchData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
+import com.workflow.orchestrator.core.model.sonar.SourceLineData
 
 /**
  * SonarQube operations used by both UI panels and AI agent.
@@ -28,4 +32,16 @@ interface SonarService {
 
     /** Test the SonarQube connection. */
     suspend fun testConnection(): ToolResult<Unit>
+
+    /** List branches for a project with their quality gate status. */
+    suspend fun getBranches(projectKey: String): ToolResult<List<SonarBranchData>>
+
+    /** Get project-level aggregate measures (ratings, coverage, debt). */
+    suspend fun getProjectMeasures(projectKey: String, branch: String? = null): ToolResult<ProjectMeasuresData>
+
+    /** Get source lines with per-line coverage status. */
+    suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null): ToolResult<List<SourceLineData>>
+
+    /** Get issues with paging metadata for pagination support. */
+    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100): ToolResult<PagedIssuesData>
 }
