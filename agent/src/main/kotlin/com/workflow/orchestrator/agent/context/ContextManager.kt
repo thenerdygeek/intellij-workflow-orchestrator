@@ -183,11 +183,17 @@ class ContextManager(
         }
 
         if (totalTokens > tMax) {
-            // Phase 1: Prune old tool results first (fast, no LLM)
-            pruneOldToolResults()
-            // Phase 2: Full compression if still over budget
+            // Phase 0: Smart pruning — eliminate genuinely redundant content first (no info loss)
+            SmartPruner.pruneAll(messages)
+            totalTokens = TokenEstimator.estimate(getMessages())
+
             if (totalTokens > tMax) {
-                compress()
+                // Phase 1: Prune old tool results (fast, no LLM)
+                pruneOldToolResults()
+                // Phase 2: Full compression if still over budget
+                if (totalTokens > tMax) {
+                    compress()
+                }
             }
         }
     }
