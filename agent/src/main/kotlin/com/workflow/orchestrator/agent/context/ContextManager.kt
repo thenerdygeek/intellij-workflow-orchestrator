@@ -76,6 +76,14 @@ class ContextManager(
         sb.toString().take(8000)
     }
 ) {
+    companion object {
+        private const val COMPRESSION_BOUNDARY = "[CONTEXT COMPRESSED] Messages above this point are a lossy summary of earlier work.\n" +
+            "- Line numbers, code snippets, and variable names may be approximate\n" +
+            "- ALWAYS re-read a file before editing it, even if the summary mentions it\n" +
+            "- If you need exact details from the summary, verify with a tool call first\n" +
+            "- Treat summarized content as a starting point for re-investigation, not as ground truth"
+    }
+
     private val messages = mutableListOf<ChatMessage>()
     private val anchoredSummaries = mutableListOf<String>()
     /** Disk spillover for full tool outputs (OpenCode pattern). */
@@ -243,7 +251,7 @@ class ContextManager(
         // Uses LLM-powered summarization when brain is available, otherwise falls back
         // to the default truncation summarizer.
         val summary = summarizeMessages(messagesToSummarize)
-        anchoredSummaries.add(summary)
+        anchoredSummaries.add(summary + "\n\n" + COMPRESSION_BOUNDARY)
         // Cap at 3 summaries — consolidate older ones
         if (anchoredSummaries.size > 3) {
             val consolidated = anchoredSummaries.joinToString("\n---\n")
@@ -295,6 +303,9 @@ class ContextManager(
             try {
                 val promptContent = messagesToDrop.mapNotNull { it.content }.joinToString("\n---\n")
                 val summarizePrompt = """
+IMPORTANT: Mark any detail you are uncertain about with [APPROX].
+Do NOT invent line numbers or code patterns — only include what is explicitly stated.
+
 Summarize the conversation so far into a structured continuation prompt.
 Use this exact format:
 
@@ -353,7 +364,7 @@ critical for continuing the task.
             summarizer(messagesToDrop)
         }
 
-        anchoredSummaries.add(summary)
+        anchoredSummaries.add(summary + "\n\n" + COMPRESSION_BOUNDARY)
         // Cap at 3 summaries — consolidate older ones
         if (anchoredSummaries.size > 3) {
             val consolidated = anchoredSummaries.joinToString("\n---\n")

@@ -173,6 +173,54 @@ class ContextManagerCompressionTest {
     }
 
     @Test
+    fun `compress adds boundary marker warning about lossy context`() {
+        // Use tight thresholds so auto-compression fires
+        val cm = ContextManager(
+            maxInputTokens = 3000,
+            tMaxRatio = 0.60,    // tMax = 1800
+            tRetainedRatio = 0.30 // tRetained = 900
+        )
+        cm.addMessage(ChatMessage(role = "system", content = "You are a helpful assistant."))
+
+        // Add enough messages to trigger auto-compress (>1800 tokens)
+        for (i in 1..15) {
+            cm.addMessage(ChatMessage(role = "user", content = "User msg $i: ${"X".repeat(200)}"))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Asst msg $i: ${"Y".repeat(200)}"))
+        }
+
+        // After auto-compression, the boundary marker should be in the context
+        val allMsgs = cm.getMessages()
+        val systemContent = allMsgs.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        assertTrue(
+            systemContent.contains("CONTEXT COMPRESSED") || systemContent.contains("lossy"),
+            "Should contain compression boundary marker, got: ${systemContent.take(500)}"
+        )
+    }
+
+    @Test
+    fun `compressWithLlm adds boundary marker`() = runTest {
+        val mockBrain = createMockBrain(successResponse("Summary: analyzed build logs"))
+        val cm = buildAboveRetainedWithTool()
+
+        cm.compressWithLlm(mockBrain)
+
+        val allMsgs = cm.getMessages()
+        val systemContent = allMsgs.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        assertTrue(
+            systemContent.contains("CONTEXT COMPRESSED"),
+            "Should contain compression boundary marker after LLM compression"
+        )
+        assertTrue(
+            systemContent.contains("lossy summary"),
+            "Boundary marker should warn about lossy summary"
+        )
+        assertTrue(
+            systemContent.contains("re-read a file before editing"),
+            "Boundary marker should instruct to re-read files"
+        )
+    }
+
+    @Test
     fun `compressWithLlm does nothing when context is small`() = runTest {
         val mockBrain = createMockBrain(successResponse("Should not be called"))
         val cm = createCm()
