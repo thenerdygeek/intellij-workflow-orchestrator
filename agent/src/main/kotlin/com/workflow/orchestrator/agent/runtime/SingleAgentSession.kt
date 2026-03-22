@@ -7,6 +7,9 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.Fact
+import com.workflow.orchestrator.agent.context.FactType
+import com.workflow.orchestrator.agent.context.FactsStore
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
@@ -159,6 +162,11 @@ class SingleAgentSession(
 
         // Initialize LoopGuard for loop detection and auto-verification
         val loopGuard = LoopGuard()
+
+        // Initialize FactsStore for compression-proof knowledge retention
+        if (contextManager.factsStore == null) {
+            contextManager.factsStore = FactsStore(maxFacts = 50)
+        }
 
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
@@ -598,6 +606,7 @@ class SingleAgentSession(
                     content = tr.content,
                     summary = tr.summary
                 )
+                recordFactFromToolResult(toolName, tc.function.arguments, tr.content, tr.summary, iteration, contextManager)
                 allArtifacts.addAll(tr.artifacts)
                 toolResults.add(tc.id to tr.isError)
 
@@ -635,6 +644,7 @@ class SingleAgentSession(
                 content = toolResult.content,
                 summary = toolResult.summary
             )
+            recordFactFromToolResult(toolName, toolCall.function.arguments, toolResult.content, toolResult.summary, iteration, contextManager)
 
             allArtifacts.addAll(toolResult.artifacts)
             toolResults.add(toolCall.id to toolResult.isError)
@@ -706,6 +716,45 @@ class SingleAgentSession(
         }
 
         return null // continue loop
+    }
+
+    /**
+     * Record a fact from a tool result into the FactsStore for compression-proof retention.
+     * Extracts structured information from tool results based on the tool type.
+     */
+    private fun recordFactFromToolResult(
+        toolName: String,
+        toolArgs: String,
+        content: String,
+        summary: String,
+        iteration: Int,
+        contextManager: ContextManager
+    ) {
+        val factsStore = contextManager.factsStore ?: return
+        val pathRegex = Regex(""""path"\s*:\s*"([^"]+)"""")
+        val filePath = pathRegex.find(toolArgs)?.groupValues?.get(1)
+        when (toolName) {
+            "read_file" -> if (filePath != null) {
+                val lineCount = content.lines().size
+                val firstLine = content.lineSequence().firstOrNull()?.take(80) ?: ""
+                factsStore.record(Fact(FactType.FILE_READ, filePath, "$lineCount lines. Starts with: $firstLine", iteration))
+            }
+            "edit_file" -> if (filePath != null) {
+                factsStore.record(Fact(FactType.EDIT_MADE, filePath, summary.take(200), iteration))
+            }
+            "search_code", "glob_files", "find_references", "find_definition" -> {
+                factsStore.record(Fact(FactType.CODE_PATTERN, filePath, summary.take(200), iteration))
+            }
+            "run_command", "run_tests" -> {
+                factsStore.record(Fact(FactType.COMMAND_RESULT, null, summary.take(200), iteration))
+            }
+            "diagnostics", "run_inspections" -> {
+                if (content.contains("error") || content.contains("warning")) {
+                    factsStore.record(Fact(FactType.ERROR_FOUND, filePath, summary.take(200), iteration))
+                }
+            }
+        }
+        contextManager.updateFactsAnchor()
     }
 
     /**

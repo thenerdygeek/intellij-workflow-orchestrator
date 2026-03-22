@@ -666,6 +666,8 @@ critical for continuing the task.
         planAnchor = null
         skillAnchor = null
         mentionAnchor = null
+        factsAnchor = null
+        factsStore?.clear()
         totalTokens = 0
     }
 
