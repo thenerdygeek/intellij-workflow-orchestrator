@@ -37,6 +37,17 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     @Volatile private var cachedClient: BambooApiClient? = null
     @Volatile private var cachedBaseUrl: String? = null
 
+    private fun resolvePlanKey(planKey: String?, repoName: String?): String? {
+        if (!planKey.isNullOrBlank()) return planKey
+        if (repoName != null) {
+            val repo = PluginSettings.getInstance(project).getRepoByName(repoName)
+            if (repo != null && !repo.bambooPlanKey.isNullOrBlank()) return repo.bambooPlanKey
+        }
+        val primary = PluginSettings.getInstance(project).getPrimaryRepo()
+        if (primary != null && !primary.bambooPlanKey.isNullOrBlank()) return primary.bambooPlanKey
+        return settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
+    }
+
     private val client: BambooApiClient?
         get() {
             val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
@@ -53,7 +64,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             return cachedClient
         }
 
-    override suspend fun getLatestBuild(planKey: String): ToolResult<BuildResultData> {
+    override suspend fun getLatestBuild(planKey: String, repoName: String?): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $planKey")
 
         return when (val result = api.getLatestResult(planKey)) {
@@ -441,7 +452,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
-    override suspend fun getRecentBuilds(planKey: String, maxResults: Int): ToolResult<List<BuildResultData>> {
+    override suspend fun getRecentBuilds(planKey: String, maxResults: Int, repoName: String?): ToolResult<List<BuildResultData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Bamboo not configured. Cannot fetch recent builds for $planKey.",
@@ -597,7 +608,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
-    override suspend fun getPlanBranches(planKey: String): ToolResult<List<PlanBranchData>> {
+    override suspend fun getPlanBranches(planKey: String, repoName: String?): ToolResult<List<PlanBranchData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Bamboo not configured. Cannot fetch branches for $planKey.",
@@ -635,7 +646,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
-    override suspend fun getRunningBuilds(planKey: String): ToolResult<List<BuildResultData>> {
+    override suspend fun getRunningBuilds(planKey: String, repoName: String?): ToolResult<List<BuildResultData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Bamboo not configured. Cannot fetch running builds for $planKey.",

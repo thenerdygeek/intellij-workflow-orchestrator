@@ -33,9 +33,20 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     private val client: SonarApiClient?
         get() = SonarDataService.getInstance(project).getSharedApiClient()
 
+    private fun resolveProjectKey(projectKey: String?, repoName: String?): String? {
+        if (!projectKey.isNullOrBlank()) return projectKey
+        if (repoName != null) {
+            val repo = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).getRepoByName(repoName)
+            if (repo != null && !repo.sonarProjectKey.isNullOrBlank()) return repo.sonarProjectKey
+        }
+        // Fallback to existing data service project key resolution
+        return null
+    }
+
     override suspend fun getIssues(
         projectKey: String,
-        filePath: String?
+        filePath: String?,
+        repoName: String?
     ): ToolResult<List<SonarIssueData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
@@ -103,7 +114,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
-    override suspend fun getQualityGateStatus(projectKey: String): ToolResult<QualityGateData> {
+    override suspend fun getQualityGateStatus(projectKey: String, repoName: String?): ToolResult<QualityGateData> {
         val api = client ?: return ToolResult(
             data = QualityGateData(status = "ERROR"),
             summary = "SonarQube not configured. Cannot fetch quality gate status.",
@@ -152,7 +163,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
-    override suspend fun getCoverage(projectKey: String): ToolResult<CoverageData> {
+    override suspend fun getCoverage(projectKey: String, repoName: String?): ToolResult<CoverageData> {
         val api = client ?: return ToolResult(
             data = CoverageData(
                 lineCoverage = 0.0, branchCoverage = 0.0,
@@ -246,7 +257,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
-    override suspend fun getAnalysisTasks(projectKey: String): ToolResult<List<SonarAnalysisTaskData>> {
+    override suspend fun getAnalysisTasks(projectKey: String, repoName: String?): ToolResult<List<SonarAnalysisTaskData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch analysis tasks.",
@@ -329,7 +340,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
-    override suspend fun getBranches(projectKey: String): ToolResult<List<SonarBranchData>> {
+    override suspend fun getBranches(projectKey: String, repoName: String?): ToolResult<List<SonarBranchData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch branches.",
@@ -377,7 +388,8 @@ class SonarServiceImpl(private val project: Project) : SonarService {
 
     override suspend fun getProjectMeasures(
         projectKey: String,
-        branch: String?
+        branch: String?,
+        repoName: String?
     ): ToolResult<ProjectMeasuresData> {
         val api = client ?: return ToolResult(
             data = ProjectMeasuresData(null, null, null, null, null, null, null),
@@ -434,7 +446,8 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     override suspend fun getSourceLines(
         componentKey: String,
         from: Int?,
-        to: Int?
+        to: Int?,
+        repoName: String?
     ): ToolResult<List<SourceLineData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
@@ -486,7 +499,8 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     override suspend fun getIssuesPaged(
         projectKey: String,
         page: Int,
-        pageSize: Int
+        pageSize: Int,
+        repoName: String?
     ): ToolResult<PagedIssuesData> {
         val api = client ?: return ToolResult(
             data = PagedIssuesData(emptyList(), 0, page, pageSize),
