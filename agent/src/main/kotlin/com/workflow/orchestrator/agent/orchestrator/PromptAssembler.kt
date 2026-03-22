@@ -35,7 +35,7 @@ class PromptAssembler(
 
         // 2. Available Tools Summary (dynamic)
         val toolSummary = buildToolSummary()
-        sections.add("<available_tools>\n$toolSummary\n</available_tools>")
+        sections.add("<available_tools>\n$toolSummary\n\nNote: Not all tools listed above may be active in every iteration. If you need a tool that returns 'tool not found', call request_tools(category=\"...\") to activate it. This requires no approval and takes effect immediately.\n</available_tools>")
 
         // 3. Project Context (dynamic, only if we have info)
         if (projectName != null || frameworkInfo != null) {
