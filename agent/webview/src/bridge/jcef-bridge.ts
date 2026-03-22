@@ -157,6 +157,16 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setMermaidTheme(isDark: boolean) {
     stores?.getThemeStore().setIsDark(isDark);
   },
+  applyVisualizationSettings(settingsJson: string) {
+    try {
+      const settings = JSON.parse(settingsJson);
+      for (const [type, config] of Object.entries(settings)) {
+        stores?.getSettingsStore().updateVisualization(type, config);
+      }
+    } catch (e) {
+      console.error('Failed to apply visualization settings:', e);
+    }
+  },
 };
 
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
