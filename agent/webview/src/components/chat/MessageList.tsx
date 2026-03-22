@@ -1,5 +1,6 @@
 import { useChatStore } from '@/stores/chatStore';
 import { MessageCard } from './MessageCard';
+import { ToolCallList } from '@/components/agent/ToolCallList';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useVirtualScroll } from '@/hooks/useVirtualScroll';
 
@@ -109,6 +110,7 @@ export function MessageList() {
                 <MessageCard message={msg} />
               </div>
             ))}
+            <ToolCallList />
             {streamPlaceholder && (
               <MessageCard
                 key="__streaming__"
