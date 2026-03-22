@@ -14,6 +14,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.BranchChangeListener
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBSplitter
@@ -36,6 +37,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
@@ -45,8 +47,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Cursor
+import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import javax.swing.ComboBoxModel
+import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListModel
 import javax.swing.JList
 import javax.swing.JPanel
@@ -287,14 +292,31 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val statusLabel = JBLabel("")
     private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
+    // Repo selector for multi-repo support
+    private val bambooRepos: List<RepoConfig> = settings.getRepos().filter { !it.bambooPlanKey.isNullOrBlank() }
+    private val repoSelector: ComboBox<String>? = if (bambooRepos.size > 1) {
+        ComboBox(DefaultComboBoxModel(bambooRepos.map { it.displayLabel }.toTypedArray())).apply {
+            // Pre-select the primary repo or the first one
+            val primaryIndex = bambooRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+            selectedIndex = primaryIndex
+        }
+    } else null
+
     init {
         border = JBUI.Borders.empty()
 
         // Toolbar
         val toolbar = createToolbar()
+        val headerLeft = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            if (repoSelector != null) {
+                add(repoSelector)
+            }
+            add(headerLabel)
+        }
         val headerPanel = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(4, 8)
-            add(headerLabel, BorderLayout.WEST)
+            add(headerLeft, BorderLayout.WEST)
             add(toolbar, BorderLayout.EAST)
         }
         add(headerPanel, BorderLayout.NORTH)
@@ -421,6 +443,29 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // Start polling
         startMonitoring()
 
+        // Repo selector listener — switch monitored plan when a different repo is selected
+        repoSelector?.addActionListener {
+            val selectedIndex = repoSelector.selectedIndex
+            if (selectedIndex >= 0 && selectedIndex < bambooRepos.size) {
+                val selectedRepo = bambooRepos[selectedIndex]
+                val newPlanKey = selectedRepo.bambooPlanKey.orEmpty()
+                if (newPlanKey.isNotBlank()) {
+                    activePlanKey = newPlanKey
+                    val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
+                    val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
+                    headerLabel.text = "Plan: $newPlanKey / $branch"
+                    loadingIcon.isVisible = true
+                    // Clear history and reset state for the new plan
+                    viewingHistoricalBuild = false
+                    historicalBuildBanner.isVisible = false
+                    historyListModel.clear()
+                    historyPanel.isVisible = false
+                    monitorService.switchBranch(newPlanKey, branch, interval)
+                    prBar.refreshPrs()
+                }
+            }
+        }
+
         // Fetch PRs for current branch — delay to wait for Git repository initialization
         scope.launch {
             // Wait for Git to be ready (repositories list becomes non-empty)
@@ -452,7 +497,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun startMonitoring() {
-        val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
+        // Use selected repo's plan key if multi-repo selector is active
+        val selectedRepoPlanKey = if (repoSelector != null && bambooRepos.isNotEmpty()) {
+            val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
+            bambooRepos.getOrNull(idx)?.bambooPlanKey.orEmpty()
+        } else ""
+        val planKey = activePlanKey.ifBlank { selectedRepoPlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() } }
         if (planKey.isBlank()) {
             // Don't show error — PR detection will auto-detect the plan key
             headerLabel.text = "Waiting for PR detection to find Bamboo plan..."

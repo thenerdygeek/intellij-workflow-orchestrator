@@ -4,11 +4,14 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.QualityGateStatus
 import com.workflow.orchestrator.sonar.model.SonarState
@@ -21,6 +24,7 @@ import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
 import javax.swing.BoxLayout
+import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JPanel
 
@@ -28,8 +32,18 @@ class QualityDashboardPanel(
     private val project: Project
 ) : JPanel(BorderLayout()), Disposable {
 
+    private val settings = PluginSettings.getInstance(project)
     private val dataService = SonarDataService.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
+
+    // Repo selector for multi-repo support
+    private val sonarRepos: List<RepoConfig> = settings.getRepos().filter { !it.sonarProjectKey.isNullOrBlank() }
+    private val repoSelector: ComboBox<String>? = if (sonarRepos.size > 1) {
+        ComboBox(DefaultComboBoxModel(sonarRepos.map { it.displayLabel }.toTypedArray())).apply {
+            val primaryIndex = sonarRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+            selectedIndex = primaryIndex
+        }
+    } else null
 
     // UI components
     private val headerLabel = JBLabel("").apply {
@@ -84,6 +98,9 @@ class QualityDashboardPanel(
         // Use FlowLayout so elements wrap at narrow widths instead of overlapping
         val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
             border = JBUI.Borders.empty(4, 8)
+            if (repoSelector != null) {
+                add(repoSelector)
+            }
             add(headerLabel)
             add(newCodeButton)
             add(overallButton)
@@ -139,6 +156,22 @@ class QualityDashboardPanel(
 
         // Initial toggle state
         updateToggleAppearance(true)
+
+        // Repo selector listener — switch sonar project key when a different repo is selected
+        repoSelector?.addActionListener {
+            val selectedIndex = repoSelector.selectedIndex
+            if (selectedIndex >= 0 && selectedIndex < sonarRepos.size) {
+                val selectedRepo = sonarRepos[selectedIndex]
+                val newProjectKey = selectedRepo.sonarProjectKey.orEmpty()
+                if (newProjectKey.isNotBlank()) {
+                    // Update the settings so SonarDataService picks up the new project key
+                    settings.state.sonarProjectKey = newProjectKey
+                    statusLabel.text = "Switching to $newProjectKey..."
+                    loadingIcon.isVisible = true
+                    dataService.refresh()
+                }
+            }
+        }
 
         // Subscribe to state updates
         scope.launch {
