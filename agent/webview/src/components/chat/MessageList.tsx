@@ -1,6 +1,7 @@
 import { useChatStore } from '@/stores/chatStore';
 import { MessageCard } from './MessageCard';
 import { ToolCallList } from '@/components/agent/ToolCallList';
+import { PlanCard } from '@/components/agent/PlanCard';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useVirtualScroll } from '@/hooks/useVirtualScroll';
 
@@ -9,6 +10,7 @@ const VIRTUAL_SCROLL_THRESHOLD = 100;
 export function MessageList() {
   const messages = useChatStore(s => s.messages);
   const activeStream = useChatStore(s => s.activeStream);
+  const plan = useChatStore(s => s.plan);
   const messageCount = messages.length + (activeStream ? 1 : 0);
 
   const useVirtual = messageCount >= VIRTUAL_SCROLL_THRESHOLD;
@@ -111,6 +113,7 @@ export function MessageList() {
               </div>
             ))}
             <ToolCallList />
+            {plan && <PlanCard plan={plan} />}
             {streamPlaceholder && (
               <MessageCard
                 key="__streaming__"
