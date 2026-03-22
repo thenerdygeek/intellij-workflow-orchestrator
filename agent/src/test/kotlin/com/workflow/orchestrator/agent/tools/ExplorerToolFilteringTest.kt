@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
+import com.workflow.orchestrator.agent.runtime.ApprovalGate
+import com.workflow.orchestrator.agent.runtime.RiskLevel
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.debug.AgentDebugController
 import io.mockk.mockk
@@ -73,6 +75,26 @@ class ExplorerToolFilteringTest {
             assertTrue(
                 WorkerType.ANALYZER in tool.allowedWorkers,
                 "Explorer (ANALYZER) SHOULD have access to ${tool.name} (read-only)"
+            )
+        }
+    }
+
+    @Test
+    fun `all explorer-accessible tools are NONE risk`() {
+        val explorerReadOnlyTools = listOf(
+            "read_file", "search_code", "glob_files", "file_structure",
+            "find_definition", "find_references", "type_hierarchy",
+            "call_hierarchy", "find_implementations",
+            "git_status", "git_blame", "git_diff", "git_log",
+            "git_branches", "git_show_file", "git_show_commit",
+            "list_breakpoints", "get_debug_state", "get_stack_frames", "get_variables",
+            "diagnostics", "think"
+        )
+        for (toolName in explorerReadOnlyTools) {
+            val risk = ApprovalGate.riskLevelFor(toolName)
+            assertEquals(
+                RiskLevel.NONE, risk,
+                "Explorer tool '$toolName' should be NONE risk, but was $risk"
             )
         }
     }
