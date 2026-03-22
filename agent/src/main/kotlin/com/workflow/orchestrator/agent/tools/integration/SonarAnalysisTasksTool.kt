@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class SonarAnalysisTasksTool : AgentTool {
@@ -14,7 +15,8 @@ class SonarAnalysisTasksTool : AgentTool {
     override val description = "Get recent SonarQube analysis tasks (Compute Engine) for a project. Shows analysis status (SUCCESS/FAILED/PENDING/IN_PROGRESS), errors, and timing. Useful for diagnosing stuck or failed analyses after builds."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key")
+            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("project_key")
     )
@@ -27,6 +29,7 @@ class SonarAnalysisTasksTool : AgentTool {
         ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
         val service = ServiceLookup.sonar(project) ?: return ServiceLookup.notConfigured("SonarQube")
 
-        return service.getAnalysisTasks(projectKey).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+        return service.getAnalysisTasks(projectKey, repoName = repoName).toAgentToolResult()
     }
 }

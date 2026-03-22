@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketReplyToCommentTool : AgentTool {
@@ -16,7 +17,8 @@ class BitbucketReplyToCommentTool : AgentTool {
         properties = mapOf(
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
             "parent_comment_id" to ParameterProperty(type = "string", description = "ID of the comment to reply to (numeric)"),
-            "text" to ParameterProperty(type = "string", description = "Reply text (supports Markdown)")
+            "text" to ParameterProperty(type = "string", description = "Reply text (supports Markdown)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id", "parent_comment_id", "text")
     )
@@ -33,6 +35,8 @@ class BitbucketReplyToCommentTool : AgentTool {
         ToolValidation.validateNotBlank(text, "text")?.let { return it }
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.replyToComment(prId, parentCommentId, text).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.replyToComment(prId, parentCommentId, text, repoName = repoName).toAgentToolResult()
     }
 }

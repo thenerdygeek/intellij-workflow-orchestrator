@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetBranchesTool : AgentTool {
@@ -14,7 +15,8 @@ class BitbucketGetBranchesTool : AgentTool {
     override val description = "List branches in the Bitbucket repository, optionally filtered by name."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "filter" to ParameterProperty(type = "string", description = "Optional name filter to match branches (e.g., 'feature/')")
+            "filter" to ParameterProperty(type = "string", description = "Optional name filter to match branches (e.g., 'feature/')"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = emptyList()
     )
@@ -25,6 +27,8 @@ class BitbucketGetBranchesTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getBranches(filter).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getBranches(filter, repoName = repoName).toAgentToolResult()
     }
 }

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BambooGetRunningBuildsTool : AgentTool {
@@ -14,7 +15,8 @@ class BambooGetRunningBuildsTool : AgentTool {
     override val description = "Get currently running and queued builds for a Bamboo plan."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "plan_key" to ParameterProperty(type = "string", description = "Bamboo plan key (e.g., PROJ-PLAN)")
+            "plan_key" to ParameterProperty(type = "string", description = "Bamboo plan key (e.g., PROJ-PLAN)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("plan_key")
     )
@@ -27,6 +29,7 @@ class BambooGetRunningBuildsTool : AgentTool {
         ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
         val service = ServiceLookup.bamboo(project) ?: return ServiceLookup.notConfigured("Bamboo")
 
-        return service.getRunningBuilds(planKey).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+        return service.getRunningBuilds(planKey, repoName = repoName).toAgentToolResult()
     }
 }

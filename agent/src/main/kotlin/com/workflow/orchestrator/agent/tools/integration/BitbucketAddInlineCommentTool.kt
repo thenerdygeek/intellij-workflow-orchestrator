@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketAddInlineCommentTool : AgentTool {
@@ -18,7 +19,8 @@ class BitbucketAddInlineCommentTool : AgentTool {
             "file_path" to ParameterProperty(type = "string", description = "File path relative to repository root"),
             "line" to ParameterProperty(type = "string", description = "Line number to comment on"),
             "line_type" to ParameterProperty(type = "string", description = "Line type: 'ADDED', 'REMOVED', or 'CONTEXT'"),
-            "text" to ParameterProperty(type = "string", description = "Comment text (supports Markdown)")
+            "text" to ParameterProperty(type = "string", description = "Comment text (supports Markdown)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id", "file_path", "line", "line_type", "text")
     )
@@ -39,6 +41,8 @@ class BitbucketAddInlineCommentTool : AgentTool {
         ToolValidation.validateNotBlank(text, "text")?.let { return it }
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.addInlineComment(prId, filePath, line, lineType, text).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.addInlineComment(prId, filePath, line, lineType, text, repoName = repoName).toAgentToolResult()
     }
 }

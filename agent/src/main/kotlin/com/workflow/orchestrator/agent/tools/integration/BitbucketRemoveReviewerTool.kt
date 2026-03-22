@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketRemoveReviewerTool : AgentTool {
@@ -15,7 +16,8 @@ class BitbucketRemoveReviewerTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
-            "username" to ParameterProperty(type = "string", description = "Username of the reviewer to remove")
+            "username" to ParameterProperty(type = "string", description = "Username of the reviewer to remove"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id", "username")
     )
@@ -30,6 +32,8 @@ class BitbucketRemoveReviewerTool : AgentTool {
         ToolValidation.validateNotBlank(username, "username")?.let { return it }
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.removeReviewer(prId, username).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.removeReviewer(prId, username, repoName = repoName).toAgentToolResult()
     }
 }

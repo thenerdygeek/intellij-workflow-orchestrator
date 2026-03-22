@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class SonarBranchesTool : AgentTool {
@@ -14,7 +15,8 @@ class SonarBranchesTool : AgentTool {
     override val description = "List branches for a SonarQube project with their quality gate status and analysis date."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')")
+            "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("project_key")
     )
@@ -26,6 +28,7 @@ class SonarBranchesTool : AgentTool {
 
         val service = ServiceLookup.sonar(project) ?: return ServiceLookup.notConfigured("SonarQube")
 
-        return service.getBranches(projectKey).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+        return service.getBranches(projectKey, repoName = repoName).toAgentToolResult()
     }
 }

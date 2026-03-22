@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetBuildStatusesTool : AgentTool {
@@ -14,7 +15,8 @@ class BitbucketGetBuildStatusesTool : AgentTool {
     override val description = "Get build statuses for a specific commit in Bitbucket. Shows CI/CD pipeline results."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "commit_id" to ParameterProperty(type = "string", description = "Full or abbreviated commit hash")
+            "commit_id" to ParameterProperty(type = "string", description = "Full or abbreviated commit hash"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("commit_id")
     )
@@ -27,6 +29,8 @@ class BitbucketGetBuildStatusesTool : AgentTool {
         ToolValidation.validateNotBlank(commitId, "commit_id")?.let { return it }
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getBuildStatuses(commitId).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getBuildStatuses(commitId, repoName = repoName).toAgentToolResult()
     }
 }

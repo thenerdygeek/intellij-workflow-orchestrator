@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketMergePrTool : AgentTool {
@@ -17,7 +18,8 @@ class BitbucketMergePrTool : AgentTool {
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
             "strategy" to ParameterProperty(type = "string", description = "Merge strategy: 'merge-commit', 'squash', or 'ff-only' (optional)"),
             "delete_source_branch" to ParameterProperty(type = "string", description = "Delete source branch after merge: 'true' or 'false' (default: false)"),
-            "commit_message" to ParameterProperty(type = "string", description = "Custom merge commit message (optional)")
+            "commit_message" to ParameterProperty(type = "string", description = "Custom merge commit message (optional)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id")
     )
@@ -32,6 +34,8 @@ class BitbucketMergePrTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.mergePullRequest(prId, strategy, deleteSourceBranch, commitMessage).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.mergePullRequest(prId, strategy, deleteSourceBranch, commitMessage, repoName = repoName).toAgentToolResult()
     }
 }

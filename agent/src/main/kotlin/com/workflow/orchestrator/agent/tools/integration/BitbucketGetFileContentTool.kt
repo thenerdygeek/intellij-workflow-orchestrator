@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetFileContentTool : AgentTool {
@@ -15,7 +16,8 @@ class BitbucketGetFileContentTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "file_path" to ParameterProperty(type = "string", description = "File path relative to repository root"),
-            "at_ref" to ParameterProperty(type = "string", description = "Git ref to read from (branch name, tag, or commit hash)")
+            "at_ref" to ParameterProperty(type = "string", description = "Git ref to read from (branch name, tag, or commit hash)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("file_path", "at_ref")
     )
@@ -32,6 +34,8 @@ class BitbucketGetFileContentTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getFileContent(filePath, atRef).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getFileContent(filePath, atRef, repoName = repoName).toAgentToolResult()
     }
 }

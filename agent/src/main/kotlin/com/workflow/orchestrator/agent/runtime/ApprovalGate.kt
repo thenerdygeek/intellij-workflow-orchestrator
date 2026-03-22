@@ -101,7 +101,7 @@ class ApprovalGate(
 
             // Enterprise read-only (Sonar)
             "sonar_issues", "sonar_quality_gate", "sonar_coverage",
-            "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
+            "sonar_search_projects", "sonar_analysis_tasks",
             "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
 
             // Runtime & Debug read-only
@@ -114,7 +114,7 @@ class ApprovalGate(
             "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail",
             "bitbucket_get_pr_activities", "bitbucket_get_pr_changes",
             "bitbucket_get_pr_diff", "bitbucket_get_build_statuses",
-            "bitbucket_check_merge_status", "bitbucket_search_users",
+            "bitbucket_check_merge_status", "bitbucket_search_users", "bitbucket_list_repos",
 
             // Subagent spawning (runs in isolated context)
             "agent", "delegate_task"

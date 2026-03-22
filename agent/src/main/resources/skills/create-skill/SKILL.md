@@ -54,7 +54,7 @@ Use `think` to analyze which of the 52 available tools are relevant to this work
 - **Spring:** spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules
 - **Jira:** jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work
 - **Bamboo:** bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results
-- **SonarQube:** sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_project_health
+- **SonarQube:** sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks
 - **Bitbucket:** bitbucket_create_pr
 - **Planning:** create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill
 
@@ -129,7 +129,7 @@ preferred-tools: [jira_get_ticket, jira_transition, git_status, bamboo_trigger_b
 ---
 name: review-prep
 description: Prepare code for review — quality checks, fix blockers, verify coverage. Use when the user says review prep, prepare for PR, ready for review, or code quality before merging.
-preferred-tools: [sonar_issues, sonar_coverage, sonar_project_health, run_tests, compile_module, diagnostics]
+preferred-tools: [sonar_issues, sonar_coverage, sonar_project_measures, run_tests, compile_module, diagnostics]
 ---
 ## Pre-Review Checklist
 1. Run `compile_module` to verify clean compilation

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketAddReviewerTool : AgentTool {
@@ -15,7 +16,8 @@ class BitbucketAddReviewerTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
-            "username" to ParameterProperty(type = "string", description = "Username of the reviewer to add")
+            "username" to ParameterProperty(type = "string", description = "Username of the reviewer to add"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id", "username")
     )
@@ -30,6 +32,8 @@ class BitbucketAddReviewerTool : AgentTool {
         ToolValidation.validateNotBlank(username, "username")?.let { return it }
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.addReviewer(prId, username).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.addReviewer(prId, username, repoName = repoName).toAgentToolResult()
     }
 }

@@ -103,13 +103,14 @@ class SingleAgentSession(
             "bamboo_get_running_builds", "bamboo_get_build_variables", "bamboo_get_plan_variables",
             // Sonar read-only
             "sonar_issues", "sonar_quality_gate", "sonar_coverage",
-            "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
+            "sonar_search_projects", "sonar_analysis_tasks",
             "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
             // Bitbucket read-only
             "bitbucket_get_pr_commits", "bitbucket_get_file_content", "bitbucket_get_branches",
             "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs",
             "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes",
-            "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_check_merge_status"
+            "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_check_merge_status",
+            "bitbucket_list_repos"
         )
     }
 

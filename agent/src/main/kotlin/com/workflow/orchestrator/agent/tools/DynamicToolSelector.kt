@@ -58,7 +58,7 @@ object DynamicToolSelector {
         "variable" to setOf("bamboo_get_plan_variables", "bamboo_get_build_variables"),
 
         // Sonar tools triggered by quality/coverage/sonar keywords
-        "sonar" to setOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health", "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"),
+        "sonar" to setOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"),
         "quality" to setOf("sonar_issues", "sonar_quality_gate", "sonar_project_measures"),
         "coverage" to setOf("sonar_coverage", "sonar_source_lines"),
         "code smell" to setOf("sonar_issues", "sonar_issues_paged"),
@@ -66,11 +66,10 @@ object DynamicToolSelector {
         "quality gate" to setOf("sonar_quality_gate", "sonar_branches"),
         "analysis" to setOf("sonar_analysis_tasks"),
         "compute engine" to setOf("sonar_analysis_tasks"),
-        "tech debt" to setOf("sonar_project_health", "sonar_project_measures"),
-        "technical debt" to setOf("sonar_project_health", "sonar_project_measures"),
-        "rating" to setOf("sonar_project_health", "sonar_project_measures"),
-        "health" to setOf("sonar_project_health"),
-        "duplication" to setOf("sonar_project_health", "sonar_project_measures"),
+        "tech debt" to setOf("sonar_project_measures"),
+        "technical debt" to setOf("sonar_project_measures"),
+        "rating" to setOf("sonar_project_measures"),
+        "duplication" to setOf("sonar_project_measures"),
         "source line" to setOf("sonar_source_lines"),
         "measures" to setOf("sonar_project_measures"),
 
@@ -92,7 +91,8 @@ object DynamicToolSelector {
         "stack frame" to setOf("get_stack_frames"),
 
         // Bitbucket tools triggered by PR/pull request keywords
-        "bitbucket" to setOf("bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment", "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status", "bitbucket_get_file_content", "bitbucket_add_reviewer", "bitbucket_update_pr_title", "bitbucket_get_branches", "bitbucket_create_branch", "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_approve_pr", "bitbucket_merge_pr", "bitbucket_decline_pr", "bitbucket_update_pr_description", "bitbucket_add_pr_comment", "bitbucket_check_merge_status", "bitbucket_remove_reviewer"),
+        "bitbucket" to setOf("bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment", "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status", "bitbucket_get_file_content", "bitbucket_add_reviewer", "bitbucket_update_pr_title", "bitbucket_get_branches", "bitbucket_create_branch", "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_approve_pr", "bitbucket_merge_pr", "bitbucket_decline_pr", "bitbucket_update_pr_description", "bitbucket_add_pr_comment", "bitbucket_check_merge_status", "bitbucket_remove_reviewer", "bitbucket_list_repos"),
+        "repo" to setOf("bitbucket_list_repos"),
         "pull request" to setOf("bitbucket_create_pr", "bitbucket_get_pr_detail", "bitbucket_get_pr_commits", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_approve_pr", "bitbucket_merge_pr"),
         "pr" to setOf("bitbucket_create_pr", "bitbucket_get_pr_detail", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_approve_pr", "bitbucket_merge_pr"),
         "review" to setOf("bitbucket_get_reviewing_prs", "bitbucket_add_reviewer", "bitbucket_set_reviewer_status", "bitbucket_remove_reviewer", "bitbucket_approve_pr"),
@@ -110,7 +110,7 @@ object DynamicToolSelector {
         "endpoint" to setOf("spring_endpoints"),
         "controller" to setOf("spring_endpoints"),
         "service" to setOf("spring_context"),
-        "repository" to setOf("spring_context", "spring_repositories"),
+        "repository" to setOf("bitbucket_list_repos", "spring_context", "spring_repositories"),
         "injection" to setOf("spring_bean_graph"),
         "autowired" to setOf("spring_bean_graph"),
 

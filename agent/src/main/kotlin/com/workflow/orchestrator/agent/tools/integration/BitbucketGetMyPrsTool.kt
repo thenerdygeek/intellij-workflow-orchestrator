@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetMyPrsTool : AgentTool {
@@ -14,7 +15,8 @@ class BitbucketGetMyPrsTool : AgentTool {
     override val description = "Get pull requests authored by the current user. Optionally filter by state (OPEN, MERGED, DECLINED)."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "state" to ParameterProperty(type = "string", description = "PR state filter: 'OPEN', 'MERGED', or 'DECLINED' (default: OPEN)")
+            "state" to ParameterProperty(type = "string", description = "PR state filter: 'OPEN', 'MERGED', or 'DECLINED' (default: OPEN)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = emptyList()
     )
@@ -25,6 +27,8 @@ class BitbucketGetMyPrsTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getMyPullRequests(state).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getMyPullRequests(state, repoName = repoName).toAgentToolResult()
     }
 }

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetPrDiffTool : AgentTool {
@@ -14,7 +15,8 @@ class BitbucketGetPrDiffTool : AgentTool {
     override val description = "Get the raw unified diff for a Bitbucket pull request. Returns the full diff text."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)")
+            "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id")
     )
@@ -26,6 +28,8 @@ class BitbucketGetPrDiffTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getPullRequestDiff(prId).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getPullRequestDiff(prId, repoName = repoName).toAgentToolResult()
     }
 }

@@ -178,7 +178,6 @@ class AgentService(
             register(SonarCoverageTool())
             register(SonarSearchProjectsTool())
             register(SonarAnalysisTasksTool())
-            register(SonarProjectHealthTool())
             register(SonarBranchesTool())
             register(SonarProjectMeasuresTool())
             register(SonarSourceLinesTool())
@@ -210,6 +209,7 @@ class AgentService(
             register(BitbucketAddPrCommentTool())
             register(BitbucketCheckMergeStatusTool())
             register(BitbucketRemoveReviewerTool())
+            register(BitbucketListReposTool())
 
             // Planning tools
             register(CreatePlanTool())

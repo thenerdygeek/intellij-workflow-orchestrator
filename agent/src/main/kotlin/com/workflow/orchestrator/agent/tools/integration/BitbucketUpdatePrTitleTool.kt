@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketUpdatePrTitleTool : AgentTool {
@@ -15,7 +16,8 @@ class BitbucketUpdatePrTitleTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
-            "new_title" to ParameterProperty(type = "string", description = "New title for the pull request")
+            "new_title" to ParameterProperty(type = "string", description = "New title for the pull request"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id", "new_title")
     )
@@ -30,6 +32,8 @@ class BitbucketUpdatePrTitleTool : AgentTool {
         ToolValidation.validateNotBlank(newTitle, "new_title")?.let { return it }
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.updatePrTitle(prId, newTitle).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.updatePrTitle(prId, newTitle, repoName = repoName).toAgentToolResult()
     }
 }

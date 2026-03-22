@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketPrTool : AgentTool {
@@ -17,7 +18,8 @@ class BitbucketPrTool : AgentTool {
             "title" to ParameterProperty(type = "string", description = "Pull request title (clear, concise summary of changes)"),
             "description" to ParameterProperty(type = "string", description = "Pull request description (details of what changed and why)"),
             "from_branch" to ParameterProperty(type = "string", description = "Source branch name (e.g., 'feature/PROJ-123-fix-auth')"),
-            "to_branch" to ParameterProperty(type = "string", description = "Target branch name. Optional, defaults to 'master'")
+            "to_branch" to ParameterProperty(type = "string", description = "Target branch name. Optional, defaults to 'master'"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("title", "description", "from_branch")
     )
@@ -45,6 +47,8 @@ class BitbucketPrTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.createPullRequest(title, description, fromBranch, toBranch).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.createPullRequest(title, description, fromBranch, toBranch, repoName = repoName).toAgentToolResult()
     }
 }

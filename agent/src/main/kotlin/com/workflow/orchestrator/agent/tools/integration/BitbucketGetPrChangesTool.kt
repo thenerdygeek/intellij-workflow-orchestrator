@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetPrChangesTool : AgentTool {
@@ -14,7 +15,8 @@ class BitbucketGetPrChangesTool : AgentTool {
     override val description = "Get the list of changed files in a Bitbucket pull request. Shows file paths, change types (ADD, MODIFY, DELETE), and line counts."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)")
+            "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id")
     )
@@ -26,6 +28,8 @@ class BitbucketGetPrChangesTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getPullRequestChanges(prId).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getPullRequestChanges(prId, repoName = repoName).toAgentToolResult()
     }
 }

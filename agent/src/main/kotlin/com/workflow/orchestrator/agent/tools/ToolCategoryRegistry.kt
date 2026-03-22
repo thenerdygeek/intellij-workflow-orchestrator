@@ -98,7 +98,7 @@ object ToolCategoryRegistry {
             badgePrefix = "QA",
             description = "Code issues, quality gate status, coverage metrics, project search, branches, measures, source lines",
             tools = listOf(
-                "sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
+                "sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks",
                 "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"
             )
         ),
@@ -133,7 +133,7 @@ object ToolCategoryRegistry {
                 "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_build_statuses",
                 "bitbucket_approve_pr", "bitbucket_merge_pr", "bitbucket_decline_pr",
                 "bitbucket_update_pr_description", "bitbucket_add_pr_comment", "bitbucket_check_merge_status",
-                "bitbucket_remove_reviewer"
+                "bitbucket_remove_reviewer", "bitbucket_list_repos"
             )
         ),
         ToolCategory(

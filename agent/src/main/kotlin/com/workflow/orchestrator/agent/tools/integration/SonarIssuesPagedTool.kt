@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class SonarIssuesPagedTool : AgentTool {
@@ -16,7 +17,8 @@ class SonarIssuesPagedTool : AgentTool {
         properties = mapOf(
             "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')"),
             "page" to ParameterProperty(type = "string", description = "Page number (default: 1)"),
-            "page_size" to ParameterProperty(type = "string", description = "Results per page, max 500 (default: 100)")
+            "page_size" to ParameterProperty(type = "string", description = "Results per page, max 500 (default: 100)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("project_key")
     )
@@ -30,6 +32,7 @@ class SonarIssuesPagedTool : AgentTool {
 
         val service = ServiceLookup.sonar(project) ?: return ServiceLookup.notConfigured("SonarQube")
 
-        return service.getIssuesPaged(projectKey, page, pageSize).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+        return service.getIssuesPaged(projectKey, page, pageSize, repoName = repoName).toAgentToolResult()
     }
 }

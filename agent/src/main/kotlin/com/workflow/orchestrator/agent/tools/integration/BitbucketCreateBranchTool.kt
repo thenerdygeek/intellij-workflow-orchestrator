@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketCreateBranchTool : AgentTool {
@@ -15,7 +16,8 @@ class BitbucketCreateBranchTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "name" to ParameterProperty(type = "string", description = "New branch name (e.g., feature/PROJ-123-fix-auth)"),
-            "start_point" to ParameterProperty(type = "string", description = "Start point: branch name, tag, or commit hash to branch from")
+            "start_point" to ParameterProperty(type = "string", description = "Start point: branch name, tag, or commit hash to branch from"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("name", "start_point")
     )
@@ -32,6 +34,8 @@ class BitbucketCreateBranchTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.createBranch(name, startPoint).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.createBranch(name, startPoint, repoName = repoName).toAgentToolResult()
     }
 }

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetPrDetailTool : AgentTool {
@@ -14,7 +15,8 @@ class BitbucketGetPrDetailTool : AgentTool {
     override val description = "Get full details of a Bitbucket pull request including title, description, author, reviewers, and approval status."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)")
+            "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name for multi-repo projects. Omit for single-repo or to use the primary repository.")
         ),
         required = listOf("pr_id")
     )
@@ -26,6 +28,8 @@ class BitbucketGetPrDetailTool : AgentTool {
 
         val service = ServiceLookup.bitbucket(project) ?: return ServiceLookup.notConfigured("Bitbucket")
 
-        return service.getPullRequestDetail(prId).toAgentToolResult()
+        val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+
+        return service.getPullRequestDetail(prId, repoName = repoName).toAgentToolResult()
     }
 }
