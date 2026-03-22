@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 64 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 86 tools.
 
 ## LLM API
 
@@ -33,18 +33,19 @@ AgentController (UI entry point)
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (64 total, 9 categories)
+## Tools (86 total, 10 categories)
 
 | Category | Tools |
 |----------|-------|
 | Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, agent, delegate_task (deprecated), think |
-| IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests |
-| VCS & Navigation | git_status, git_blame, find_implementations |
+| IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations |
+| Runtime & Debug | get_run_configurations, get_running_processes, get_run_output, get_test_results, add_breakpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_pause, debug_run_to_cursor, debug_stop, evaluate_expression, get_stack_frames, get_variables, create_run_config, modify_run_config, delete_run_config |
+| VCS | git_status, git_blame, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_stash_list, git_merge_base, git_file_history |
 | Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners |
-| Jira | jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work |
-| CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results |
-| Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_project_health |
-| Pull Requests — Bitbucket | bitbucket_create_pr |
+| Jira | jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work, jira_get_worklogs, jira_get_sprints, jira_get_linked_prs, jira_get_boards, jira_get_sprint_issues, jira_get_board_issues, jira_search_issues, jira_get_dev_branches, jira_start_work |
+| CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results, bamboo_stop_build, bamboo_cancel_build, bamboo_get_artifacts, bamboo_recent_builds, bamboo_get_plans, bamboo_get_project_plans, bamboo_search_plans, bamboo_get_plan_branches, bamboo_get_running_builds, bamboo_get_build_variables, bamboo_get_plan_variables, bamboo_rerun_failed_jobs, bamboo_trigger_stage |
+| Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_project_health, sonar_branches, sonar_project_measures, sonar_source_lines, sonar_issues_paged |
+| Pull Requests — Bitbucket | bitbucket_create_pr, bitbucket_get_pr_commits, bitbucket_add_inline_comment, bitbucket_reply_to_comment, bitbucket_set_reviewer_status, bitbucket_get_file_content, bitbucket_add_reviewer, bitbucket_update_pr_title, bitbucket_get_branches, bitbucket_create_branch, bitbucket_search_users, bitbucket_get_my_prs, bitbucket_get_reviewing_prs, bitbucket_get_pr_detail, bitbucket_get_pr_activities, bitbucket_get_pr_changes, bitbucket_get_pr_diff, bitbucket_get_build_statuses, bitbucket_approve_pr, bitbucket_merge_pr, bitbucket_decline_pr, bitbucket_update_pr_description, bitbucket_add_pr_comment, bitbucket_check_merge_status, bitbucket_remove_reviewer |
 | Planning | create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill |
 
 ## Tool Selection (Hybrid)
@@ -126,6 +127,16 @@ Three layers:
 - Injected into system prompt as `<agent_memory>` section
 - `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
+## Interactive Debugging
+
+Agent has full programmatic access to IntelliJ's debugger via `AgentDebugController`:
+- **Breakpoints**: Set/remove/list line breakpoints with conditions, log expressions, temporary flags
+- **Session control**: Launch debug sessions, step over/into/out, resume, pause, run-to-cursor, stop
+- **Inspection**: Get debug state, stack frames, variables (recursive with depth control), evaluate expressions
+- **Run configs**: Create/modify/delete IntelliJ run configurations (`[Agent]` prefix for safety)
+- **Async pattern**: `MutableSharedFlow(replay=1)` wraps XDebugger's callback-based API into coroutines
+- **Skills**: `systematic-debugging` (updated with escalation) + `interactive-debugging` (LLM-only, activated on escalation)
+
 ## User-Extensible Skills
 
 - Format: SKILL.md with YAML frontmatter (Agent Skills standard)
@@ -135,7 +146,7 @@ Three layers:
 - Discovery: descriptions loaded at session start, full content on activation
 - Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `activate_skill`
 - Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
-- Built-in skills: `systematic-debugging` and `create-skill` ship with the plugin from resources
+- Built-in skills: `systematic-debugging`, `interactive-debugging`, and `create-skill` ship with the plugin from resources
 - Supporting files: non-SKILL.md files in skill directory listed via `getSupportingFiles()`
 
 **Frontmatter fields:**

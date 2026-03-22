@@ -422,6 +422,7 @@ class PromptAssembler(
             - NEVER assume branch names. Check git_branches first to find the actual base branch (it may not be 'main').
             - NEVER reference remote refs (origin/, upstream/) in any git operation. All git tools work on local refs only.
             - If you call the same tool 3 times with the same arguments, try a different approach.
+            - When debugging, start with get_test_results and get_run_output for structured error data. Only escalate to interactive debugging (breakpoints, stepping) when static analysis is insufficient. The interactive-debugging skill teaches efficient debugging patterns.
             - If a tool call returns an error, address the error before continuing with other actions.
             - After completing a task, suggest 1-3 concrete, contextual next steps the user might want to take.
               These should be specific to what was just done (e.g., "Run tests for the changed module",
