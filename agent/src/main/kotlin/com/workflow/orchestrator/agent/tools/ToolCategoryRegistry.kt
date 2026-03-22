@@ -47,8 +47,8 @@ object ToolCategoryRegistry {
             displayName = "VCS",
             color = "#06B6D4",
             badgePrefix = "GIT",
-            description = "Git status, blame, diff, and log",
-            tools = listOf("git_status", "git_blame", "git_diff", "git_log")
+            description = "Git status, blame, diff, log, branches, show-file, show-commit, stash, merge-base, file-history",
+            tools = listOf("git_status", "git_blame", "git_diff", "git_log", "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history")
         ),
         ToolCategory(
             id = "framework",

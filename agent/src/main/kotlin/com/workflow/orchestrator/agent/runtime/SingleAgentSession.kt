@@ -84,7 +84,9 @@ class SingleAgentSession(
         private val READ_ONLY_TOOLS = setOf(
             "read_file", "search_code", "glob_files", "file_structure",
             "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
-            "diagnostics", "git_status", "git_blame", "git_diff", "git_log", "find_implementations",
+            "diagnostics", "git_status", "git_blame", "git_diff", "git_log",
+            "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history",
+            "find_implementations",
             "spring_context", "spring_endpoints", "spring_bean_graph",
             "jira_get_ticket", "jira_get_comments", "jira_get_transitions",
             "bamboo_build_status", "bamboo_get_build", "bamboo_get_test_results",

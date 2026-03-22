@@ -179,6 +179,12 @@ class AgentService(
             register(GitBlameTool())
             register(GitDiffTool())
             register(GitLogTool())
+            register(GitBranchesTool())
+            register(GitShowFileTool())
+            register(GitShowCommitTool())
+            register(GitStashListTool())
+            register(GitMergeBaseTool())
+            register(GitFileHistoryTool())
             register(FindImplementationsTool())
 
             // Framework tools

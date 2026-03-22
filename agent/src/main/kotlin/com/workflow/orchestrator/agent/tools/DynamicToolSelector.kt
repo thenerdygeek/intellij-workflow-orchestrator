@@ -62,7 +62,6 @@ object DynamicToolSelector {
         "bitbucket" to setOf("bitbucket_create_pr"),
         "pull request" to setOf("bitbucket_create_pr"),
         "pr" to setOf("bitbucket_create_pr"),
-        "merge" to setOf("bitbucket_create_pr"),
 
         // Spring tools triggered by spring/bean/endpoint keywords
         "spring" to setOf("spring_context", "spring_endpoints", "spring_bean_graph", "spring_config", "spring_version_info", "spring_profiles", "spring_repositories", "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"),
@@ -91,15 +90,17 @@ object DynamicToolSelector {
         "run test" to setOf("run_tests"),
 
         // VCS tools — triggered by git keywords
-        "git" to setOf("git_status", "git_blame", "git_diff", "git_log"),
+        "git" to setOf("git_status", "git_blame", "git_diff", "git_log", "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history"),
         "blame" to setOf("git_blame"),
         "who changed" to setOf("git_blame"),
-        "branch" to setOf("git_status"),
-        "commit" to setOf("git_status", "git_log"),
+        "branch" to setOf("git_status", "git_branches"),
+        "commit" to setOf("git_status", "git_log", "git_show_commit"),
         "diff" to setOf("git_diff", "git_status"),
         "changed files" to setOf("git_status", "git_diff"),
         "log" to setOf("git_log"),
-        "history" to setOf("git_log"),
+        "history" to setOf("git_log", "git_file_history"),
+        "stash" to setOf("git_stash_list"),
+        "merge" to setOf("bitbucket_create_pr", "git_merge_base"),
         "implement" to setOf("find_implementations"),
         "implementation" to setOf("find_implementations"),
         "override" to setOf("find_implementations"),
