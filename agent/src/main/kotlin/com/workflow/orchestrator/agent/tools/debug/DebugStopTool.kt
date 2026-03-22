@@ -27,7 +27,7 @@ class DebugStopTool(
         ),
         required = emptyList()
     )
-    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.CODER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content

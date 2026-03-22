@@ -68,8 +68,8 @@ class CreateRunConfigToolTest {
     }
 
     @Test
-    fun `allowedWorkers includes CODER and ANALYZER`() {
-        assertEquals(setOf(WorkerType.CODER, WorkerType.ANALYZER), tool.allowedWorkers)
+    fun `allowedWorkers includes CODER only`() {
+        assertEquals(setOf(WorkerType.CODER), tool.allowedWorkers)
     }
 
     @Test

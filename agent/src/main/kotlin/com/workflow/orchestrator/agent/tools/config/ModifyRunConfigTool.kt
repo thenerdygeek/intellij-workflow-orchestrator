@@ -55,7 +55,7 @@ class ModifyRunConfigTool : AgentTool {
         ),
         required = listOf("name")
     )
-    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.CODER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val configName = params["name"]?.jsonPrimitive?.contentOrNull

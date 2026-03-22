@@ -38,7 +38,7 @@ class EvaluateExpressionTool(
         ),
         required = listOf("expression")
     )
-    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val expression = params["expression"]?.jsonPrimitive?.content

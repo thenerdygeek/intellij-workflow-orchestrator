@@ -40,7 +40,7 @@ class RemoveBreakpointTool : AgentTool {
         ),
         required = listOf("file", "line")
     )
-    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.CODER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val filePath = params["file"]?.jsonPrimitive?.content

@@ -86,7 +86,7 @@ class CreateRunConfigTool : AgentTool {
         ),
         required = listOf("name", "type")
     )
-    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.CODER)
 
     companion object {
         const val AGENT_PREFIX = "[Agent] "

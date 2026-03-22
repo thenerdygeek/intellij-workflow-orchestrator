@@ -43,7 +43,7 @@ class StartDebugSessionToolTest {
 
     @Test
     fun `start tool allowed workers`() {
-        assertEquals(setOf(WorkerType.CODER, WorkerType.ANALYZER), startTool.allowedWorkers)
+        assertEquals(setOf(WorkerType.CODER), startTool.allowedWorkers)
     }
 
     @Test
@@ -92,8 +92,8 @@ class StartDebugSessionToolTest {
         }
 
         @Test
-        fun `allowed workers include CODER and ANALYZER`() {
-            assertEquals(setOf(WorkerType.CODER, WorkerType.ANALYZER), tool.allowedWorkers)
+        fun `allowed workers include CODER only`() {
+            assertEquals(setOf(WorkerType.CODER), tool.allowedWorkers)
         }
 
         @Test
@@ -193,8 +193,8 @@ class StartDebugSessionToolTest {
         }
 
         @Test
-        fun `allowed workers include CODER and ANALYZER`() {
-            assertEquals(setOf(WorkerType.CODER, WorkerType.ANALYZER), tool.allowedWorkers)
+        fun `allowed workers include CODER only`() {
+            assertEquals(setOf(WorkerType.CODER), tool.allowedWorkers)
         }
 
         @Test
@@ -322,8 +322,8 @@ class StartDebugSessionToolTest {
         }
 
         @Test
-        fun `allowed workers include CODER and ANALYZER`() {
-            assertEquals(setOf(WorkerType.CODER, WorkerType.ANALYZER), tool.allowedWorkers)
+        fun `allowed workers include CODER only`() {
+            assertEquals(setOf(WorkerType.CODER), tool.allowedWorkers)
         }
 
         @Test
@@ -408,7 +408,7 @@ class StartDebugSessionToolTest {
 
     @Test
     fun `all 8 tools have correct allowed workers`() {
-        val expected = setOf(WorkerType.CODER, WorkerType.ANALYZER)
+        val expected = setOf(WorkerType.CODER)
         val tools = listOf(
             startTool,
             DebugStepOverTool(controller),

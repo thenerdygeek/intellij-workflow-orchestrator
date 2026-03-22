@@ -39,8 +39,8 @@ class EvaluateExpressionToolTest {
     }
 
     @Test
-    fun `allowed workers include CODER, REVIEWER, and ANALYZER`() {
-        assertEquals(setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER), tool.allowedWorkers)
+    fun `allowed workers include CODER and REVIEWER`() {
+        assertEquals(setOf(WorkerType.CODER, WorkerType.REVIEWER), tool.allowedWorkers)
     }
 
     @Test
