@@ -67,6 +67,11 @@ code, pre, .font-mono {
   80% { transform: translateX(1px); }
 }
 
+@keyframes flowDash {
+  from { stroke-dashoffset: 18; }
+  to { stroke-dashoffset: 0; }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
