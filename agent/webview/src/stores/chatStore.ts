@@ -1,96 +1,460 @@
 import { create } from 'zustand';
+import type {
+  Message,
+  ToolCall,
+  ToolCallStatus,
+  Plan,
+  PlanStepStatus,
+  Question,
+  SessionInfo,
+  SessionStatus,
+  Mention,
+  MentionSearchResult,
+  StatusType,
+  EditDiff,
+  Skill,
+  ToastType,
+} from '../bridge/types';
 
-// Minimal stub store — real implementation in Task 4
-// Every method referenced by jcef-bridge.ts is a no-op here
-
-interface ChatStoreStub {
-  // State
-  busy: boolean;
-  inputLocked: boolean;
-
-  // Methods (all no-ops for now)
-  startSession: (task: string) => void;
-  addMessage: (role: string, text: string) => void;
-  endStream: () => void;
-  completeSession: (info: any) => void;
-  appendToken: (token: string) => void;
-  addToolCall: (name: string, args: string, status: string) => void;
-  updateToolCall: (name: string, status: string, result?: string, durationMs?: number) => void;
-  addDiff: (diff: any) => void;
-  addStatus: (message: string, type: string) => void;
-  addThinking: (text: string) => void;
-  clearChat: () => void;
-  showToolsPanel: (toolsJson: string) => void;
-  hideToolsPanel: () => void;
-  setPlan: (plan: any) => void;
-  updatePlanStep: (stepId: string, status: string) => void;
-  showQuestions: (questions: any) => void;
-  showQuestion: (index: number) => void;
-  showQuestionSummary: (summary: any) => void;
-  setInputLocked: (locked: boolean) => void;
-  setBusy: (busy: boolean) => void;
-  updateTokenBudget: (used: number, max: number) => void;
-  setModelName: (name: string) => void;
-  updateSkillsList: (skills: any) => void;
-  showRetryButton: (lastMessage: string) => void;
-  focusInput: () => void;
-  showSkillBanner: (name: string) => void;
-  hideSkillBanner: () => void;
-  addChart: (chartConfigJson: string) => void;
-  addAnsiOutput: (text: string) => void;
-  showSkeleton: () => void;
-  hideSkeleton: () => void;
-  showToast: (message: string, type: string, durationMs: number) => void;
-  addTabs: (tabsJson: string) => void;
-  addTimeline: (itemsJson: string) => void;
-  addProgressBar: (percent: number, type: string) => void;
-  addJiraCard: (cardJson: string) => void;
-  addSonarBadge: (badgeJson: string) => void;
-  receiveMentionResults: (results: any) => void;
+// ── Internal ID generator ──
+let _idCounter = 0;
+function nextId(prefix: string = 'msg'): string {
+  return `${prefix}-${Date.now()}-${++_idCounter}`;
 }
 
-const noop = () => {};
+// ── Toast state ──
+interface Toast {
+  id: string;
+  message: string;
+  type: ToastType;
+  durationMs: number;
+}
 
-export const useChatStore = create<ChatStoreStub>()((set) => ({
+// ── Chat store state ──
+interface ChatState {
+  // State
+  messages: Message[];
+  activeStream: { text: string; isStreaming: boolean } | null;
+  activeToolCalls: Map<string, ToolCall>;
+  plan: Plan | null;
+  questions: Question[] | null;
+  activeQuestionIndex: number;
+  questionSummary: any | null;
+  session: SessionInfo;
+  inputState: {
+    locked: boolean;
+    mentions: Mention[];
+    model: string;
+    mode: 'agent' | 'plan';
+  };
+  busy: boolean;
+  showingToolsPanel: boolean;
+  toolsPanelData: string | null;
+  showingSkeleton: boolean;
+  retryMessage: string | null;
+  toasts: Toast[];
+  skillBanner: string | null;
+  skillsList: Skill[];
+  tokenBudget: { used: number; max: number };
+  mentionResults: MentionSearchResult[];
+  focusInputTrigger: number;
+
+  // Actions
+  startSession(task: string): void;
+  completeSession(info: SessionInfo): void;
+  addMessage(role: 'user' | 'agent', content: string): void;
+  appendToken(token: string): void;
+  endStream(): void;
+  addToolCall(name: string, args: string, status: ToolCallStatus): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number): void;
+  addDiff(diff: EditDiff): void;
+  addStatus(message: string, type: StatusType): void;
+  addThinking(text: string): void;
+  clearChat(): void;
+  setPlan(plan: Plan): void;
+  updatePlanStep(stepId: string, status: string): void;
+  showQuestions(questions: Question[]): void;
+  showQuestion(index: number): void;
+  showQuestionSummary(summary: any): void;
+  setInputLocked(locked: boolean): void;
+  setBusy(busy: boolean): void;
+  setModelName(model: string): void;
+  updateTokenBudget(used: number, max: number): void;
+  updateSkillsList(skills: Skill[]): void;
+  showSkillBanner(name: string): void;
+  hideSkillBanner(): void;
+  showToolsPanel(toolsJson: string): void;
+  hideToolsPanel(): void;
+  showRetryButton(lastMessage: string): void;
+  focusInput(): void;
+  addChart(chartConfigJson: string): void;
+  addAnsiOutput(text: string): void;
+  addTabs(tabsJson: string): void;
+  addTimeline(itemsJson: string): void;
+  addProgressBar(percent: number, type: string): void;
+  addJiraCard(cardJson: string): void;
+  addSonarBadge(badgeJson: string): void;
+  showSkeleton(): void;
+  hideSkeleton(): void;
+  showToast(message: string, type: string, durationMs: number): void;
+  dismissToast(id: string): void;
+  receiveMentionResults(results: MentionSearchResult[]): void;
+  sendMessage(text: string, mentions: Mention[]): void;
+}
+
+export const useChatStore = create<ChatState>((set, get) => ({
+  // Initial state
+  messages: [],
+  activeStream: null,
+  activeToolCalls: new Map(),
+  plan: null,
+  questions: null,
+  activeQuestionIndex: 0,
+  questionSummary: null,
+  session: {
+    status: 'RUNNING' as SessionStatus,
+    tokensUsed: 0,
+    durationMs: 0,
+    iterations: 0,
+    filesModified: [],
+  },
+  inputState: {
+    locked: false,
+    mentions: [],
+    model: '',
+    mode: 'agent',
+  },
   busy: false,
-  inputLocked: false,
+  showingToolsPanel: false,
+  toolsPanelData: null,
+  showingSkeleton: false,
+  retryMessage: null,
+  toasts: [],
+  skillBanner: null,
+  skillsList: [],
+  tokenBudget: { used: 0, max: 0 },
+  mentionResults: [],
+  focusInputTrigger: 0,
 
-  startSession: noop,
-  addMessage: noop,
-  endStream: noop,
-  completeSession: noop,
-  appendToken: noop,
-  addToolCall: noop,
-  updateToolCall: noop,
-  addDiff: noop,
-  addStatus: noop,
-  addThinking: noop,
-  clearChat: noop,
-  showToolsPanel: noop,
-  hideToolsPanel: noop,
-  setPlan: noop,
-  updatePlanStep: noop,
-  showQuestions: noop,
-  showQuestion: noop,
-  showQuestionSummary: noop,
-  setInputLocked: (locked: boolean) => set({ inputLocked: locked }),
-  setBusy: (busy: boolean) => set({ busy }),
-  updateTokenBudget: noop,
-  setModelName: noop,
-  updateSkillsList: noop,
-  showRetryButton: noop,
-  focusInput: noop,
-  showSkillBanner: noop,
-  hideSkillBanner: noop,
-  addChart: noop,
-  addAnsiOutput: noop,
-  showSkeleton: noop,
-  hideSkeleton: noop,
-  showToast: noop,
-  addTabs: noop,
-  addTimeline: noop,
-  addProgressBar: noop,
-  addJiraCard: noop,
-  addSonarBadge: noop,
-  receiveMentionResults: noop,
+  // Actions
+  startSession(_task: string) {
+    set({
+      messages: [],
+      activeStream: null,
+      activeToolCalls: new Map(),
+      plan: null,
+      questions: null,
+      questionSummary: null,
+      busy: true,
+      retryMessage: null,
+      session: {
+        status: 'RUNNING',
+        tokensUsed: 0,
+        durationMs: 0,
+        iterations: 0,
+        filesModified: [],
+      },
+    });
+  },
+
+  completeSession(info: SessionInfo) {
+    set({
+      session: info,
+      busy: false,
+      activeStream: null,
+    });
+  },
+
+  addMessage(role: 'user' | 'agent', content: string) {
+    const message: Message = {
+      id: nextId('msg'),
+      role,
+      content,
+      timestamp: Date.now(),
+    };
+    set(state => ({
+      messages: [...state.messages, message],
+    }));
+  },
+
+  appendToken(token: string) {
+    set(state => {
+      const stream = state.activeStream ?? { text: '', isStreaming: true };
+      return {
+        activeStream: {
+          text: stream.text + token,
+          isStreaming: true,
+        },
+      };
+    });
+  },
+
+  endStream() {
+    const stream = get().activeStream;
+    if (stream && stream.text.length > 0) {
+      const message: Message = {
+        id: nextId('msg'),
+        role: 'agent',
+        content: stream.text,
+        timestamp: Date.now(),
+      };
+      set(state => ({
+        messages: [...state.messages, message],
+        activeStream: null,
+      }));
+    } else {
+      set({ activeStream: null });
+    }
+  },
+
+  addToolCall(name: string, args: string, status: ToolCallStatus) {
+    set(state => {
+      const newMap = new Map(state.activeToolCalls);
+      newMap.set(name, { name, args, status });
+      return { activeToolCalls: newMap };
+    });
+  },
+
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number) {
+    set(state => {
+      const newMap = new Map(state.activeToolCalls);
+      const existing = newMap.get(name);
+      if (existing) {
+        newMap.set(name, { ...existing, status, result, durationMs });
+      } else {
+        newMap.set(name, { name, args: '', status, result, durationMs });
+      }
+      return { activeToolCalls: newMap };
+    });
+  },
+
+  addDiff(diff: EditDiff) {
+    const message: Message = {
+      id: nextId('diff'),
+      role: 'system',
+      content: JSON.stringify(diff),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addStatus(message: string, type: StatusType) {
+    const statusMessage: Message = {
+      id: nextId('status'),
+      role: 'system',
+      content: JSON.stringify({ type: 'status', message, statusType: type }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, statusMessage] }));
+  },
+
+  addThinking(text: string) {
+    const thinkingMessage: Message = {
+      id: nextId('thinking'),
+      role: 'system',
+      content: JSON.stringify({ type: 'thinking', text }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, thinkingMessage] }));
+  },
+
+  clearChat() {
+    set({
+      messages: [],
+      activeStream: null,
+      activeToolCalls: new Map(),
+      plan: null,
+      questions: null,
+      questionSummary: null,
+      retryMessage: null,
+    });
+  },
+
+  setPlan(plan: Plan) {
+    set({ plan });
+  },
+
+  updatePlanStep(stepId: string, status: string) {
+    set(state => {
+      if (!state.plan) return {};
+      const steps = state.plan.steps.map(step =>
+        step.id === stepId ? { ...step, status: status as PlanStepStatus } : step
+      );
+      return { plan: { ...state.plan, steps } };
+    });
+  },
+
+  showQuestions(questions: Question[]) {
+    set({ questions, activeQuestionIndex: 0, questionSummary: null });
+  },
+
+  showQuestion(index: number) {
+    set({ activeQuestionIndex: index });
+  },
+
+  showQuestionSummary(summary: any) {
+    set({ questionSummary: summary });
+  },
+
+  setInputLocked(locked: boolean) {
+    set(state => ({
+      inputState: { ...state.inputState, locked },
+    }));
+  },
+
+  setBusy(busy: boolean) {
+    set({ busy });
+  },
+
+  setModelName(model: string) {
+    set(state => ({
+      inputState: { ...state.inputState, model },
+    }));
+  },
+
+  updateTokenBudget(used: number, max: number) {
+    set({ tokenBudget: { used, max } });
+  },
+
+  updateSkillsList(skills: Skill[]) {
+    set({ skillsList: skills });
+  },
+
+  showSkillBanner(name: string) {
+    set({ skillBanner: name });
+  },
+
+  hideSkillBanner() {
+    set({ skillBanner: null });
+  },
+
+  showToolsPanel(toolsJson: string) {
+    set({ showingToolsPanel: true, toolsPanelData: toolsJson });
+  },
+
+  hideToolsPanel() {
+    set({ showingToolsPanel: false, toolsPanelData: null });
+  },
+
+  showRetryButton(lastMessage: string) {
+    set({ retryMessage: lastMessage });
+  },
+
+  focusInput() {
+    set(state => ({ focusInputTrigger: state.focusInputTrigger + 1 }));
+  },
+
+  addChart(chartConfigJson: string) {
+    const message: Message = {
+      id: nextId('chart'),
+      role: 'system',
+      content: JSON.stringify({ type: 'chart', config: chartConfigJson }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addAnsiOutput(text: string) {
+    const message: Message = {
+      id: nextId('ansi'),
+      role: 'system',
+      content: JSON.stringify({ type: 'ansi', text }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addTabs(tabsJson: string) {
+    const message: Message = {
+      id: nextId('tabs'),
+      role: 'system',
+      content: JSON.stringify({ type: 'tabs', data: tabsJson }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addTimeline(itemsJson: string) {
+    const message: Message = {
+      id: nextId('timeline'),
+      role: 'system',
+      content: JSON.stringify({ type: 'timeline', data: itemsJson }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addProgressBar(percent: number, type: string) {
+    const message: Message = {
+      id: nextId('progress'),
+      role: 'system',
+      content: JSON.stringify({ type: 'progressBar', percent, barType: type }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addJiraCard(cardJson: string) {
+    const message: Message = {
+      id: nextId('jira'),
+      role: 'system',
+      content: JSON.stringify({ type: 'jiraCard', data: cardJson }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addSonarBadge(badgeJson: string) {
+    const message: Message = {
+      id: nextId('sonar'),
+      role: 'system',
+      content: JSON.stringify({ type: 'sonarBadge', data: badgeJson }),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  showSkeleton() {
+    set({ showingSkeleton: true });
+  },
+
+  hideSkeleton() {
+    set({ showingSkeleton: false });
+  },
+
+  showToast(message: string, type: string, durationMs: number) {
+    const toast: Toast = {
+      id: nextId('toast'),
+      message,
+      type: type as ToastType,
+      durationMs,
+    };
+    set(state => ({ toasts: [...state.toasts, toast] }));
+    if (durationMs > 0) {
+      setTimeout(() => {
+        get().dismissToast(toast.id);
+      }, durationMs);
+    }
+  },
+
+  dismissToast(id: string) {
+    set(state => ({
+      toasts: state.toasts.filter(t => t.id !== id),
+    }));
+  },
+
+  receiveMentionResults(results: MentionSearchResult[]) {
+    set({ mentionResults: results });
+  },
+
+  sendMessage(text: string, mentions: Mention[]) {
+    get().addMessage('user', text);
+    import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
+      if (mentions.length > 0) {
+        kotlinBridge.sendMessageWithMentions(text, JSON.stringify(mentions));
+      } else {
+        kotlinBridge.sendMessage(text);
+      }
+    });
+  },
 }));

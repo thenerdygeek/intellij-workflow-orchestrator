@@ -1,11 +1,51 @@
 import { create } from 'zustand';
+import type { VisualizationType, VisualizationConfig } from '../bridge/types';
 
-// Minimal stub store — real implementation in Task 4
+const defaultVisualizationConfig: VisualizationConfig = {
+  enabled: true,
+  autoRender: true,
+  defaultExpanded: false,
+  maxHeight: 300,
+};
 
-interface SettingsStoreStub {
-  visualizationsEnabled: boolean;
+const defaultVisualizations: Record<VisualizationType, VisualizationConfig> = {
+  mermaid: { ...defaultVisualizationConfig },
+  chart: { ...defaultVisualizationConfig },
+  flow: { ...defaultVisualizationConfig },
+  math: { ...defaultVisualizationConfig, defaultExpanded: true, maxHeight: 0 },
+  diff: { ...defaultVisualizationConfig, defaultExpanded: true, maxHeight: 400 },
+  interactiveHtml: { ...defaultVisualizationConfig, maxHeight: 500 },
+};
+
+interface SettingsState {
+  visualizations: Record<VisualizationType, VisualizationConfig>;
+  updateVisualization(type: VisualizationType, config: Partial<VisualizationConfig>): void;
+  resetVisualization(type: VisualizationType): void;
+  resetAll(): void;
 }
 
-export const useSettingsStore = create<SettingsStoreStub>()(() => ({
-  visualizationsEnabled: true,
+export const useSettingsStore = create<SettingsState>((set) => ({
+  visualizations: { ...defaultVisualizations },
+
+  updateVisualization(type: VisualizationType, config: Partial<VisualizationConfig>) {
+    set(state => ({
+      visualizations: {
+        ...state.visualizations,
+        [type]: { ...state.visualizations[type], ...config },
+      },
+    }));
+  },
+
+  resetVisualization(type: VisualizationType) {
+    set(state => ({
+      visualizations: {
+        ...state.visualizations,
+        [type]: { ...defaultVisualizationConfig },
+      },
+    }));
+  },
+
+  resetAll() {
+    set({ visualizations: { ...defaultVisualizations } });
+  },
 }));
