@@ -12,8 +12,10 @@
     "@tanstack/react-virtual": "^3.13.6",
     "@types/dagre": "^0.7.54",
     "ansi_up": "^6.0.2",
+    "chart.js": "^4.5.1",
     "dagre": "^0.8.5",
     "dompurify": "^3.2.4",
+    "katex": "^0.16.40",
     "mermaid": "^11.13.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -26,6 +28,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.4",
     "@types/dompurify": "^3.2.0",
+    "@types/katex": "^0.16.8",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.4.1",
