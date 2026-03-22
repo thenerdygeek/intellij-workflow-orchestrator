@@ -148,8 +148,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const results = JSON.parse(resultsJson);
     stores?.getChatStore().receiveMentionResults(results);
   },
-  applyTheme(vars: Record<string, string>) {
-    stores?.getThemeStore().applyTheme(JSON.stringify(vars));
+  applyTheme(vars: Record<string, string> | string) {
+    stores?.getThemeStore().applyTheme(vars);
   },
   setPrismTheme(isDark: boolean) {
     stores?.getThemeStore().setIsDark(isDark);
