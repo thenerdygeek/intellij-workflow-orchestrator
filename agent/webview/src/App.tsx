@@ -4,6 +4,7 @@ import { installMockBridge, simulateTheme } from './bridge/mock-bridge'
 import { useChatStore } from './stores/chatStore'
 import { useThemeStore } from './stores/themeStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { MessageList } from '@/components/chat/MessageList'
 
 function App() {
   useEffect(() => {
@@ -20,11 +21,13 @@ function App() {
   }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-[var(--bg,#2b2d30)] text-[var(--fg,#cbd5e1)]">
-      <h1 className="text-2xl font-semibold">Agent Chat</h1>
-      <p className="text-sm text-[var(--fg-secondary,#94a3b8)] mt-2">
-        Bridge initialized. {isJcefEnvironment() ? 'JCEF mode' : 'Dev mode — open console for __mock commands.'}
-      </p>
+    <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
+      <MessageList />
+      <div className="border-t border-[var(--border,#333)] px-4 py-3">
+        <div className="rounded-lg border border-[var(--input-border,#444)] bg-[var(--input-bg,#2a2a2a)] px-3 py-2 text-[13px] text-[var(--fg-muted,#888)]">
+          Ask anything...
+        </div>
+      </div>
     </div>
   );
 }
