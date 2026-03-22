@@ -50,7 +50,7 @@ class SpawnAgentTool : AgentTool {
 
         val BUILT_IN_AGENTS = mapOf(
             "general-purpose" to BuiltInAgent(WorkerType.ORCHESTRATOR, "Full capability agent for complex tasks"),
-            "explorer" to BuiltInAgent(WorkerType.ANALYZER, "Fast read-only codebase exploration"),
+            "explorer" to BuiltInAgent(WorkerType.ANALYZER, "Fast read-only codebase exploration with PSI intelligence — specify thoroughness: quick/medium/very thorough"),
             "coder" to BuiltInAgent(WorkerType.CODER, "Code editing and implementation"),
             "reviewer" to BuiltInAgent(WorkerType.REVIEWER, "Code review and analysis"),
             "tooler" to BuiltInAgent(WorkerType.TOOLER, "Integration tools (Jira, Bamboo, SonarQube)")
@@ -64,12 +64,20 @@ class SpawnAgentTool : AgentTool {
             "with its own tools and returns results.\n\n" +
             "Available agent types:\n" +
             "- general-purpose: Full tool access, for complex multi-step tasks\n" +
-            "- explorer: Read-only, fast codebase exploration\n" +
+            "- explorer: Read-only, fast codebase exploration. Specify thoroughness in prompt: " +
+            "'quick' (1-3 calls, targeted lookup), 'medium' (3-6 calls, default), " +
+            "'very thorough' (6-10 calls, exhaustive). Uses PSI tools for semantically accurate navigation. " +
+            "Prefer explorer over direct Grep/Glob when: the search is open-ended, requires >3 queries, " +
+            "or needs to follow references/inheritance/call chains.\n" +
             "- coder: Code editing and implementation\n" +
             "- reviewer: Code review and analysis (read-only)\n" +
             "- tooler: Integration tools (Jira, Bamboo, SonarQube, Bitbucket)\n" +
             "Or specify any custom agent defined in .workflow/agents/\n\n" +
             "If subagent_type is omitted, defaults to general-purpose.\n\n" +
+            "When NOT to use explorer (use direct tools instead):\n" +
+            "- Reading a specific known file → read_file\n" +
+            "- Searching for a specific class/method → search_code or find_definition\n" +
+            "- Searching within 1-3 known files → read_file\n\n" +
             "Lifecycle:\n" +
             "- Resume: agent(resume='agentId', prompt='continue with...') — continues a previous agent\n" +
             "- Background: agent(run_in_background=true, ...) — returns immediately, notifies on completion\n" +
