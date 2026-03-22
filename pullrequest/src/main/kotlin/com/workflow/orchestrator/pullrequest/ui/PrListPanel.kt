@@ -29,7 +29,9 @@ data class PrListItem(
     val toBranch: String,
     /** true = section header (non-selectable), false = normal PR row */
     val isHeader: Boolean = false,
-    val version: Int = 0
+    val version: Int = 0,
+    /** Source repo name — displayed as badge when multiple repos are configured */
+    val repoName: String = ""
 )
 
 /**
@@ -40,6 +42,8 @@ class PrListPanel : JPanel(BorderLayout()) {
 
     private var allItems: List<PrListItem> = emptyList()
     private var filterDebounceTimer: Timer? = null
+    /** When true, repo badge is shown on each PR row (set by dashboard when multiple repos configured) */
+    var showRepoBadge: Boolean = false
 
     private val searchField = SearchTextField(false).apply {
         textEditor.emptyText.text = "Filter by title, author, or branch..."
@@ -60,7 +64,7 @@ class PrListPanel : JPanel(BorderLayout()) {
 
     private val listModel = DefaultListModel<PrListItem>()
     val prList = JBList(listModel).apply {
-        cellRenderer = PrListCellRenderer()
+        cellRenderer = PrListCellRenderer { showRepoBadge }
         selectionMode = ListSelectionModel.SINGLE_SELECTION
         fixedCellHeight = JBUI.scale(62)
         border = JBUI.Borders.empty()
@@ -175,6 +179,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     || item.authorName.contains(text, ignoreCase = true)
                     || item.fromBranch.contains(text, ignoreCase = true)
                     || item.toBranch.contains(text, ignoreCase = true)
+                    || item.repoName.contains(text, ignoreCase = true)
                 ) {
                     if (lastHeader != null) {
                         result.add(lastHeader)
@@ -223,7 +228,7 @@ class PrListPanel : JPanel(BorderLayout()) {
     // Cell renderer
     // ---------------------------------------------------------------
 
-    private class PrListCellRenderer : ListCellRenderer<PrListItem> {
+    private class PrListCellRenderer(private val showRepoBadgeProvider: () -> Boolean) : ListCellRenderer<PrListItem> {
 
         // Cached header cell components
         private val headerPanel = JPanel(BorderLayout()).apply {
@@ -263,6 +268,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         private val idLabel = JBLabel().apply {
             font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
         }
+        private val repoBadgePanel = RepoBadgePanel()
         private val titleLabel = JBLabel().apply {
             font = font.deriveFont(JBUI.scale(12).toFloat())
             border = JBUI.Borders.emptyLeft(6)
@@ -292,6 +298,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         init {
             headerPanel.add(headerLabel, BorderLayout.WEST)
 
+            topLeft.add(repoBadgePanel)
             topLeft.add(idLabel)
             topLeft.add(titleLabel)
             topRow.add(topLeft, BorderLayout.CENTER)
@@ -313,6 +320,14 @@ class PrListPanel : JPanel(BorderLayout()) {
             }
 
             selectedState = isSelected
+
+            // Repo badge — only visible when multiple repos configured
+            if (showRepoBadgeProvider() && value.repoName.isNotBlank()) {
+                repoBadgePanel.update(value.repoName)
+                repoBadgePanel.isVisible = true
+            } else {
+                repoBadgePanel.isVisible = false
+            }
 
             idLabel.text = "#${value.id}"
             idLabel.foreground = if (isSelected) JBColor.foreground() else LINK_COLOR
@@ -345,6 +360,48 @@ class PrListPanel : JPanel(BorderLayout()) {
             }
 
             return prPanel
+        }
+
+        /** Repo name badge shown when multiple repos are configured. */
+        private class RepoBadgePanel : JPanel() {
+            private var badgeText: String = ""
+
+            init {
+                isOpaque = false
+                border = JBUI.Borders.emptyRight(4)
+            }
+
+            fun update(repoName: String) {
+                badgeText = repoName
+                val fm = getFontMetrics(font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat()))
+                val textW = fm.stringWidth(badgeText)
+                preferredSize = Dimension(textW + JBUI.scale(10), fm.height + JBUI.scale(4))
+            }
+
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                if (badgeText.isEmpty()) return
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
+                if (desktopHints != null) {
+                    desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
+                } else {
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+                }
+                g2.color = StatusColors.INFO
+                g2.fill(RoundRectangle2D.Float(
+                    0f, 0f, width.toFloat(), height.toFloat(),
+                    JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
+                ))
+                g2.color = JBColor.WHITE
+                g2.font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
+                val fm = g2.fontMetrics
+                val textX = (width - fm.stringWidth(badgeText)) / 2
+                val textY = (height + fm.ascent - fm.descent) / 2
+                g2.drawString(badgeText, textX, textY)
+                g2.dispose()
+            }
         }
 
         /** Cached status badge that repaints with updated color/text. */

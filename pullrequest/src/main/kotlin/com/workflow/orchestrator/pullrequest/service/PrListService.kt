@@ -102,14 +102,6 @@ class PrListService(private val project: Project) : Disposable {
             return
         }
 
-        val settings = pluginSettings.state
-        val projectKey = settings.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
-        if (projectKey.isBlank() || repoSlug.isBlank()) {
-            log.info("[PR:List] Bitbucket project/repo not configured, skipping refresh")
-            return
-        }
-
         val client = getClient(bitbucketUrl)
 
         // Auto-detect username on first call (or use saved setting)
@@ -129,17 +121,44 @@ class PrListService(private val project: Project) : Disposable {
                 }
             }
 
-        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
+        // Collect repos to query — use multi-repo list, fall back to scalar settings
+        val repos = pluginSettings.getRepos().filter { it.isConfigured }
+        val repoEntries = if (repos.isNotEmpty()) {
+            repos.map { Triple(it.bitbucketProjectKey ?: "", it.bitbucketRepoSlug ?: "", it.displayLabel) }
+        } else {
+            val settings = pluginSettings.state
+            val projectKey = settings.bitbucketProjectKey.orEmpty()
+            val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+            if (projectKey.isBlank() || repoSlug.isBlank()) {
+                log.info("[PR:List] Bitbucket project/repo not configured, skipping refresh")
+                return
+            }
+            listOf(Triple(projectKey, repoSlug, repoSlug))
+        }
 
-        // Fetch PRs authored by the current user (paginated)
-        val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
-        _myPrs.value = myResults
-        log.info("[PR:List] Found ${myResults.size} authored PRs (state=$currentState)")
+        val allMyPrs = mutableListOf<BitbucketPrDetail>()
+        val allReviewingPrs = mutableListOf<BitbucketPrDetail>()
 
-        // Fetch PRs where the current user is a reviewer (paginated)
-        val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
-        _reviewingPrs.value = reviewResults
-        log.info("[PR:List] Found ${reviewResults.size} reviewing PRs (state=$currentState)")
+        for ((projectKey, repoSlug, repoName) in repoEntries) {
+            log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
+
+            // Fetch PRs authored by the current user (paginated)
+            val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
+            // Tag each PR with its source repo name
+            myResults.forEach { it.repoName = repoName }
+            allMyPrs.addAll(myResults)
+
+            // Fetch PRs where the current user is a reviewer (paginated)
+            val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
+            reviewResults.forEach { it.repoName = repoName }
+            allReviewingPrs.addAll(reviewResults)
+        }
+
+        _myPrs.value = allMyPrs
+        log.info("[PR:List] Found ${allMyPrs.size} authored PRs across ${repoEntries.size} repos (state=$currentState)")
+
+        _reviewingPrs.value = allReviewingPrs
+        log.info("[PR:List] Found ${allReviewingPrs.size} reviewing PRs across ${repoEntries.size} repos (state=$currentState)")
     }
 
     /**

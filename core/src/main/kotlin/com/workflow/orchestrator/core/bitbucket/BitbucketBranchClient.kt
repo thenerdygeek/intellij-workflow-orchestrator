@@ -147,7 +147,11 @@ data class BitbucketPrDetail(
     val fromRef: BitbucketPrRef? = null,
     val toRef: BitbucketPrRef? = null,
     val links: BitbucketLinks? = null
-)
+) {
+    /** Transient repo name — set after fetch to identify source repo in multi-repo setups */
+    @kotlinx.serialization.Transient
+    var repoName: String = ""
+}
 
 @Serializable
 data class BitbucketPrParticipant(

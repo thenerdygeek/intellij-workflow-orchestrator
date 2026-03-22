@@ -15,11 +15,14 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import kotlinx.coroutines.*
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import javax.swing.DefaultComboBoxModel
+import javax.swing.JComboBox
 import javax.swing.JPanel
 import javax.swing.JToggleButton
 import javax.swing.ButtonGroup
@@ -66,11 +69,18 @@ class PrDashboardPanel(
         isVisible = false
     }
 
+    // -- Repo filter dropdown (only visible when multiple repos configured) --
+    private val repoFilterModel = DefaultComboBoxModel(arrayOf("All Repos"))
+    private val repoFilter = JComboBox(repoFilterModel).apply {
+        isVisible = false
+    }
+
     // -- State --
     private var currentMyPrs: List<BitbucketPrDetail> = emptyList()
     private var currentReviewingPrs: List<BitbucketPrDetail> = emptyList()
     private enum class PrFilter { MY, REVIEWING, ALL }
     private var activeFilter = PrFilter.MY
+    private var activeRepoFilter: String? = null  // null = all repos
     private var lastUpdatedMillis: Long = 0
 
     init {
@@ -78,6 +88,7 @@ class PrDashboardPanel(
         isOpaque = true
 
         setupLayout()
+        setupRepoFilter()
         setupListeners()
         startDataCollection()
         setupVisibilityListener()
@@ -118,6 +129,7 @@ class PrDashboardPanel(
         filterPanel.add(myPrsToggle)
         filterPanel.add(reviewingToggle)
         filterPanel.add(allToggle)
+        filterPanel.add(repoFilter)
         topPanel.add(filterPanel, BorderLayout.CENTER)
 
         // State filter toggles (Open | Merged | Declined) — right side
@@ -155,6 +167,30 @@ class PrDashboardPanel(
         bottomPanel.add(loadingIcon)
         bottomPanel.add(statusLabel)
         add(bottomPanel, BorderLayout.SOUTH)
+    }
+
+    // ---------------------------------------------------------------
+    // Repo filter
+    // ---------------------------------------------------------------
+
+    private fun setupRepoFilter() {
+        val repos = PluginSettings.getInstance(project).getRepos().filter { it.isConfigured }
+        val multiRepo = repos.size > 1
+        repoFilter.isVisible = multiRepo
+        listPanel.showRepoBadge = multiRepo
+
+        if (multiRepo) {
+            repoFilterModel.removeAllElements()
+            repoFilterModel.addElement("All Repos")
+            repos.forEach { repoFilterModel.addElement(it.displayLabel) }
+            repoFilter.selectedIndex = 0
+        }
+
+        repoFilter.addActionListener {
+            val selected = repoFilter.selectedItem as? String
+            activeRepoFilter = if (selected == "All Repos") null else selected
+            refreshListView()
+        }
     }
 
     // ---------------------------------------------------------------
@@ -272,8 +308,12 @@ class PrDashboardPanel(
     }
 
     private fun refreshListView() {
-        val myItems = currentMyPrs.map { it.toPrListItem() }
-        val reviewingItems = currentReviewingPrs.map { it.toPrListItem() }
+        val repoName = activeRepoFilter
+        val filteredMyPrs = if (repoName != null) currentMyPrs.filter { it.repoName == repoName } else currentMyPrs
+        val filteredReviewingPrs = if (repoName != null) currentReviewingPrs.filter { it.repoName == repoName } else currentReviewingPrs
+
+        val myItems = filteredMyPrs.map { it.toPrListItem() }
+        val reviewingItems = filteredReviewingPrs.map { it.toPrListItem() }
 
         when (activeFilter) {
             PrFilter.MY -> listPanel.updatePrs(myItems, emptyList())
@@ -310,7 +350,8 @@ class PrDashboardPanel(
             reviewerCount = reviewers.size,
             updatedDate = updatedDate,
             fromBranch = fromRef?.displayId ?: "",
-            toBranch = toRef?.displayId ?: ""
+            toBranch = toRef?.displayId ?: "",
+            repoName = repoName
         )
     }
 
