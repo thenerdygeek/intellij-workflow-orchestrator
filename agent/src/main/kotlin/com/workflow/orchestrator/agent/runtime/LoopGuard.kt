@@ -131,6 +131,14 @@ class LoopGuard(
         readFiles.remove(filePath)
     }
 
+    /**
+     * Clear all file read tracking. Called after context pruning/compression
+     * so the agent can re-read files whose content was pruned from context.
+     */
+    fun clearAllFileReads() {
+        readFiles.clear()
+    }
+
     /** Reset state (for reuse across sessions). */
     fun reset() {
         recentDoomCalls.clear()

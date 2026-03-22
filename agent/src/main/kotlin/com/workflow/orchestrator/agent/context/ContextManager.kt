@@ -253,6 +253,26 @@ class ContextManager(
 
         if (messagesToSummarize.isEmpty()) return
 
+        // Orphan protection: if we're dropping an assistant message with tool_calls,
+        // also drop the corresponding tool result messages to avoid orphans.
+        val droppedToolCallIds = mutableSetOf<String>()
+        for (idx in indicesToRemove) {
+            val msg = messages[idx]
+            if (msg.role == "assistant" && msg.toolCalls != null) {
+                msg.toolCalls.forEach { tc -> droppedToolCallIds.add(tc.id) }
+            }
+        }
+        if (droppedToolCallIds.isNotEmpty()) {
+            for (i in messages.indices) {
+                if (i in indicesToRemove) continue
+                val msg = messages[i]
+                if (msg.role == "tool" && msg.toolCallId in droppedToolCallIds) {
+                    messagesToSummarize.add(msg)
+                    indicesToRemove.add(i)
+                }
+            }
+        }
+
         // Create anchored summary of dropped messages.
         // Uses LLM-powered summarization when brain is available, otherwise falls back
         // to the default truncation summarizer.
@@ -301,6 +321,26 @@ class ContextManager(
         }
 
         if (messagesToDrop.isEmpty()) return
+
+        // Orphan protection: if we're dropping an assistant message with tool_calls,
+        // also drop the corresponding tool result messages to avoid orphans.
+        val droppedToolCallIds = mutableSetOf<String>()
+        for (idx in indicesToRemove) {
+            val msg = messages[idx]
+            if (msg.role == "assistant" && msg.toolCalls != null) {
+                msg.toolCalls.forEach { tc -> droppedToolCallIds.add(tc.id) }
+            }
+        }
+        if (droppedToolCallIds.isNotEmpty()) {
+            for (i in messages.indices) {
+                if (i in indicesToRemove) continue
+                val msg = messages[i]
+                if (msg.role == "tool" && msg.toolCallId in droppedToolCallIds) {
+                    messagesToDrop.add(msg)
+                    indicesToRemove.add(i)
+                }
+            }
+        }
 
         val hasToolResults = messagesToDrop.any { it.role == "tool" }
 
@@ -560,4 +600,30 @@ critical for continuing the task.
 
     /** Check if budget is critically low (<10% remaining). */
     fun isBudgetCritical(): Boolean = remainingBudget() < (effectiveBudget * 0.10)
+
+    /**
+     * Remove the oldest system warning message from the internal messages list.
+     * Operates on [messages] (not [getMessages]) to avoid index mismatch with anchors.
+     *
+     * @return true if a warning was removed, false if none found
+     */
+    fun removeOldestSystemWarning(): Boolean {
+        val idx = messages.indexOfFirst { msg ->
+            msg.role == "system" && msg.content?.contains("system_warning") == true
+        }
+        if (idx >= 0) {
+            messages.removeAt(idx)
+            totalTokens = TokenEstimator.estimate(getMessages())
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Count the number of system warning messages in the internal messages list.
+     * Used to cap warnings and prevent context bloat from accumulated warnings.
+     */
+    fun countSystemWarnings(): Int = messages.count { msg ->
+        msg.role == "system" && msg.content?.contains("system_warning") == true
+    }
 }

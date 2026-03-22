@@ -237,6 +237,7 @@ class SingleAgentSession(
                         ))
                         // Compress to free space at high utilization
                         contextManager.compressWithLlm(brain)
+                        loopGuard.clearAllFileReads()
                     }
                 }
                 BudgetEnforcer.BudgetStatus.NUDGE -> {
@@ -256,6 +257,7 @@ class SingleAgentSession(
                     val messagesBefore = contextManager.messageCount
                     // Use LLM-powered compression when brain is available
                     contextManager.compressWithLlm(brain)
+                    loopGuard.clearAllFileReads()
                     sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, contextManager.currentTokens, messagesBefore - contextManager.messageCount)
                 }
                 BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
@@ -275,6 +277,10 @@ class SingleAgentSession(
             val usedPercent = if (maxInputTokens > 0) ((contextManager.currentTokens.toDouble() / maxInputTokens) * 100).toInt() else 0
             if (usedPercent > 50 && usedPercent / 10 > lastWarningPercent / 10) {
                 lastWarningPercent = usedPercent
+                // Cap system warnings at 2 — remove oldest before adding new one
+                while (contextManager.countSystemWarnings() >= 2) {
+                    contextManager.removeOldestSystemWarning()
+                }
                 val remaining = maxInputTokens - contextManager.currentTokens
                 contextManager.addMessage(ChatMessage(
                     role = "system",
@@ -286,6 +292,9 @@ class SingleAgentSession(
             val iterationPercent = (iteration * 100) / maxIterations
             when {
                 iterationPercent >= 95 -> {
+                    while (contextManager.countSystemWarnings() >= 2) {
+                        contextManager.removeOldestSystemWarning()
+                    }
                     contextManager.addMessage(ChatMessage(
                         role = "system",
                         content = "<system_warning>CRITICAL: This is your final iteration. Tools are disabled after this response. Provide a complete summary of what you accomplished and what remains.</system_warning>"
@@ -293,6 +302,9 @@ class SingleAgentSession(
                     forceTextOnly = true
                 }
                 iterationPercent >= 80 -> {
+                    while (contextManager.countSystemWarnings() >= 2) {
+                        contextManager.removeOldestSystemWarning()
+                    }
                     contextManager.addMessage(ChatMessage(
                         role = "system",
                         content = "<system_warning>IMPORTANT: You have used $iteration of $maxIterations iterations. Focus on completing the task. Avoid unnecessary exploration.</system_warning>"
@@ -319,6 +331,7 @@ class SingleAgentSession(
                 contextManager.pruneOldToolResults()
                 // Phase 2: Full compression (LLM if brain available, otherwise truncation)
                 try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
+                loopGuard.clearAllFileReads()
                 // Re-fetch messages after compression
                 val compressedMessages = contextManager.getMessages()
                 // Retry with reduced tools and compressed context
