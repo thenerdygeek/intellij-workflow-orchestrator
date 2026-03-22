@@ -44,9 +44,9 @@ class CefResourceSchemeHandler : CefResourceHandler {
 
     override fun processRequest(request: CefRequest, callback: CefCallback): Boolean {
         val url = request.url ?: return false
-        val path = url.removePrefix(BASE_URL).takeIf { it.isNotBlank() } ?: "agent-chat.html"
+        val path = url.removePrefix(BASE_URL).takeIf { it.isNotBlank() } ?: "index.html"
 
-        val resourcePath = "webview/$path"
+        val resourcePath = "webview/dist/$path"
         val bytes = try {
             javaClass.classLoader.getResourceAsStream(resourcePath)?.readBytes()
         } catch (e: Exception) {

@@ -215,6 +215,17 @@ export const kotlinBridge = {
   },
 };
 
+// ═══ Editor Tab Popout ═══
+
+export function openInEditorTab(type: string, content: string): void {
+  const bridge = (window as any)._openInEditorTab;
+  if (bridge) {
+    bridge(JSON.stringify({ type, content }));
+  } else {
+    console.warn('[bridge] _openInEditorTab not available — running in browser mode');
+  }
+}
+
 // ═══ Initialization ═══
 
 export function initBridge(storeAccessors: StoreAccessors): void {

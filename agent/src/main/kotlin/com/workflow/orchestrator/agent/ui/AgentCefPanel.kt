@@ -11,8 +11,10 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import java.awt.BorderLayout
@@ -41,6 +43,7 @@ class AgentCefPanel(
         fun isAvailable(): Boolean = try { JBCefApp.isSupported() } catch (_: Exception) { false }
     }
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var browser: JBCefBrowser? = null
     private var undoQuery: JBCefJSQuery? = null
     private var traceQuery: JBCefJSQuery? = null
@@ -67,6 +70,7 @@ class AgentCefPanel(
     private var openToolsPanelQuery: JBCefJSQuery? = null
     private var searchMentionsQuery: JBCefJSQuery? = null
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
+    private var openInEditorTabQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
     @Volatile private var pageLoaded = false
@@ -119,6 +123,8 @@ class AgentCefPanel(
     var onRequestFocusIde: (() -> Unit)? = null
     var onOpenSettings: (() -> Unit)? = null
     var onOpenToolsPanel: (() -> Unit)? = null
+    /** Callback when user clicks "Open in Tab" on a visualization. Params: type, content JSON payload. */
+    var onOpenInEditorTab: ((String) -> Unit)? = null
 
     init {
         try {
@@ -149,14 +155,14 @@ class AgentCefPanel(
                 factory
             )
             // Load via scheme URL — all relative paths in HTML resolve via our handler
-            b.loadURL(CefResourceSchemeHandler.BASE_URL + "agent-chat.html")
+            b.loadURL(CefResourceSchemeHandler.BASE_URL + "index.html")
         } catch (e: Exception) {
             // Fallback: if CefApp registration fails, load HTML directly
             LOG.warn("AgentCefPanel: scheme handler registration failed, falling back to loadHTML", e)
-            val htmlContent = javaClass.classLoader.getResource("webview/agent-chat.html")?.readText()
+            val htmlContent = javaClass.classLoader.getResource("webview/dist/index.html")?.readText()
             if (htmlContent != null) b.loadHTML(htmlContent)
             else {
-                LOG.error("AgentCefPanel: agent-chat.html not found in resources")
+                LOG.error("AgentCefPanel: index.html not found in resources")
                 return
             }
         }
@@ -268,7 +274,7 @@ class AgentCefPanel(
                 val type = if (colonIdx > 0) data.substring(0, colonIdx) else data
                 val query = if (colonIdx > 0) data.substring(colonIdx + 1) else ""
                 // Search on IO thread, callback to JS
-                GlobalScope.launch(Dispatchers.IO) {
+                scope.launch {
                     val results = mentionSearchProvider?.search(type, query) ?: "[]"
                     callJs("receiveMentionResults(${jsonStr(results)})")
                 }
@@ -288,6 +294,9 @@ class AgentCefPanel(
                 }
                 JBCefJSQuery.Response("ok")
             }
+        }
+        openInEditorTabQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
         }
 
         // Wait for page load before executing JS
@@ -400,6 +409,10 @@ class AgentCefPanel(
                     sendMessageWithMentionsQuery?.let { q ->
                         val sendJs = q.inject("payload")
                         js("window._sendMessageWithMentions = function(payload) { $sendJs }")
+                    }
+                    openInEditorTabQuery?.let { q ->
+                        val tabJs = q.inject("payload")
+                        js("window._openInEditorTab = function(payload) { $tabJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -720,6 +733,7 @@ class AgentCefPanel(
     }
 
     override fun dispose() {
+        scope.cancel()
         undoQuery?.dispose()
         traceQuery?.dispose()
         promptQuery?.dispose()
@@ -745,6 +759,7 @@ class AgentCefPanel(
         openToolsPanelQuery?.dispose()
         searchMentionsQuery?.dispose()
         sendMessageWithMentionsQuery?.dispose()
+        openInEditorTabQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -771,6 +786,7 @@ class AgentCefPanel(
         openToolsPanelQuery = null
         searchMentionsQuery = null
         sendMessageWithMentionsQuery = null
+        openInEditorTabQuery = null
         browser = null
     }
 }

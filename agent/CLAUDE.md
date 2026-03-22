@@ -263,7 +263,45 @@ JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 - Toast notifications, skeleton loading, timeline visualization
 - Sortable/filterable tables, tabbed content, progress bars
 
-**Resource serving:** `CefResourceSchemeHandler` serves all resources from plugin JAR via `http://workflow-agent/` scheme. CSP enforced: `connect-src: 'none'` (no outbound network).
+**Resource serving:** `CefResourceSchemeHandler` serves all resources from plugin JAR via `http://workflow-agent/` scheme, loading from `webview/dist/` (Vite build output). CSP enforced: `connect-src: 'none'` (no outbound network).
+
+## React Webview Architecture
+
+The chat UI is a React + TypeScript app built with Vite, located in `agent/webview/`.
+
+**Stack:** React 19, TypeScript, Zustand (state), Tailwind CSS, Vite
+
+**Build:**
+```bash
+cd agent/webview && npm run build    # Output: agent/src/main/resources/webview/dist/
+```
+
+**Directory structure:**
+```
+agent/webview/
+  src/
+    bridge/         # JCEF bridge protocol (jcef-bridge.ts, globals.d.ts, types.ts)
+    components/     # React components (chat/, rich/, common/, input/)
+    stores/         # Zustand stores (chatStore, themeStore, settingsStore)
+    styles/         # Tailwind + theme CSS
+    App.tsx         # Root component
+    main.tsx        # Entry point
+  vite.config.ts    # Vite config (outputs to ../src/main/resources/webview/dist/)
+```
+
+**Bridge protocol:**
+- **Kotlin -> JS (42 functions):** `AgentCefPanel.callJs()` invokes global JS functions registered by `initBridge()` in `jcef-bridge.ts`. Functions map directly to Zustand store actions.
+- **JS -> Kotlin (26 functions):** `kotlinBridge` object wraps `JBCefJSQuery` bridges injected as `window._xxx` globals. React components call `kotlinBridge.sendMessage()`, etc.
+- **Editor tab popout:** `openInEditorTab(type, content)` sends visualization content to Kotlin via `_openInEditorTab` bridge, which opens an `AgentVisualizationEditor` tab.
+
+**Key files:**
+- `bridge/jcef-bridge.ts` — All bridge function definitions and initialization
+- `bridge/globals.d.ts` — TypeScript declarations for Kotlin-injected window globals
+- `stores/chatStore.ts` — Primary state: messages, streaming, plans, questions, tool calls
+- `stores/themeStore.ts` — IDE theme variables synced from Kotlin
+- `stores/settingsStore.ts` — Visualization settings (enabled, maxHeight, etc.)
+
+**Visualization popout:** `AgentVisualizationTab.kt` provides `FileEditor` + `FileEditorProvider` + `LightVirtualFile` for opening visualizations (mermaid, chart, flow, etc.) in IDE editor tabs.
 
 ## Testing
 

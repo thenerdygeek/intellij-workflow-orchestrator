@@ -27,6 +27,7 @@ declare global {
     _editQuestion?: (qid: string) => void;
     _deactivateSkill?: () => void;
     _activateSkill?: (name: string) => void;
+    _openInEditorTab?: (payload: string) => void;
     __mock?: Record<string, (...args: any[]) => any>;
   }
 }

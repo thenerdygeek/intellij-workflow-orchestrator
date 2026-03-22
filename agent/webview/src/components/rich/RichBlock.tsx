@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, type ReactNode, type ComponentType } from 'react';
 import type { VisualizationType } from '@/bridge/types';
+import { openInEditorTab } from '@/bridge/jcef-bridge';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { FullscreenOverlay } from '@/components/common/FullscreenOverlay';
@@ -143,6 +144,10 @@ export function RichBlock({
     setIsExpanded((prev) => !prev);
   }, []);
 
+  const handleOpenInTab = useCallback(() => {
+    openInEditorTab(type, source);
+  }, [type, source]);
+
   const handleFullscreen = useCallback(() => {
     setIsFullscreen(true);
   }, []);
@@ -212,6 +217,14 @@ export function RichBlock({
                 </svg>
               </ActionButton>
             )}
+
+            {/* Open in editor tab */}
+            <ActionButton label="Open in editor tab" onClick={handleOpenInTab}>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M5 1H2a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1V7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M7 1h4v4M7 5l4-4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </ActionButton>
 
             {/* Fullscreen */}
             <ActionButton label="Open fullscreen" onClick={handleFullscreen}>
