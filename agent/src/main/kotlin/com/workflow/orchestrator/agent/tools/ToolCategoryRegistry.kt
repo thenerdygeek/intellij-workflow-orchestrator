@@ -69,32 +69,56 @@ object ToolCategoryRegistry {
             displayName = "Jira",
             color = "#A855F7",
             badgePrefix = "JIRA",
-            description = "Ticket details, transitions, comments, time logging",
-            tools = listOf("jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_comment", "jira_get_comments", "jira_log_work")
+            description = "Ticket details, transitions, comments, time logging, worklogs, sprints, boards, search, dev-status, start work",
+            tools = listOf(
+                "jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_comment", "jira_get_comments", "jira_log_work",
+                "jira_get_worklogs", "jira_get_sprints", "jira_get_linked_prs", "jira_get_boards",
+                "jira_get_sprint_issues", "jira_get_board_issues", "jira_search_issues",
+                "jira_get_dev_branches", "jira_start_work"
+            )
         ),
         ToolCategory(
             id = "bamboo",
             displayName = "CI/CD — Bamboo",
             color = "#EF4444",
             badgePrefix = "CI",
-            description = "Build status, trigger builds, build logs, test results",
-            tools = listOf("bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build", "bamboo_get_build_log", "bamboo_get_test_results")
+            description = "Build status, trigger builds, build logs, test results, stop/cancel builds, artifacts, plans, branches, variables",
+            tools = listOf(
+                "bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build", "bamboo_get_build_log", "bamboo_get_test_results",
+                "bamboo_stop_build", "bamboo_cancel_build", "bamboo_get_artifacts", "bamboo_recent_builds",
+                "bamboo_get_plans", "bamboo_get_project_plans", "bamboo_search_plans", "bamboo_get_plan_branches",
+                "bamboo_get_running_builds", "bamboo_get_build_variables", "bamboo_get_plan_variables",
+                "bamboo_rerun_failed_jobs", "bamboo_trigger_stage"
+            )
         ),
         ToolCategory(
             id = "sonar",
             displayName = "Quality — SonarQube",
             color = "#EC4899",
             badgePrefix = "QA",
-            description = "Code issues, quality gate status, coverage metrics, project search",
-            tools = listOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health")
+            description = "Code issues, quality gate status, coverage metrics, project search, branches, measures, source lines",
+            tools = listOf(
+                "sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
+                "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"
+            )
         ),
         ToolCategory(
             id = "bitbucket",
             displayName = "Pull Requests — Bitbucket",
             color = "#3B82F6",
             badgePrefix = "PR",
-            description = "Create pull requests",
-            tools = listOf("bitbucket_create_pr")
+            description = "Pull requests: create, review, merge, decline, approve, comment, diff, branches, users, build status",
+            tools = listOf(
+                "bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment",
+                "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status", "bitbucket_get_file_content",
+                "bitbucket_add_reviewer", "bitbucket_update_pr_title", "bitbucket_get_branches",
+                "bitbucket_create_branch", "bitbucket_search_users", "bitbucket_get_my_prs",
+                "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail", "bitbucket_get_pr_activities",
+                "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_build_statuses",
+                "bitbucket_approve_pr", "bitbucket_merge_pr", "bitbucket_decline_pr",
+                "bitbucket_update_pr_description", "bitbucket_add_pr_comment", "bitbucket_check_merge_status",
+                "bitbucket_remove_reviewer"
+            )
         ),
         ToolCategory(
             id = "planning",

@@ -88,10 +88,25 @@ class SingleAgentSession(
             "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history",
             "find_implementations",
             "spring_context", "spring_endpoints", "spring_bean_graph",
+            // Jira read-only
             "jira_get_ticket", "jira_get_comments", "jira_get_transitions",
+            "jira_get_worklogs", "jira_get_sprints", "jira_get_linked_prs",
+            "jira_get_boards", "jira_get_sprint_issues", "jira_get_board_issues",
+            "jira_search_issues", "jira_get_dev_branches",
+            // Bamboo read-only
             "bamboo_build_status", "bamboo_get_build", "bamboo_get_test_results",
+            "bamboo_get_artifacts", "bamboo_recent_builds", "bamboo_get_plans",
+            "bamboo_get_project_plans", "bamboo_search_plans", "bamboo_get_plan_branches",
+            "bamboo_get_running_builds", "bamboo_get_build_variables", "bamboo_get_plan_variables",
+            // Sonar read-only
             "sonar_issues", "sonar_quality_gate", "sonar_coverage",
-            "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health"
+            "sonar_search_projects", "sonar_analysis_tasks", "sonar_project_health",
+            "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
+            // Bitbucket read-only
+            "bitbucket_get_pr_commits", "bitbucket_get_file_content", "bitbucket_get_branches",
+            "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs",
+            "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes",
+            "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_check_merge_status"
         )
     }
 
