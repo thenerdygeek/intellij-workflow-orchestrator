@@ -74,3 +74,45 @@ data class SprintData(
     val startDate: String?,
     val endDate: String?
 )
+
+/**
+ * Jira board (scrum or kanban) shared between UI panels and AI agent.
+ */
+@Serializable
+data class BoardData(
+    val id: Int,
+    val name: String,
+    val type: String
+)
+
+/**
+ * Branch linked to a Jira issue via the dev-status API.
+ */
+@Serializable
+data class DevStatusBranchData(
+    val name: String,
+    val url: String
+)
+
+/**
+ * Result of a "Start Work" operation: branch creation + ticket transition.
+ */
+@Serializable
+data class StartWorkResultData(
+    val branchName: String,
+    val ticketKey: String,
+    val transitioned: Boolean
+)
+
+/**
+ * Content and metadata of a downloaded Jira attachment.
+ */
+@Serializable
+data class AttachmentContentData(
+    val filename: String,
+    val mimeType: String?,
+    val sizeBytes: Long,
+    val content: String?,
+    val filePath: String,
+    val attachmentId: String
+)

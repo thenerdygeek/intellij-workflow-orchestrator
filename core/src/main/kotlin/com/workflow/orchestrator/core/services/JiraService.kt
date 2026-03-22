@@ -1,10 +1,14 @@
 package com.workflow.orchestrator.core.services
 
+import com.workflow.orchestrator.core.model.jira.AttachmentContentData
+import com.workflow.orchestrator.core.model.jira.BoardData
+import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
 import com.workflow.orchestrator.core.model.jira.SprintData
+import com.workflow.orchestrator.core.model.jira.StartWorkResultData
 import com.workflow.orchestrator.core.model.jira.WorklogData
 
 /**
@@ -46,4 +50,25 @@ interface JiraService {
 
     /** Test the Jira connection. */
     suspend fun testConnection(): ToolResult<Unit>
+
+    /** Get boards, optionally filtered by type (scrum/kanban) and name. */
+    suspend fun getBoards(type: String? = null, nameFilter: String? = null): ToolResult<List<BoardData>>
+
+    /** Get all issues in a sprint. */
+    suspend fun getSprintIssues(sprintId: Int): ToolResult<List<JiraTicketData>>
+
+    /** Get unresolved issues on a board. */
+    suspend fun getBoardIssues(boardId: Int): ToolResult<List<JiraTicketData>>
+
+    /** Full-text search for issues assigned to current user. */
+    suspend fun searchIssues(text: String, maxResults: Int = 20): ToolResult<List<JiraTicketData>>
+
+    /** Get branches linked to an issue via Jira dev-status API. */
+    suspend fun getDevStatusBranches(issueId: String): ToolResult<List<DevStatusBranchData>>
+
+    /** Start work: transition ticket to In Progress and return branch name. */
+    suspend fun startWork(issueKey: String, branchName: String, sourceBranch: String): ToolResult<StartWorkResultData>
+
+    /** Download an attachment from a Jira issue. */
+    suspend fun downloadAttachment(issueKey: String, attachmentId: String): ToolResult<AttachmentContentData>
 }

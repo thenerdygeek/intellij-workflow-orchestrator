@@ -6,11 +6,15 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.jira.AttachmentContentData
+import com.workflow.orchestrator.core.model.jira.BoardData
+import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
 import com.workflow.orchestrator.core.model.jira.SprintData
+import com.workflow.orchestrator.core.model.jira.StartWorkResultData
 import com.workflow.orchestrator.core.model.jira.WorklogData
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.ToolResult
@@ -405,6 +409,298 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                 )
             }
         }
+    }
+
+    // ── New agent-exposable methods ──────────────────────────────────────
+
+    override suspend fun getBoards(type: String?, nameFilter: String?): ToolResult<List<BoardData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch boards.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getBoards(type ?: "", nameFilter ?: "")) {
+            is ApiResult.Success -> {
+                val boards = result.data.map { b ->
+                    BoardData(id = b.id, name = b.name, type = b.type)
+                }
+                ToolResult.success(
+                    data = boards,
+                    summary = "Found ${boards.size} board(s)${type?.let { " (type=$it)" } ?: ""}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch boards: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching boards: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getSprintIssues(sprintId: Int): ToolResult<List<JiraTicketData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch sprint issues.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getSprintIssues(sprintId, true)) {
+            is ApiResult.Success -> {
+                val tickets = result.data.map { it.toTicketData() }
+                ToolResult.success(
+                    data = tickets,
+                    summary = "Sprint $sprintId: ${tickets.size} issue(s)"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch sprint $sprintId issues: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching sprint $sprintId issues: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getBoardIssues(boardId: Int): ToolResult<List<JiraTicketData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch board issues.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getBoardIssues(boardId, true)) {
+            is ApiResult.Success -> {
+                val tickets = result.data.map { it.toTicketData() }
+                ToolResult.success(
+                    data = tickets,
+                    summary = "Board $boardId: ${tickets.size} unresolved issue(s)"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch board $boardId issues: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching board $boardId issues: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun searchIssues(text: String, maxResults: Int): ToolResult<List<JiraTicketData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot search issues.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.searchIssues(text, maxResults)) {
+            is ApiResult.Success -> {
+                val tickets = result.data.map { it.toTicketData() }
+                ToolResult.success(
+                    data = tickets,
+                    summary = "Search \"$text\": ${tickets.size} result(s)"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Search failed for \"$text\": ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error searching issues: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getDevStatusBranches(issueId: String): ToolResult<List<DevStatusBranchData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch dev-status branches for issue $issueId.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getDevStatusBranches(issueId)) {
+            is ApiResult.Success -> {
+                val branches = result.data.map { b ->
+                    DevStatusBranchData(name = b.name, url = b.url)
+                }
+                val listing = if (branches.isEmpty()) "none" else branches.joinToString(", ") { it.name }
+                ToolResult.success(
+                    data = branches,
+                    summary = "Found ${branches.size} branch(es) for issue $issueId: $listing"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch dev-status branches for issue $issueId: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching branches for issue $issueId: ${result.message}",
+                    isError = true,
+                    hint = "The dev-status API may not be available on your Jira instance."
+                )
+            }
+        }
+    }
+
+    override suspend fun startWork(
+        issueKey: String,
+        branchName: String,
+        sourceBranch: String
+    ): ToolResult<StartWorkResultData> {
+        val api = client ?: return ToolResult(
+            data = StartWorkResultData(branchName = branchName, ticketKey = issueKey, transitioned = false),
+            summary = "Jira not configured. Cannot start work on $issueKey.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        // Attempt to transition the ticket to "In Progress"
+        var transitioned = false
+        when (val transResult = api.getTransitions(issueKey)) {
+            is ApiResult.Success -> {
+                val inProgressTransition = transResult.data.firstOrNull { t ->
+                    t.to.name.equals("In Progress", ignoreCase = true)
+                }
+                if (inProgressTransition != null) {
+                    when (api.transitionIssue(issueKey, inProgressTransition.id)) {
+                        is ApiResult.Success -> {
+                            transitioned = true
+                            log.info("[JiraService] Transitioned $issueKey to In Progress")
+                        }
+                        is ApiResult.Error -> {
+                            log.warn("[JiraService] Failed to transition $issueKey to In Progress")
+                        }
+                    }
+                } else {
+                    log.info("[JiraService] No 'In Progress' transition available for $issueKey")
+                }
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Could not fetch transitions for $issueKey: ${transResult.message}")
+            }
+        }
+
+        val data = StartWorkResultData(
+            branchName = branchName,
+            ticketKey = issueKey,
+            transitioned = transitioned
+        )
+        return ToolResult.success(
+            data = data,
+            summary = buildString {
+                append("Started work on $issueKey. Branch: $branchName (from $sourceBranch).")
+                if (transitioned) append(" Ticket transitioned to In Progress.")
+                else append(" Ticket status unchanged (no In Progress transition available).")
+            }
+        )
+    }
+
+    override suspend fun downloadAttachment(
+        issueKey: String,
+        attachmentId: String
+    ): ToolResult<AttachmentContentData> {
+        val api = client ?: return ToolResult(
+            data = AttachmentContentData(
+                filename = "", mimeType = null, sizeBytes = 0,
+                content = null, filePath = "", attachmentId = attachmentId
+            ),
+            summary = "Jira not configured. Cannot download attachment.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        // Fetch issue to find the attachment metadata
+        val issueResult = api.getIssue(issueKey)
+        if (issueResult is ApiResult.Error) {
+            return ToolResult(
+                data = AttachmentContentData(
+                    filename = "", mimeType = null, sizeBytes = 0,
+                    content = null, filePath = "", attachmentId = attachmentId
+                ),
+                summary = "Error fetching issue $issueKey: ${issueResult.message}",
+                isError = true,
+                hint = "Verify the issue key is correct."
+            )
+        }
+
+        val issue = (issueResult as ApiResult.Success).data
+        val attachment = issue.fields.attachment.firstOrNull { it.id == attachmentId }
+            ?: return ToolResult(
+                data = AttachmentContentData(
+                    filename = "", mimeType = null, sizeBytes = 0,
+                    content = null, filePath = "", attachmentId = attachmentId
+                ),
+                summary = "Attachment $attachmentId not found on $issueKey.",
+                isError = true,
+                hint = "Use getTicket to list available attachments."
+            )
+
+        val downloadService = AttachmentDownloadService(project)
+        val downloadResult = downloadService.downloadAttachment(attachment)
+            ?: return ToolResult(
+                data = AttachmentContentData(
+                    filename = attachment.filename, mimeType = attachment.mimeType,
+                    sizeBytes = attachment.size, content = null, filePath = "",
+                    attachmentId = attachmentId
+                ),
+                summary = "Failed to download attachment ${attachment.filename} from $issueKey.",
+                isError = true,
+                hint = "The attachment content URL may be inaccessible."
+            )
+
+        // For text MIME types, read file content
+        val textContent = if (downloadResult.isText) {
+            try {
+                downloadResult.file.readText().take(10_000)
+            } catch (e: Exception) {
+                log.warn("[JiraService] Could not read text content of ${attachment.filename}", e)
+                null
+            }
+        } else null
+
+        val data = AttachmentContentData(
+            filename = downloadResult.filename,
+            mimeType = downloadResult.mimeType,
+            sizeBytes = downloadResult.sizeBytes,
+            content = textContent,
+            filePath = downloadResult.file.absolutePath,
+            attachmentId = attachmentId
+        )
+        return ToolResult.success(
+            data = data,
+            summary = "Downloaded ${data.filename} (${data.sizeBytes} bytes) to ${data.filePath}"
+        )
+    }
+
+    // ── Helper ────────────────────────────────────────────────────────────
+
+    private fun com.workflow.orchestrator.jira.api.dto.JiraIssue.toTicketData(): JiraTicketData {
+        return JiraTicketData(
+            key = key,
+            summary = fields.summary,
+            status = fields.status.name,
+            assignee = fields.assignee?.displayName,
+            type = fields.issuetype?.name ?: "Unknown",
+            priority = fields.priority?.name,
+            description = fields.description?.take(500),
+            labels = fields.labels
+        )
     }
 
     /**
