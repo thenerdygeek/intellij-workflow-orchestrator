@@ -15,6 +15,8 @@ export function ApprovalGate({ title, description, commandPreview, onApprove, on
   return (
     <div
       className="my-3 rounded-xl border-2 animate-[fade-in_220ms_ease-out]"
+      role="alertdialog"
+      aria-label="Approval required"
       style={{
         borderColor: 'var(--warning, #f59e0b)',
         backgroundColor: 'color-mix(in srgb, var(--warning, #f59e0b) 6%, var(--bg, #1e1e1e))',

@@ -116,7 +116,7 @@ export function ChatInput() {
               </button>
             )}
           </div>
-          <textarea ref={textareaRef} value={text} onChange={handleChange} onKeyDown={handleKeyDown} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} disabled={inputState.locked} placeholder="Ask anything..." rows={1} className="flex-1 resize-none bg-transparent px-1 py-2.5 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--fg-muted)] disabled:cursor-not-allowed" />
+          <textarea ref={textareaRef} data-chat-input value={text} onChange={handleChange} onKeyDown={handleKeyDown} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} disabled={inputState.locked} placeholder="Ask anything..." rows={1} aria-label="Chat message input" className="flex-1 resize-none bg-transparent px-1 py-2.5 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--fg-muted)] disabled:cursor-not-allowed" />
           <button onClick={sendMessage} disabled={!text.trim() || inputState.locked || busy} className="mb-2 mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md transition-all duration-150 active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed enabled:bg-[var(--accent,#6366f1)] enabled:text-white enabled:hover:brightness-110" title="Send (Enter)">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 8l12-5-5 12-2-5-5-2z" fill="currentColor" /></svg>
           </button>

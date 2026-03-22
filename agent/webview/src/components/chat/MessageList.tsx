@@ -77,6 +77,9 @@ export function MessageList() {
       <div
         ref={setRef}
         className="h-full overflow-y-auto scroll-smooth px-4 py-3"
+        role="log"
+        aria-live="polite"
+        aria-label="Agent chat messages"
       >
         {useVirtual ? (
           <div

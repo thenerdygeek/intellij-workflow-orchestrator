@@ -285,6 +285,8 @@ export function PlanCard({ plan }: PlanCardProps) {
   return (
     <div
       className="my-3 overflow-hidden rounded-lg border"
+      role="region"
+      aria-label="Execution plan"
       style={{
         borderColor: 'var(--accent, #6366f1)',
         backgroundColor: 'var(--card-bg, #252525)',

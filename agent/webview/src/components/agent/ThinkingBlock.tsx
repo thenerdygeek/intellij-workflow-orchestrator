@@ -68,6 +68,8 @@ export function ThinkingBlock({ content, isStreaming }: ThinkingBlockProps) {
   return (
     <div
       className="mb-3 overflow-hidden rounded-lg"
+      role="region"
+      aria-label="Agent reasoning"
       style={{
         borderLeft: '3px solid var(--accent-thinking, #8b5cf6)',
         backgroundColor: 'var(--thinking-bg, #1f2937)',
@@ -76,6 +78,8 @@ export function ThinkingBlock({ content, isStreaming }: ThinkingBlockProps) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} reasoning`}
         className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors duration-100 hover:brightness-110"
         style={{ background: 'transparent' }}
       >

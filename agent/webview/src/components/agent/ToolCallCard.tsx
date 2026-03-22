@@ -200,6 +200,8 @@ export function ToolCallCard({ toolCall, isLatest }: ToolCallCardProps) {
   return (
     <div
       className="mb-2 overflow-hidden rounded-lg border transition-all duration-200"
+      role="region"
+      aria-label={`Tool call: ${name}`}
       style={{
         borderColor: isError
           ? 'var(--error-border, #5c2020)'
@@ -212,6 +214,8 @@ export function ToolCallCard({ toolCall, isLatest }: ToolCallCardProps) {
       {/* Header */}
       <button
         onClick={toggleExpanded}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${name} tool call`}
         className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors duration-100 hover:brightness-110"
         style={{ background: 'transparent' }}
       >
