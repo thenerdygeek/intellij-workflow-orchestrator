@@ -41,9 +41,22 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.register<Exec>("npmInstallWebview") {
+    workingDir = file("webview")
+    commandLine("npm", "ci")
+    inputs.file("webview/package-lock.json")
+    outputs.dir("webview/node_modules")
+}
+
 tasks.register<Exec>("buildWebview") {
     workingDir = file("webview")
     commandLine("npm", "run", "build")
+    dependsOn("npmInstallWebview")
+    inputs.dir("webview/src")
+    inputs.file("webview/package.json")
+    inputs.file("webview/vite.config.ts")
+    inputs.file("webview/tsconfig.json")
+    outputs.dir("src/main/resources/webview/dist")
 }
 
 tasks.named("processResources") {
