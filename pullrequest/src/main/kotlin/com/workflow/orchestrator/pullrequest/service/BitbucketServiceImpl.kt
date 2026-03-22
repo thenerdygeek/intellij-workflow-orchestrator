@@ -10,8 +10,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrReviewerRef
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
-import com.workflow.orchestrator.core.model.bitbucket.CommitData
-import com.workflow.orchestrator.core.model.bitbucket.PullRequestData
+import com.workflow.orchestrator.core.model.bitbucket.*
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -319,6 +318,572 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             }
         }
     }
+
+    // --- Branch operations ---
+
+    override suspend fun getBranches(filter: String?): ToolResult<List<BranchData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch branches.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getBranches(projectKey, repoSlug, filter ?: "")) {
+            is ApiResult.Success -> {
+                val branches = result.data.map { b ->
+                    BranchData(id = b.id, displayId = b.displayId, latestCommit = b.latestCommit, isDefault = b.isDefault)
+                }
+                ToolResult.success(branches, "Found ${branches.size} branch(es)${if (!filter.isNullOrBlank()) " matching '$filter'" else ""}")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch branches: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching branches: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    override suspend fun createBranch(name: String, startPoint: String): ToolResult<BranchData> {
+        val api = client ?: return ToolResult(
+            data = BranchData(id = "", displayId = "", latestCommit = null),
+            summary = "Bitbucket not configured. Cannot create branch.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = BranchData(id = "", displayId = "", latestCommit = null),
+                summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.createBranch(projectKey, repoSlug, name, startPoint)) {
+            is ApiResult.Success -> {
+                val b = result.data
+                val data = BranchData(id = b.id, displayId = b.displayId, latestCommit = b.latestCommit, isDefault = b.isDefault)
+                ToolResult.success(data, "Branch '${data.displayId}' created from '$startPoint'")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to create branch '$name': ${result.message}")
+                ToolResult(data = BranchData(id = "", displayId = name, latestCommit = null),
+                    summary = "Error creating branch '$name': ${result.message}", isError = true,
+                    hint = "Check the start point is a valid commit or branch name.")
+            }
+        }
+    }
+
+    // --- Users ---
+
+    override suspend fun searchUsers(filter: String): ToolResult<List<BitbucketUserData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot search users.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+
+        return when (val result = api.getUsers(filter)) {
+            is ApiResult.Success -> {
+                val users = result.data.map { u ->
+                    BitbucketUserData(name = u.name, displayName = u.displayName, emailAddress = u.emailAddress)
+                }
+                ToolResult.success(users, "Found ${users.size} user(s) matching '$filter'")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to search users: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error searching users: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    // --- PR listing ---
+
+    override suspend fun getPullRequestsForBranch(branchName: String): ToolResult<List<PullRequestData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch PRs for branch.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getPullRequestsForBranch(projectKey, repoSlug, branchName)) {
+            is ApiResult.Success -> {
+                val prs = result.data.map { pr ->
+                    PullRequestData(
+                        id = pr.id, title = pr.title, state = pr.state,
+                        fromBranch = pr.fromRef?.displayId ?: branchName,
+                        toBranch = pr.toRef?.displayId ?: "",
+                        link = pr.links.self.firstOrNull()?.href ?: "",
+                        authorName = null
+                    )
+                }
+                ToolResult.success(prs, "Found ${prs.size} PR(s) for branch '$branchName'")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch PRs for branch '$branchName': ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching PRs for branch: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    override suspend fun getMyPullRequests(state: String): ToolResult<List<PullRequestData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch my PRs.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getMyPullRequests(projectKey, repoSlug, state)) {
+            is ApiResult.Success -> {
+                val prs = result.data.values.map { it.toPullRequestData() }
+                ToolResult.success(prs, "Found ${prs.size} authored PR(s) with state '$state'")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch my PRs: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching my PRs: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    override suspend fun getReviewingPullRequests(state: String): ToolResult<List<PullRequestData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch reviewing PRs.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getReviewingPullRequests(projectKey, repoSlug, state)) {
+            is ApiResult.Success -> {
+                val prs = result.data.values.map { it.toPullRequestData() }
+                ToolResult.success(prs, "Found ${prs.size} reviewing PR(s) with state '$state'")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch reviewing PRs: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching reviewing PRs: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    // --- PR detail ---
+
+    override suspend fun getPullRequestDetail(prId: Int): ToolResult<PullRequestDetailData> {
+        val api = client ?: return ToolResult(
+            data = emptyPrDetail(prId),
+            summary = "Bitbucket not configured. Cannot fetch PR #$prId detail.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyPrDetail(prId), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getPullRequestDetail(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                val pr = result.data
+                val data = pr.toPullRequestDetailData()
+                val reviewerSummary = data.reviewers.joinToString(", ") { "${it.displayName} (${it.status})" }
+                ToolResult.success(data, buildString {
+                    append("PR #${data.id}: ${data.title} [${data.state}]")
+                    append("\n${data.fromBranch} -> ${data.toBranch}")
+                    if (data.reviewers.isNotEmpty()) append("\nReviewers: $reviewerSummary")
+                })
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch PR #$prId detail: ${result.message}")
+                ToolResult(data = emptyPrDetail(prId), summary = "Error fetching PR #$prId detail: ${result.message}", isError = true,
+                    hint = "Verify the PR exists.")
+            }
+        }
+    }
+
+    override suspend fun getPullRequestActivities(prId: Int): ToolResult<List<PrActivityData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch PR #$prId activities.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getPullRequestActivities(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                val activities = result.data.map { a ->
+                    PrActivityData(
+                        id = a.id,
+                        action = a.action,
+                        userName = a.user.displayName.ifBlank { a.user.name },
+                        timestamp = a.createdDate,
+                        commentText = a.comment?.text,
+                        commentId = a.comment?.id,
+                        filePath = a.commentAnchor?.path ?: a.comment?.anchor?.path,
+                        lineNumber = a.commentAnchor?.line ?: a.comment?.anchor?.line
+                    )
+                }
+                ToolResult.success(activities, "PR #$prId has ${activities.size} activit${if (activities.size == 1) "y" else "ies"}")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch PR #$prId activities: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching PR #$prId activities: ${result.message}", isError = true,
+                    hint = "Verify the PR exists.")
+            }
+        }
+    }
+
+    override suspend fun getPullRequestChanges(prId: Int): ToolResult<List<PrChangeData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch PR #$prId changes.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getPullRequestChanges(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                val changes = result.data.map { c ->
+                    PrChangeData(path = c.path.toString, changeType = c.type)
+                }
+                ToolResult.success(changes, "PR #$prId has ${changes.size} changed file(s)")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch PR #$prId changes: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching PR #$prId changes: ${result.message}", isError = true,
+                    hint = "Verify the PR exists.")
+            }
+        }
+    }
+
+    override suspend fun getPullRequestDiff(prId: Int): ToolResult<String> {
+        val api = client ?: return ToolResult(
+            data = "", summary = "Bitbucket not configured. Cannot fetch PR #$prId diff.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = "", summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getPullRequestDiff(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                ToolResult.success(result.data, "PR #$prId diff fetched (${result.data.length} chars)")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch PR #$prId diff: ${result.message}")
+                ToolResult(data = "", summary = "Error fetching PR #$prId diff: ${result.message}", isError = true,
+                    hint = "Verify the PR exists.")
+            }
+        }
+    }
+
+    // --- Build status ---
+
+    override suspend fun getBuildStatuses(commitId: String): ToolResult<List<BuildStatusData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch build statuses.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+
+        return when (val result = api.getBuildStatuses(commitId)) {
+            is ApiResult.Success -> {
+                val statuses = result.data.map { s ->
+                    BuildStatusData(state = s.state, name = s.name ?: s.key, url = s.url, key = s.key)
+                }
+                ToolResult.success(statuses, "Commit ${commitId.take(8)} has ${statuses.size} build status(es)")
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch build statuses for $commitId: ${result.message}")
+                ToolResult(data = emptyList(), summary = "Error fetching build statuses: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    // --- PR actions ---
+
+    override suspend fun approvePullRequest(prId: Int): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot approve PR #$prId.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        return when (val result = api.approvePullRequest(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId approved")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to approve PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error approving PR #$prId: ${result.message}", isError = true,
+                    hint = "You may already have approved this PR or may not be a reviewer.")
+            }
+        }
+    }
+
+    override suspend fun unapprovePullRequest(prId: Int): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot unapprove PR #$prId.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        return when (val result = api.unapprovePullRequest(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId approval removed")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to unapprove PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error removing approval from PR #$prId: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    override suspend fun mergePullRequest(
+        prId: Int,
+        strategy: String?,
+        deleteSourceBranch: Boolean,
+        commitMessage: String?
+    ): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot merge PR #$prId.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        // Fetch PR to get current version for optimistic locking
+        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
+        val prDetail = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ToolResult(data = Unit,
+                summary = "Error fetching PR #$prId for merge: ${currentPr.message}", isError = true,
+                hint = "Verify the PR exists.")
+        }
+
+        return when (val result = api.mergePullRequest(
+            projectKey, repoSlug, prId, prDetail.version,
+            strategyId = strategy, deleteSourceBranch = deleteSourceBranch, commitMessage = commitMessage
+        )) {
+            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId merged successfully")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to merge PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error merging PR #$prId: ${result.message}", isError = true,
+                    hint = "Check merge preconditions with checkMergeStatus first.")
+            }
+        }
+    }
+
+    override suspend fun declinePullRequest(prId: Int): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot decline PR #$prId.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        // Fetch PR to get current version for optimistic locking
+        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
+        val prDetail = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ToolResult(data = Unit,
+                summary = "Error fetching PR #$prId for decline: ${currentPr.message}", isError = true,
+                hint = "Verify the PR exists.")
+        }
+
+        return when (val result = api.declinePullRequest(projectKey, repoSlug, prId, prDetail.version)) {
+            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId declined")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to decline PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error declining PR #$prId: ${result.message}", isError = true,
+                    hint = "The PR may already be declined or merged.")
+            }
+        }
+    }
+
+    override suspend fun updatePrDescription(prId: Int, description: String): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot update PR #$prId description.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        // Fetch current PR to preserve title/reviewers (PUT replaces entire PR)
+        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
+        val existingPr = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ToolResult(data = Unit,
+                summary = "Error fetching PR #$prId: ${currentPr.message}", isError = true,
+                hint = "Verify the PR exists.")
+        }
+
+        val updateRequest = BitbucketPrUpdateRequest(
+            title = existingPr.title,
+            description = description,
+            version = existingPr.version,
+            reviewers = existingPr.reviewers.map {
+                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+            }
+        )
+        return when (val result = api.updatePullRequest(projectKey, repoSlug, prId, updateRequest)) {
+            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId description updated")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to update PR #$prId description: ${result.message}")
+                ToolResult(data = Unit, summary = "Error updating PR description: ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection in Settings.")
+            }
+        }
+    }
+
+    override suspend fun addPrComment(prId: Int, text: String): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot add comment to PR #$prId.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        return when (val result = api.addPullRequestComment(projectKey, repoSlug, prId, text)) {
+            is ApiResult.Success -> ToolResult.success(Unit, "Comment added to PR #$prId (comment #${result.data.id})")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to add comment to PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error adding comment to PR #$prId: ${result.message}", isError = true,
+                    hint = "Verify the PR exists.")
+            }
+        }
+    }
+
+    override suspend fun checkMergeStatus(prId: Int): ToolResult<MergeStatusData> {
+        val api = client ?: return ToolResult(
+            data = MergeStatusData(canMerge = false, conflicted = false, vetoes = emptyList()),
+            summary = "Bitbucket not configured. Cannot check merge status for PR #$prId.",
+            isError = true, hint = "Set up Bitbucket connection in Settings."
+        )
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            return ToolResult(data = MergeStatusData(canMerge = false, conflicted = false, vetoes = emptyList()),
+                summary = "Bitbucket project/repo not configured.", isError = true,
+                hint = "Set Bitbucket project key and repo slug in Settings.")
+        }
+
+        return when (val result = api.getMergeStatus(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                val status = result.data
+                val data = MergeStatusData(
+                    canMerge = status.canMerge,
+                    conflicted = status.conflicted,
+                    vetoes = status.vetoes.map { v ->
+                        if (v.detailedMessage.isNotBlank()) "${v.summaryMessage}: ${v.detailedMessage}"
+                        else v.summaryMessage
+                    }
+                )
+                ToolResult.success(data, buildString {
+                    append("PR #$prId merge status: ")
+                    append(if (data.canMerge) "CAN merge" else "CANNOT merge")
+                    if (data.conflicted) append(" (CONFLICTED)")
+                    if (data.vetoes.isNotEmpty()) append("\nVetoes: ${data.vetoes.joinToString("; ")}")
+                })
+            }
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to check merge status for PR #$prId: ${result.message}")
+                ToolResult(data = MergeStatusData(canMerge = false, conflicted = false, vetoes = emptyList()),
+                    summary = "Error checking merge status for PR #$prId: ${result.message}", isError = true,
+                    hint = "Verify the PR exists.")
+            }
+        }
+    }
+
+    override suspend fun removeReviewer(prId: Int, username: String): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot remove reviewer from PR #$prId.")
+        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) return repoNotConfiguredError()
+
+        // Fetch current PR to get reviewer list
+        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
+        val existingPr = when (currentPr) {
+            is ApiResult.Success -> currentPr.data
+            is ApiResult.Error -> return ToolResult(data = Unit,
+                summary = "Error fetching PR #$prId: ${currentPr.message}", isError = true,
+                hint = "Verify the PR exists.")
+        }
+
+        if (existingPr.reviewers.none { it.user.name == username }) {
+            return ToolResult(data = Unit, summary = "'$username' is not a reviewer on PR #$prId.",
+                isError = true, hint = "Check the username is correct.")
+        }
+
+        val updatedReviewers = existingPr.reviewers
+            .filter { it.user.name != username }
+            .map { BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name)) }
+
+        val updateRequest = BitbucketPrUpdateRequest(
+            title = existingPr.title,
+            description = existingPr.description ?: "",
+            version = existingPr.version,
+            reviewers = updatedReviewers
+        )
+        return when (val result = api.updatePullRequest(projectKey, repoSlug, prId, updateRequest)) {
+            is ApiResult.Success -> ToolResult.success(Unit, "Reviewer '$username' removed from PR #$prId")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to remove reviewer '$username' from PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error removing reviewer: ${result.message}", isError = true,
+                    hint = "Verify the username is correct.")
+            }
+        }
+    }
+
+    // --- Private helpers ---
+
+    private fun com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail.toPullRequestData(): PullRequestData =
+        PullRequestData(
+            id = id, title = title, state = state,
+            fromBranch = fromRef?.displayId ?: "",
+            toBranch = toRef?.displayId ?: "",
+            link = links?.self?.firstOrNull()?.href ?: "",
+            authorName = author?.user?.displayName ?: author?.user?.name
+        )
+
+    private fun com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail.toPullRequestDetailData(): PullRequestDetailData =
+        PullRequestDetailData(
+            id = id, title = title, description = description, state = state,
+            fromBranch = fromRef?.displayId ?: "",
+            toBranch = toRef?.displayId ?: "",
+            authorName = author?.user?.displayName ?: author?.user?.name,
+            reviewers = reviewers.map { r ->
+                ReviewerData(
+                    username = r.user.name,
+                    displayName = r.user.displayName.ifBlank { r.user.name },
+                    approved = r.approved,
+                    status = r.status
+                )
+            },
+            createdDate = createdDate, updatedDate = updatedDate, version = version
+        )
+
+    private fun emptyPrDetail(prId: Int) = PullRequestDetailData(
+        id = prId, title = "", description = null, state = "ERROR",
+        fromBranch = "", toBranch = "", authorName = null,
+        reviewers = emptyList(), createdDate = 0, updatedDate = 0, version = 0
+    )
 
     private fun notConfiguredError(detail: String): ToolResult<Unit> = ToolResult(
         data = Unit, summary = "Bitbucket not configured. $detail",

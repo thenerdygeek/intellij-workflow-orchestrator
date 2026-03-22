@@ -36,6 +36,7 @@ data class BitbucketRepo(
 data class BitbucketBranch(
     val id: String,
     val displayId: String,
+    val latestCommit: String? = null,
     val isDefault: Boolean = false
 )
 
