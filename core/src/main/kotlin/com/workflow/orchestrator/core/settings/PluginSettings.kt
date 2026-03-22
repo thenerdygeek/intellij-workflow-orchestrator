@@ -139,6 +139,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Sprint dashboard view preferences
         var sprintGroupBy by string("Assignee")
         var sprintSortBy by string("Default")
+
+        // Multi-repo configuration
+        var repos by list<RepoConfig>()
     }
 
     /**
@@ -204,6 +207,42 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
                     !state.sourcegraphUrl.isNullOrBlank() ||
                     !state.nexusUrl.isNullOrBlank()
         }
+
+    override fun loadState(state: State) {
+        super.loadState(state)
+        migrateToMultiRepo(state)
+    }
+
+    /**
+     * Migrates existing scalar repo fields to a RepoConfig entry on first load.
+     * Scalar fields are kept for backward compatibility but new code should use [getRepos].
+     */
+    private fun migrateToMultiRepo(state: State) {
+        if (state.repos.isNotEmpty()) return  // already migrated
+
+        if (!state.bitbucketProjectKey.isNullOrBlank()) {
+            val config = RepoConfig()
+            config.name = state.bitbucketRepoSlug ?: ""
+            config.bitbucketProjectKey = state.bitbucketProjectKey ?: ""
+            config.bitbucketRepoSlug = state.bitbucketRepoSlug ?: ""
+            config.bambooPlanKey = state.bambooPlanKey ?: ""
+            config.sonarProjectKey = state.sonarProjectKey ?: ""
+            config.dockerTagKey = state.dockerTagKey ?: ""
+            config.defaultTargetBranch = state.defaultTargetBranch ?: "develop"
+            config.isPrimary = true
+            state.repos.add(config)
+        }
+    }
+
+    // ---- Multi-repo convenience accessors ----
+
+    fun getRepos(): List<RepoConfig> = state.repos.toList()
+
+    fun getPrimaryRepo(): RepoConfig? = state.repos.find { it.isPrimary } ?: state.repos.firstOrNull()
+
+    fun getRepoForPath(vcsRootPath: String): RepoConfig? = state.repos.find { it.localVcsRootPath == vcsRootPath }
+
+    fun getRepoByName(name: String): RepoConfig? = state.repos.find { it.name == name }
 
     companion object {
         fun getInstance(project: Project): PluginSettings {
