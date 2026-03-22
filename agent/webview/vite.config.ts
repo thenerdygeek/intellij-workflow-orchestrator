@@ -18,10 +18,9 @@ export default defineConfig({
         manualChunks(id) {
           // Viz libraries get predictable chunk names for debugging
           // These are installed in later tasks (15-17)
-          if (id.includes('mermaid')) return 'mermaid'
+          if (id.includes('mermaid') || id.includes('dagre')) return 'mermaid'
           if (id.includes('katex')) return 'katex'
           if (id.includes('chart.js')) return 'chartjs'
-          if (id.includes('dagre')) return 'dagre'
           if (id.includes('diff2html')) return 'diff2html'
         },
       },

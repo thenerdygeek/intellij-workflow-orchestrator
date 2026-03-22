@@ -4,6 +4,13 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
+import { MermaidDiagram } from '@/components/rich/MermaidDiagram';
+import { ChartView } from '@/components/rich/ChartView';
+import { FlowDiagram } from '@/components/rich/FlowDiagram';
+import { MathBlock } from '@/components/rich/MathBlock';
+import { DiffHtml } from '@/components/rich/DiffHtml';
+import { AnsiOutput } from '@/components/rich/AnsiOutput';
+import { InteractiveHtml } from '@/components/rich/InteractiveHtml';
 
 interface MarkdownRendererProps {
   content: string;
@@ -32,6 +39,29 @@ function createMarkdownComponents(isStreaming: boolean): any {
     if (isBlock) {
       const language = className?.replace('language-', '') ?? '';
       const codeString = String(children).replace(/\n$/, '');
+
+      // Route special code fence languages to rich components
+      switch (language) {
+        case 'mermaid':
+          return <MermaidDiagram source={codeString} />;
+        case 'chart':
+          return <ChartView source={codeString} />;
+        case 'flow':
+          return <FlowDiagram source={codeString} />;
+        case 'math':
+          return <MathBlock latex={codeString} displayMode={true} />;
+        case 'diff':
+        case 'patch':
+          return <DiffHtml diffSource={codeString} />;
+        case 'ansi':
+          return <AnsiOutput text={codeString} />;
+        case 'html-interactive':
+        case 'visualization':
+        case 'viz':
+          return <InteractiveHtml htmlContent={codeString} />;
+      }
+
+      // Default: Shiki CodeBlock
       return <CodeBlock code={codeString} language={language} isStreaming={isStreaming} />;
     }
     return (
@@ -131,6 +161,19 @@ function createMarkdownComponents(isStreaming: boolean): any {
   },
 
   p({ children, ...props }: any) {
+    if (typeof children === 'string' && children.includes('$')) {
+      const parts = children.split(/(\$[^$]+\$)/g);
+      return (
+        <p className="my-1.5" {...props}>
+          {parts.map((part: string, i: number) => {
+            if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+              return <MathBlock key={i} latex={part.slice(1, -1)} displayMode={false} />;
+            }
+            return <span key={i}>{part}</span>;
+          })}
+        </p>
+      );
+    }
     return (
       <p className="my-1.5" {...props}>
         {children}

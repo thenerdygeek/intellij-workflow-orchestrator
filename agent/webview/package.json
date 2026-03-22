@@ -14,6 +14,7 @@
     "ansi_up": "^6.0.2",
     "chart.js": "^4.5.1",
     "dagre": "^0.8.5",
+    "diff2html": "^3.4.56",
     "dompurify": "^3.2.4",
     "katex": "^0.16.40",
     "mermaid": "^11.13.0",
