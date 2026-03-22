@@ -1,0 +1,1928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow Orchestrator — Agentic Chat UI Mockup</title>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   CSS VARIABLES — Mapped from AgentColors.kt JBColor values
+   These are the EXACT variables we'd inject in JCEF
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  /* Base palette — Dark theme (IntelliJ Darcula) */
+  --bg: #1e1f22;
+  --bg-elevated: #2b2d30;
+  --bg-surface: #313338;
+  --bg-surface-hover: #3c3f41;
+  --bg-input: #1e1f22;
+  --bg-user-msg: #2d3748;
+  --bg-agent-msg: #25272b;
+  --bg-thinking: #1a1d2e;
+  --bg-tool-card: #2a2d32;
+  --bg-code: #0d1117;
+  --bg-inline-code: #343942;
+  --bg-skeleton: #2b2d30;
+  --bg-skeleton-shimmer: #3c3f41;
+
+  /* Text */
+  --fg: #bcbec4;
+  --fg-primary: #dfe1e5;
+  --fg-secondary: #8b8d93;
+  --fg-muted: #6b6d74;
+  --fg-inverse: #1e1f22;
+  --fg-thinking: #9ba1ab;
+
+  /* Accent */
+  --accent: #6c9ef8;
+  --accent-dim: rgba(108, 158, 248, 0.15);
+  --accent-hover: #85b1fa;
+  --accent-glow: rgba(108, 158, 248, 0.25);
+
+  /* Status */
+  --success: #4caf50;
+  --success-dim: rgba(76, 175, 80, 0.12);
+  --error: #f44336;
+  --error-dim: rgba(244, 67, 54, 0.12);
+  --warning: #ff9800;
+  --warning-dim: rgba(255, 152, 0, 0.12);
+  --info: #5bc0de;
+
+  /* Tool badges */
+  --badge-read-bg: rgba(96, 165, 250, 0.15);
+  --badge-read-fg: #60a5fa;
+  --badge-write-bg: rgba(74, 222, 128, 0.15);
+  --badge-write-fg: #4ade80;
+  --badge-edit-bg: rgba(251, 191, 36, 0.15);
+  --badge-edit-fg: #fbbf24;
+  --badge-cmd-bg: rgba(248, 113, 113, 0.15);
+  --badge-cmd-fg: #f87171;
+  --badge-search-bg: rgba(45, 212, 191, 0.15);
+  --badge-search-fg: #2dd4bf;
+  --badge-think-bg: rgba(167, 139, 250, 0.15);
+  --badge-think-fg: #a78bfa;
+
+  /* Diff */
+  --diff-add-bg: rgba(34, 197, 94, 0.12);
+  --diff-add-fg: #86efac;
+  --diff-rem-bg: rgba(239, 68, 68, 0.10);
+  --diff-rem-fg: #fca5a5;
+
+  /* Borders */
+  --border: #393b40;
+  --border-subtle: #2f3136;
+  --border-focus: var(--accent);
+
+  /* Misc */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --transition-fast: 120ms ease;
+  --transition-normal: 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --transition-expand: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LAYOUT — Simulates IntelliJ tool window
+   ═══════════════════════════════════════════════════════════ */
+.ide-frame {
+  display: flex;
+  height: 100vh;
+  background: #1a1b1e;
+}
+
+.ide-sidebar {
+  width: 48px;
+  background: #1a1b1e;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  gap: 4px;
+}
+
+.ide-sidebar-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.ide-sidebar-btn:hover { background: var(--bg-surface-hover); color: var(--fg-primary); }
+.ide-sidebar-btn.active { background: var(--accent-dim); color: var(--accent); }
+
+.ide-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Tab bar simulating IntelliJ tool window tabs */
+.tab-bar {
+  display: flex;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  gap: 0;
+  height: 32px;
+  align-items: flex-end;
+}
+.tab {
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+  white-space: nowrap;
+  user-select: none;
+}
+.tab:hover { color: var(--fg-primary); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ═══════════════════════════════════════════════════════════
+   CHAT CONTAINER
+   ═══════════════════════════════════════════════════════════ */
+.chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 16px 8px;
+  scroll-behavior: smooth;
+}
+
+.chat-messages::-webkit-scrollbar { width: 6px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.chat-messages::-webkit-scrollbar-thumb:hover { background: var(--fg-muted); }
+
+/* ═══════════════════════════════════════════════════════════
+   MESSAGES
+   ═══════════════════════════════════════════════════════════ */
+.message {
+  animation: message-enter 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  margin-bottom: 16px;
+}
+
+@keyframes message-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* User message */
+.message-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.message-user .message-bubble {
+  max-width: 85%;
+  background: var(--bg-user-msg);
+  border-radius: var(--radius-md) var(--radius-md) 4px var(--radius-md);
+  padding: 10px 14px;
+  color: var(--fg-primary);
+  border: 1px solid rgba(108, 158, 248, 0.1);
+}
+
+.message-user .message-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+  padding-right: 4px;
+}
+
+/* Agent message */
+.message-agent {
+  display: flex;
+  flex-direction: column;
+}
+
+.message-agent .message-content {
+  background: var(--bg-agent-msg);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+}
+
+.message-agent .message-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: white;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.message-agent .message-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.message-agent .message-label .model-tag {
+  background: var(--bg-surface);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--fg-secondary);
+  margin-left: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MARKDOWN CONTENT
+   ═══════════════════════════════════════════════════════════ */
+.md-content p { margin-bottom: 8px; color: var(--fg); }
+.md-content p:last-child { margin-bottom: 0; }
+.md-content strong { color: var(--fg-primary); font-weight: 600; }
+.md-content em { font-style: italic; color: var(--fg-secondary); }
+
+.md-content code {
+  background: var(--bg-inline-code);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.md-content ul, .md-content ol { padding-left: 20px; margin-bottom: 8px; }
+.md-content li { margin-bottom: 4px; }
+
+/* Code blocks */
+.code-block {
+  position: relative;
+  margin: 10px 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #161b22;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
+
+.code-lang {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+
+.code-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.code-action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-secondary);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.code-action-btn:hover { background: var(--bg-surface-hover); color: var(--fg-primary); border-color: var(--fg-muted); }
+.code-action-btn.copied { color: var(--success); border-color: var(--success); }
+
+.code-body {
+  background: var(--bg-code);
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+.code-body::-webkit-scrollbar { height: 4px; }
+.code-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Syntax colors */
+.tok-keyword { color: #ff7b72; }
+.tok-string { color: #a5d6ff; }
+.tok-comment { color: #8b949e; font-style: italic; }
+.tok-function { color: #d2a8ff; }
+.tok-type { color: #ffa657; }
+.tok-number { color: #79c0ff; }
+.tok-operator { color: #ff7b72; }
+.tok-property { color: #79c0ff; }
+.tok-annotation { color: #ffa657; }
+.tok-variable { color: #ffa657; }
+
+/* ═══════════════════════════════════════════════════════════
+   TOOL CALL CARDS
+   ═══════════════════════════════════════════════════════════ */
+.tool-calls-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.tool-card {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: border-color var(--transition-fast);
+}
+.tool-card:hover { border-color: var(--fg-muted); }
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tool-card);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+.tool-card-header:hover { background: var(--bg-surface-hover); }
+
+.tool-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.tool-badge.read { background: var(--badge-read-bg); color: var(--badge-read-fg); }
+.tool-badge.write { background: var(--badge-write-bg); color: var(--badge-write-fg); }
+.tool-badge.edit { background: var(--badge-edit-bg); color: var(--badge-edit-fg); }
+.tool-badge.cmd { background: var(--badge-cmd-bg); color: var(--badge-cmd-fg); }
+.tool-badge.search { background: var(--badge-search-bg); color: var(--badge-search-fg); }
+.tool-badge.think { background: var(--badge-think-bg); color: var(--badge-think-fg); }
+
+.tool-name {
+  font-size: 12px;
+  color: var(--fg-primary);
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-target {
+  font-size: 11px;
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tool-duration {
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+
+.tool-status-icon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-success { color: var(--success); }
+.status-error { color: var(--error); }
+.status-running { color: var(--accent); }
+
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+/* Checkmark SVG animation */
+@keyframes checkmark-draw {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+
+.chevron {
+  color: var(--fg-muted);
+  font-size: 10px;
+  transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tool-card.expanded .chevron { transform: rotate(180deg); }
+
+.tool-card-body {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height var(--transition-expand), opacity 200ms ease;
+  background: var(--bg-elevated);
+}
+.tool-card.expanded .tool-card-body {
+  max-height: 300px;
+  opacity: 1;
+}
+
+.tool-card-body-inner {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-secondary);
+  line-height: 1.5;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tool-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+.tool-output {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.tool-output::-webkit-scrollbar { width: 4px; }
+.tool-output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Progress bar on running tools */
+.tool-progress {
+  height: 2px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+@keyframes indeterminate {
+  0%   { transform: translateX(-100%) scaleX(0.4); }
+  50%  { transform: translateX(50%) scaleX(0.6); }
+  100% { transform: translateX(200%) scaleX(0.4); }
+}
+
+.tool-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  animation: indeterminate 1.6s cubic-bezier(0.65, 0.05, 0.36, 0.95) infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   THINKING BLOCK
+   ═══════════════════════════════════════════════════════════ */
+.thinking-block {
+  margin: 10px 0;
+  border-left: 3px solid rgba(167, 139, 250, 0.3);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--bg-thinking);
+  overflow: hidden;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+.thinking-header:hover { background: rgba(167, 139, 250, 0.05); }
+
+.thinking-icon {
+  font-size: 14px;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.92); }
+}
+.thinking-icon.active {
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
+.thinking-label {
+  font-size: 12px;
+  color: var(--fg-thinking);
+  flex: 1;
+}
+
+.thinking-chevron {
+  color: var(--fg-muted);
+  font-size: 10px;
+  transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.thinking-block.expanded .thinking-chevron { transform: rotate(180deg); }
+
+.thinking-body {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 350ms ease, opacity 200ms ease;
+}
+.thinking-block.expanded .thinking-body {
+  max-height: 500px;
+  opacity: 1;
+}
+
+.thinking-content {
+  padding: 0 12px 10px;
+  font-size: 12px;
+  color: var(--fg-thinking);
+  line-height: 1.6;
+  border-top: 1px solid rgba(167, 139, 250, 0.1);
+  padding-top: 10px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PLAN CARD
+   ═══════════════════════════════════════════════════════════ */
+.plan-card {
+  margin: 10px 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+
+.plan-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(108, 158, 248, 0.08), rgba(167, 139, 250, 0.06));
+  border-bottom: 1px solid var(--border);
+}
+
+.plan-icon { font-size: 16px; }
+
+.plan-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-primary);
+  flex: 1;
+}
+
+.plan-meta {
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
+
+.plan-steps {
+  padding: 8px 0;
+}
+
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 14px;
+  transition: background var(--transition-fast);
+}
+.plan-step:hover { background: var(--bg-surface-hover); }
+
+.step-indicator {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+  font-size: 10px;
+  transition: all 250ms ease;
+}
+
+.step-pending {
+  border: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.step-running {
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.step-done {
+  background: var(--success);
+  color: white;
+  border: none;
+}
+
+.step-failed {
+  background: var(--error);
+  color: white;
+  border: none;
+}
+
+.step-content { flex: 1; min-width: 0; }
+
+.step-title {
+  font-size: 12px;
+  color: var(--fg-primary);
+  font-weight: 500;
+}
+.plan-step.done .step-title { color: var(--fg-secondary); }
+
+.step-detail {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+
+.step-connector {
+  width: 2px;
+  height: 8px;
+  background: var(--border);
+  margin-left: 23px;
+  transition: background 400ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+.step-connector.filled { background: var(--success); }
+
+.plan-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.plan-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition-fast);
+}
+.plan-btn:active { transform: scale(0.97); }
+
+.plan-btn-primary {
+  background: var(--accent);
+  color: white;
+}
+.plan-btn-primary:hover { background: var(--accent-hover); }
+
+.plan-btn-secondary {
+  background: transparent;
+  color: var(--fg-secondary);
+  border: 1px solid var(--border);
+}
+.plan-btn-secondary:hover { background: var(--bg-surface-hover); color: var(--fg-primary); }
+
+/* ═══════════════════════════════════════════════════════════
+   APPROVAL GATE
+   ═══════════════════════════════════════════════════════════ */
+.approval-gate {
+  margin: 10px 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--warning);
+  background: var(--warning-dim);
+  overflow: hidden;
+}
+
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.approval-icon { font-size: 18px; }
+
+.approval-content { flex: 1; }
+
+.approval-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.approval-desc {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  margin-top: 2px;
+}
+
+.approval-detail {
+  padding: 0 14px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg);
+  background: rgba(0,0,0,0.15);
+  margin: 0 10px 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 152, 0, 0.2);
+}
+
+.approval-btn-approve {
+  background: var(--success);
+  color: white;
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.approval-btn-approve:hover { filter: brightness(1.1); }
+.approval-btn-approve:active { transform: scale(0.97); }
+
+.approval-btn-deny {
+  background: transparent;
+  color: var(--error);
+  padding: 6px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--error);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.approval-btn-deny:hover { background: var(--error-dim); }
+
+/* ═══════════════════════════════════════════════════════════
+   STREAMING CURSOR
+   ═══════════════════════════════════════════════════════════ */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent);
+  animation: cursor-blink 530ms step-end infinite;
+  vertical-align: text-bottom;
+  margin-left: 1px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TYPING INDICATOR
+   ═══════════════════════════════════════════════════════════ */
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
+
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.typing-dots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+.typing-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CONTEXT CHIPS
+   ═══════════════════════════════════════════════════════════ */
+.context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--fg-secondary);
+  background: var(--bg-surface);
+  transition: all var(--transition-fast);
+}
+.context-chip:hover { border-color: var(--fg-muted); color: var(--fg-primary); }
+
+.chip-icon { font-size: 10px; }
+
+/* ═══════════════════════════════════════════════════════════
+   DIFF VIEW
+   ═══════════════════════════════════════════════════════════ */
+.diff-block {
+  margin: 10px 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #161b22;
+  border-bottom: 1px solid var(--border);
+}
+
+.diff-file-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-secondary);
+}
+
+.diff-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.diff-btn {
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  border: none;
+  transition: all var(--transition-fast);
+}
+.diff-btn:active { transform: scale(0.97); }
+
+.diff-btn-accept {
+  background: var(--success-dim);
+  color: var(--success);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+}
+.diff-btn-accept:hover { background: rgba(76, 175, 80, 0.25); }
+
+.diff-btn-reject {
+  background: var(--error-dim);
+  color: var(--error);
+  border: 1px solid rgba(244, 67, 54, 0.2);
+}
+.diff-btn-reject:hover { background: rgba(244, 67, 54, 0.2); }
+
+.diff-body {
+  background: var(--bg-code);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-line {
+  padding: 0 12px;
+  display: flex;
+  gap: 0;
+}
+
+.diff-line-num {
+  width: 36px;
+  text-align: right;
+  padding-right: 10px;
+  color: var(--fg-muted);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.diff-line-content { flex: 1; white-space: pre; }
+
+.diff-line.added { background: var(--diff-add-bg); }
+.diff-line.added .diff-line-content { color: var(--diff-add-fg); }
+
+.diff-line.removed { background: var(--diff-rem-bg); }
+.diff-line.removed .diff-line-content { color: var(--diff-rem-fg); }
+
+/* ═══════════════════════════════════════════════════════════
+   SESSION METRICS
+   ═══════════════════════════════════════════════════════════ */
+.session-metrics {
+  margin: 12px 0;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.metric {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--fg-secondary);
+  background: var(--bg-surface);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.metric-icon { font-size: 12px; }
+.metric-value { color: var(--fg-primary); font-weight: 500; font-family: var(--font-mono); }
+
+/* ═══════════════════════════════════════════════════════════
+   INPUT AREA
+   ═══════════════════════════════════════════════════════════ */
+.input-area {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.input-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.input-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 14px;
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--fg-secondary);
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+.input-chip:hover { border-color: var(--fg-muted); color: var(--fg-primary); }
+.input-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.input-chip-icon { font-size: 11px; }
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.input-field-container {
+  flex: 1;
+  position: relative;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+  overflow: hidden;
+}
+.input-field-container:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.input-mentions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px 0;
+}
+
+.mention-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+.mention-remove {
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+.mention-remove:hover { opacity: 1; }
+
+.input-textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--fg-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: none;
+  min-height: 20px;
+  max-height: 120px;
+}
+.input-textarea::placeholder { color: var(--fg-muted); }
+
+.input-send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+.input-send-btn:hover { background: var(--accent-hover); }
+.input-send-btn:active { transform: scale(0.93); }
+.input-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0 0;
+}
+
+.toolbar-left, .toolbar-right { display: flex; gap: 4px; align-items: center; }
+
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.toolbar-btn:hover { background: var(--bg-surface-hover); color: var(--fg-secondary); }
+
+.toolbar-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.shortcut-hint {
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHIMMER / SKELETON
+   ═══════════════════════════════════════════════════════════ */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-skeleton) 0%, var(--bg-skeleton-shimmer) 50%, var(--bg-skeleton) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+.skeleton-line { height: 14px; margin-bottom: 6px; }
+.skeleton-line:last-child { width: 60%; }
+
+/* ═══════════════════════════════════════════════════════════
+   NEW MESSAGES BADGE
+   ═══════════════════════════════════════════════════════════ */
+.new-messages-badge {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  opacity: 0;
+  pointer-events: none;
+  background: var(--accent);
+  color: white;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 14px;
+  border-radius: 16px;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: opacity 200ms ease, transform 200ms ease;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.new-messages-badge.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ERROR MESSAGE
+   ═══════════════════════════════════════════════════════════ */
+.error-message {
+  margin: 10px 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  background: var(--error-dim);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.error-icon { font-size: 16px; color: var(--error); }
+.error-text { font-size: 12px; color: var(--fg); flex: 1; }
+
+.error-retry-btn {
+  background: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+.error-retry-btn:hover { background: var(--error-dim); }
+
+/* ═══════════════════════════════════════════════════════════
+   FILE LINK
+   ═══════════════════════════════════════════════════════════ */
+.file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--transition-fast);
+}
+.file-link:hover { border-bottom-color: var(--accent); }
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLLBAR POSITION INDICATOR
+   ═══════════════════════════════════════════════════════════ */
+.chat-scroll-wrapper {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INTERACTIVE DEMO CONTROLS
+   ═══════════════════════════════════════════════════════════ */
+.demo-controls {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.demo-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--fg-secondary);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+.demo-btn:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+.demo-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--fg-muted);
+  padding: 4px 0 2px;
+}
+</style>
+</head>
+<body>
+
+<div class="ide-frame">
+  <!-- IDE Sidebar -->
+  <div class="ide-sidebar">
+    <button class="ide-sidebar-btn" title="Project">📁</button>
+    <button class="ide-sidebar-btn" title="Git">🔀</button>
+    <button class="ide-sidebar-btn" title="Terminal">⌨</button>
+    <button class="ide-sidebar-btn active" title="Agent">🤖</button>
+    <button class="ide-sidebar-btn" title="Build">🔨</button>
+  </div>
+
+  <!-- Main content -->
+  <div class="ide-main">
+    <!-- Tab bar -->
+    <div class="tab-bar">
+      <div class="tab">Sprint</div>
+      <div class="tab">PR</div>
+      <div class="tab">Build</div>
+      <div class="tab">Quality</div>
+      <div class="tab active">Agent</div>
+      <div class="tab">Handover</div>
+    </div>
+
+    <!-- Chat -->
+    <div class="chat-container">
+      <div class="chat-scroll-wrapper">
+        <div class="chat-messages" id="chatMessages">
+
+          <!-- User message -->
+          <div class="message message-user" style="animation-delay: 0ms">
+            <div class="message-label">You</div>
+            <div class="message-bubble">
+              Fix the failing test in <code>BudgetEnforcerTest.kt</code> — the compression threshold changed from 0.60 to 0.80 but the test still asserts 0.60. Also check if any other tests reference the old thresholds.
+              <div class="context-chips">
+                <span class="context-chip"><span class="chip-icon">📄</span> BudgetEnforcerTest.kt</span>
+                <span class="context-chip"><span class="chip-icon">📄</span> BudgetEnforcer.kt</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent response with thinking -->
+          <div class="message message-agent" style="animation-delay: 100ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">
+                Workflow Agent
+                <span class="model-tag">opus-4.6</span>
+              </div>
+            </div>
+            <div class="message-content">
+
+              <!-- Thinking block - collapsed -->
+              <div class="thinking-block" id="thinkingBlock1">
+                <div class="thinking-header" onclick="toggleThinking('thinkingBlock1')">
+                  <span class="thinking-icon">💭</span>
+                  <span class="thinking-label">Thought for 3.2s</span>
+                  <span class="thinking-chevron">▼</span>
+                </div>
+                <div class="thinking-body">
+                  <div class="thinking-content">
+                    The user wants me to fix the BudgetEnforcerTest. I need to read the current test file first to see which assertions reference the old threshold values. The thresholds changed: COMPRESSION 0.60→0.80, NUDGE 0.75→0.88, STRONG_NUDGE 0.85→0.93, TERMINATE 0.95→0.97. Let me check for all of these in the test file and any other test files that might reference these constants.
+                  </div>
+                </div>
+              </div>
+
+              <div class="md-content">
+                <p>I'll start by reading the test file and the source to understand all the threshold changes, then fix the assertions.</p>
+              </div>
+
+              <!-- Tool calls group -->
+              <div class="tool-calls-group">
+                <!-- Read tool - completed -->
+                <div class="tool-card" id="tool1">
+                  <div class="tool-card-header" onclick="toggleTool('tool1')">
+                    <span class="tool-badge read">READ</span>
+                    <span class="tool-name">read_file</span>
+                    <span class="tool-target">BudgetEnforcerTest.kt</span>
+                    <div class="tool-status">
+                      <span class="tool-duration">0.3s</span>
+                      <div class="tool-status-icon status-success">✓</div>
+                    </div>
+                    <span class="chevron">▼</span>
+                  </div>
+                  <div class="tool-card-body">
+                    <div class="tool-card-body-inner">
+                      <div class="tool-section-label">Output</div>
+                      <div class="tool-output">Read 82 lines from agent/src/test/kotlin/.../BudgetEnforcerTest.kt
+Found 5 assertions referencing old thresholds:
+  Line 24: assertEquals(0.60, enforcer.compressionThreshold)
+  Line 31: assertEquals(0.75, enforcer.nudgeThreshold)
+  Line 38: assertEquals(0.85, enforcer.strongNudgeThreshold)
+  Line 45: assertEquals(0.95, enforcer.terminateThreshold)
+  Line 62: assertTrue(ratio > 0.60) // compression check</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Search tool - completed -->
+                <div class="tool-card" id="tool2">
+                  <div class="tool-card-header" onclick="toggleTool('tool2')">
+                    <span class="tool-badge search">SEARCH</span>
+                    <span class="tool-name">grep_codebase</span>
+                    <span class="tool-target">"0\\.60|0\\.75|0\\.85|0\\.95"</span>
+                    <div class="tool-status">
+                      <span class="tool-duration">1.2s</span>
+                      <div class="tool-status-icon status-success">✓</div>
+                    </div>
+                    <span class="chevron">▼</span>
+                  </div>
+                  <div class="tool-card-body">
+                    <div class="tool-card-body-inner">
+                      <div class="tool-section-label">Output</div>
+                      <div class="tool-output">Found 3 files with old threshold references:
+  BudgetEnforcerTest.kt:24,31,38,45,62 (5 matches)
+  ContextManagerCompressionTest.kt:18 (1 match)
+  PromptAssemblerTest.kt: no threshold refs ✓</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Edit tool - completed -->
+                <div class="tool-card" id="tool3">
+                  <div class="tool-card-header" onclick="toggleTool('tool3')">
+                    <span class="tool-badge edit">EDIT</span>
+                    <span class="tool-name">edit_file</span>
+                    <span class="tool-target">BudgetEnforcerTest.kt</span>
+                    <div class="tool-status">
+                      <span class="tool-duration">0.1s</span>
+                      <div class="tool-status-icon status-success">✓</div>
+                    </div>
+                    <span class="chevron">▼</span>
+                  </div>
+                  <div class="tool-card-body">
+                    <div class="tool-card-body-inner">
+                      <div class="tool-section-label">Changes</div>
+                      <div class="tool-output">Replaced 5 threshold assertions:
+  0.60 → 0.80 (compression)
+  0.75 → 0.88 (nudge)
+  0.85 → 0.93 (strong nudge)
+  0.95 → 0.97 (terminate)
+  ratio > 0.60 → ratio > 0.80</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- CMD tool - running -->
+                <div class="tool-card" id="tool4">
+                  <div class="tool-card-header" onclick="toggleTool('tool4')">
+                    <span class="tool-badge cmd">CMD</span>
+                    <span class="tool-name">run_command</span>
+                    <span class="tool-target">./gradlew :agent:test</span>
+                    <div class="tool-status">
+                      <span class="tool-duration" id="runningTimer">12.4s</span>
+                      <div class="tool-status-icon status-running">
+                        <div class="spinner"></div>
+                      </div>
+                    </div>
+                    <span class="chevron">▼</span>
+                  </div>
+                  <div class="tool-progress"><div class="tool-progress-bar"></div></div>
+                  <div class="tool-card-body">
+                    <div class="tool-card-body-inner">
+                      <div class="tool-section-label">Live Output</div>
+                      <div class="tool-output" style="color: var(--fg-muted);">
+> Task :agent:compileKotlin UP-TO-DATE
+> Task :agent:compileTestKotlin
+> Task :agent:test
+  BudgetEnforcerTest > returns OK when below threshold PASSED
+  BudgetEnforcerTest > returns COMPRESS at 0.80 PASSED
+  BudgetEnforcerTest > returns NUDGE at 0.88 PASSED
+  ContextManagerTest > compression preserves anchors RUNNING<span class="stream-cursor"></span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Inline diff view -->
+              <div class="diff-block">
+                <div class="diff-header">
+                  <span class="diff-file-path">agent/src/test/.../BudgetEnforcerTest.kt</span>
+                  <div class="diff-actions">
+                    <button class="diff-btn diff-btn-accept">✓ Accept</button>
+                    <button class="diff-btn diff-btn-reject">✗ Reject</button>
+                  </div>
+                </div>
+                <div class="diff-body">
+                  <div class="diff-line"><span class="diff-line-num">22</span><span class="diff-line-content">    @Test</span></div>
+                  <div class="diff-line"><span class="diff-line-num">23</span><span class="diff-line-content">    fun `compression threshold is correct`() {</span></div>
+                  <div class="diff-line removed"><span class="diff-line-num">24</span><span class="diff-line-content">-       assertEquals(0.60, enforcer.compressionThreshold)</span></div>
+                  <div class="diff-line added"><span class="diff-line-num">24</span><span class="diff-line-content">+       assertEquals(0.80, enforcer.compressionThreshold)</span></div>
+                  <div class="diff-line"><span class="diff-line-num">25</span><span class="diff-line-content">    }</span></div>
+                  <div class="diff-line"><span class="diff-line-num">26</span><span class="diff-line-content"></span></div>
+                  <div class="diff-line"><span class="diff-line-num">27</span><span class="diff-line-content">    @Test</span></div>
+                  <div class="diff-line"><span class="diff-line-num">28</span><span class="diff-line-content">    fun `nudge threshold is correct`() {</span></div>
+                  <div class="diff-line removed"><span class="diff-line-num">29</span><span class="diff-line-content">-       assertEquals(0.75, enforcer.nudgeThreshold)</span></div>
+                  <div class="diff-line added"><span class="diff-line-num">29</span><span class="diff-line-content">+       assertEquals(0.88, enforcer.nudgeThreshold)</span></div>
+                  <div class="diff-line"><span class="diff-line-num">30</span><span class="diff-line-content">    }</span></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Second agent message with plan -->
+          <div class="message message-agent" style="animation-delay: 200ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">
+                Workflow Agent
+                <span class="model-tag">opus-4.6</span>
+              </div>
+            </div>
+            <div class="message-content">
+              <div class="md-content">
+                <p>I found a larger issue — the context compression tests also need updates. Here's my plan:</p>
+              </div>
+
+              <!-- Plan Card -->
+              <div class="plan-card">
+                <div class="plan-header">
+                  <span class="plan-icon">📋</span>
+                  <span class="plan-title">Fix threshold assertions across test suite</span>
+                  <span class="plan-meta">4 steps</span>
+                </div>
+                <div class="plan-steps">
+                  <div class="plan-step done">
+                    <div class="step-indicator step-done">✓</div>
+                    <div class="step-content">
+                      <div class="step-title">Update BudgetEnforcerTest thresholds</div>
+                      <div class="step-detail">5 assertions updated (0.60→0.80, 0.75→0.88, 0.85→0.93, 0.95→0.97)</div>
+                    </div>
+                  </div>
+                  <div class="step-connector filled"></div>
+                  <div class="plan-step done">
+                    <div class="step-indicator step-done">✓</div>
+                    <div class="step-content">
+                      <div class="step-title">Update ContextManagerCompressionTest</div>
+                      <div class="step-detail">1 assertion on line 18</div>
+                    </div>
+                  </div>
+                  <div class="step-connector filled"></div>
+                  <div class="plan-step" style="background: rgba(108, 158, 248, 0.04);">
+                    <div class="step-indicator step-running">
+                      <div class="spinner" style="width: 12px; height: 12px; border-width: 1.5px;"></div>
+                    </div>
+                    <div class="step-content">
+                      <div class="step-title">Run full test suite</div>
+                      <div class="step-detail">./gradlew :agent:test — verifying all 695 tests pass</div>
+                    </div>
+                  </div>
+                  <div class="step-connector"></div>
+                  <div class="plan-step">
+                    <div class="step-indicator step-pending">4</div>
+                    <div class="step-content">
+                      <div class="step-title">Commit changes</div>
+                      <div class="step-detail">fix(agent): update test assertions for new budget thresholds</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Approval Gate -->
+          <div class="message message-agent" style="animation-delay: 300ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">Workflow Agent <span class="model-tag">opus-4.6</span></div>
+            </div>
+            <div class="message-content">
+              <div class="approval-gate">
+                <div class="approval-header">
+                  <span class="approval-icon">⚠️</span>
+                  <div class="approval-content">
+                    <div class="approval-title">Approval Required — Create PR</div>
+                    <div class="approval-desc">This will create a pull request on the remote repository</div>
+                  </div>
+                </div>
+                <div class="approval-detail">
+                  gh pr create --title "fix(agent): update budget threshold test assertions"
+                  --base feature/phase-3-agentic-ai-foundation
+                  --body "Updates 6 test assertions to match new compression thresholds"
+                </div>
+                <div class="approval-actions">
+                  <button class="approval-btn-approve">✓ Approve</button>
+                  <button class="approval-btn-deny">✗ Deny</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Error + retry example -->
+          <div class="message message-agent" style="animation-delay: 350ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">Workflow Agent <span class="model-tag">opus-4.6</span></div>
+            </div>
+            <div class="message-content">
+              <div class="error-message">
+                <span class="error-icon">⊘</span>
+                <span class="error-text">Build failed: <code>ContextManagerTest.kt:142</code> — expected <code>COMPRESS</code> but was <code>OK</code>. The test ratio 0.79 is below the new 0.80 threshold.</span>
+                <button class="error-retry-btn">↻ Retry</button>
+              </div>
+              <div class="md-content" style="margin-top: 8px;">
+                <p>The test at line 142 uses a ratio of 0.79 which was above the old threshold (0.60) but below the new one (0.80). I'll adjust the test input to use 0.82 instead.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Code block example -->
+          <div class="message message-agent" style="animation-delay: 400ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">Workflow Agent <span class="model-tag">opus-4.6</span></div>
+            </div>
+            <div class="message-content">
+              <div class="md-content">
+                <p>Here's the fixed test — I bumped the fill ratio from 0.79 to 0.82:</p>
+              </div>
+              <div class="code-block">
+                <div class="code-header">
+                  <span class="code-lang">Kotlin</span>
+                  <div class="code-actions">
+                    <button class="code-action-btn" onclick="copyCode(this)">📋 Copy</button>
+                    <button class="code-action-btn">✏️ Apply</button>
+                  </div>
+                </div>
+                <div class="code-body"><span class="tok-annotation">@Test</span>
+<span class="tok-keyword">fun</span> <span class="tok-function">`returns COMPRESS when above threshold`</span>() {
+    <span class="tok-keyword">val</span> enforcer = <span class="tok-type">BudgetEnforcer</span>(maxTokens = <span class="tok-number">150000</span>)
+    <span class="tok-keyword">val</span> currentTokens = <span class="tok-number">123000</span> <span class="tok-comment">// 0.82 ratio — above 0.80 threshold</span>
+
+    <span class="tok-keyword">val</span> result = enforcer.<span class="tok-function">evaluate</span>(currentTokens)
+
+    <span class="tok-function">assertEquals</span>(<span class="tok-type">BudgetState</span>.<span class="tok-property">COMPRESS</span>, result)
+}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Session metrics -->
+          <div class="message message-agent" style="animation-delay: 450ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">Workflow Agent <span class="model-tag">opus-4.6</span></div>
+            </div>
+            <div class="message-content">
+              <div class="md-content">
+                <p><strong>All 695 tests passing.</strong> Fixed 6 test assertions across 2 files. Changes committed.</p>
+              </div>
+              <div class="session-metrics">
+                <div class="metric"><span class="metric-icon">🔤</span> Tokens: <span class="metric-value">24,891</span></div>
+                <div class="metric"><span class="metric-icon">⏱</span> Duration: <span class="metric-value">2m 34s</span></div>
+                <div class="metric"><span class="metric-icon">🔄</span> Iterations: <span class="metric-value">8</span></div>
+                <div class="metric"><span class="metric-icon">📝</span> Files: <span class="metric-value">2 modified</span></div>
+                <div class="metric"><span class="metric-icon">✅</span> Status: <span class="metric-value" style="color: var(--success)">Success</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Streaming message example -->
+          <div class="message message-user" style="animation-delay: 500ms">
+            <div class="message-label">You</div>
+            <div class="message-bubble">
+              Now can you also add a new test that verifies the budget enforcer correctly handles the edge case at exactly 0.80?
+            </div>
+          </div>
+
+          <!-- Agent streaming response -->
+          <div class="message message-agent" style="animation-delay: 550ms">
+            <div class="message-header">
+              <div class="agent-avatar">W</div>
+              <div class="message-label">Workflow Agent <span class="model-tag">opus-4.6</span></div>
+            </div>
+            <div class="message-content">
+              <div class="thinking-block expanded" id="thinkingBlock2">
+                <div class="thinking-header" onclick="toggleThinking('thinkingBlock2')">
+                  <span class="thinking-icon active">💭</span>
+                  <span class="thinking-label">Thinking...</span>
+                  <span class="thinking-chevron">▼</span>
+                </div>
+                <div class="thinking-body" style="max-height: 500px; opacity: 1;">
+                  <div class="thinking-content">
+                    The user wants an edge case test at exactly the 0.80 boundary. I need to determine: is 0.80 inclusive (returns COMPRESS) or exclusive (returns OK)? Let me check the BudgetEnforcer source code...<span class="stream-cursor"></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Skeleton loading -->
+              <div style="margin-top: 10px;">
+                <div class="skeleton skeleton-line" style="width: 90%;"></div>
+                <div class="skeleton skeleton-line" style="width: 75%;"></div>
+                <div class="skeleton skeleton-line" style="width: 60%;"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- New messages badge -->
+        <div class="new-messages-badge" id="newMsgBadge">
+          ↓ New messages below
+        </div>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <div class="input-chips">
+          <span class="input-chip active"><span class="input-chip-icon">🤖</span> Agent Mode</span>
+          <span class="input-chip"><span class="input-chip-icon">📋</span> Plan Mode</span>
+          <span class="input-chip"><span class="input-chip-icon">💡</span> Skills</span>
+          <span class="input-chip"><span class="input-chip-icon">🔧</span> opus-4.6</span>
+        </div>
+        <div class="input-wrapper">
+          <div class="input-field-container">
+            <div class="input-mentions">
+              <span class="mention-tag">📄 BudgetEnforcer.kt <span class="mention-remove">×</span></span>
+            </div>
+            <textarea class="input-textarea" rows="1" placeholder="Ask the agent... (@ to mention files)">Add edge case test for exactly 0.80 boundary</textarea>
+          </div>
+          <button class="input-send-btn" title="Send (⏎)">↑</button>
+        </div>
+        <div class="input-toolbar">
+          <div class="toolbar-left">
+            <button class="toolbar-btn" title="Undo last action">↩ Undo</button>
+            <span class="toolbar-separator"></span>
+            <button class="toolbar-btn" title="New chat session">+ New</button>
+            <button class="toolbar-btn" title="Stop agent">■ Stop</button>
+          </div>
+          <div class="toolbar-right">
+            <button class="toolbar-btn" title="View traces">📊 Traces</button>
+            <button class="toolbar-btn" title="Settings">⚙</button>
+            <span class="shortcut-hint">⏎ Send · ⇧⏎ Newline</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Demo controls -->
+<div class="demo-controls">
+  <div class="demo-label">Interactive Demo</div>
+  <button class="demo-btn" onclick="toggleTheme()">Toggle Light/Dark</button>
+  <button class="demo-btn" onclick="showNewMsgBadge()">Show "New Messages"</button>
+  <button class="demo-btn" onclick="simulateStream()">Simulate Streaming</button>
+  <button class="demo-btn" onclick="scrollToTop()">Scroll to Top</button>
+</div>
+
+<script>
+// Tool card expand/collapse
+function toggleTool(id) {
+  document.getElementById(id).classList.toggle('expanded');
+}
+
+// Thinking block expand/collapse
+function toggleThinking(id) {
+  document.getElementById(id).classList.toggle('expanded');
+}
+
+// Copy button
+function copyCode(btn) {
+  btn.classList.add('copied');
+  btn.innerHTML = '✓ Copied';
+  setTimeout(() => {
+    btn.classList.remove('copied');
+    btn.innerHTML = '📋 Copy';
+  }, 2000);
+}
+
+// Running timer
+let timerVal = 12.4;
+setInterval(() => {
+  timerVal += 0.1;
+  const el = document.getElementById('runningTimer');
+  if (el) el.textContent = timerVal.toFixed(1) + 's';
+}, 100);
+
+// Theme toggle
+let isDark = true;
+function toggleTheme() {
+  isDark = !isDark;
+  const root = document.documentElement.style;
+  if (!isDark) {
+    root.setProperty('--bg', '#f5f5f5');
+    root.setProperty('--bg-elevated', '#ffffff');
+    root.setProperty('--bg-surface', '#f0f0f0');
+    root.setProperty('--bg-surface-hover', '#e8e8e8');
+    root.setProperty('--bg-input', '#ffffff');
+    root.setProperty('--bg-user-msg', '#e8f0fe');
+    root.setProperty('--bg-agent-msg', '#ffffff');
+    root.setProperty('--bg-thinking', '#f0eeff');
+    root.setProperty('--bg-tool-card', '#f8f8f8');
+    root.setProperty('--bg-code', '#1e1e1e');
+    root.setProperty('--bg-inline-code', '#e8eaed');
+    root.setProperty('--bg-skeleton', '#e8e8e8');
+    root.setProperty('--bg-skeleton-shimmer', '#d0d0d0');
+    root.setProperty('--fg', '#3c4043');
+    root.setProperty('--fg-primary', '#202124');
+    root.setProperty('--fg-secondary', '#5f6368');
+    root.setProperty('--fg-muted', '#9aa0a6');
+    root.setProperty('--fg-thinking', '#5f6368');
+    root.setProperty('--border', '#dadce0');
+    root.setProperty('--border-subtle', '#e8eaed');
+    root.setProperty('--accent', '#1a73e8');
+    root.setProperty('--accent-dim', 'rgba(26, 115, 232, 0.08)');
+    root.setProperty('--accent-hover', '#1765cc');
+    root.setProperty('--accent-glow', 'rgba(26, 115, 232, 0.15)');
+    root.setProperty('--diff-add-bg', 'rgba(34, 197, 94, 0.15)');
+    root.setProperty('--diff-rem-bg', 'rgba(239, 68, 68, 0.12)');
+    root.setProperty('--error-dim', 'rgba(244, 67, 54, 0.08)');
+    root.setProperty('--warning-dim', 'rgba(255, 152, 0, 0.08)');
+    root.setProperty('--success-dim', 'rgba(76, 175, 80, 0.08)');
+    // IDE frame
+    document.querySelector('.ide-sidebar').style.background = '#e8e8e8';
+    document.querySelector('.ide-frame').style.background = '#e8e8e8';
+  } else {
+    // Reset to dark
+    root.setProperty('--bg', '#1e1f22');
+    root.setProperty('--bg-elevated', '#2b2d30');
+    root.setProperty('--bg-surface', '#313338');
+    root.setProperty('--bg-surface-hover', '#3c3f41');
+    root.setProperty('--bg-input', '#1e1f22');
+    root.setProperty('--bg-user-msg', '#2d3748');
+    root.setProperty('--bg-agent-msg', '#25272b');
+    root.setProperty('--bg-thinking', '#1a1d2e');
+    root.setProperty('--bg-tool-card', '#2a2d32');
+    root.setProperty('--bg-code', '#0d1117');
+    root.setProperty('--bg-inline-code', '#343942');
+    root.setProperty('--bg-skeleton', '#2b2d30');
+    root.setProperty('--bg-skeleton-shimmer', '#3c3f41');
+    root.setProperty('--fg', '#bcbec4');
+    root.setProperty('--fg-primary', '#dfe1e5');
+    root.setProperty('--fg-secondary', '#8b8d93');
+    root.setProperty('--fg-muted', '#6b6d74');
+    root.setProperty('--fg-thinking', '#9ba1ab');
+    root.setProperty('--border', '#393b40');
+    root.setProperty('--border-subtle', '#2f3136');
+    root.setProperty('--accent', '#6c9ef8');
+    root.setProperty('--accent-dim', 'rgba(108, 158, 248, 0.15)');
+    root.setProperty('--accent-hover', '#85b1fa');
+    root.setProperty('--accent-glow', 'rgba(108, 158, 248, 0.25)');
+    root.setProperty('--diff-add-bg', 'rgba(34, 197, 94, 0.12)');
+    root.setProperty('--diff-rem-bg', 'rgba(239, 68, 68, 0.10)');
+    root.setProperty('--error-dim', 'rgba(244, 67, 54, 0.12)');
+    root.setProperty('--warning-dim', 'rgba(255, 152, 0, 0.12)');
+    root.setProperty('--success-dim', 'rgba(76, 175, 80, 0.12)');
+    document.querySelector('.ide-sidebar').style.background = '#1a1b1e';
+    document.querySelector('.ide-frame').style.background = '#1a1b1e';
+  }
+}
+
+// New messages badge
+function showNewMsgBadge() {
+  const badge = document.getElementById('newMsgBadge');
+  badge.classList.add('visible');
+  setTimeout(() => badge.classList.remove('visible'), 3000);
+}
+
+// Scroll to top
+function scrollToTop() {
+  document.getElementById('chatMessages').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Simulate streaming
+function simulateStream() {
+  const words = "I'll write a boundary test that checks the exact 0.80 ratio. At exactly the threshold, the enforcer should return COMPRESS since we use >= comparison.".split(' ');
+  const container = document.createElement('div');
+  container.className = 'message message-agent';
+  container.innerHTML = `
+    <div class="message-header">
+      <div class="agent-avatar">W</div>
+      <div class="message-label">Workflow Agent <span class="model-tag">opus-4.6</span></div>
+    </div>
+    <div class="message-content">
+      <div class="md-content"><p id="streamTarget"></p></div>
+    </div>
+  `;
+  document.getElementById('chatMessages').appendChild(container);
+  const target = document.getElementById('streamTarget');
+  const cursor = document.createElement('span');
+  cursor.className = 'stream-cursor';
+
+  let i = 0;
+  function addWord() {
+    if (i < words.length) {
+      target.innerHTML += (i > 0 ? ' ' : '') + `<span style="animation: word-appear 80ms ease-out both">${words[i]}</span>`;
+      target.appendChild(cursor);
+      i++;
+      setTimeout(addWord, 60 + Math.random() * 80);
+    } else {
+      cursor.remove();
+    }
+  }
+  addWord();
+
+  // Auto-scroll
+  const chat = document.getElementById('chatMessages');
+  const interval = setInterval(() => {
+    if (i >= words.length) { clearInterval(interval); return; }
+    chat.scrollTo({ top: chat.scrollHeight, behavior: 'instant' });
+  }, 100);
+}
+
+// Auto-scroll to bottom on load
+window.addEventListener('load', () => {
+  const chat = document.getElementById('chatMessages');
+  chat.scrollTop = chat.scrollHeight;
+});
+</script>
+
+</body>
+</html>
