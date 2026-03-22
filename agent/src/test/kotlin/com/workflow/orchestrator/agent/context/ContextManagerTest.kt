@@ -1,9 +1,13 @@
 package com.workflow.orchestrator.agent.context
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
+import com.workflow.orchestrator.agent.api.dto.FunctionCall
+import com.workflow.orchestrator.agent.api.dto.ToolCall
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 
 class ContextManagerTest {
 
@@ -216,5 +220,208 @@ class ContextManagerTest {
         val messages = manager.getMessages()
         val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
         assertTrue(summaryContent.contains("Previous conversation summary"), "Expected default summary, got: $summaryContent")
+    }
+
+    // --- Rich pruning placeholder tests ---
+
+    @Test
+    fun `pruneOldToolResults placeholder contains tool name and arguments`() {
+        // Large budget so we can manually trigger pruning without auto-compression
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+
+        // Add assistant with tool_call, then matching tool result
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-read-1",
+                function = FunctionCall(name = "read_file", arguments = """{"path":"/src/Auth.kt"}""")
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>class Auth {\n  fun login() {}\n  fun logout() {}\n  fun validate() {}\n  fun refresh() {}\n  fun expire() {}\n  // more code\n}</external_data>",
+            toolCallId = "tc-read-1"
+        ))
+
+        // Add many more messages to push the tool result outside the protection window
+        for (i in 1..200) {
+            cm.addMessage(ChatMessage(role = "user", content = "Padding $i " + "x".repeat(500)))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Response $i " + "y".repeat(500)))
+        }
+
+        // Force prune with a small protection window
+        cm.pruneOldToolResults(protectedTokens = 0)
+
+        val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-read-1" }
+        val content = toolMsg.content!!
+        assertTrue(content.contains("read_file"), "Placeholder should contain tool name 'read_file', got: ${content.take(200)}")
+        assertTrue(content.contains("/src/Auth.kt"), "Placeholder should contain the file path argument, got: ${content.take(300)}")
+    }
+
+    @Test
+    fun `pruneOldToolResults placeholder contains content preview`() {
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-search-1",
+                function = FunctionCall(name = "search_code", arguments = """{"query":"TODO"}""")
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>Line 1: TODO fix auth\nLine 2: TODO add tests\nLine 3: TODO refactor\nLine 4: TODO cleanup\nLine 5: TODO docs\nLine 6: extra line\nLine 7: more</external_data>",
+            toolCallId = "tc-search-1"
+        ))
+
+        for (i in 1..200) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i " + "x".repeat(500)))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
+        }
+
+        cm.pruneOldToolResults(protectedTokens = 0)
+
+        val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-search-1" }
+        val content = toolMsg.content!!
+        assertTrue(content.contains("Preview:"), "Placeholder should contain 'Preview:', got: ${content.take(400)}")
+        assertTrue(content.contains("Line 1: TODO fix auth"), "Preview should contain first line of content")
+        assertTrue(content.contains("Line 5: TODO docs"), "Preview should contain 5th line")
+        assertTrue(content.contains("more lines"), "Preview should indicate truncation for remaining lines")
+    }
+
+    @Test
+    fun `pruneOldToolResults placeholder contains disk path when ToolOutputStore is available`(@TempDir tempDir: File) {
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+        val store = ToolOutputStore(tempDir)
+        cm.toolOutputStore = store
+
+        // Save content to disk first (as addToolResult would do)
+        val fullContent = "Full file content here\nLine 2\nLine 3"
+        store.save("tc-disk-1", fullContent)
+
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-disk-1",
+                function = FunctionCall(name = "read_file", arguments = """{"path":"/src/Main.kt"}""")
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>$fullContent</external_data>",
+            toolCallId = "tc-disk-1"
+        ))
+
+        for (i in 1..200) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i " + "x".repeat(500)))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
+        }
+
+        cm.pruneOldToolResults(protectedTokens = 0)
+
+        val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-disk-1" }
+        val content = toolMsg.content!!
+        assertTrue(content.contains("Full output saved:"), "Placeholder should contain disk path reference, got: ${content.take(500)}")
+        assertTrue(content.contains("tool-outputs"), "Disk path should reference tool-outputs directory")
+        assertTrue(content.contains("Recovery:"), "Placeholder should contain recovery hint")
+        assertTrue(content.contains("re-read"), "Recovery hint for read_file should suggest re-reading")
+    }
+
+    @Test
+    fun `pruneOldToolResults placeholder has recovery hint for search_code`() {
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-search-2",
+                function = FunctionCall(name = "search_code", arguments = """{"query":"Exception","path":"/src"}""")
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>Found 3 matches</external_data>",
+            toolCallId = "tc-search-2"
+        ))
+
+        for (i in 1..200) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i " + "x".repeat(500)))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
+        }
+
+        cm.pruneOldToolResults(protectedTokens = 0)
+
+        val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-search-2" }
+        val content = toolMsg.content!!
+        assertTrue(content.contains("re-run search_code"), "Recovery hint should suggest re-running search_code")
+    }
+
+    @Test
+    fun `pruneOldToolResults uses default protection window of 40K tokens`() {
+        // Verify the default parameter is 40K (not the old 30K)
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-recent",
+                function = FunctionCall(name = "read_file", arguments = """{"path":"/recent.kt"}""")
+            ))
+        ))
+        // A tool result within the 40K protection window should NOT be pruned
+        // 40K tokens ~ 140K chars. This small result is well within the window.
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>Recent content</external_data>",
+            toolCallId = "tc-recent"
+        ))
+
+        // Call with defaults — should not prune the only tool result
+        cm.pruneOldToolResults()
+
+        val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-recent" }
+        assertTrue(toolMsg.content!!.contains("Recent content"), "Recent tool result within 40K window should not be pruned")
+    }
+
+    @Test
+    fun `pruneOldToolResults truncates long arguments at 300 chars`() {
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+
+        val longArgs = """{"query":"${"a".repeat(400)}"}"""
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-long-args",
+                function = FunctionCall(name = "search_code", arguments = longArgs)
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>Some result</external_data>",
+            toolCallId = "tc-long-args"
+        ))
+
+        for (i in 1..200) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i " + "x".repeat(500)))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
+        }
+
+        cm.pruneOldToolResults(protectedTokens = 0)
+
+        val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-long-args" }
+        val content = toolMsg.content!!
+        assertTrue(content.contains("Args:"), "Should contain Args section")
+        assertTrue(content.contains("..."), "Long arguments should be truncated with ellipsis")
+        // The args line should not contain the full 400-char string
+        val argsLine = content.lines().find { it.startsWith("Args:") }
+        assertNotNull(argsLine)
+        assertTrue(argsLine!!.length < 350, "Args line should be truncated, got length ${argsLine.length}")
     }
 }

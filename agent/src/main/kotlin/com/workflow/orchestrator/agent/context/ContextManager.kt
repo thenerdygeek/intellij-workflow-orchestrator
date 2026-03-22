@@ -338,12 +338,120 @@ critical for continuing the task.
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 
+    /** Metadata about a tool call that triggered a tool result. */
+    private data class ToolCallMeta(val toolName: String, val arguments: String)
+
+    /**
+     * Walk backward from a tool result message index to find the assistant message
+     * containing the tool_call that triggered it (matched by toolCallId).
+     */
+    private fun findToolCallMetadata(toolResultIndex: Int): ToolCallMeta? {
+        val toolCallId = messages[toolResultIndex].toolCallId ?: return null
+        for (j in (toolResultIndex - 1) downTo 0) {
+            val candidate = messages[j]
+            if (candidate.role != "assistant") continue
+            val matchingCall = candidate.toolCalls?.find { it.id == toolCallId }
+            if (matchingCall != null) {
+                return ToolCallMeta(
+                    toolName = matchingCall.function.name,
+                    arguments = matchingCall.function.arguments
+                )
+            }
+        }
+        return null
+    }
+
+    /**
+     * Build a metadata-rich placeholder for a pruned tool result.
+     * Contains tool name, arguments (truncated), content preview, disk path, and recovery hint.
+     */
+    private fun buildRichPlaceholder(
+        originalContent: String?,
+        meta: ToolCallMeta?,
+        toolCallId: String?
+    ): String {
+        val sb = StringBuilder()
+        sb.appendLine("[Tool result pruned to save context]")
+
+        // Tool name and arguments
+        val toolName = meta?.toolName ?: "unknown_tool"
+        sb.appendLine("Tool: $toolName")
+        if (meta != null) {
+            val truncatedArgs = if (meta.arguments.length > 300) {
+                meta.arguments.take(300) + "..."
+            } else {
+                meta.arguments
+            }
+            sb.appendLine("Args: $truncatedArgs")
+        }
+
+        // Content preview — first 5 lines of the unwrapped original content
+        if (!originalContent.isNullOrBlank()) {
+            val unwrapped = originalContent
+                .removePrefix("<external_data>\n")
+                .removeSuffix("\n</external_data>")
+                .removePrefix("<external_data>")
+                .removeSuffix("</external_data>")
+            val previewLines = unwrapped.lines().take(5)
+            if (previewLines.isNotEmpty()) {
+                sb.appendLine("Preview:")
+                previewLines.forEach { sb.appendLine("  $it") }
+                val totalLines = unwrapped.lines().size
+                if (totalLines > 5) {
+                    sb.appendLine("  ... (${totalLines - 5} more lines)")
+                }
+            }
+        }
+
+        // Disk path for recovery
+        val diskPath = toolCallId?.let { toolOutputStore?.getPath(it) }
+        if (diskPath != null) {
+            sb.appendLine("Full output saved: $diskPath")
+        }
+
+        // Recovery hint
+        val recoveryHint = buildRecoveryHint(toolName, meta?.arguments, diskPath)
+        if (recoveryHint != null) {
+            sb.appendLine("Recovery: $recoveryHint")
+        }
+
+        return "<external_data>${sb.toString().trimEnd()}</external_data>"
+    }
+
+    /**
+     * Build an actionable recovery hint based on the tool that was pruned.
+     */
+    private fun buildRecoveryHint(toolName: String, arguments: String?, diskPath: String?): String? {
+        // Try to extract a file path from arguments for file-related tools
+        val filePath = arguments?.let {
+            val pathMatch = Regex(""""(?:path|file_path|file)"\s*:\s*"([^"]+)"""").find(it)
+            pathMatch?.groupValues?.get(1)
+        }
+
+        return when {
+            toolName == "read_file" && filePath != null ->
+                "use read_file on '$filePath' to re-read"
+            toolName == "search_code" ->
+                "re-run search_code with the same query to refresh results"
+            toolName == "glob_files" ->
+                "re-run glob_files with the same pattern to refresh results"
+            toolName == "run_command" ->
+                "re-run the command if the output is still needed"
+            toolName == "diagnostics" ->
+                "re-run diagnostics to get current results"
+            diskPath != null ->
+                "use read_file on '$diskPath' to recover full output"
+            else -> null
+        }
+    }
+
     /**
      * Phase 1 compression: prune old tool results in-place.
      * Protects the most recent tool results (up to protectedTokens).
-     * Older tool results are replaced with a brief marker.
+     * Older tool results are replaced with a metadata-rich placeholder
+     * containing tool name, arguments, content preview, and recovery hints.
      */
-    fun pruneOldToolResults(protectedTokens: Int = 30_000) {
+    fun pruneOldToolResults(protectedTokens: Int = 40_000) {
         var protectedSoFar = 0
         for (i in messages.indices.reversed()) {
             val msg = messages[i]
@@ -354,9 +462,11 @@ critical for continuing the task.
                 continue
             }
             val toolCallId = msg.toolCallId
+            val meta = findToolCallMetadata(i)
+            val placeholder = buildRichPlaceholder(msg.content, meta, toolCallId)
             messages[i] = ChatMessage(
                 role = "tool",
-                content = "<external_data>[Old tool result cleared to save context]</external_data>",
+                content = placeholder,
                 toolCallId = toolCallId
             )
         }
