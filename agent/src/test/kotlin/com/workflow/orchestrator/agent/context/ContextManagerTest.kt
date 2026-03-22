@@ -207,7 +207,7 @@ class ContextManagerTest {
         // Should still have compressed using default truncation
         assertTrue(defaultManager.messageCount < 40)
         val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
-        assertTrue(summaryContent.contains("Previous conversation summary"), "Expected default summary, got: $summaryContent")
+        assertTrue(summaryContent.contains("Compressed Context Summary"), "Expected default summary, got: $summaryContent")
     }
 
     @Test
@@ -219,7 +219,7 @@ class ContextManagerTest {
 
         val messages = manager.getMessages()
         val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
-        assertTrue(summaryContent.contains("Previous conversation summary"), "Expected default summary, got: $summaryContent")
+        assertTrue(summaryContent.contains("Compressed Context Summary"), "Expected default summary, got: $summaryContent")
     }
 
     // --- Rich pruning placeholder tests ---
@@ -387,6 +387,56 @@ class ContextManagerTest {
 
         val toolMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-recent" }
         assertTrue(toolMsg.content!!.contains("Recent content"), "Recent tool result within 40K window should not be pruned")
+    }
+
+    @Test
+    fun `fallback summarizer includes tool result preview not just char count`() {
+        val cm = ContextManager(
+            maxInputTokens = 1000,
+            tMaxRatio = 0.70,
+            tRetainedRatio = 0.40
+        )
+
+        // Add a tool result with recognizable content
+        cm.addMessage(ChatMessage(role = "tool", content = "<external_data>Build FAILED: src/Main.kt:42 NullPointerException\nStack trace line 1\nStack trace line 2</external_data>", toolCallId = "tc-1"))
+
+        // Fill to trigger compression
+        for (i in 1..40) {
+            cm.addMessage(ChatMessage(role = "user", content = "Message $i padding. " + "x".repeat(80)))
+        }
+
+        val messages = cm.getMessages()
+        val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        // Should contain actual tool content, not just "N chars"
+        assertTrue(summaryContent.contains("Build FAILED") || summaryContent.contains("NullPointerException"),
+            "Summarizer should include tool result preview content, got: $summaryContent")
+        assertFalse(summaryContent.contains("chars)"),
+            "Summarizer should NOT just show char count, got: $summaryContent")
+    }
+
+    @Test
+    fun `fallback summarizer extracts file paths into separate section`() {
+        val cm = ContextManager(
+            maxInputTokens = 1000,
+            tMaxRatio = 0.70,
+            tRetainedRatio = 0.40
+        )
+
+        // Add messages with file paths
+        cm.addMessage(ChatMessage(role = "user", content = "Please fix the error in src/main/kotlin/Auth.kt"))
+        cm.addMessage(ChatMessage(role = "tool", content = "<external_data>Found issue at com/example/Service.kt line 42</external_data>", toolCallId = "tc-1"))
+
+        // Fill to trigger compression
+        for (i in 1..40) {
+            cm.addMessage(ChatMessage(role = "user", content = "Message $i padding. " + "x".repeat(80)))
+        }
+
+        val messages = cm.getMessages()
+        val summaryContent = messages.filter { it.role == "system" }.mapNotNull { it.content }.joinToString("\n")
+        assertTrue(summaryContent.contains("Referenced Files"),
+            "Summarizer should have a Referenced Files section, got: $summaryContent")
+        assertTrue(summaryContent.contains("src/main/kotlin/Auth.kt") || summaryContent.contains("com/example/Service.kt"),
+            "Referenced Files section should contain extracted file paths, got: $summaryContent")
     }
 
     @Test

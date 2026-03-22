@@ -147,7 +147,7 @@ class ContextManagerCompressionTest {
         // Truncation summary should exist
         val allMsgs = cm.getMessages()
         assertTrue(
-            allMsgs.any { it.role == "system" && it.content?.contains("Previous conversation summary:") == true },
+            allMsgs.any { it.role == "system" && it.content?.contains("Compressed Context Summary") == true },
             "Should have truncation summary"
         )
     }
@@ -167,7 +167,7 @@ class ContextManagerCompressionTest {
         // Fallback truncation summary should exist
         val allMsgs = cm.getMessages()
         assertTrue(
-            allMsgs.any { it.role == "system" && it.content?.contains("Previous conversation summary:") == true },
+            allMsgs.any { it.role == "system" && it.content?.contains("Compressed Context Summary") == true },
             "Should have fallback truncation summary despite LLM error"
         )
     }

@@ -30,20 +30,50 @@ class ContextManager(
     private val toolResultMaxTokens: Int = 4000,
     private var reservedTokens: Int = 0,
     private val summarizer: (List<ChatMessage>) -> String = { msgs ->
-        val sb = StringBuilder("Previous conversation summary:\n")
+        val sb = StringBuilder("## Compressed Context Summary\n")
+        sb.appendLine("WARNING: This is a lossy summary. Details may be missing or truncated.")
+        sb.appendLine()
+        val filePaths = mutableSetOf<String>()
+        val filePathRegex = Regex("""[\w./\\-]+\.\w{1,10}""")
         for (msg in msgs) {
             val content = msg.content ?: continue
-            when (msg.role) {
-                "user" -> sb.appendLine("- User: ${content.take(200)}")
-                "assistant" -> {
-                    if (content.length > 5) sb.appendLine("- Agent: ${content.take(300)}")
+            // Extract file paths from all message types
+            filePathRegex.findAll(content).forEach { match ->
+                val path = match.value
+                if (path.contains('/') || path.contains('\\')) {
+                    filePaths.add(path)
                 }
-                "tool" -> sb.appendLine("- Tool result (${content.length} chars)")
+            }
+            when (msg.role) {
+                "user" -> sb.appendLine("- User: ${content.take(500)}")
+                "assistant" -> {
+                    if (content.length > 5) sb.appendLine("- Agent: ${content.take(500)}")
+                }
+                "tool" -> {
+                    val unwrapped = content
+                        .removePrefix("<external_data>\n")
+                        .removeSuffix("\n</external_data>")
+                        .removePrefix("<external_data>")
+                        .removeSuffix("</external_data>")
+                    val previewLines = unwrapped.lines().take(10)
+                    val preview = previewLines.joinToString("\n").take(500)
+                    sb.appendLine("- Tool result:")
+                    sb.appendLine(preview)
+                    val totalLines = unwrapped.lines().size
+                    if (totalLines > 10) {
+                        sb.appendLine("  ... (${totalLines - 10} more lines)")
+                    }
+                }
                 "system" -> {} // Skip system messages in summary
             }
-            if (sb.length > 2000) break
+            if (sb.length > 6000) break
         }
-        sb.toString().take(2500)
+        if (filePaths.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("### Referenced Files")
+            filePaths.take(30).forEach { sb.appendLine("- $it") }
+        }
+        sb.toString().take(8000)
     }
 ) {
     private val messages = mutableListOf<ChatMessage>()
