@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
+import { CodeBlock } from '@/components/markdown/CodeBlock';
 
 interface MarkdownRendererProps {
   content: string;
@@ -24,28 +25,14 @@ function closeOpenFences(text: string): string {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const markdownComponents: any = {
+function createMarkdownComponents(isStreaming: boolean): any {
+  return {
   code({ className, children, ...props }: any) {
     const isBlock = className?.startsWith('language-');
     if (isBlock) {
       const language = className?.replace('language-', '') ?? '';
-      return (
-        <div className="relative my-2 rounded-md border border-[var(--border)] bg-[var(--code-bg)] overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1">
-            <span className="text-[10px] font-medium uppercase text-[var(--fg-muted)]">
-              {language || 'code'}
-            </span>
-          </div>
-          <pre className="overflow-x-auto p-3">
-            <code
-              className={`font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[12px] ${className ?? ''}`}
-              {...props}
-            >
-              {children}
-            </code>
-          </pre>
-        </div>
-      );
+      const codeString = String(children).replace(/\n$/, '');
+      return <CodeBlock code={codeString} language={language} isStreaming={isStreaming} />;
     }
     return (
       <code
@@ -151,6 +138,7 @@ const markdownComponents: any = {
     );
   },
 };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 export const MarkdownRenderer = memo(function MarkdownRenderer({
@@ -162,12 +150,14 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
     return DOMPurify.sanitize(processedContent);
   }, [content, isStreaming]);
 
+  const components = useMemo(() => createMarkdownComponents(isStreaming), [isStreaming]);
+
   return (
     <div className="markdown-body text-[13px] leading-relaxed">
       <Markdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw]}
-        components={markdownComponents}
+        components={components}
       >
         {sanitizedContent}
       </Markdown>
