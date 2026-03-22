@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.tools.vcs
+package com.workflow.orchestrator.agent.tools.psi
 
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
