@@ -16,32 +16,32 @@ import com.workflow.orchestrator.core.model.sonar.SourceLineData
  */
 interface SonarService {
     /** Get open issues for a project, optionally filtered by file. */
-    suspend fun getIssues(projectKey: String, filePath: String? = null): ToolResult<List<SonarIssueData>>
+    suspend fun getIssues(projectKey: String, filePath: String? = null, repoName: String? = null): ToolResult<List<SonarIssueData>>
 
     /** Get quality gate status. */
-    suspend fun getQualityGateStatus(projectKey: String): ToolResult<QualityGateData>
+    suspend fun getQualityGateStatus(projectKey: String, repoName: String? = null): ToolResult<QualityGateData>
 
     /** Get coverage metrics. */
-    suspend fun getCoverage(projectKey: String): ToolResult<CoverageData>
+    suspend fun getCoverage(projectKey: String, repoName: String? = null): ToolResult<CoverageData>
 
     /** Search for SonarQube projects by name or key. */
     suspend fun searchProjects(query: String): ToolResult<List<SonarProjectData>>
 
     /** Get recent analysis tasks for a project. */
-    suspend fun getAnalysisTasks(projectKey: String): ToolResult<List<SonarAnalysisTaskData>>
+    suspend fun getAnalysisTasks(projectKey: String, repoName: String? = null): ToolResult<List<SonarAnalysisTaskData>>
 
     /** Test the SonarQube connection. */
     suspend fun testConnection(): ToolResult<Unit>
 
     /** List branches for a project with their quality gate status. */
-    suspend fun getBranches(projectKey: String): ToolResult<List<SonarBranchData>>
+    suspend fun getBranches(projectKey: String, repoName: String? = null): ToolResult<List<SonarBranchData>>
 
     /** Get project-level aggregate measures (ratings, coverage, debt). */
-    suspend fun getProjectMeasures(projectKey: String, branch: String? = null): ToolResult<ProjectMeasuresData>
+    suspend fun getProjectMeasures(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<ProjectMeasuresData>
 
     /** Get source lines with per-line coverage status. */
-    suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null): ToolResult<List<SourceLineData>>
+    suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null, repoName: String? = null): ToolResult<List<SourceLineData>>
 
     /** Get issues with paging metadata for pagination support. */
-    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100): ToolResult<PagedIssuesData>
+    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, repoName: String? = null): ToolResult<PagedIssuesData>
 }

@@ -13,7 +13,7 @@ import com.workflow.orchestrator.core.model.bamboo.TestResultsData
  */
 interface BambooService {
     /** Get latest build result for a plan. */
-    suspend fun getLatestBuild(planKey: String): ToolResult<BuildResultData>
+    suspend fun getLatestBuild(planKey: String, repoName: String? = null): ToolResult<BuildResultData>
 
     /** Get a specific build result with stages. */
     suspend fun getBuild(buildKey: String): ToolResult<BuildResultData>
@@ -52,7 +52,7 @@ interface BambooService {
     suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): ToolResult<Boolean>
 
     /** Get recent build results for a plan. */
-    suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10): ToolResult<List<BuildResultData>>
+    suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10, repoName: String? = null): ToolResult<List<BuildResultData>>
 
     /** List all plans visible to the authenticated user. */
     suspend fun getPlans(): ToolResult<List<PlanData>>
@@ -64,10 +64,10 @@ interface BambooService {
     suspend fun searchPlans(query: String): ToolResult<List<PlanData>>
 
     /** List branches for a plan. */
-    suspend fun getPlanBranches(planKey: String): ToolResult<List<PlanBranchData>>
+    suspend fun getPlanBranches(planKey: String, repoName: String? = null): ToolResult<List<PlanBranchData>>
 
     /** Get running and queued builds for a plan. */
-    suspend fun getRunningBuilds(planKey: String): ToolResult<List<BuildResultData>>
+    suspend fun getRunningBuilds(planKey: String, repoName: String? = null): ToolResult<List<BuildResultData>>
 
     /** Get variables used in a specific build result. */
     suspend fun getBuildVariables(resultKey: String): ToolResult<List<PlanVariableData>>

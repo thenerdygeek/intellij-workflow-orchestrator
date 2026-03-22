@@ -122,3 +122,14 @@ data class MergeStatusData(
     val conflicted: Boolean,
     val vetoes: List<String>
 )
+
+/**
+ * Repository info for multi-repo support.
+ */
+@Serializable
+data class RepoInfo(
+    val name: String,
+    val projectKey: String,
+    val repoSlug: String,
+    val isPrimary: Boolean
+)
