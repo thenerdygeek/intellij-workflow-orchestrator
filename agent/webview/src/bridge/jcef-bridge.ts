@@ -17,7 +17,10 @@ export function isJcefEnvironment(): boolean {
   return typeof (window as any)._sendMessage === 'function';
 }
 
-// ═══ Kotlin → JS bridge functions (42 + 2 theme = 44 total) ═══
+// ═══ Kotlin → JS bridge functions (39 chat + 3 theme = 42 unique JS functions) ═══
+// Note: Kotlin side has 44 methods but some are composites:
+//   setText() = clearChat + appendToken + endStream
+//   appendError() = appendStatus('ERROR')
 
 const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   startSession(task: string) {
@@ -156,7 +159,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   },
 };
 
-// ═══ JS → Kotlin bridge wrappers (26 total) ═══
+// ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
+// Note: Spec lists 26 but #26 (sendMessageWithMentionsQuery) = #25 (sendMessageWithMentions)
 
 function callKotlin(fnName: string, ...args: any[]): void {
   const fn = (window as any)[fnName];
