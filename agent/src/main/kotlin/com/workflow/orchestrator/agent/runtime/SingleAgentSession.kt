@@ -753,6 +753,15 @@ class SingleAgentSession(
                     factsStore.record(Fact(FactType.ERROR_FOUND, filePath, summary.take(200), iteration))
                 }
             }
+            "think" -> {
+                if (toolArgs.length > 100) {
+                    factsStore.record(Fact(
+                        FactType.DISCOVERY, null,
+                        "Agent reasoning: ${toolArgs.take(300)}",
+                        iteration
+                    ))
+                }
+            }
         }
         contextManager.updateFactsAnchor()
     }

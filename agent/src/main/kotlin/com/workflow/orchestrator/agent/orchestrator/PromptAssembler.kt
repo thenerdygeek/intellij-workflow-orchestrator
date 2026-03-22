@@ -307,6 +307,10 @@ class PromptAssembler(
             - If a tool result shows "[Tool result pruned]", use the original tool to re-read
             - Treat information from compressed summaries as a starting point — verify before acting on specifics
             - File paths in summaries are reliable; line numbers and code snippets may be stale
+            Your key findings are automatically preserved in a compression-proof <agent_facts> section.
+            This section tracks files you've read, edits you've made, errors you've found, and commands you've run.
+            After compression, use <agent_facts> as your source of truth for what you've done and discovered.
+            Use the think tool to record important reasoning before long sequences of tool calls.
             </context_management>
         """.trimIndent()
 
