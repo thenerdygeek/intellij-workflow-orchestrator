@@ -40,3 +40,12 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.register<Exec>("buildWebview") {
+    workingDir = file("webview")
+    commandLine("npm", "run", "build")
+}
+
+tasks.named("processResources") {
+    dependsOn("buildWebview")
+}
