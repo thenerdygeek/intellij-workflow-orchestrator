@@ -240,7 +240,7 @@ class ContextManagerTest {
         ))
         cm.addMessage(ChatMessage(
             role = "tool",
-            content = "<external_data>class Auth {\n  fun login() {}\n  fun logout() {}\n  fun validate() {}\n  fun refresh() {}\n  fun expire() {}\n  // more code\n}</external_data>",
+            content = "<external_data>class Auth {\n  fun login() {}\n  fun logout() {}\n  fun validate() {}\n  fun refresh() {}\n  fun expire() {}\n  // more code\n${"  // padding line\n".repeat(50)}}</external_data>",
             toolCallId = "tc-read-1"
         ))
 
@@ -273,7 +273,7 @@ class ContextManagerTest {
         ))
         cm.addMessage(ChatMessage(
             role = "tool",
-            content = "<external_data>Line 1: TODO fix auth\nLine 2: TODO add tests\nLine 3: TODO refactor\nLine 4: TODO cleanup\nLine 5: TODO docs\nLine 6: extra line\nLine 7: more</external_data>",
+            content = "<external_data>Line 1: TODO fix auth\nLine 2: TODO add tests\nLine 3: TODO refactor\nLine 4: TODO cleanup\nLine 5: TODO docs\nLine 6: extra line\nLine 7: more\n${"Line N: TODO additional item padding\n".repeat(25)}</external_data>",
             toolCallId = "tc-search-1"
         ))
 
@@ -298,8 +298,8 @@ class ContextManagerTest {
         val store = ToolOutputStore(tempDir)
         cm.toolOutputStore = store
 
-        // Save content to disk first (as addToolResult would do)
-        val fullContent = "Full file content here\nLine 2\nLine 3"
+        // Save content to disk first (as addToolResult would do) — must exceed 200 token minimum
+        val fullContent = "Full file content here\nLine 2\nLine 3\n" + "Additional content line\n".repeat(40)
         store.save("tc-disk-1", fullContent)
 
         cm.addMessage(ChatMessage(
@@ -345,7 +345,7 @@ class ContextManagerTest {
         ))
         cm.addMessage(ChatMessage(
             role = "tool",
-            content = "<external_data>Found 3 matches</external_data>",
+            content = "<external_data>Found 3 matches\n${"src/module/File.kt:42: throw Exception(\"error\")\n".repeat(25)}</external_data>",
             toolCallId = "tc-search-2"
         ))
 
@@ -440,6 +440,87 @@ class ContextManagerTest {
     }
 
     @Test
+    fun `pruneOldToolResults never prunes protected tool types`() {
+        val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
+
+        // Add an "agent" tool result (protected) and a "read_file" tool result (not protected)
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-agent-1",
+                function = FunctionCall(name = "agent", arguments = """{"description":"Refactor auth","prompt":"..."}""")
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>Subagent completed: refactored 12 files, added tests</external_data>",
+            toolCallId = "tc-agent-1"
+        ))
+
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(
+                id = "tc-read-prot",
+                function = FunctionCall(name = "read_file", arguments = """{"path":"/src/File.kt"}""")
+            ))
+        ))
+        cm.addMessage(ChatMessage(
+            role = "tool",
+            content = "<external_data>class File { fun doStuff() {} }\n${"  // filler line for size\n".repeat(40)}</external_data>",
+            toolCallId = "tc-read-prot"
+        ))
+
+        // Add padding to push both tool results outside the protection window
+        for (i in 1..200) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i " + "x".repeat(500)))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Resp $i " + "y".repeat(500)))
+        }
+
+        // Prune with zero protection window — everything outside window is eligible
+        cm.pruneOldToolResults(protectedTokens = 0)
+
+        // Agent result should be intact (protected tool type)
+        val agentMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-agent-1" }
+        assertTrue(agentMsg.content!!.contains("Subagent completed"),
+            "Protected 'agent' tool result should NOT be pruned, got: ${agentMsg.content!!.take(200)}")
+        assertFalse(agentMsg.content!!.contains("[Tool result pruned"),
+            "Protected 'agent' tool result should NOT have pruning placeholder")
+
+        // read_file result should be pruned (not a protected tool type)
+        val readMsg = cm.getMessages().first { it.role == "tool" && it.toolCallId == "tc-read-prot" }
+        assertTrue(readMsg.content!!.contains("[Tool result pruned"),
+            "Non-protected 'read_file' tool result SHOULD be pruned, got: ${readMsg.content!!.take(200)}")
+    }
+
+    @Test
+    fun `pruneOldToolResults skips small results below minimum savings threshold`() {
+        val cm = ContextManager(maxInputTokens = 10000, tMaxRatio = 0.90, tRetainedRatio = 0.50)
+        cm.addMessage(ChatMessage(role = "system", content = "System"))
+
+        // Small tool result (< 200 tokens)
+        cm.addMessage(ChatMessage(role = "assistant", content = null,
+            toolCalls = listOf(ToolCall(id = "c1", type = "function",
+                function = FunctionCall(name = "git_status", arguments = "{}")))))
+        cm.addMessage(ChatMessage(role = "tool",
+            content = "<external_data>On branch main\nnothing to commit</external_data>",
+            toolCallId = "c1"))
+
+        // Pad context
+        for (i in 1..30) {
+            cm.addMessage(ChatMessage(role = "user", content = "Pad $i ${"X".repeat(200)}"))
+            cm.addMessage(ChatMessage(role = "assistant", content = "Reply $i ${"Y".repeat(200)}"))
+        }
+
+        cm.pruneOldToolResults(protectedTokens = 500)
+
+        val toolMsg = cm.getMessages().first { it.toolCallId == "c1" }
+        assertTrue(toolMsg.content!!.contains("nothing to commit"),
+            "Small tool result should not be pruned")
+    }
+
+    @Test
     fun `pruneOldToolResults truncates long arguments at 300 chars`() {
         val cm = ContextManager(maxInputTokens = 200_000, tMaxRatio = 0.99, tRetainedRatio = 0.90)
 
@@ -454,7 +535,7 @@ class ContextManagerTest {
         ))
         cm.addMessage(ChatMessage(
             role = "tool",
-            content = "<external_data>Some result</external_data>",
+            content = "<external_data>Some result\n${"Match found at src/File.kt:42\n".repeat(30)}</external_data>",
             toolCallId = "tc-long-args"
         ))
 

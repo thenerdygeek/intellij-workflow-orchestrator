@@ -82,6 +82,15 @@ class ContextManager(
             "- ALWAYS re-read a file before editing it, even if the summary mentions it\n" +
             "- If you need exact details from the summary, verify with a tool call first\n" +
             "- Treat summarized content as a starting point for re-investigation, not as ground truth"
+
+        /** Tools whose results must never be pruned — they represent irreplaceable work. */
+        val PROTECTED_TOOLS = setOf(
+            "agent", "delegate_task", "create_plan", "update_plan_step",
+            "save_memory", "activate_skill", "ask_questions"
+        )
+
+        /** Minimum token savings to justify pruning — skip results smaller than this. */
+        private const val PRUNE_MINIMUM_TOKENS = 200
     }
 
     private val messages = mutableListOf<ChatMessage>()
@@ -548,8 +557,18 @@ critical for continuing the task.
                 protectedSoFar += msgTokens
                 continue
             }
+            // Skip small results — not worth the info loss for tiny outputs like git_status
+            if (msgTokens < PRUNE_MINIMUM_TOKENS) continue
+
             val toolCallId = msg.toolCallId
             val meta = findToolCallMetadata(i)
+
+            // Never prune results from protected tools (subagents, plans, etc.)
+            if (meta != null && meta.toolName in PROTECTED_TOOLS) {
+                protectedSoFar += msgTokens // Count toward protected budget but don't prune
+                continue
+            }
+
             val placeholder = buildRichPlaceholder(msg.content, meta, toolCallId)
             messages[i] = ChatMessage(
                 role = "tool",
