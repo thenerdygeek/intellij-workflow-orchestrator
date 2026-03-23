@@ -1,0 +1,48 @@
+/*
+ * Theme Bridge — Maps IntelliJ-injected CSS variables to shadcn/ui token names.
+ * AgentCefPanel.kt injects --bg, --fg, --accent, --border, etc. as inline styles.
+ * This file creates NEW shadcn/ui tokens that reference the IntelliJ vars.
+ *
+ * COLLISION NOTE: IntelliJ injects --accent (primary blue) and --border (border color).
+ * shadcn/ui also uses --accent (hover state) and --border. Since IntelliJ injects via
+ * inline styles (higher specificity), IntelliJ values WIN for colliding names.
+ * This is fine: --accent stays as the primary accent, --border stays as the border color.
+ * For shadcn hover states, components use Tailwind hover:bg utilities directly.
+ *
+ * IMPORTANT: Zero hardcoded hex values. Everything flows from IntelliJ themes.
+ */
+
+:root {
+  /* === Core shadcn/ui tokens (NEW names, no collisions) === */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --primary: var(--accent);
+  --primary-foreground: var(--bg);
+  --secondary: var(--tool-bg);
+  --secondary-foreground: var(--fg);
+  --muted: var(--tool-bg);
+  --muted-foreground: var(--fg-secondary);
+  /* NOTE: Don't redefine --accent or --border — IntelliJ injects these with inline
+     styles. shadcn components using bg-accent get the primary accent color, which is
+     acceptable for an IDE plugin. For hover states, use hover:bg-[var(--hover-overlay)]. */
+  --accent-foreground: var(--fg);
+  --destructive: var(--accent-cmd);
+  --destructive-foreground: var(--bg);
+  --input: var(--input-border);
+  --ring: var(--accent);
+  --card: var(--tool-bg);
+  --card-foreground: var(--fg);
+  --popover: var(--tool-bg);
+  --popover-foreground: var(--fg);
+
+  /* === Agent-specific semantic tokens === */
+  --tool-read: var(--accent-read);
+  --tool-write: var(--accent-write);
+  --tool-edit: var(--accent-edit);
+  --tool-cmd: var(--accent-cmd);
+  --tool-search: var(--accent-search);
+  --approval-border: var(--accent-edit);
+
+  /* === Border radius — match IDE feel === */
+  --radius: 0.375rem;
+}
