@@ -6,7 +6,9 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import okhttp3.Cache
 import okhttp3.ConnectionPool
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Response
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -23,6 +25,7 @@ class HttpClientFactory(
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
             .addInterceptor(RetryInterceptor())
+            .addNetworkInterceptor(SensitiveEndpointNoCacheInterceptor())
             .build()
     }
 
@@ -36,6 +39,33 @@ class HttpClientFactory(
             baseClient.newBuilder()
                 .addInterceptor(AuthInterceptor({ tokenProvider(service) }, scheme))
                 .build()
+        }
+    }
+
+    /**
+     * Prevents the HTTP cache from storing responses for authentication
+     * and user-info endpoints that may contain sensitive data.
+     */
+    class SensitiveEndpointNoCacheInterceptor : Interceptor {
+        private val noCachePaths = setOf(
+            "/rest/api/2/myself",
+            "/rest/auth",
+            "/_api/graphql",
+            "/api/user"
+        )
+
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val request = chain.request()
+            val path = request.url.encodedPath
+            val response = chain.proceed(request)
+            return if (noCachePaths.any { path.contains(it, ignoreCase = true) }) {
+                response.newBuilder()
+                    .header("Cache-Control", "no-store")
+                    .removeHeader("ETag")
+                    .build()
+            } else {
+                response
+            }
         }
     }
 

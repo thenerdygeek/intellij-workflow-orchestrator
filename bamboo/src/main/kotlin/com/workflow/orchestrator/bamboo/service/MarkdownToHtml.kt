@@ -85,11 +85,18 @@ object MarkdownToHtml {
         // Inline code
         result = result.replace(Regex("`([^`]+)`"), "<code style='background:#f0f0f0; padding:1px 4px; border-radius:2px;'>$1</code>")
         // Links
-        result = result.replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "<a href='$2'>$1</a>")
+        result = result.replace(Regex("\\[([^]]+)]\\(([^)]+)\\)")) { match ->
+            val text = match.groupValues[1]
+            val url = sanitizeHref(match.groupValues[2])
+            "<a href='$url'>$text</a>"
+        }
         // Checkmarks
         result = result.replace("✅", "&#10004;")
         return result
     }
+
+    private fun sanitizeHref(url: String): String =
+        if (url.startsWith("http://") || url.startsWith("https://")) url else "#"
 
     private fun escapeHtml(text: String): String =
         text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -20,8 +20,21 @@ class CredentialStore(
          * CredentialStore is NOT a singleton — it's instantiated directly in 45+ locations.
          * The cache MUST be static so all instances share the same cached tokens.
          * PasswordSafe.get() can block for 1-2s on first access (especially on Windows).
+         *
+         * Tokens are cached with a TTL to avoid indefinite retention in memory,
+         * reducing risk of stale tokens and cross-project leakage.
+         *
+         * SEC-15 accepted risk: Tokens are stored as immutable JVM Strings, which cannot
+         * be securely zeroed from memory. This is a JVM platform limitation. Mitigation:
+         * TTL-based eviction (1 hour) limits the window of exposure. CharArray-based
+         * storage is not practical because PasswordSafe and OkHttp both require String.
          */
-        private val tokenCache = ConcurrentHashMap<ServiceType, String>()
+        private data class CachedToken(val token: String, val expiresAt: Long)
+
+        private val tokenCache = ConcurrentHashMap<ServiceType, CachedToken>()
+
+        /** Cache TTL: tokens are re-read from PasswordSafe after 1 hour. */
+        private const val CACHE_TTL_MS = 3_600_000L  // 1 hour
 
         /** Clear all cached tokens. Call when credentials may have changed externally. */
         fun clearGlobalCache() {
@@ -40,19 +53,24 @@ class CredentialStore(
         val attributes = credentialAttributes(service)
         val credentials = Credentials(service.name, token)
         safe().set(attributes, credentials)
-        tokenCache[service] = token
+        tokenCache[service] = CachedToken(token, System.currentTimeMillis() + CACHE_TTL_MS)
         log.info("[Core:Credentials] Stored credential for ${service.name}")
     }
 
     fun getToken(service: ServiceType): String? {
         tokenCache[service]?.let { cached ->
-            log.debug("[Core:Credentials] Retrieved credential for ${service.name} (cached)")
-            return cached
+            if (System.currentTimeMillis() < cached.expiresAt) {
+                log.debug("[Core:Credentials] Retrieved credential for ${service.name} (cached)")
+                return cached.token
+            } else {
+                tokenCache.remove(service)
+                log.debug("[Core:Credentials] Cached token expired for ${service.name}")
+            }
         }
         val attributes = credentialAttributes(service)
         val result = safe().get(attributes)?.getPasswordAsString()
         if (result != null) {
-            tokenCache[service] = result
+            tokenCache[service] = CachedToken(result, System.currentTimeMillis() + CACHE_TTL_MS)
             log.debug("[Core:Credentials] Retrieved credential for ${service.name} (from PasswordSafe)")
         } else {
             log.debug("[Core:Credentials] No credential found for ${service.name}")

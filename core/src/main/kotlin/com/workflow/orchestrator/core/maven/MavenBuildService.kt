@@ -29,7 +29,7 @@ class MavenBuildService(private val project: Project) {
         val commandLine = GeneralCommandLine(
             listOf(executable) + allArgs
         ).withWorkDirectory(project.basePath)
-            .withEnvironment(System.getenv())
+            .withEnvironment(sanitizedEnvironment())
 
         val handler = OSProcessHandler(commandLine)
         val output = StringBuilder()
@@ -122,7 +122,12 @@ class MavenBuildService(private val project: Project) {
         val executable = detectMavenExecutable()
         return GeneralCommandLine(listOf(executable) + args)
             .withWorkDirectory(project.basePath)
-            .withEnvironment(System.getenv())
+            .withEnvironment(sanitizedEnvironment())
+    }
+
+    private fun sanitizedEnvironment(): Map<String, String> {
+        val sensitivePattern = Regex("(?i).*(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|AWS_|GITHUB_|GITLAB_|NPM_|DOCKER_).*")
+        return System.getenv().filterKeys { !sensitivePattern.matches(it) }
     }
 
     internal fun detectMavenExecutable(): String {

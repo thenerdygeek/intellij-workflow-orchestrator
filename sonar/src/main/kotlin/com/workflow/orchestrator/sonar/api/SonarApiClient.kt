@@ -224,6 +224,15 @@ class SonarApiClient(
                     when (it.code) {
                         in 200..299 -> {
                             log.debug("[Sonar:API] $path -> ${it.code}")
+                            val contentType = it.header("Content-Type") ?: ""
+                            if (contentType.isNotBlank() &&
+                                !contentType.contains("application/json", ignoreCase = true) &&
+                                !contentType.contains("text/json", ignoreCase = true)) {
+                                return@withContext ApiResult.Error(
+                                    ErrorType.PARSE_ERROR,
+                                    "Unexpected response Content-Type: $contentType (expected JSON)"
+                                )
+                            }
                             val bodyStr = it.body?.string() ?: ""
                             ApiResult.Success(json.decodeFromString<T>(bodyStr))
                         }

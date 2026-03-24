@@ -12,6 +12,8 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.net.InetAddress
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -173,7 +175,58 @@ class DockerRegistryClient(
         val realm = params["realm"] ?: return null
         val service = params["service"] ?: ""
         val scope = params["scope"] ?: ""
+
+        if (!isRealmSafe(realm, registryUrl)) {
+            log.warn("[Docker] Rejected unsafe realm URL: $realm (registry: $registryUrl)")
+            return null
+        }
+
         return DockerAuthChallenge(realm, service, scope)
+    }
+
+    /**
+     * Validates that a Bearer token realm URL is safe to follow.
+     * Prevents SSRF by ensuring:
+     * 1. The realm host matches the configured registry host
+     * 2. The realm does not point to private/internal IP ranges
+     */
+    internal fun isRealmSafe(realm: String, registryBaseUrl: String): Boolean {
+        val realmHost: String
+        val registryHost: String
+        try {
+            realmHost = URI(realm).host?.lowercase() ?: return false
+            registryHost = URI(registryBaseUrl).host?.lowercase() ?: return false
+        } catch (_: Exception) {
+            return false
+        }
+
+        // Reject private IP ranges and localhost
+        val privatePatterns = listOf(
+            Regex("""^127\.\d+\.\d+\.\d+$"""),
+            Regex("""^169\.254\.\d+\.\d+$"""),
+            Regex("""^10\.\d+\.\d+\.\d+$"""),
+            Regex("""^192\.168\.\d+\.\d+$"""),
+            Regex("""^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$"""),
+            Regex("""^0\.0\.0\.0$"""),
+            Regex("""^\[?::1]?$""")
+        )
+
+        if (realmHost == "localhost" || privatePatterns.any { it.matches(realmHost) }) {
+            return false
+        }
+
+        // Also resolve the hostname and check if it points to a private IP
+        try {
+            val addr = InetAddress.getByName(realmHost)
+            if (addr.isLoopbackAddress || addr.isLinkLocalAddress || addr.isSiteLocalAddress || addr.isAnyLocalAddress) {
+                return false
+            }
+        } catch (_: Exception) {
+            return false
+        }
+
+        // Realm host must match the registry host
+        return realmHost == registryHost
     }
 
     private fun fetchBearerToken(challenge: DockerAuthChallenge): String? {

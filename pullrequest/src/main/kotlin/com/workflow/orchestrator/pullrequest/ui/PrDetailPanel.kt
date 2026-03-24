@@ -1756,13 +1756,20 @@ class PrDetailPanel(
                 .replace(Regex("((?:^- .+\n?)+)", RegexOption.MULTILINE)) { match ->
                     "<ul>" + match.value.replace(Regex("^- (.+)$", RegexOption.MULTILINE), "<li>$1</li>") + "</ul>"
                 }
-                .replace(Regex("\\[(.+?)\\]\\((.+?)\\)"), "<a href='$2'>$1</a>")
+                .replace(Regex("\\[(.+?)\\]\\((.+?)\\)")) { match ->
+                    val text = match.groupValues[1]
+                    val url = sanitizeHref(match.groupValues[2])
+                    "<a href='$url'>$text</a>"
+                }
                 .replace("\n\n", "<br><br>")
 
             val bgColor = StatusColors.htmlColor(CARD_BG)
             val textColor = StatusColors.htmlColor(SECONDARY_TEXT)
             return "<html><body style='font-family: sans-serif; color: $textColor;'>$html</body></html>"
         }
+
+        private fun sanitizeHref(url: String): String =
+            if (url.startsWith("http://") || url.startsWith("https://")) url else "#"
 
         private fun saveDescription() {
             val prId = currentPrId ?: return
@@ -1942,7 +1949,12 @@ class PrDetailPanel(
 
         private fun navigateToFile(relativePath: String, line: Int) {
             val basePath = project.basePath ?: return
-            val fullPath = "$basePath/$relativePath"
+            val resolved = java.io.File(basePath, relativePath).canonicalFile
+            if (!resolved.canonicalPath.startsWith(java.io.File(basePath).canonicalPath)) {
+                log.warn("[PR] Path traversal attempt blocked: $relativePath")
+                return
+            }
+            val fullPath = resolved.path
             val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
                 .findFileByPath(fullPath) ?: run {
                 log.warn("[PR:Activity] File not found locally: $fullPath")
@@ -2172,7 +2184,10 @@ class PrDetailPanel(
          * Builds a clickable "Reply" link that expands into an inline reply input.
          */
         private fun buildReplyLink(activity: BitbucketPrActivity): JPanel {
-            val commentId = activity.comment?.id?.toInt() ?: return JPanel().apply { isOpaque = false }
+            val rawId = activity.comment?.id ?: return JPanel().apply { isOpaque = false }
+            // SEC-24: Guard against integer overflow when Long comment ID exceeds Int range
+            if (rawId < Int.MIN_VALUE || rawId > Int.MAX_VALUE) return JPanel().apply { isOpaque = false }
+            val commentId = rawId.toInt()
             val prId = currentPrId ?: return JPanel().apply { isOpaque = false }
 
             val replyContainer = JPanel(CardLayout()).apply {

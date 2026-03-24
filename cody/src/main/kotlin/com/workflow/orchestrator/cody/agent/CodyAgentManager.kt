@@ -250,12 +250,25 @@ class CodyAgentManager(private val project: Project) : Disposable {
 
     override fun dispose() {
         try {
-            server?.shutdown()?.get(5, TimeUnit.SECONDS)
+            server?.shutdown()?.get(10, TimeUnit.SECONDS)
             server?.exit()
         } catch (e: Exception) {
             log.debug("Shutdown error (expected if agent already exited)", e)
         }
-        process?.destroyForcibly()
+
+        // Kill the process and all child processes to prevent orphaned agent subprocesses
+        process?.let { proc ->
+            proc.destroyForcibly()
+            try {
+                proc.toHandle().descendants().forEach { it.destroyForcibly() }
+            } catch (e: Exception) {
+                log.debug("Failed to kill child processes (expected if already exited)", e)
+            }
+        }
+
+        // Clear secrets from the client to avoid retaining tokens in memory
+        _client?.clearSecrets()
+
         process = null
         server = null
         _client = null

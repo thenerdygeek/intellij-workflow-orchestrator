@@ -67,7 +67,6 @@ class AttachmentDownloadService(private val project: Project) {
 
             val isTempDownload = targetDir == null
             val dir = targetDir ?: createTempDir()
-            dir.mkdirs()
 
             val request = Request.Builder()
                 .url(url)
@@ -77,23 +76,29 @@ class AttachmentDownloadService(private val project: Project) {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     log.warn("[Jira:Attachment] Download failed for ${attachment.filename}: HTTP ${response.code}")
+                    if (isTempDownload) dir.deleteRecursively()
                     return@withContext null
                 }
 
                 val body = response.body ?: run {
                     log.warn("[Jira:Attachment] Empty response body for ${attachment.filename}")
+                    if (isTempDownload) dir.deleteRecursively()
                     return@withContext null
                 }
 
-                val targetFile = File(dir, attachment.filename)
+                val safeName = attachment.filename.substringAfterLast('/').substringAfterLast('\\')
+                    .replace("..", "_").ifBlank { "attachment_${attachment.id}" }
+                val targetFile = File(dir, safeName)
+                if (!targetFile.canonicalPath.startsWith(dir.canonicalPath)) {
+                    log.warn("[Jira] Path traversal attempt blocked in attachment: ${attachment.filename}")
+                    if (isTempDownload) dir.deleteRecursively()
+                    return@withContext null
+                }
+
                 body.byteStream().use { input ->
                     targetFile.outputStream().use { output ->
                         input.copyTo(output)
                     }
-                }
-
-                if (isTempDownload) {
-                    targetFile.deleteOnExit()
                 }
 
                 log.info("[Jira:Attachment] Downloaded ${attachment.filename} (${targetFile.length()} bytes)")
@@ -174,8 +179,7 @@ class AttachmentDownloadService(private val project: Project) {
     }
 
     private fun createTempDir(): File {
-        val dir = File(System.getProperty("java.io.tmpdir"), "workflow-orchestrator-attachments")
-        dir.mkdirs()
+        val dir = java.nio.file.Files.createTempDirectory("workflow-orchestrator-attachments").toFile()
         return dir
     }
 
