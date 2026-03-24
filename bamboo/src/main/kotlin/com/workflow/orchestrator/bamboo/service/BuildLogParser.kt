@@ -24,10 +24,12 @@ object BuildLogParser {
     )
 
     fun parse(buildLog: String): List<BuildError> {
-        log.info("[Bamboo:Parser] Starting build log parsing (${buildLog.lines().size} lines)")
+        val lines = buildLog.lineSequence()
+        val lineCount = buildLog.count { it == '\n' } + 1
+        log.info("[Bamboo:Parser] Starting build log parsing (~$lineCount lines)")
         val errors = mutableListOf<BuildError>()
 
-        for (line in buildLog.lines()) {
+        for (line in lines) {
             FILE_ERROR_PATTERN.find(line)?.let { match ->
                 errors.add(
                     BuildError(

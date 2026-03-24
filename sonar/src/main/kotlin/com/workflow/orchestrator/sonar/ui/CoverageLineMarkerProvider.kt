@@ -12,6 +12,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 import com.workflow.orchestrator.sonar.service.SonarDataService
+import com.workflow.orchestrator.sonar.service.SpringEndpointCacheService
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
 
@@ -25,9 +26,9 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
 
         val baseDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
         val relativePath = if (baseDir != null) {
-            VfsUtilCore.getRelativePath(file, baseDir) ?: file.path
+            (VfsUtilCore.getRelativePath(file, baseDir) ?: file.path).replace('\\', '/')
         } else {
-            file.path
+            file.path.replace('\\', '/')
         }
 
         val service = getDataService(project) ?: return null
@@ -36,10 +37,14 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         val lineStatuses = service.lineCoverageCache[relativePath]
         if (lineStatuses == null) {
             // Not yet fetched — trigger async fetch, then re-render when done
-            if (pendingFetches.putIfAbsent(relativePath, true) == null) {
+            val projectPending = getProjectPendingFetches(project)
+            if (projectPending.putIfAbsent(relativePath, true) == null) {
                 val psiFile = element.containingFile
                 service.fetchLineCoverageAsync(relativePath) {
                     try {
+                        // Trigger async Spring endpoint detection now that coverage data is available
+                        triggerEndpointCachePopulation(project, relativePath)
+
                         // Re-trigger gutter marker rendering on the EDT
                         if (psiFile.isValid && !project.isDisposed) {
                             com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
@@ -49,7 +54,7 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
                             }
                         }
                     } finally {
-                        pendingFetches.remove(relativePath)
+                        projectPending.remove(relativePath)
                     }
                 }
             }
@@ -62,14 +67,11 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         val lineNumber = doc.getLineNumber(element.textRange.startOffset) + 1
         val lineStatus = lineStatuses[lineNumber] ?: return null
 
-        // Spring-aware: highlight uncovered @RequestMapping endpoints more urgently
+        // Spring-aware: use pre-computed cache (populated asynchronously off-EDT).
+        // If the cache is not yet populated, we show the regular uncovered icon
+        // — no PSI tree walks on the EDT.
         val isEndpoint = if (lineStatus == LineCoverageStatus.UNCOVERED) {
-            val containingMethod = com.intellij.psi.util.PsiTreeUtil.getParentOfType(
-                element, com.intellij.psi.PsiMethod::class.java
-            )
-            containingMethod?.annotations?.any {
-                it.qualifiedName in REQUEST_MAPPING_ANNOTATIONS
-            } ?: false
+            getEndpointCacheService(project)?.isEndpointLine(relativePath, lineNumber) ?: false
         } else false
 
         val (icon, tooltip) = when {
@@ -91,9 +93,39 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         )
     }
 
+    /**
+     * After coverage data arrives for a file, trigger async computation of which
+     * uncovered lines are inside Spring endpoint methods. This populates the
+     * [SpringEndpointCacheService] so subsequent marker renders can distinguish
+     * endpoint lines without PSI walks on the EDT.
+     */
+    private fun triggerEndpointCachePopulation(project: Project, relativePath: String) {
+        if (project.isDisposed) return
+
+        val service = getDataService(project) ?: return
+        val lineStatuses = service.lineCoverageCache[relativePath] ?: return
+
+        val uncoveredLines = lineStatuses.entries
+            .filter { it.value == LineCoverageStatus.UNCOVERED }
+            .map { it.key }
+            .toSet()
+
+        if (uncoveredLines.isEmpty()) return
+
+        getEndpointCacheService(project)?.computeEndpointLinesAsync(relativePath, uncoveredLines)
+    }
+
     private fun getDataService(project: Project): SonarDataService? {
         return try {
             SonarDataService.getInstance(project)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getEndpointCacheService(project: Project): SpringEndpointCacheService? {
+        return try {
+            SpringEndpointCacheService.getInstance(project)
         } catch (_: Exception) {
             null
         }
@@ -105,19 +137,28 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         private val ICON_PARTIAL: Icon = IconLoader.getIcon("/icons/coverage-partial.svg", CoverageLineMarkerProvider::class.java)
         private val ICON_ENDPOINT_UNCOVERED: Icon = IconLoader.getIcon("/icons/coverage-endpoint-uncovered.svg", CoverageLineMarkerProvider::class.java)
 
-        private val REQUEST_MAPPING_ANNOTATIONS = setOf(
-            "org.springframework.web.bind.annotation.RequestMapping",
-            "org.springframework.web.bind.annotation.GetMapping",
-            "org.springframework.web.bind.annotation.PostMapping",
-            "org.springframework.web.bind.annotation.PutMapping",
-            "org.springframework.web.bind.annotation.DeleteMapping",
-            "org.springframework.web.bind.annotation.PatchMapping"
-        )
+        /**
+         * Per-project map tracking which files have an in-flight line coverage fetch
+         * to avoid duplicate requests. Scoped to projects so disposal is clean.
+         */
+        private val projectPendingFetches = ConcurrentHashMap<Int, ConcurrentHashMap<String, Boolean>>()
 
         /**
-         * Tracks which files have an in-flight line coverage fetch to avoid duplicate requests.
-         * Entries are removed when the fetch completes.
+         * Get the pending fetches map for a specific project, creating it if needed.
+         * Uses project hash code as key; entries are cleaned up via [clearProjectState].
          */
-        private val pendingFetches = ConcurrentHashMap<String, Boolean>()
+        private fun getProjectPendingFetches(project: Project): ConcurrentHashMap<String, Boolean> {
+            return projectPendingFetches.getOrPut(System.identityHashCode(project)) {
+                ConcurrentHashMap()
+            }
+        }
+
+        /**
+         * Clean up all state associated with a project when it closes.
+         * Called from [SonarDataService.dispose] to prevent memory leaks.
+         */
+        fun clearProjectState(project: Project) {
+            projectPendingFetches.remove(System.identityHashCode(project))
+        }
     }
 }

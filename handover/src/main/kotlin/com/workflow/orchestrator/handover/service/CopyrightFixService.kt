@@ -2,10 +2,12 @@ package com.workflow.orchestrator.handover.service
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.handover.model.CopyrightFileEntry
 import com.workflow.orchestrator.handover.model.CopyrightStatus
 import java.time.Year
+import java.util.concurrent.ConcurrentHashMap
 
 @Service(Service.Level.PROJECT)
 class CopyrightFixService {
@@ -28,6 +30,20 @@ class CopyrightFixService {
 
     private val SOURCE_EXTENSIONS = setOf("java", "kt", "kts", "xml", "yaml", "yml", "properties")
     private val GENERATED_PATH_PREFIXES = listOf("target/", "build/", ".gradle/", "node_modules/", ".idea/")
+
+    /**
+     * Cache of FileType by file extension. FileTypeRegistry.getFileTypeByFile() involves
+     * registry lookups that are redundant when processing many files with the same extension
+     * (e.g., scanning 200 .kt files). Each extension is resolved once and reused.
+     */
+    private val fileTypeCache = ConcurrentHashMap<String, FileType>()
+
+    private fun getCachedFileType(file: com.intellij.openapi.vfs.VirtualFile): FileType {
+        val ext = file.extension ?: ""
+        return fileTypeCache.getOrPut(ext) {
+            com.intellij.openapi.fileTypes.FileTypeRegistry.getInstance().getFileTypeByFile(file)
+        }
+    }
 
     fun updateYearInHeader(headerText: String, currentYear: Int): String {
         val yearExprMatch = FULL_YEAR_EXPR.find(headerText) ?: return headerText
@@ -57,7 +73,7 @@ class CopyrightFixService {
     }
 
     fun wrapForLanguage(template: String, file: com.intellij.openapi.vfs.VirtualFile): String {
-        val fileType = com.intellij.openapi.fileTypes.FileTypeRegistry.getInstance().getFileTypeByFile(file)
+        val fileType = getCachedFileType(file)
         val language = (fileType as? com.intellij.openapi.fileTypes.LanguageFileType)?.language ?: return template
         val commenter = com.intellij.lang.LanguageCommenters.INSTANCE.forLanguage(language) ?: return template
 
@@ -95,7 +111,7 @@ class CopyrightFixService {
     }
 
     fun isSourceFile(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
-        val fileType = com.intellij.openapi.fileTypes.FileTypeRegistry.getInstance().getFileTypeByFile(file)
+        val fileType = getCachedFileType(file)
         return !fileType.isBinary
     }
 

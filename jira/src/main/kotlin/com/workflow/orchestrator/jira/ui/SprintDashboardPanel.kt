@@ -439,8 +439,12 @@ class SprintDashboardPanel(
                 val index = ticketList.locationToIndex(e.point)
                 val current = ticketList.getClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY) as? Int ?: -1
                 if (index != current) {
+                    // Repaint only the old and new hovered cells, not the entire list
+                    val oldRect = if (current >= 0) ticketList.getCellBounds(current, current) else null
+                    val newRect = if (index >= 0) ticketList.getCellBounds(index, index) else null
                     ticketList.putClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY, index)
-                    ticketList.repaint()
+                    oldRect?.let { ticketList.repaint(it) }
+                    newRect?.let { ticketList.repaint(it) }
                 }
             }
         })
@@ -449,8 +453,10 @@ class SprintDashboardPanel(
             override fun mouseExited(e: MouseEvent) {
                 val current = ticketList.getClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY) as? Int ?: -1
                 if (current != -1) {
+                    // Repaint only the previously hovered cell
+                    val oldRect = ticketList.getCellBounds(current, current)
                     ticketList.putClientProperty(TicketListCellRenderer.HOVERED_INDEX_KEY, -1)
-                    ticketList.repaint()
+                    oldRect?.let { ticketList.repaint(it) }
                 }
             }
         })

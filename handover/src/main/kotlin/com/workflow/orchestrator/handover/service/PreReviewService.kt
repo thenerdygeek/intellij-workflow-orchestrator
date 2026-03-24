@@ -21,6 +21,23 @@ class PreReviewService {
 
     private val log = Logger.getInstance(PreReviewService::class.java)
 
+    // --- Cached reflection lookups (H-01 perf fix) ---
+    // These avoid re-resolving Class/Method objects per file during enriched review.
+    // Classes and methods are resolved lazily on first use and reused across all files.
+
+    private val psiEnricherClass: Class<*> by lazy {
+        Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
+    }
+    private val enrichPsiMethod: Method by lazy {
+        psiEnricherClass.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
+    }
+    private val springEnricherClass: Class<*> by lazy {
+        Class.forName("com.workflow.orchestrator.cody.service.SpringContextEnricher")
+    }
+    private val enrichSpringMethod: Method by lazy {
+        springEnricherClass.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
+    }
+
     /**
      * Parses Cody's text response into structured findings.
      * Cody returns free-text; we look for patterns like:
@@ -103,24 +120,15 @@ class PreReviewService {
         proj: Project,
         changedFiles: List<VirtualFile>
     ): List<String> {
-        // Resolve PsiContextEnricher via reflection (lives in :cody module)
-        val psiEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
+        // Create enricher instances (classes + methods are cached as lazy fields)
         val psiEnricher = psiEnricherClass.getConstructor(Project::class.java).newInstance(proj)
-        val enrichPsiMethod = psiEnricherClass.getMethod(
-            "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
-        )
 
-        // Resolve SpringContextEnricher via reflection (interface in :cody module)
-        val springEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.SpringContextEnricher")
         val springEnricher: Any = try {
             proj.getService(springEnricherClass)
                 ?: getSpringEnricherEmpty(springEnricherClass)
         } catch (_: Exception) {
             getSpringEnricherEmpty(springEnricherClass)
         }
-        val enrichSpringMethod = springEnricherClass.getMethod(
-            "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
-        )
 
         return changedFiles.mapNotNull { file ->
             try {

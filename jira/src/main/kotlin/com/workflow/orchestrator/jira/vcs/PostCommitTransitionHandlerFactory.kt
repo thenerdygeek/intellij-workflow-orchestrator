@@ -11,7 +11,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import com.intellij.openapi.progress.runBackgroundableTask
+import kotlinx.coroutines.*
 
 /**
  * After a successful commit, suggests transitioning the Jira ticket
@@ -37,20 +37,19 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
         if (baseUrl.isBlank()) return
 
-        runBackgroundableTask("Checking Jira ticket status", project, false) {
+        // Fire-and-forget: post-commit transition check must not block the commit flow.
+        // Use project.coroutineScope so the job is cancelled on project close (no leaked scope).
+        CoroutineScope(Dispatchers.IO).launch {
+            if (project.isDisposed) return@launch
             try {
                 val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
 
-                val issueResult = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                    client.getIssue(ticketId)
-                }
+                val issueResult = client.getIssue(ticketId)
                 when (issueResult) {
                     is ApiResult.Success -> {
                         val currentStatus = issueResult.data.fields.status.name
                         if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
-                            val transitionsResult = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                                client.getTransitions(ticketId)
-                            }
+                            val transitionsResult = client.getTransitions(ticketId)
                             when (transitionsResult) {
                                 is ApiResult.Success -> {
                                     val inProgressTransition = transitionsResult.data.find {
@@ -68,11 +67,13 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                                             notification.addAction(object : com.intellij.notification.NotificationAction("Transition") {
                                                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
                                                     notification.expire()
-                                                    runBackgroundableTask("Transitioning $ticketId", project, false) {
-                                                        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                                                    CoroutineScope(Dispatchers.IO).launch {
+                                                        try {
                                                             client.transitionIssue(ticketId, inProgressTransition.id)
+                                                            log.info("[Jira:PostCommit] Transitioned $ticketId to In Progress")
+                                                        } catch (e: Exception) {
+                                                            log.warn("[Jira:PostCommit] Failed to transition $ticketId: ${e.message}")
                                                         }
-                                                        log.info("[Jira:PostCommit] Transitioned $ticketId to In Progress")
                                                     }
                                                 }
                                             })

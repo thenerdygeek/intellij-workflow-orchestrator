@@ -245,10 +245,13 @@ class StageDetailPanel(
         val console = consoleView ?: return
         console.clear()
 
-        fullLogText = logText
+        // Release previous log immediately to avoid holding two logs in memory
+        fullLogText = null
         val truncated = logText.length > MAX_DISPLAY_CHARS
 
         if (truncated) {
+            // Only retain the full text when truncated (needed for "Open full log in editor")
+            fullLogText = logText
             val displayText = logText.takeLast(MAX_DISPLAY_CHARS)
             truncationLabel.text = "Log truncated (${logText.length / 1000}K chars). Showing last ${MAX_DISPLAY_CHARS / 1000}K."
             logActionBar.isVisible = true
@@ -510,6 +513,16 @@ class StageDetailPanel(
             bytes < 1024 * 1024 -> "${bytes / 1024} KB"
             else -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
         }
+    }
+
+    /**
+     * Release the retained full log text when this panel is removed from the
+     * component hierarchy (e.g., the user switches away from the Build tab).
+     * This prevents large log strings from staying in memory while invisible.
+     */
+    override fun removeNotify() {
+        super.removeNotify()
+        fullLogText = null
     }
 
     fun showEmpty() {

@@ -28,6 +28,12 @@ class CveAnnotator : ExternalAnnotator<CveAnnotator.CollectionInfo, CveAnnotator
         val cve: CveVulnerability
     )
 
+    // Cache: skip re-scanning if the file hasn't been modified since last run.
+    // Keyed by file path so multiple pom.xml files don't share cached results
+    // (ExternalAnnotator instances may be shared across files).
+    private data class CacheEntry(val stamp: Long, val vulnCount: Int, val result: CollectionInfo)
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, CacheEntry>()
+
     override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): CollectionInfo? {
         if (file !is XmlFile || file.name != "pom.xml") return null
         val project = file.project
@@ -37,7 +43,38 @@ class CveAnnotator : ExternalAnnotator<CveAnnotator.CollectionInfo, CveAnnotator
         val vulns = CveRemediationService.getInstance(project).vulnerabilities.value
         if (vulns.isEmpty()) return null
 
-        return CollectionInfo(file, vulns)
+        // Short-circuit: if the file hasn't changed and vuln list is same size, reuse cached results.
+        // Keyed by file path to handle multiple pom.xml files correctly.
+        val filePath = file.virtualFile?.path ?: ""
+        val currentStamp = file.modificationStamp
+        val cached = cache[filePath]
+        if (cached != null && cached.stamp == currentStamp && cached.vulnCount == vulns.size) {
+            return cached.result
+        }
+
+        // Skip scan if the caret is not within a dependency-related block.
+        // Check if the file actually contains dependency tags before doing full scan.
+        val caretOffset = editor.caretModel.offset
+        val elementAtCaret = file.findElementAt(caretOffset)
+        val isInDependencyContext = elementAtCaret?.let { element ->
+            var parent = element.parent
+            while (parent != null) {
+                if (parent is XmlTag && (parent.name == "dependencies" || parent.name == "dependencyManagement")) {
+                    return@let true
+                }
+                parent = parent.parent
+            }
+            false
+        } ?: false
+
+        // If we're editing outside dependency blocks and have cached results, reuse them
+        if (!isInDependencyContext && cached != null && cached.vulnCount == vulns.size) {
+            return cached.result
+        }
+
+        val result = CollectionInfo(file, vulns)
+        cache[filePath] = CacheEntry(currentStamp, vulns.size, result)
+        return result
     }
 
     override fun doAnnotate(collectionInfo: CollectionInfo): AnnotationResult {

@@ -62,8 +62,26 @@ class TagStagingPanel(
     }
 
     fun setEntries(entries: List<TagEntry>) {
+        val oldEntries = tableModel.entries
+
+        // Skip update entirely if data is identical
+        if (oldEntries == entries) {
+            return
+        }
+
         tableModel.entries = entries
-        tableModel.fireTableDataChanged()
+
+        if (oldEntries.size != entries.size) {
+            // Row count changed — must do full structural update
+            tableModel.fireTableDataChanged()
+        } else {
+            // Same row count — only fire updates for rows that actually changed
+            for (i in entries.indices) {
+                if (oldEntries[i] != entries[i]) {
+                    tableModel.fireTableRowsUpdated(i, i)
+                }
+            }
+        }
         cardLayout.show(cardPanel, if (entries.isEmpty()) "empty" else "table")
     }
 

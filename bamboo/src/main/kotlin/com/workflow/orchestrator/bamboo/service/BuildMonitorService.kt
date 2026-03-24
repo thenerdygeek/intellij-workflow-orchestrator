@@ -136,10 +136,16 @@ class BuildMonitorService : Disposable {
             val dto = result.data
             var buildState = mapToBuildState(dto, planKey, branch)
 
-            // Check if a newer build is running/queued
-            val newerBuild = checkForNewerBuild(planKey, dto.buildNumber)
-            if (newerBuild != null) {
-                buildState = buildState.copy(newerBuild = newerBuild)
+            // Only check for newer builds when the current build is in a terminal state.
+            // While the build is still running, there's no point querying for newer builds —
+            // it wastes an API call on every 30-second poll cycle.
+            val isTerminalState = dto.lifeCycleState == "Finished" ||
+                dto.state == "Successful" || dto.state == "Failed"
+            if (isTerminalState) {
+                val newerBuild = checkForNewerBuild(planKey, dto.buildNumber)
+                if (newerBuild != null) {
+                    buildState = buildState.copy(newerBuild = newerBuild)
+                }
             }
 
             _stateFlow.value = buildState

@@ -51,13 +51,7 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
 
     private fun paintSectionHeader(g: Graphics, issue: JiraIssue) {
         val g2 = g.create() as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-        if (desktopHints != null) {
-            desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-        } else {
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        }
+        com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
 
         val insets = insets
         val x = insets.left
@@ -98,13 +92,7 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         }
 
         val g2 = g.create() as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-        if (desktopHints != null) {
-            desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-        } else {
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        }
+        com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
 
         val insets = insets
         val x = insets.left
@@ -273,11 +261,18 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
             val ellipsisWidth = metrics.stringWidth(ellipsis)
             val available = maxWidth - ellipsisWidth
             if (available <= 0) return ellipsis
-            var end = text.length
-            while (end > 0 && metrics.stringWidth(text.substring(0, end)) > available) {
-                end--
+            // Binary search for the right truncation point — O(log n) vs O(n)
+            var lo = 0
+            var hi = text.length
+            while (lo < hi) {
+                val mid = (lo + hi + 1) / 2
+                if (metrics.stringWidth(text.substring(0, mid)) <= available) {
+                    lo = mid
+                } else {
+                    hi = mid - 1
+                }
             }
-            return text.substring(0, end) + ellipsis
+            return if (lo > 0) text.substring(0, lo) + ellipsis else ellipsis
         }
     }
 }

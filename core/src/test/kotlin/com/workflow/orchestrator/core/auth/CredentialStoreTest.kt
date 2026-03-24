@@ -36,6 +36,7 @@ class CredentialStoreTest {
     @AfterEach
     fun tearDown() {
         storedCredentials.clear()
+        CredentialStore.clearGlobalCache()
     }
 
     @Test

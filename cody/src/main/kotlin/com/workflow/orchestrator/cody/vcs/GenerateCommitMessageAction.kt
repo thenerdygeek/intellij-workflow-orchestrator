@@ -25,6 +25,9 @@ import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
 import git4idea.repo.GitRepositoryManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -187,33 +190,44 @@ class GenerateCommitMessageAction : AnAction(
      * Build code intelligence context from IntelliJ's PSI model.
      * Provides class names, annotations (@Service, @RestController, @Test),
      * Maven module, and whether files are test or production code.
+     *
+     * Enriches up to 5 files in parallel to keep processing reasonable
+     * while avoiding sequential 500ms-2s PSI reads per file.
      */
     private suspend fun buildCodeContext(project: Project): String {
         return try {
             val enricher = PsiContextEnricher(project)
             val changeListManager = ChangeListManager.getInstance(project)
-            val contexts = changeListManager.allChanges.take(10).mapNotNull { change ->
-                val path = change.afterRevision?.file?.path ?: return@mapNotNull null
-                try {
-                    val ctx = enricher.enrich(path)
-                    if (ctx.className == null && ctx.classAnnotations.isEmpty()) return@mapNotNull null
-                    buildString {
-                        val fileName = path.substringAfterLast('/')
-                        append(fileName)
-                        if (ctx.isTestFile) append(" [TEST]")
-                        if (ctx.mavenModule != null) append(" (module: ${ctx.mavenModule})")
-                        if (ctx.className != null) append(" — ${ctx.className}")
-                        if (ctx.classAnnotations.isNotEmpty()) {
-                            append(" @${ctx.classAnnotations.joinToString(", @")}")
-                        }
-                        val interestingMethods = ctx.methodAnnotations.entries
-                            .filter { (_, anns) -> anns.any { it in listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "RequestMapping", "Test", "BeforeEach", "Transactional") } }
-                            .take(5)
-                        if (interestingMethods.isNotEmpty()) {
-                            append("\n  methods: ${interestingMethods.map { (m, a) -> "$m(${a.joinToString(",")})" }.joinToString(", ")}")
-                        }
+            val changedFiles = changeListManager.allChanges.take(5).mapNotNull { change ->
+                change.afterRevision?.file?.path
+            }
+
+            // Enrich all files in parallel instead of sequentially
+            val contexts = coroutineScope {
+                changedFiles.map { path ->
+                    async {
+                        try {
+                            val ctx = enricher.enrich(path)
+                            if (ctx.className == null && ctx.classAnnotations.isEmpty()) return@async null
+                            buildString {
+                                val fileName = path.substringAfterLast('/')
+                                append(fileName)
+                                if (ctx.isTestFile) append(" [TEST]")
+                                if (ctx.mavenModule != null) append(" (module: ${ctx.mavenModule})")
+                                if (ctx.className != null) append(" — ${ctx.className}")
+                                if (ctx.classAnnotations.isNotEmpty()) {
+                                    append(" @${ctx.classAnnotations.joinToString(", @")}")
+                                }
+                                val interestingMethods = ctx.methodAnnotations.entries
+                                    .filter { (_, anns) -> anns.any { it in listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "RequestMapping", "Test", "BeforeEach", "Transactional") } }
+                                    .take(5)
+                                if (interestingMethods.isNotEmpty()) {
+                                    append("\n  methods: ${interestingMethods.map { (m, a) -> "$m(${a.joinToString(",")})" }.joinToString(", ")}")
+                                }
+                            }
+                        } catch (_: Exception) { null }
                     }
-                } catch (_: Exception) { null }
+                }.awaitAll().filterNotNull()
             }
             contexts.joinToString("\n")
         } catch (_: Exception) { "" }

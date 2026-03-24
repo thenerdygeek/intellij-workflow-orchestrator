@@ -10,6 +10,11 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 @Service(Service.Level.PROJECT)
 class DriftDetectorService {
@@ -38,23 +43,32 @@ class DriftDetectorService {
         this.registryClient = registryClient
     }
     private val semverPattern = Regex("""^\d+\.\d+\.\d+.*$""")
+    private val concurrencyLimit = Semaphore(5)
 
     suspend fun checkDrift(entries: List<TagEntry>): List<DriftResult> {
-        return entries
-            .filter { semverPattern.matches(it.currentTag) && !it.isCurrentRepo }
-            .mapNotNull { entry ->
-                val result = registryClient.getLatestReleaseTag(entry.serviceName)
-                val latestTag = (result as? ApiResult.Success)?.data
-                if (latestTag != null) {
-                    DriftResult(
-                        serviceName = entry.serviceName,
-                        currentTag = entry.currentTag,
-                        latestReleaseTag = latestTag,
-                        isStale = entry.currentTag != latestTag
-                    )
-                } else {
-                    null
+        val eligible = entries.filter { semverPattern.matches(it.currentTag) && !it.isCurrentRepo }
+        if (eligible.isEmpty()) return emptyList()
+
+        // Fetch all registry tags in parallel (capped at 5 concurrent requests)
+        return coroutineScope {
+            eligible.map { entry ->
+                async {
+                    concurrencyLimit.withPermit {
+                        val result = registryClient.getLatestReleaseTag(entry.serviceName)
+                        val latestTag = (result as? ApiResult.Success)?.data
+                        if (latestTag != null) {
+                            DriftResult(
+                                serviceName = entry.serviceName,
+                                currentTag = entry.currentTag,
+                                latestReleaseTag = latestTag,
+                                isStale = entry.currentTag != latestTag
+                            )
+                        } else {
+                            null
+                        }
+                    }
                 }
-            }
+            }.awaitAll().filterNotNull()
+        }
     }
 }
