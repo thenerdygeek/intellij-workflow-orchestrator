@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ToolCall, ToolCallStatus } from '@/bridge/types';
+import { Tool, type ToolPart } from '@/components/ui/prompt-kit/tool';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -69,7 +70,7 @@ const CATEGORY_STYLES: Record<ToolCategory, { className: string; label: string }
   EDIT:   { className: 'bg-[var(--badge-edit-bg,#2d1f3d)] text-[var(--badge-edit-fg,#c084fc)]',     label: 'EDIT' },
   CMD:    { className: 'bg-[var(--badge-cmd-bg,#1a2e1a)] text-[var(--badge-cmd-fg,#6ee77a)]',       label: 'CMD' },
   SEARCH: { className: 'bg-[var(--badge-search-bg,#1a2e3b)] text-[var(--badge-search-fg,#67d4e8)]', label: 'SEARCH' },
-  TOOL:   { className: 'bg-[var(--chip-bg,#2a2a2a)] text-[var(--accent)]',                  label: 'TOOL' },
+  TOOL:   { className: 'bg-[var(--chip-bg,#2a2a2a)] text-[var(--accent)]',                          label: 'TOOL' },
 };
 
 // ── Live Timer Hook ──
@@ -122,14 +123,39 @@ function extractTarget(args: string): string {
   return '';
 }
 
-// ── Pretty-print JSON ──
+// ── Map ToolCall → ToolPart ──
 
-function prettyPrint(text: string): string {
+function toToolPart(tc: ToolCall): ToolPart {
+  const stateMap: Record<ToolCallStatus, ToolPart['state']> = {
+    PENDING: 'input-available',
+    RUNNING: 'input-streaming',
+    COMPLETED: 'output-available',
+    ERROR: 'output-error',
+  };
+
+  let input: Record<string, unknown> | undefined;
   try {
-    return JSON.stringify(JSON.parse(text), null, 2);
+    input = JSON.parse(tc.args) as Record<string, unknown>;
   } catch {
-    return text;
+    input = tc.args ? { raw: tc.args } : undefined;
   }
+
+  let output: Record<string, unknown> | undefined;
+  if (tc.result) {
+    try {
+      output = JSON.parse(tc.result) as Record<string, unknown>;
+    } catch {
+      output = { result: tc.result };
+    }
+  }
+
+  return {
+    type: tc.name,
+    state: stateMap[tc.status],
+    input,
+    output: tc.status !== 'ERROR' ? output : undefined,
+    errorText: tc.status === 'ERROR' ? tc.result : undefined,
+  };
 }
 
 // ── ToolCallView Component ──
@@ -140,11 +166,12 @@ interface ToolCallViewProps {
 }
 
 export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
-  const { name, args, status, result, durationMs } = toolCall;
+  const { name, status, durationMs } = toolCall;
   const category = getCategory(name);
-  const style = CATEGORY_STYLES[category];
-  const target = extractTarget(args);
+  const catStyle = CATEGORY_STYLES[category];
+  const target = extractTarget(toolCall.args);
   const liveTimer = useLiveTimer(status);
+  const toolPart = toToolPart(toolCall);
 
   // Auto-expand: latest running card is expanded, collapse when superseded
   const [isOpen, setIsOpen] = useState(false);
@@ -164,6 +191,50 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
   const isError = status === 'ERROR';
   const isCompleted = status === 'COMPLETED';
 
+  // Header extras: category badge + target + timer/duration
+  const headerExtra = (
+    <>
+      <Badge
+        variant="secondary"
+        className={cn(
+          'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider border-0',
+          catStyle.className,
+        )}
+      >
+        {catStyle.label}
+      </Badge>
+      {target && (
+        <span
+          className="truncate text-[11px] font-mono text-[var(--fg-muted)]"
+          style={{ maxWidth: '200px' }}
+        >
+          {target}
+        </span>
+      )}
+      <span className="flex-1" />
+      {isRunning && liveTimer && (
+        <span className="text-[11px] font-mono tabular-nums text-[var(--accent)]">
+          {liveTimer}
+        </span>
+      )}
+      {(isCompleted || isError) && durationMs != null && (
+        <span className="rounded px-1.5 py-0.5 text-[10px] font-mono bg-[var(--chip-bg)] text-[var(--fg-muted)]">
+          {formatDuration(durationMs)}
+        </span>
+      )}
+    </>
+  );
+
+  // Progress bar for running state
+  const footerExtra = isRunning ? (
+    <div className="h-[2px] w-full overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
+      <div
+        className="h-full w-1/3 bg-[var(--accent)]"
+        style={{ animation: 'indeterminate 1.5s ease-in-out infinite' }}
+      />
+    </div>
+  ) : null;
+
   return (
     <div
       className={cn(
@@ -172,162 +243,14 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
         isError && 'ring-1 ring-[var(--error)] rounded-lg',
       )}
     >
-      {/* Override prompt-kit Tool's internal collapsible to use our open state */}
-      <div>
-        <div className="mt-2 overflow-hidden rounded-lg border" style={{ borderColor: 'var(--border)' }}>
-          <button
-            onClick={() => setIsOpen((prev) => !prev)}
-            aria-expanded={isOpen}
-            aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${name} tool call`}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors duration-100 hover:brightness-110"
-            style={{ backgroundColor: 'var(--tool-bg)' }}
-          >
-            {/* Status indicator */}
-            {isRunning && (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 animate-spin">
-                <circle cx="8" cy="8" r="6" stroke="var(--fg-muted)" strokeWidth="1.5" />
-                <path d="M8 2a6 6 0 0 1 6 6" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            )}
-            {status === 'PENDING' && (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <circle cx="8" cy="8" r="6" stroke="var(--fg-muted)" strokeWidth="1.5" />
-              </svg>
-            )}
-            {isCompleted && (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <circle cx="8" cy="8" r="6" fill="var(--badge-write-bg)" />
-                <path d="M5 8l2 2 4-4" stroke="var(--success)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            )}
-            {isError && (
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <circle cx="8" cy="8" r="6" fill="var(--diff-rem-bg)" />
-                <path d="M6 6l4 4M10 6l-4 4" stroke="var(--error)" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            )}
-
-            {/* Category badge */}
-            <Badge
-              variant="secondary"
-              className={cn(
-                'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider border-0',
-                style.className,
-              )}
-            >
-              {style.label}
-            </Badge>
-
-            {/* Tool name */}
-            <span className="text-[12px] font-medium text-[var(--fg)]">
-              {name}
-            </span>
-
-            {/* Target */}
-            {target && (
-              <span
-                className="truncate text-[11px] font-mono text-[var(--fg-muted)]"
-                style={{ maxWidth: '200px' }}
-              >
-                {target}
-              </span>
-            )}
-
-            {/* Spacer */}
-            <span className="flex-1" />
-
-            {/* Live timer while running */}
-            {isRunning && liveTimer && (
-              <span className="text-[11px] font-mono tabular-nums text-[var(--accent)]">
-                {liveTimer}
-              </span>
-            )}
-
-            {/* Duration badge on completion */}
-            {(isCompleted || isError) && durationMs != null && (
-              <span className="rounded px-1.5 py-0.5 text-[10px] font-mono bg-[var(--chip-bg)] text-[var(--fg-muted)]">
-                {formatDuration(durationMs)}
-              </span>
-            )}
-
-            {/* Expand chevron */}
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 16 16"
-              fill="none"
-              className={cn(
-                'shrink-0 transition-transform duration-200 text-[var(--fg-muted)]',
-                isOpen && 'rotate-180',
-              )}
-            >
-              <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-
-          {/* Indeterminate progress bar */}
-          {isRunning && (
-            <div className="h-[2px] w-full overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
-              <div
-                className="h-full w-1/3 bg-[var(--accent)]"
-                style={{ animation: 'indeterminate 1.5s ease-in-out infinite' }}
-              />
-            </div>
-          )}
-
-          {/* Expandable details */}
-          {isOpen && (
-            <div className="border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
-              {/* Input args */}
-              {args && args.length > 0 && (
-                <div className="mb-2">
-                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">
-                    Input
-                  </div>
-                  <pre
-                    className="overflow-x-auto rounded p-2 text-[11px] leading-relaxed font-mono bg-[var(--code-bg)] text-[var(--fg)]"
-                    style={{ maxHeight: '200px', overflowY: 'auto' }}
-                  >
-                    {prettyPrint(args)}
-                  </pre>
-                </div>
-              )}
-
-              {/* Output / Result */}
-              {result != null && result.length > 0 && (
-                <div>
-                  <div
-                    className={cn(
-                      'mb-1 text-[10px] font-semibold uppercase tracking-wider',
-                      isError ? 'text-[var(--error)]' : 'text-[var(--fg-muted)]',
-                    )}
-                  >
-                    {isError ? 'Error' : 'Output'}
-                  </div>
-                  <pre
-                    className={cn(
-                      'overflow-x-auto rounded p-2 text-[11px] leading-relaxed font-mono',
-                      isError
-                        ? 'bg-[var(--diff-rem-bg)] text-[var(--error)]'
-                        : 'bg-[var(--code-bg)] text-[var(--fg)]',
-                    )}
-                    style={{ maxHeight: '300px', overflowY: 'auto' }}
-                  >
-                    {prettyPrint(result)}
-                  </pre>
-                </div>
-              )}
-
-              {/* Running placeholder */}
-              {isRunning && !result && (
-                <div className="text-[11px] italic text-[var(--fg-muted)]">
-                  Executing...
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <Tool
+        toolPart={toolPart}
+        open={isOpen}
+        onOpenChange={setIsOpen}
+        headerExtra={headerExtra}
+        footerExtra={footerExtra}
+        className="mt-2"
+      />
     </div>
   );
 }

@@ -12,7 +12,7 @@ import {
   Settings,
   XCircle,
 } from "lucide-react"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 
 export type ToolPart = {
   type: string
@@ -30,26 +30,43 @@ export type ToolPart = {
 export type ToolProps = {
   toolPart: ToolPart
   defaultOpen?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   className?: string
+  headerExtra?: ReactNode
+  footerExtra?: ReactNode
 }
 
-const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen)
+const Tool = ({
+  toolPart,
+  defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
+  className,
+  headerExtra,
+  footerExtra,
+}: ToolProps) => {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen)
+  const isOpen = controlledOpen ?? internalOpen
+  const handleOpenChange = (v: boolean) => {
+    setInternalOpen(v)
+    onOpenChange?.(v)
+  }
 
   const { state, input, output, toolCallId } = toolPart
 
   const getStateIcon = () => {
     switch (state) {
       case "input-streaming":
-        return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        return <Loader2 className="h-4 w-4 animate-spin text-[var(--accent)]" />
       case "input-available":
-        return <Settings className="h-4 w-4 text-orange-500" />
+        return <Settings className="h-4 w-4 text-[var(--accent-edit,#f97316)]" />
       case "output-available":
-        return <CheckCircle className="h-4 w-4 text-green-500" />
+        return <CheckCircle className="h-4 w-4 text-[var(--success)]" />
       case "output-error":
-        return <XCircle className="h-4 w-4 text-red-500" />
+        return <XCircle className="h-4 w-4 text-[var(--error)]" />
       default:
-        return <Settings className="text-muted-foreground h-4 w-4" />
+        return <Settings className="text-[var(--fg-muted)] h-4 w-4" />
     }
   }
 
@@ -61,7 +78,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+              "bg-[var(--badge-read-bg,#1e3a5f)] text-[var(--badge-read-fg,#7cb3f0)]"
             )}
           >
             Processing
@@ -72,7 +89,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+              "bg-[var(--badge-edit-bg,#2d1f3d)] text-[var(--badge-edit-fg,#c084fc)]"
             )}
           >
             Ready
@@ -83,7 +100,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              "bg-[var(--badge-cmd-bg,#1a2e1a)] text-[var(--badge-cmd-fg,#6ee77a)]"
             )}
           >
             Completed
@@ -94,7 +111,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              "bg-[var(--diff-rem-bg)] text-[var(--error)]"
             )}
           >
             Error
@@ -105,7 +122,7 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
           <span
             className={cn(
               baseClasses,
-              "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
+              "bg-[var(--chip-bg,#2a2a2a)] text-[var(--fg-muted)]"
             )}
           >
             Pending
@@ -127,15 +144,16 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
   return (
     <div
       className={cn(
-        "border-border mt-3 overflow-hidden rounded-lg border",
+        "border-[var(--border)] mt-3 overflow-hidden rounded-lg border",
         className
       )}
     >
-      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <Collapsible open={isOpen} onOpenChange={handleOpenChange}>
         <CollapsibleTrigger asChild>
           <Button
             variant="ghost"
-            className="bg-background h-auto w-full justify-between rounded-b-none px-3 py-2 font-normal"
+            className="h-auto w-full justify-between rounded-b-none px-3 py-2 font-normal"
+            style={{ backgroundColor: "var(--tool-bg)" }}
           >
             <div className="flex items-center gap-2">
               {getStateIcon()}
@@ -143,26 +161,27 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
                 {toolPart.type}
               </span>
               {getStateBadge()}
+              {headerExtra}
             </div>
             <ChevronDown className={cn("h-4 w-4", isOpen && "rotate-180")} />
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent
           className={cn(
-            "border-border border-t",
+            "border-[var(--border)] border-t",
             "data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down overflow-hidden"
           )}
         >
-          <div className="bg-background space-y-3 p-3">
+          <div className="space-y-3 p-3" style={{ backgroundColor: "var(--tool-bg)" }}>
             {input && Object.keys(input).length > 0 && (
               <div>
-                <h4 className="text-muted-foreground mb-2 text-sm font-medium">
+                <h4 className="text-[var(--fg-muted)] mb-2 text-sm font-medium">
                   Input
                 </h4>
-                <div className="bg-background rounded border p-2 font-mono text-sm">
+                <div className="rounded border border-[var(--border)] p-2 font-mono text-sm bg-[var(--code-bg)]">
                   {Object.entries(input).map(([key, value]) => (
                     <div key={key} className="mb-1">
-                      <span className="text-muted-foreground">{key}:</span>{" "}
+                      <span className="text-[var(--fg-muted)]">{key}:</span>{" "}
                       <span>{formatValue(value)}</span>
                     </div>
                   ))}
@@ -172,10 +191,10 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {output && (
               <div>
-                <h4 className="text-muted-foreground mb-2 text-sm font-medium">
+                <h4 className="text-[var(--fg-muted)] mb-2 text-sm font-medium">
                   Output
                 </h4>
-                <div className="bg-background max-h-60 overflow-auto rounded border p-2 font-mono text-sm">
+                <div className="max-h-60 overflow-auto rounded border border-[var(--border)] p-2 font-mono text-sm bg-[var(--code-bg)]">
                   <pre className="whitespace-pre-wrap">
                     {formatValue(output)}
                   </pre>
@@ -185,27 +204,28 @@ const Tool = ({ toolPart, defaultOpen = false, className }: ToolProps) => {
 
             {state === "output-error" && toolPart.errorText && (
               <div>
-                <h4 className="mb-2 text-sm font-medium text-red-500">Error</h4>
-                <div className="bg-background rounded border border-red-200 p-2 text-sm dark:border-red-950 dark:bg-red-900/20">
+                <h4 className="mb-2 text-sm font-medium text-[var(--error)]">Error</h4>
+                <div className="rounded border border-[var(--error)] p-2 text-sm bg-[var(--diff-rem-bg)]">
                   {toolPart.errorText}
                 </div>
               </div>
             )}
 
             {state === "input-streaming" && (
-              <div className="text-muted-foreground text-sm">
+              <div className="text-[var(--fg-muted)] text-sm">
                 Processing tool call...
               </div>
             )}
 
             {toolCallId && (
-              <div className="text-muted-foreground border-t border-blue-200 pt-2 text-xs">
+              <div className="text-[var(--fg-muted)] border-t border-[var(--border)] pt-2 text-xs">
                 <span className="font-mono">Call ID: {toolCallId}</span>
               </div>
             )}
           </div>
         </CollapsibleContent>
       </Collapsible>
+      {footerExtra}
     </div>
   )
 }
