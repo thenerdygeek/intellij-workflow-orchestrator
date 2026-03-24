@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import java.awt.BorderLayout
 import javax.swing.JPanel
@@ -145,6 +146,7 @@ class AgentCefPanel(
     var onRejectDiffHunk: ((String, Int) -> Unit)? = null
 
     init {
+        Disposer.register(parentDisposable) { scope.cancel() }
         try {
             createBrowser()
             Disposer.register(parentDisposable, this)
@@ -293,8 +295,15 @@ class AgentCefPanel(
                 val query = if (colonIdx > 0) data.substring(colonIdx + 1) else ""
                 // Search on IO thread, callback to JS
                 scope.launch {
-                    val results = mentionSearchProvider?.search(type, query) ?: "[]"
-                    callJs("receiveMentionResults(${jsonStr(results)})")
+                    try {
+                        withTimeout(5000L) {
+                            val results = mentionSearchProvider?.search(type, query) ?: "[]"
+                            callJs("receiveMentionResults(${jsonStr(results)})")
+                        }
+                    } catch (e: Exception) {
+                        LOG.debug("searchMentions handler failed: ${e.message}")
+                        callJs("receiveMentionResults('[]')")
+                    }
                 }
                 JBCefJSQuery.Response("ok")
             }
@@ -302,8 +311,15 @@ class AgentCefPanel(
         searchTicketsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { query ->
                 scope.launch {
-                    val results = mentionSearchProvider?.searchTickets(query) ?: "[]"
-                    callJs("(window.__ticketSearchCallback)(${jsonStr(results)})")
+                    try {
+                        withTimeout(5000L) {
+                            val results = mentionSearchProvider?.searchTickets(query) ?: "[]"
+                            callJs("(window.__ticketSearchCallback)(${jsonStr(results)})")
+                        }
+                    } catch (e: Exception) {
+                        LOG.debug("searchTickets handler failed: ${e.message}")
+                        callJs("(window.__ticketSearchCallback)('[]')")
+                    }
                 }
                 JBCefJSQuery.Response("ok")
             }
@@ -316,10 +332,13 @@ class AgentCefPanel(
                 val callbackName = parts.getOrElse(1) { "" }
                 scope.launch {
                     try {
-                        val result = mentionSearchProvider?.validateTicket(ticketKey)
-                        val json = result ?: """{"valid":false}"""
-                        callJs("(window[${jsonStr(callbackName)}])(${jsonStr(json)})")
-                    } catch (_: Exception) {
+                        withTimeout(5000L) {
+                            val result = mentionSearchProvider?.validateTicket(ticketKey)
+                            val json = result ?: """{"valid":false}"""
+                            callJs("(window[${jsonStr(callbackName)}])(${jsonStr(json)})")
+                        }
+                    } catch (e: Exception) {
+                        LOG.debug("validateTicket handler failed: ${e.message}")
                         callJs("(window[${jsonStr(callbackName)}])(${jsonStr("""{"valid":false}""")})")
                     }
                 }
@@ -833,6 +852,10 @@ class AgentCefPanel(
             js(code)
         } else {
             synchronized(pendingCalls) {
+                if (pendingCalls.size >= 10_000) {
+                    LOG.warn("Pending JS calls queue exceeded 10K items, dropping call")
+                    return
+                }
                 pendingCalls.add(code)
             }
         }
