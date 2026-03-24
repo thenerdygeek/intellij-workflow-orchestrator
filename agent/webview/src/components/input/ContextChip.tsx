@@ -12,7 +12,7 @@ interface ContextChipProps {
 const typeStyles: Record<string, { color: string; bg: string; border: string; icon: React.ElementType }> = {
   file:   { color: 'var(--accent-read, #3b82f6)',   bg: 'rgba(59,130,246,0.1)',   border: 'rgba(59,130,246,0.25)',   icon: File },
   folder: { color: 'var(--accent-read, #3b82f6)',   bg: 'rgba(59,130,246,0.08)',  border: 'rgba(59,130,246,0.2)',    icon: Folder },
-  symbol: { color: '#a78bfa',                        bg: 'rgba(139,92,246,0.1)',   border: 'rgba(139,92,246,0.25)',   icon: Hash },
+  symbol: { color: 'var(--accent-search, #a78bfa)',    bg: 'color-mix(in srgb, var(--accent-search, #a78bfa) 10%, transparent)', border: 'color-mix(in srgb, var(--accent-search, #a78bfa) 25%, transparent)', icon: Hash },
   tool:   { color: 'var(--accent-write, #22c55e)',   bg: 'rgba(34,197,94,0.1)',    border: 'rgba(34,197,94,0.25)',    icon: Wrench },
   skill:  { color: 'var(--accent-edit, #f59e0b)',    bg: 'rgba(251,191,36,0.1)',   border: 'rgba(251,191,36,0.25)',   icon: Sparkles },
   ticket: { color: 'var(--accent-read, #3b82f6)',   bg: 'rgba(59,130,246,0.1)',   border: 'rgba(59,130,246,0.25)',   icon: SquareKanban },

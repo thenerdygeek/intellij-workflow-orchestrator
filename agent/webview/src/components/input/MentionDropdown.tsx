@@ -20,7 +20,7 @@ const typeIconComponents: Record<string, React.ElementType> = {
 const typeIconColors: Record<string, string> = {
   file: 'var(--accent-read, #3b82f6)',
   folder: 'var(--accent-read, #3b82f6)',
-  symbol: '#a78bfa',
+  symbol: 'var(--accent-search, #a78bfa)',
 };
 
 const typeLabels: Record<string, string> = {

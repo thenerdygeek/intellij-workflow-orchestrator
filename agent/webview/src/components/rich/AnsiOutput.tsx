@@ -67,7 +67,7 @@ export function AnsiOutput({ text }: AnsiOutputProps) {
 
       {/* Output area */}
       <pre
-        className="max-h-[400px] overflow-auto bg-[#1e1e1e] p-3 font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[12px] leading-[1.6] text-[#d4d4d4]"
+        className="max-h-[400px] overflow-auto bg-[var(--code-bg,var(--bg))] p-3 font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[12px] leading-[1.6] text-[var(--fg)]"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>

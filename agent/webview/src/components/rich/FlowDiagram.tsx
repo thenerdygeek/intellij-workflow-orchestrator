@@ -703,7 +703,7 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                       >
                         <div
                           style={{
-                            background: isDark ? '#333' : '#fff',
+                            background: `var(--tooltip-bg, var(--code-bg, ${isDark ? '#333' : '#fff'}))`,
                             border: `1px solid ${borderColor}`,
                             borderRadius: 4,
                             padding: '2px 8px',

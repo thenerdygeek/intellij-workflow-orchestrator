@@ -9,14 +9,14 @@ type ChipStatus = 'default' | 'pending' | 'valid' | 'invalid';
 const chipColors: Record<string, { color: string; bg: string; border: string }> = {
   file:   { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
   folder: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.2)' },
-  symbol: { color: '#a78bfa',                      bg: 'rgba(139,92,246,0.1)',  border: 'rgba(139,92,246,0.25)' },
+  symbol: { color: 'var(--accent-search, #a78bfa)',  bg: 'color-mix(in srgb, var(--accent-search, #a78bfa) 10%, transparent)', border: 'color-mix(in srgb, var(--accent-search, #a78bfa) 25%, transparent)' },
   ticket: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
 };
 
 // Status-based colors for ticket validation states
 const statusColors: Record<ChipStatus, { color: string; bg: string; border: string }> = {
   default: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
-  pending: { color: '#ca8a04',                      bg: 'rgba(202,138,4,0.12)',  border: 'rgba(202,138,4,0.3)' },
+  pending: { color: 'var(--accent-edit, #ca8a04)',    bg: 'color-mix(in srgb, var(--accent-edit, #ca8a04) 12%, transparent)', border: 'color-mix(in srgb, var(--accent-edit, #ca8a04) 30%, transparent)' },
   valid:   { color: 'var(--success, #22c55e)',      bg: 'rgba(34,197,94,0.1)',   border: 'rgba(34,197,94,0.25)' },
   invalid: { color: 'var(--error, #ef4444)',        bg: 'rgba(239,68,68,0.1)',   border: 'rgba(239,68,68,0.25)' },
 };

@@ -30,7 +30,7 @@ function loadDiff2Html(): Promise<Diff2HtmlModule> {
 
 /** Shared button styles */
 const BTN_BASE =
-  'font-size:11px;padding:2px 8px;border-radius:4px;border:none;cursor:pointer;color:#fff;';
+  'font-size:11px;padding:2px 8px;border-radius:4px;border:none;cursor:pointer;color:var(--bg,#fff);';
 
 /** Extract "new" side text lines from a diff2html hunk tbody (side-by-side format) */
 function extractNewLinesFromHunk(hunk: Element): string {

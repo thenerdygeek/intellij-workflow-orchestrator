@@ -267,7 +267,7 @@ function InputBarContent({
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
-                <Hash className="size-3.5" style={{ color: '#a78bfa' }} />
+                <Hash className="size-3.5" style={{ color: 'var(--accent-search, #a78bfa)' }} />
                 <span>Symbol</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
               </DropdownMenuItem>
