@@ -733,7 +733,7 @@ class AgentController(
             return ApprovalResult.Approved
         }
 
-        var result: ApprovalResult = ApprovalResult.Rejected
+        var result: ApprovalResult = ApprovalResult.Rejected()
         ApplicationManager.getApplication().invokeAndWait {
             when {
                 // Command execution — show CommandApprovalDialog with command text
@@ -741,7 +741,7 @@ class AgentController(
                     val cmdMatch = Regex("run_command\\((.+?)\\)").find(description)
                     val dialog = CommandApprovalDialog(project, cmdMatch?.groupValues?.get(1) ?: description, project.basePath ?: ".", riskLevel.name)
                     dialog.show()
-                    result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
+                    result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected()
                     if (dialog.allowAll) sessionAutoApprove = true
                 }
 
@@ -771,7 +771,7 @@ class AgentController(
                                 editDescription = "Agent wants to edit: $filePath"
                             )
                             dialog.show()
-                            result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected
+                            result = if (dialog.approved) ApprovalResult.Approved else ApprovalResult.Rejected()
                         } else {
                             // Parsing partial — show what we could extract
                             val fileInfo = filePath ?: "unknown file"
@@ -803,7 +803,7 @@ class AgentController(
                     val answer = Messages.showYesNoDialog(project,
                         "The agent wants to perform:\n\n$description\n\nRisk level: ${riskLevel.name}",
                         "Agent Action Approval", "Allow", "Block", Messages.getQuestionIcon())
-                    result = if (answer == Messages.YES) ApprovalResult.Approved else ApprovalResult.Rejected
+                    result = if (answer == Messages.YES) ApprovalResult.Approved else ApprovalResult.Rejected()
                 }
             }
         }
@@ -869,7 +869,7 @@ class AgentController(
         return when (answer) {
             Messages.YES -> ApprovalResult.Approved
             Messages.CANCEL -> { sessionAutoApprove = true; ApprovalResult.Approved }
-            else -> ApprovalResult.Rejected
+            else -> ApprovalResult.Rejected()
         }
     }
 

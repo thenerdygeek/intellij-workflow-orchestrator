@@ -1,6 +1,16 @@
 package com.workflow.orchestrator.agent.security
 
 /**
+ * Exception thrown when [OutputValidator.validateOrThrow] detects security-sensitive
+ * content in LLM output.
+ *
+ * @param issues Human-readable descriptions of each detected violation
+ */
+class SecurityViolationException(
+    val issues: List<String>
+) : RuntimeException("Security violations detected: ${issues.joinToString("; ")}")
+
+/**
  * Validates LLM output before presenting it to the user or applying it to files.
  * Detects potential credential leakage, sensitive file references, and other
  * security-concerning patterns in generated content.
@@ -53,6 +63,30 @@ object OutputValidator {
         SensitivePattern(
             Regex("(?<!access_)TOKEN=[^(\\s]\\S+", RegexOption.IGNORE_CASE),
             "Output contains a sensitive token assignment"
+        ),
+
+        // JDBC connection strings (may embed credentials)
+        SensitivePattern(
+            Regex("jdbc:[a-z]+://\\S+"),
+            "Output contains a JDBC connection string"
+        ),
+
+        // MongoDB URIs (may embed credentials)
+        SensitivePattern(
+            Regex("mongodb(\\+srv)?://\\S+"),
+            "Output contains a MongoDB connection URI"
+        ),
+
+        // Path traversal (two or more levels of ../ or ..\)
+        SensitivePattern(
+            Regex("""(?:\.\.[/\\]){2,}"""),
+            "Output contains a path traversal sequence"
+        ),
+
+        // Redis URIs (may embed credentials)
+        SensitivePattern(
+            Regex("redis://\\S+"),
+            "Output contains a Redis connection URI"
         )
     )
 
@@ -70,5 +104,19 @@ object OutputValidator {
             }
         }
         return issues
+    }
+
+    /**
+     * Validates LLM output and throws [SecurityViolationException] if any
+     * sensitive content is detected.
+     *
+     * @param output The generated text to validate
+     * @throws SecurityViolationException if the output contains sensitive content
+     */
+    fun validateOrThrow(output: String) {
+        val issues = validate(output)
+        if (issues.isNotEmpty()) {
+            throw SecurityViolationException(issues)
+        }
     }
 }

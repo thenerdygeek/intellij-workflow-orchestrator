@@ -208,7 +208,7 @@ class SingleAgentFlowE2ETest {
         // Create an approval gate that rejects all edits
         val gate = ApprovalGate(
             approvalRequired = true,
-            onApprovalNeeded = { _, _ -> ApprovalResult.Rejected }
+            onApprovalNeeded = { _, _ -> ApprovalResult.Rejected() }
         )
 
         val result = orchestrator.executeTask(

@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.context.ToolOutputStore
 import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.security.CommandRisk
+import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
@@ -29,6 +32,7 @@ class RunCommandTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.CODER)
 
     companion object {
+        private val LOG = Logger.getInstance(RunCommandTool::class.java)
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
         private const val MAX_TIMEOUT_SECONDS = 600L
         private const val MAX_OUTPUT_CHARS = 30_000
@@ -147,6 +151,20 @@ class RunCommandTool : AgentTool {
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val command = params["command"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
+        // 5B: CommandSafetyAnalyzer — block DANGEROUS commands before any other processing
+        val risk = CommandSafetyAnalyzer.classify(command)
+        if (risk == CommandRisk.DANGEROUS) {
+            LOG.warn("[Agent:RunCommand] BLOCKED dangerous command: ${command.take(100)}")
+            return ToolResult(
+                content = "Command blocked by safety analyzer: classified as DANGEROUS. This command could cause data loss or system damage.",
+                summary = "Error: dangerous command blocked",
+                tokenEstimate = 30,
+                isError = true
+            )
+        }
+        // Log the execution for audit
+        LOG.info("[Agent:RunCommand] risk=$risk command=${command.take(80)}")
 
         // Smart git command filter — allowlist approach
         val gitBlockReason = checkGitCommand(command)

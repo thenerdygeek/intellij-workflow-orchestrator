@@ -1,5 +1,12 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.workflow.orchestrator.agent.security.CommandRisk
+import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
+import java.time.Instant
+
 /**
  * Risk levels for agent actions. Determines whether user approval is needed.
  */
@@ -16,22 +23,53 @@ enum class RiskLevel {
  */
 sealed class ApprovalResult {
     object Approved : ApprovalResult()
-    object Rejected : ApprovalResult()
+    data class Rejected(val reason: String = "Rejected by user") : ApprovalResult()
     data class Pending(val description: String, val riskLevel: RiskLevel) : ApprovalResult()
 }
+
+/**
+ * Audit log entry recording every approval decision with context.
+ */
+data class AuditEntry(
+    val toolName: String,
+    val riskLevel: RiskLevel,
+    val params: Map<String, Any?>,
+    val timestamp: Instant,
+    var result: ApprovalResult? = null
+)
 
 /**
  * Gates agent actions based on risk level and user preferences.
  *
  * The approval gate checks each tool action against the user's configured
  * autonomy level and either auto-approves, queues for approval, or blocks.
+ *
+ * Supports two modes:
+ * - **Synchronous** (legacy): Uses [onApprovalNeeded] callback for immediate decisions.
+ * - **Asynchronous** (blocking): Uses [CompletableDeferred] + [respondToApproval] for UI-driven approval
+ *   with configurable timeout.
  */
 class ApprovalGate(
-    private val approvalRequired: Boolean = true,  // from AgentSettings
-    private val onApprovalNeeded: ((String, RiskLevel) -> ApprovalResult)? = null  // callback for UI
+    private val approvalRequired: Boolean = true,
+    private val timeoutMs: Long = 60_000L,
+    private val onApprovalNeeded: ((String, RiskLevel) -> ApprovalResult)? = null,
+    private val approvalCallback: ((String, RiskLevel, Map<String, Any?>) -> Unit)? = null
 ) {
     /**
-     * Check if an action should proceed.
+     * Audit log recording every approval decision.
+     * Thread-safe — backed by [java.util.Collections.synchronizedList].
+     */
+    val auditLog: MutableList<AuditEntry> = java.util.Collections.synchronizedList(mutableListOf())
+
+    /**
+     * The pending deferred for the current approval request.
+     * Completed by [respondToApproval] from the UI thread.
+     */
+    @Volatile
+    private var pendingApproval: CompletableDeferred<ApprovalResult>? = null
+
+    /**
+     * Legacy synchronous check for backward compatibility.
      * @param toolName The tool being called
      * @param description Human-readable description of what the tool will do
      * @param riskLevel The risk level of this action
@@ -46,11 +84,97 @@ class ApprovalGate(
 
         // HIGH and DESTRUCTIVE always require approval regardless of settings
         if (riskLevel >= RiskLevel.HIGH || (approvalRequired && riskLevel >= RiskLevel.MEDIUM)) {
-            return onApprovalNeeded?.invoke(description, riskLevel)
-                ?: ApprovalResult.Rejected  // BLOCK if no callback — safer default
+            val result = onApprovalNeeded?.invoke(description, riskLevel)
+                ?: ApprovalResult.Rejected("No approval callback — blocked by default")
+
+            // Record in audit log
+            auditLog.add(AuditEntry(
+                toolName = toolName,
+                riskLevel = riskLevel,
+                params = emptyMap(),
+                timestamp = Instant.now(),
+                result = result
+            ))
+
+            return result
         }
 
         return ApprovalResult.Approved
+    }
+
+    /**
+     * Blocking approval check with timeout — the primary method for agentic execution.
+     *
+     * Uses [CompletableDeferred] to block until the UI calls [respondToApproval].
+     * If no response arrives within [timeoutMs], returns [ApprovalResult.Rejected] with timeout reason.
+     *
+     * @param toolName The tool being called
+     * @param params Tool parameters — used for context-aware risk classification
+     * @param overrideTimeoutMs Optional per-call timeout override
+     * @return ApprovalResult indicating whether to proceed
+     */
+    suspend fun check(toolName: String, params: Map<String, Any?> = emptyMap(), overrideTimeoutMs: Long? = null): ApprovalResult {
+        val risk = classifyRisk(toolName, params)
+
+        // Read-only actions always proceed
+        if (risk == RiskLevel.NONE) {
+            recordAudit(toolName, risk, params, ApprovalResult.Approved)
+            return ApprovalResult.Approved
+        }
+
+        // If approval not required, auto-approve LOW
+        if (!approvalRequired && risk <= RiskLevel.LOW) {
+            recordAudit(toolName, risk, params, ApprovalResult.Approved)
+            return ApprovalResult.Approved
+        }
+
+        // Record pending audit entry
+        val auditEntry = AuditEntry(
+            toolName = toolName,
+            riskLevel = risk,
+            params = params,
+            timestamp = Instant.now(),
+            result = null
+        )
+        auditLog.add(auditEntry)
+
+        val deferred = CompletableDeferred<ApprovalResult>()
+        pendingApproval = deferred
+
+        // Notify UI via callback
+        approvalCallback?.invoke(toolName, risk, params)
+
+        // Wait with timeout
+        val effectiveTimeout = overrideTimeoutMs ?: timeoutMs
+        return try {
+            val result = withTimeout(effectiveTimeout) { deferred.await() }
+            auditEntry.result = result
+            result
+        } catch (e: TimeoutCancellationException) {
+            val result = ApprovalResult.Rejected("Approval timed out after ${effectiveTimeout / 1000}s")
+            auditEntry.result = result
+            result
+        } finally {
+            pendingApproval = null
+        }
+    }
+
+    /**
+     * Complete the pending approval from the UI thread.
+     * Called when the user approves or rejects an action in the approval dialog.
+     */
+    fun respondToApproval(result: ApprovalResult) {
+        pendingApproval?.complete(result)
+    }
+
+    private fun recordAudit(toolName: String, risk: RiskLevel, params: Map<String, Any?>, result: ApprovalResult) {
+        auditLog.add(AuditEntry(
+            toolName = toolName,
+            riskLevel = risk,
+            params = params,
+            timestamp = Instant.now(),
+            result = result
+        ))
     }
 
     companion object {
@@ -161,12 +285,61 @@ class ApprovalGate(
         // bitbucket_approve_pr, bitbucket_decline_pr, bamboo_trigger_build,
         // bamboo_stop_build, bamboo_cancel_build, etc.
 
-        /** Determine risk level for a given tool. */
+        /** Determine risk level for a given tool (static classification, no params). */
         fun riskLevelFor(toolName: String): RiskLevel = when {
             toolName in NONE_RISK_TOOLS -> RiskLevel.NONE
             toolName in LOW_RISK_TOOLS -> RiskLevel.LOW
             toolName in MEDIUM_RISK_TOOLS -> RiskLevel.MEDIUM
             else -> RiskLevel.HIGH
         }
+
+        /**
+         * Context-aware risk classification that considers tool parameters.
+         *
+         * For tools like `edit_file`, the risk depends on WHAT is being edited:
+         * - Test files and docs (.md, .txt) are LOW risk
+         * - Production source code (/main/) is MEDIUM risk
+         *
+         * For `run_command`, the risk depends on the command content:
+         * - Read-only commands (ls, grep, git status) are LOW risk
+         * - Risky commands (git push, docker build) are HIGH risk
+         * - Dangerous commands (rm -rf, curl|bash, DROP TABLE) are DESTRUCTIVE
+         *
+         * @param toolName The tool being called
+         * @param params Tool parameters for context-aware classification
+         * @return The assessed risk level
+         */
+        fun classifyRisk(toolName: String, params: Map<String, Any?> = emptyMap()): RiskLevel {
+            // Static classification for known-safe tools
+            if (toolName in NONE_RISK_TOOLS) return RiskLevel.NONE
+            if (toolName in LOW_RISK_TOOLS) return RiskLevel.LOW
+
+            // Context-aware classification for edit_file
+            if (toolName == "edit_file") {
+                val path = params["path"] as? String ?: return RiskLevel.MEDIUM
+                return when {
+                    path.contains("/test/") || path.endsWith("Test.kt") || path.endsWith("Test.java") -> RiskLevel.LOW
+                    path.endsWith(".md") || path.endsWith(".txt") -> RiskLevel.LOW
+                    path.contains("/main/") -> RiskLevel.MEDIUM
+                    else -> RiskLevel.MEDIUM
+                }
+            }
+
+            // 5D: Context-aware classification for run_command — delegates to CommandSafetyAnalyzer
+            if (toolName == "run_command") {
+                val command = params["command"] as? String ?: return RiskLevel.HIGH
+                return when (CommandSafetyAnalyzer.classify(command)) {
+                    CommandRisk.SAFE -> RiskLevel.LOW
+                    CommandRisk.RISKY -> RiskLevel.HIGH
+                    CommandRisk.DANGEROUS -> RiskLevel.DESTRUCTIVE
+                }
+            }
+
+            // Fall through to static classification for remaining tools
+            if (toolName in MEDIUM_RISK_TOOLS) return RiskLevel.MEDIUM
+            return RiskLevel.HIGH
+        }
+
+        // classifyCommandRisk removed — now delegates to CommandSafetyAnalyzer (5D)
     }
 }

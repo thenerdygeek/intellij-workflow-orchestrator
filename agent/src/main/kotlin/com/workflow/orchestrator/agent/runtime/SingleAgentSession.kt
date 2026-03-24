@@ -15,6 +15,7 @@ import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.security.CredentialRedactor
 import com.workflow.orchestrator.agent.security.OutputValidator
+import com.workflow.orchestrator.agent.security.SecurityViolationException
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.ApiResult
@@ -25,6 +26,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Result of a single-agent session execution.
@@ -602,12 +604,14 @@ class SingleAgentSession(
                 val tr = entry.second
                 val durMs = entry.third
                 val toolName = tc.function.name
+                // 5C: Redact credentials before injecting tool results into LLM context
+                val redactedContent = CredentialRedactor.redact(tr.content)
                 contextManager.addToolResult(
                     toolCallId = tc.id,
-                    content = tr.content,
+                    content = redactedContent,
                     summary = tr.summary
                 )
-                recordFactFromToolResult(toolName, tc.function.arguments, tr.content, tr.summary, iteration, contextManager)
+                recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, contextManager)
                 allArtifacts.addAll(tr.artifacts)
                 toolResults.add(tc.id to tr.isError)
 
@@ -640,12 +644,14 @@ class SingleAgentSession(
             val (_, toolResult, toolDurationMs) = executeSingleToolRaw(toolCall, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
             val toolName = toolCall.function.name
 
+            // 5C: Redact credentials before injecting tool results into LLM context
+            val redactedWriteContent = CredentialRedactor.redact(toolResult.content)
             contextManager.addToolResult(
                 toolCallId = toolCall.id,
-                content = toolResult.content,
+                content = redactedWriteContent,
                 summary = toolResult.summary
             )
-            recordFactFromToolResult(toolName, toolCall.function.arguments, toolResult.content, toolResult.summary, iteration, contextManager)
+            recordFactFromToolResult(toolName, toolCall.function.arguments, redactedWriteContent, toolResult.summary, iteration, contextManager)
 
             allArtifacts.addAll(toolResult.artifacts)
             toolResults.add(toolCall.id to toolResult.isError)
@@ -796,13 +802,14 @@ class SingleAgentSession(
 
         // Check approval gate before executing risky tools
         if (approvalGate != null) {
-            val riskLevel = ApprovalGate.riskLevelFor(toolName)
-            eventLog?.log(AgentEventType.APPROVAL_REQUESTED, "$toolName (risk: $riskLevel)")
-            val approval = approvalGate.check(
-                toolName = toolName,
-                description = "$toolName(${toolCall.function.arguments.take(100)})",
-                riskLevel = riskLevel
-            )
+            // Convert tool call arguments to map for context-aware risk classification
+            val paramsMap = try {
+                json.decodeFromString<Map<String, String>>(toolCall.function.arguments)
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            eventLog?.log(AgentEventType.APPROVAL_REQUESTED, "$toolName (risk: ${ApprovalGate.classifyRisk(toolName, paramsMap)})")
+            val approval = approvalGate.check(toolName, paramsMap)
             when (approval) {
                 is ApprovalResult.Rejected -> {
                     eventLog?.log(AgentEventType.APPROVAL_DENIED, toolName)
@@ -842,6 +849,26 @@ class SingleAgentSession(
         return try {
             eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${toolCall.function.arguments.take(100)})")
             val params = json.decodeFromString<JsonObject>(toolCall.function.arguments)
+
+            // 5A: Before executing edit_file, validate the content being written
+            if (toolName == "edit_file") {
+                val newString = params["new_string"]?.jsonPrimitive?.content
+                if (newString != null) {
+                    try {
+                        OutputValidator.validateOrThrow(newString)
+                    } catch (e: SecurityViolationException) {
+                        LOG.warn("[Agent:Security] edit_file blocked by OutputValidator: ${e.issues.joinToString("; ")}")
+                        eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: security violation blocked edit")
+                        return Triple(toolCall, ToolResult(
+                            content = "Security violation blocked this edit: ${e.issues.joinToString("; ")}",
+                            summary = "Security violation: edit blocked",
+                            tokenEstimate = 50,
+                            isError = true
+                        ), System.currentTimeMillis() - toolStartMs)
+                    }
+                }
+            }
+
             val toolResult = tool.execute(params, project)
             val toolDurationMs = System.currentTimeMillis() - toolStartMs
 
