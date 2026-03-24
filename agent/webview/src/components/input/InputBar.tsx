@@ -1,12 +1,11 @@
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
   PromptInput,
   PromptInputTextarea,
   PromptInputActions,
-  PromptInputAction,
   usePromptInput,
 } from '@/components/ui/prompt-kit/prompt-input';
 import { Button } from '@/components/ui/button';
@@ -17,6 +16,7 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
 import { MentionDropdown } from './MentionDropdown';
+import { SkillDropdown } from './SkillDropdown';
 import { ContextChip } from './ContextChip';
 
 // ── Types ──
@@ -159,34 +159,40 @@ interface InputBarContentProps {
   text: string;
   mentions: Mention[];
   showMentions: boolean;
+  showSkills: boolean;
   mentionQuery: string;
+  skillQuery: string;
   busy: boolean;
   locked: boolean;
   planActive: boolean;
   model: string;
   onTextChange: (value: string) => void;
   onMentionSelect: (result: MentionSearchResult) => void;
+  onSkillSelect: (skillName: string) => void;
   onDismissMentions: () => void;
   onRemoveMention: (index: number) => void;
   onSend: () => void;
   onStop: () => void;
-  onTriggerMention: () => void;
+  onTriggerInsert: (char: '@' | '/') => void;
   canSend: boolean;
 }
 
 function InputBarContent({
   mentions,
   showMentions,
+  showSkills,
   mentionQuery,
+  skillQuery,
   busy,
   planActive,
   model,
   onMentionSelect,
+  onSkillSelect,
   onDismissMentions,
   onRemoveMention,
   onSend,
   onStop,
-  onTriggerMention,
+  onTriggerInsert,
   canSend,
 }: InputBarContentProps) {
   const { textareaRef } = usePromptInput();
@@ -199,11 +205,20 @@ function InputBarContent({
 
   return (
     <>
-      {/* Mention dropdown — floats above */}
+      {/* Mention dropdown (@ files/folders/symbols) — floats above */}
       {showMentions && (
         <MentionDropdown
           query={mentionQuery}
           onSelect={onMentionSelect}
+          onDismiss={onDismissMentions}
+        />
+      )}
+
+      {/* Skill dropdown (/ skills) — floats above */}
+      {showSkills && (
+        <SkillDropdown
+          query={skillQuery}
+          onSelect={onSkillSelect}
           onDismiss={onDismissMentions}
         />
       )}
@@ -223,7 +238,7 @@ function InputBarContent({
 
       {/* Textarea */}
       <PromptInputTextarea
-        placeholder="Ask anything... (@ for files, / for commands, $ for skills)"
+        placeholder="Ask anything... (@ for context, / for skills)"
         className="text-[13px] leading-relaxed px-3"
         onKeyDown={(e) => {
           if (e.key === 'Escape') onDismissMentions();
@@ -232,18 +247,38 @@ function InputBarContent({
 
       {/* Action row */}
       <PromptInputActions className="justify-between px-2 pb-2 pt-0.5">
-        {/* Left: + · Model · Plan · Skills · ··· */}
+        {/* Left: + · Model · Plan · ··· */}
         <div className="flex items-center gap-0.5">
-          <PromptInputAction tooltip="Add context (@file, @folder, @tool, @skill)">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={onTriggerMention}
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </PromptInputAction>
+          {/* + button: picker for File, Folder, Symbol, Skill */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" title="Add context or skill">
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="top" className="min-w-[180px]">
+              <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
+                <File className="size-3.5" style={{ color: 'var(--accent-read, #3b82f6)' }} />
+                <span>File</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
+                <Folder className="size-3.5" style={{ color: 'var(--accent-read, #3b82f6)' }} />
+                <span>Folder</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
+                <Hash className="size-3.5" style={{ color: '#a78bfa' }} />
+                <span>Symbol</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onTriggerInsert('/')}>
+                <Sparkles className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
+                <span>Skill</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>/</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <ModelChip model={model} />
           <PlanChip active={planActive} />
@@ -293,28 +328,41 @@ export const InputBar = memo(function InputBar() {
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [showMentions, setShowMentions] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
+  const [skillQuery, setSkillQuery] = useState('');
 
-  // We store a ref to the PromptInput's internal textareaRef via a callback
-  // that InputBarContent will call. Since InputBarContent is inside the
-  // PromptInput provider, it can access usePromptInput().textareaRef.
-  // We use a mutable ref holder at this level for callbacks that need the textarea.
   const textareaRefHolder = useRef<HTMLTextAreaElement | null>(null);
 
-  // Detect @ mention trigger
+  // Detect @ (context mention) and / (skill) triggers
   const handleValueChange = useCallback((value: string) => {
     setText(value);
     const el = textareaRefHolder.current;
     const cursorPos = el?.selectionStart ?? value.length;
     const textBeforeCursor = value.slice(0, cursorPos);
+
+    // Check for @ mention trigger (files/folders/symbols)
     const atMatch = textBeforeCursor.match(/@(\S*)$/);
     if (atMatch) {
       setShowMentions(true);
+      setShowSkills(false);
       setMentionQuery(atMatch[1] ?? '');
-    } else {
-      setShowMentions(false);
-      setMentionQuery('');
+      return;
     }
+
+    // Check for / skill trigger (only at start of line or after space)
+    const slashMatch = textBeforeCursor.match(/(?:^|\s)\/(\S*)$/);
+    if (slashMatch) {
+      setShowSkills(true);
+      setShowMentions(false);
+      setSkillQuery(slashMatch[1] ?? '');
+      return;
+    }
+
+    setShowMentions(false);
+    setShowSkills(false);
+    setMentionQuery('');
+    setSkillQuery('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -335,6 +383,22 @@ export const InputBar = memo(function InputBar() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleSkillSelect = useCallback((skillName: string) => {
+    // Replace /query with the full skill command
+    setText(prev => {
+      const el = textareaRefHolder.current;
+      const cursorPos = el?.selectionStart ?? prev.length;
+      const textBeforeCursor = prev.slice(0, cursorPos);
+      const slashIndex = textBeforeCursor.lastIndexOf('/');
+      if (slashIndex >= 0) return prev.slice(0, slashIndex) + `/${skillName} ` + prev.slice(cursorPos);
+      return `/${skillName} `;
+    });
+    setShowSkills(false);
+    setSkillQuery('');
+    textareaRefHolder.current?.focus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -345,29 +409,40 @@ export const InputBar = memo(function InputBar() {
     setText('');
     setMentions([]);
     setShowMentions(false);
+    setShowSkills(false);
   }, [text, mentions]);
 
   const handleStop = useCallback(() => {
     window._cancelTask?.();
   }, []);
 
-  const triggerMention = useCallback(() => {
+  // Insert @ or / into the textarea (called from + button picker)
+  const triggerInsert = useCallback((char: '@' | '/') => {
     setText(prev => {
       const el = textareaRefHolder.current;
-      if (!el) return prev + '@';
+      if (!el) return prev + char;
       const pos = el.selectionStart;
-      const newText = prev.slice(0, pos) + '@' + prev.slice(pos);
+      const newText = prev.slice(0, pos) + char + prev.slice(pos);
       setTimeout(() => { el.focus(); el.setSelectionRange(pos + 1, pos + 1); }, 0);
       return newText;
     });
-    setShowMentions(true);
-    setMentionQuery('');
+    if (char === '@') {
+      setShowMentions(true);
+      setShowSkills(false);
+      setMentionQuery('');
+    } else {
+      setShowSkills(true);
+      setShowMentions(false);
+      setSkillQuery('');
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleDismissMentions = useCallback(() => {
     setShowMentions(false);
+    setShowSkills(false);
     setMentionQuery('');
+    setSkillQuery('');
   }, []);
 
   const handleRemoveMention = useCallback((index: number) => {
@@ -397,18 +472,21 @@ export const InputBar = memo(function InputBar() {
           text={text}
           mentions={mentions}
           showMentions={showMentions}
+          showSkills={showSkills}
           mentionQuery={mentionQuery}
+          skillQuery={skillQuery}
           busy={busy}
           locked={inputState.locked}
           planActive={planActive}
           model={inputState.model ?? ''}
           onTextChange={handleValueChange}
           onMentionSelect={handleMentionSelect}
+          onSkillSelect={handleSkillSelect}
           onDismissMentions={handleDismissMentions}
           onRemoveMention={handleRemoveMention}
           onSend={handleSend}
           onStop={handleStop}
-          onTriggerMention={triggerMention}
+          onTriggerInsert={triggerInsert}
           canSend={canSend}
         />
       </PromptInput>

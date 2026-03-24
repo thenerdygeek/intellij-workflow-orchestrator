@@ -91,6 +91,10 @@ class AgentDashboardPanel(
         cefPanel?.setModelName(shortName)
     }
 
+    fun updateModelList(modelsJson: String) = runOnEdt {
+        cefPanel?.updateModelList(modelsJson)
+    }
+
     fun setInputLocked(locked: Boolean) = runOnEdt {
         cefPanel?.setInputLocked(locked)
         // No fallback needed — RichStreamingPanel has no input controls

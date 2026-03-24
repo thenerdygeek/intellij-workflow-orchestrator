@@ -7,6 +7,8 @@ export interface Message {
   role: MessageRole;
   content: string;
   timestamp: number;
+  /** Completed tool call chain — present on 'system' messages with type 'toolchain' */
+  toolChain?: ToolCall[];
 }
 
 // ── Tool call types ──

@@ -75,15 +75,26 @@ data class ModelInfo(
 
     companion object {
         /**
-         * Format a raw model name like "claude-sonnet-4-20250514" into
-         * a human-readable name like "Claude Sonnet 4".
+         * Format a raw model name like "claude-opus-4-5-thinking-latest" into
+         * a human-readable name like "Claude Opus 4.5 Thinking".
+         *
+         * Handles:
+         * - Date suffixes: "-20250514" → removed
+         * - "latest" suffix: "-latest" → removed
+         * - Version numbers: "4-5" → "4.5" (when preceded by a model family name)
+         * - Known brand names: proper casing
          */
         fun formatModelName(raw: String): String {
             // Remove date suffix (e.g., -20250514, -20241022)
-            val withoutDate = raw.replace(Regex("-\\d{8}$"), "")
+            var cleaned = raw.replace(Regex("-\\d{8}$"), "")
+            // Remove "-latest" suffix
+            cleaned = cleaned.replace(Regex("-latest$"), "")
+
+            // Merge version parts: "4-5" → "4.5" (a digit followed by hyphen and digit)
+            cleaned = cleaned.replace(Regex("(\\d)-(\\d)"), "$1.$2")
 
             // Split on hyphens and capitalize
-            val parts = withoutDate.split("-").map { part ->
+            val parts = cleaned.split("-").map { part ->
                 when (part.lowercase()) {
                     "claude" -> "Claude"
                     "gpt" -> "GPT"
@@ -95,6 +106,8 @@ data class ModelInfo(
                     "opus" -> "Opus"
                     "sonnet" -> "Sonnet"
                     "haiku" -> "Haiku"
+                    "thinking" -> "Thinking"
+                    "preview" -> "Preview"
                     else -> part.replaceFirstChar { it.uppercase() }
                 }
             }

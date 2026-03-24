@@ -170,43 +170,69 @@ export function installMockBridge(): void {
     console.log(`[bridge:dev] togglePlanMode(${enabled})`);
   };
 
-  // Mock _changeModel for dev mode
+  // Mock _changeModel for dev mode — extract display name from the model ID
   w._changeModel = (modelId: string) => {
     console.log(`[bridge:dev] changeModel(${modelId})`);
-    w.setModelName?.(modelId);
+    // Parse "provider::version::model-name" → display name
+    const rawName = modelId.includes('::') ? modelId.split('::').pop()! : modelId;
+    const displayName = rawName
+      .replace(/-\d{8}$/, '')  // remove date suffix
+      .replace(/-latest$/, '') // remove "latest"
+      .replace(/(\d)-(\d)/g, '$1.$2') // "4-5" → "4.5"
+      .split('-')
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+      .join(' ');
+    w.setModelName?.(displayName);
   };
 
-  // Populate mock model list after bridge init
+  // Populate mock model list after bridge init (realistic Sourcegraph model IDs)
   setTimeout(() => {
     w.updateModelList?.(JSON.stringify([
-      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', description: 'Fast, intelligent' },
-      { id: 'claude-opus-4', name: 'Claude Opus 4', description: 'Most capable' },
-      { id: 'claude-haiku-3.5', name: 'Claude Haiku 3.5', description: 'Fastest' },
+      { id: 'anthropic::2024-10-22::claude-opus-4-20250514', name: 'Claude Opus 4', description: 'Anthropic' },
+      { id: 'anthropic::2024-10-22::claude-opus-4-5-thinking-latest', name: 'Claude Opus 4.5 Thinking', description: 'Anthropic' },
+      { id: 'anthropic::2024-10-22::claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Anthropic' },
+      { id: 'anthropic::2024-10-22::claude-haiku-3-5-20241022', name: 'Claude Haiku 3.5', description: 'Anthropic' },
+      { id: 'openai::2024-02-01::gpt-4o-latest', name: 'GPT 4o', description: 'OpenAI' },
+      { id: 'google::2024-01-01::gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Google' },
     ]));
     w.setModelName?.('Claude Sonnet 4');
   }, 100);
 
-  // Mock _searchMentions so @ autocomplete works in dev mode
+  // Mock _searchMentions — returns files, folders, symbols only (no tools/skills)
   w._searchMentions = (query: string) => {
-    const mockFiles = [
+    const mockItems = [
       { type: 'file', label: 'src/App.tsx', path: 'src/App.tsx', description: 'Root component' },
       { type: 'file', label: 'src/main.tsx', path: 'src/main.tsx', description: 'Entry point' },
       { type: 'file', label: 'src/stores/chatStore.ts', path: 'src/stores/chatStore.ts', description: 'Chat state' },
+      { type: 'file', label: 'src/bridge/jcef-bridge.ts', path: 'src/bridge/jcef-bridge.ts', description: 'JCEF bridge' },
+      { type: 'file', label: 'src/components/chat/ChatView.tsx', path: 'src/components/chat/ChatView.tsx', description: 'Chat view' },
+      { type: 'file', label: 'src/components/input/InputBar.tsx', path: 'src/components/input/InputBar.tsx', description: 'Input bar' },
       { type: 'folder', label: 'src/components/', path: 'src/components', description: 'UI components' },
       { type: 'folder', label: 'src/bridge/', path: 'src/bridge', description: 'Bridge layer' },
-      { type: 'tool', label: 'read_file', path: '', description: 'Read a file' },
-      { type: 'tool', label: 'edit_file', path: '', description: 'Edit a file' },
-      { type: 'skill', label: 'systematic-debugging', path: '', description: 'Debugging skill' },
+      { type: 'folder', label: 'src/stores/', path: 'src/stores', description: 'State management' },
+      { type: 'symbol', label: 'ChatView', path: 'src/components/chat/ChatView.tsx', description: 'function component' },
+      { type: 'symbol', label: 'useChatStore', path: 'src/stores/chatStore.ts', description: 'Zustand store' },
+      { type: 'symbol', label: 'InputBar', path: 'src/components/input/InputBar.tsx', description: 'function component' },
     ];
-    const [typeFilter, searchTerm] = query.includes(':') ? query.split(':', 2) as [string, string] : ['file', query];
+    const [typeFilter, searchTerm] = query.includes(':') ? query.split(':', 2) as [string, string] : ['', query];
     const filtered = typeFilter === 'categories'
-      ? mockFiles
-      : mockFiles.filter(r =>
-          (typeFilter === 'file' ? (r.type === 'file' || r.type === 'folder') : r.type === typeFilter) &&
-          (!searchTerm || r.label.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
+      ? mockItems  // Show all items for initial display
+      : mockItems.filter(r => {
+          if (!searchTerm) return true;
+          const q = searchTerm.toLowerCase();
+          return r.label.toLowerCase().includes(q) || (r.path ?? '').toLowerCase().includes(q);
+        });
     w.receiveMentionResults?.(JSON.stringify(filtered));
   };
+
+  // Populate mock skills list for / autocomplete
+  setTimeout(() => {
+    w.updateSkillsList?.(JSON.stringify([
+      { name: 'systematic-debugging', description: 'Debug with structured root-cause analysis' },
+      { name: 'interactive-debugging', description: 'Step through code with breakpoints' },
+      { name: 'create-skill', description: 'Create a new workflow skill' },
+    ]));
+  }, 100);
 
   w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming, clearChat };
   console.log(

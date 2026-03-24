@@ -626,6 +626,10 @@ class AgentCefPanel(
         callJs("setModelName(${jsonStr(name)})")
     }
 
+    fun updateModelList(modelsJson: String) {
+        callJs("updateModelList(${jsonStr(modelsJson)})")
+    }
+
     fun updateSkillsList(skillsJson: String) {
         callJs("updateSkillsList(${jsonStr(skillsJson)})")
     }

@@ -66,7 +66,10 @@ class AgentController(
                 try {
                     val settings = AgentSettings.getInstance(project)
                     settings.state.sourcegraphChatModel = modelId
-                    dashboard.setModelName(modelId)
+                    settings.state.userManuallySelectedModel = true
+                    // Show the human-readable name, not the raw ID
+                    val displayName = com.workflow.orchestrator.agent.api.dto.ModelInfo(id = modelId).displayName
+                    dashboard.setModelName(displayName)
                 } catch (_: Exception) {}
             },
             onTogglePlanMode = { enabled -> planModeEnabled = enabled },
@@ -181,10 +184,11 @@ class AgentController(
             }
         )
 
-        // Set model name
+        // Set current model name and fetch model list from Sourcegraph
         try {
             val model = AgentSettings.getInstance(project).state.sourcegraphChatModel ?: ""
             dashboard.setModelName(model)
+            loadModelList()
         } catch (_: Exception) {}
 
         // Wire click-to-navigate file paths in JCEF chat output
@@ -919,6 +923,53 @@ class AgentController(
             else -> ApprovalResult.Rejected()
         }
     }
+
+    /**
+     * Fetch available models from Sourcegraph and send them to the chat UI dropdown.
+     */
+    private fun loadModelList() {
+        scope.launch {
+            try {
+                val settings = AgentSettings.getInstance(project)
+                val connections = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
+                val url = connections.state.sourcegraphUrl
+                val token = credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.SOURCEGRAPH)
+                if (url.isBlank() || token.isNullOrBlank()) return@launch
+
+                val client = com.workflow.orchestrator.agent.api.SourcegraphChatClient(
+                    baseUrl = url.trimEnd('/'),
+                    tokenProvider = { token },
+                    model = "",
+                )
+                val result = client.listModels()
+                if (result is com.workflow.orchestrator.core.model.ApiResult.Success) {
+                    val models = result.data.data
+                        .sortedWith(compareBy<com.workflow.orchestrator.agent.api.dto.ModelInfo> { it.tier }.thenBy { it.displayName })
+                    val json = kotlinx.serialization.json.Json.encodeToString(
+                        kotlinx.serialization.builtins.ListSerializer(
+                            kotlinx.serialization.serializer<ModelListEntry>()
+                        ),
+                        models.map { ModelListEntry(id = it.id, name = it.displayName, description = it.displayProvider) }
+                    )
+                    SwingUtilities.invokeLater {
+                        dashboard.updateModelList(json)
+                        // Also set the display name for the current model
+                        val currentId = settings.state.sourcegraphChatModel ?: ""
+                        val currentModel = models.find { it.id == currentId }
+                        if (currentModel != null) {
+                            dashboard.setModelName(currentModel.displayName)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                LOG.debug("AgentController: failed to load model list: ${e.message}")
+            }
+        }
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class ModelListEntry(val id: String, val name: String, val description: String)
 
     /**
      * Show a notification with action to view the trace file.

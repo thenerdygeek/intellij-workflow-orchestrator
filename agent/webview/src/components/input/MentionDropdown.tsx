@@ -9,31 +9,65 @@ import {
   CommandGroup,
   CommandItem,
 } from '@/components/ui/command';
-import { File, Folder, Hash, Wrench, Sparkles, AtSign } from 'lucide-react';
+import { File, Folder, Hash } from 'lucide-react';
 
 const typeIconComponents: Record<string, React.ElementType> = {
   file: File,
   folder: Folder,
   symbol: Hash,
-  tool: Wrench,
-  skill: Sparkles,
 };
 
 const typeIconColors: Record<string, string> = {
   file: 'var(--accent-read, #3b82f6)',
   folder: 'var(--accent-read, #3b82f6)',
   symbol: '#a78bfa',
-  tool: 'var(--accent-write, #22c55e)',
-  skill: 'var(--accent-edit, #f59e0b)',
 };
 
 const typeLabels: Record<string, string> = {
   file: 'Files',
   folder: 'Folders',
   symbol: 'Symbols',
-  tool: 'Tools',
-  skill: 'Skills',
 };
+
+/**
+ * Score a result against a query for relevance ranking.
+ * Higher score = more relevant. Supports:
+ * - Exact prefix match (highest)
+ * - Word boundary match
+ * - Substring match (anywhere in text)
+ * - Path segment match
+ */
+function relevanceScore(label: string, path: string | undefined, query: string): number {
+  if (!query) return 0;
+  const q = query.toLowerCase();
+  const l = label.toLowerCase();
+  const p = (path ?? '').toLowerCase();
+
+  // Exact name start → highest relevance
+  if (l.startsWith(q)) return 100;
+
+  // File name (last segment) starts with query
+  const fileName = l.includes('/') ? l.split('/').pop()! : l;
+  if (fileName.startsWith(q)) return 90;
+
+  // Word boundary match in label (e.g. "chat" matches "chatStore.ts")
+  if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(l)) return 80;
+
+  // Substring in label
+  if (l.includes(q)) return 70;
+
+  // Substring in full path
+  if (p.includes(q)) return 50;
+
+  // Fuzzy: all query chars appear in order in label
+  let qi = 0;
+  for (let i = 0; i < l.length && qi < q.length; i++) {
+    if (l[i] === q[qi]) qi++;
+  }
+  if (qi === q.length) return 30;
+
+  return 0;
+}
 
 interface MentionDropdownProps {
   query: string;
@@ -48,20 +82,49 @@ export const MentionDropdown = memo(function MentionDropdown({
 }: MentionDropdownProps) {
   const mentionResults = useChatStore(s => s.mentionResults);
 
-  // Request search results from Kotlin
+  // Request search results from Kotlin — search files, folders, symbols
   useEffect(() => {
     if (query) {
-      window._searchMentions?.(query);
+      // Search across all context types simultaneously
+      window._searchMentions?.(`file:${query}`);
     } else {
+      // Show initial results (top files, folders, symbols)
       window._searchMentions?.('categories:');
     }
   }, [query]);
 
-  // Group results by type
-  const groups = mentionResults.reduce<Record<string, MentionSearchResult[]>>((acc, r) => {
-    (acc[r.type] ??= []).push(r);
-    return acc;
-  }, {});
+  // Filter to only file/folder/symbol types and sort by relevance
+  const contextResults = mentionResults
+    .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
+    .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }))
+    .sort((a, b) => {
+      if (query) {
+        // When searching, sort by relevance score (descending)
+        if (b.score !== a.score) return b.score - a.score;
+      }
+      // Secondary: group by type (files, folders, symbols)
+      const typeOrder: Record<string, number> = { file: 0, folder: 1, symbol: 2 };
+      return (typeOrder[a.type] ?? 3) - (typeOrder[b.type] ?? 3);
+    });
+
+  // When there's a query, show as a flat relevance-ranked list
+  // When empty, group by type with 2 items each
+  const showGrouped = !query;
+
+  // Group by type for initial display
+  const groups = showGrouped
+    ? contextResults.reduce<Record<string, typeof contextResults>>((acc, r) => {
+        (acc[r.type] ??= []).push(r);
+        return acc;
+      }, {})
+    : {};
+
+  // Limit initial groups to 2 items each
+  if (showGrouped) {
+    for (const type in groups) {
+      groups[type] = groups[type]!.slice(0, 2);
+    }
+  }
 
   const handleSelect = useCallback((value: string) => {
     const result = mentionResults.find(r => r.label === value || r.path === value);
@@ -69,8 +132,9 @@ export const MentionDropdown = memo(function MentionDropdown({
   }, [mentionResults, onSelect]);
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 w-72 z-50">
+    <div className="absolute bottom-full left-0 mb-1 w-80 z-50">
       <Command
+        shouldFilter={false}
         className="rounded-lg"
         style={{
           backgroundColor: 'var(--surface-elevated, var(--toolbar-bg, var(--popover)))',
@@ -79,40 +143,55 @@ export const MentionDropdown = memo(function MentionDropdown({
         }}
       >
         <CommandInput
-          placeholder="Search files, symbols, tools..."
+          placeholder="Search files, folders, symbols..."
           value={query}
           className="text-xs"
         />
-        <CommandList className="max-h-60">
+        <CommandList className="max-h-64">
           <CommandEmpty className="text-xs py-4 text-center" style={{ color: 'var(--fg-muted)' }}>
             No results found.
           </CommandEmpty>
-          {Object.entries(groups).map(([type, results]) => (
-            <CommandGroup key={type} heading={typeLabels[type] ?? type}>
-              {results.map((r) => (
-                <CommandItem
-                  key={r.path ?? r.label}
-                  value={r.path ?? r.label}
-                  onSelect={handleSelect}
-                  className="text-xs gap-2"
-                >
-                  {(() => {
-                    const IconComponent = typeIconComponents[r.type] ?? AtSign;
-                    const iconColor = typeIconColors[r.type] ?? 'var(--fg-muted)';
-                    return <IconComponent className="size-3.5 shrink-0" style={{ color: iconColor }} />;
-                  })()}
-                  <span className="truncate">{r.label}</span>
-                  {r.description && (
-                    <span className="ml-auto text-[10px] truncate max-w-[120px]" style={{ color: 'var(--fg-muted)' }}>
-                      {r.description}
-                    </span>
-                  )}
-                </CommandItem>
+
+          {showGrouped ? (
+            /* Initial state: grouped by type, 2 items each */
+            Object.entries(groups).map(([type, results]) => (
+              <CommandGroup key={type} heading={typeLabels[type] ?? type}>
+                {results.map((r) => (
+                  <MentionItem key={r.path ?? r.label} result={r} onSelect={handleSelect} />
+                ))}
+              </CommandGroup>
+            ))
+          ) : (
+            /* Search state: flat relevance-ranked list */
+            <CommandGroup heading="Results">
+              {contextResults.slice(0, 12).map((r) => (
+                <MentionItem key={r.path ?? r.label} result={r} onSelect={handleSelect} />
               ))}
             </CommandGroup>
-          ))}
+          )}
         </CommandList>
       </Command>
     </div>
   );
 });
+
+function MentionItem({ result, onSelect }: { result: MentionSearchResult; onSelect: (value: string) => void }) {
+  const IconComponent = typeIconComponents[result.type] ?? File;
+  const iconColor = typeIconColors[result.type] ?? 'var(--fg-muted)';
+
+  return (
+    <CommandItem
+      value={result.path ?? result.label}
+      onSelect={onSelect}
+      className="text-xs gap-2"
+    >
+      <IconComponent className="size-3.5 shrink-0" style={{ color: iconColor }} />
+      <span className="truncate">{result.label}</span>
+      {result.description && (
+        <span className="ml-auto text-[10px] truncate max-w-[140px]" style={{ color: 'var(--fg-muted)' }}>
+          {result.description}
+        </span>
+      )}
+    </CommandItem>
+  );
+}

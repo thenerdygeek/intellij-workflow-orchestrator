@@ -43,7 +43,6 @@ interface ChatState {
   messages: Message[];
   activeStream: { text: string; isStreaming: boolean } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
-  completedToolChains: ToolCall[][];       // finalized tool call groups (rendered inline with messages)
   plan: Plan | null;
   questions: Question[] | null;
   activeQuestionIndex: number;
@@ -120,7 +119,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   activeStream: null,
   activeToolCalls: new Map(),
-  completedToolChains: [],
   plan: null,
   questions: null,
   activeQuestionIndex: 0,
@@ -163,7 +161,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [firstMessage],
       activeStream: null,
       activeToolCalls: new Map(),
-      completedToolChains: [],
       plan: null,
       questions: null,
       questionSummary: null,
@@ -180,18 +177,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   completeSession(info: SessionInfo) {
-    // Finalize any remaining active tool calls into completedToolChains
+    // Finalize any remaining active tool calls as a toolchain message
     const state = get();
     const remaining = Array.from(state.activeToolCalls.values());
-    const chains = remaining.length > 0
-      ? [...state.completedToolChains, remaining]
-      : state.completedToolChains;
+    const messages = remaining.length > 0
+      ? [...state.messages, { id: nextId('tc-chain'), role: 'system' as const, content: '', timestamp: Date.now(), toolChain: remaining }]
+      : state.messages;
     set({
       session: info,
       busy: false,
       activeStream: null,
       activeToolCalls: new Map(),
-      completedToolChains: chains,
+      messages,
     });
   },
 
@@ -213,12 +210,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const stream = state.activeStream ?? { text: '', isStreaming: true };
 
       // Auto-finalize the tool chain when the first token of a new text response arrives.
-      // This ensures tool calls render BEFORE the text that follows them.
+      // Inject as a toolchain message so it renders in the correct position.
       if (isFirstToken && state.activeToolCalls.size > 0) {
         const tools = Array.from(state.activeToolCalls.values());
+        const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools };
         return {
           activeStream: { text: token, isStreaming: true },
-          completedToolChains: [...state.completedToolChains, tools],
+          messages: [...state.messages, chainMsg],
           activeToolCalls: new Map(),
         };
       }
@@ -264,10 +262,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
-      // Find the most recent tool call with this name (last entry wins for updates)
+      // Find the first RUNNING tool call with this name (for parallel calls,
+      // results arrive in order, so the first RUNNING one is the correct target)
       let targetKey: string | null = null;
       for (const [key, tc] of newMap) {
-        if (tc.name === name) targetKey = key;
+        if (tc.name === name && tc.status === 'RUNNING') {
+          targetKey = key;
+          break;  // first RUNNING match, not last
+        }
+      }
+      // Fallback: if no RUNNING match, find any match with this name (last one)
+      if (!targetKey) {
+        for (const [key, tc] of newMap) {
+          if (tc.name === name) targetKey = key;
+        }
       }
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
@@ -311,12 +319,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   finalizeToolChain() {
-    // Move current active tool calls into completed chains (called before streaming final output)
+    // Move current active tool calls into messages as a toolchain entry
     const state = get();
     const tools = Array.from(state.activeToolCalls.values());
     if (tools.length === 0) return;
+    const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools };
     set({
-      completedToolChains: [...state.completedToolChains, tools],
+      messages: [...state.messages, chainMsg],
       activeToolCalls: new Map(),
     });
   },
@@ -326,7 +335,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       activeStream: null,
       activeToolCalls: new Map(),
-      completedToolChains: [],
       plan: null,
       questions: null,
       questionSummary: null,
