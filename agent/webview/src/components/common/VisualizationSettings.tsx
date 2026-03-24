@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { VisualizationType, VisualizationConfig } from '../../bridge/types';
+import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 
 const TYPE_LABELS: Record<VisualizationType, string> = {
   mermaid: 'Mermaid Diagrams',
@@ -12,41 +14,6 @@ const TYPE_LABELS: Record<VisualizationType, string> = {
 };
 
 const VIZ_TYPES: VisualizationType[] = ['mermaid', 'chart', 'flow', 'math', 'diff', 'interactiveHtml'];
-
-interface ToggleProps {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}
-
-function Toggle({ checked, onChange, label, disabled }: ToggleProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`
-        relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full
-        transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2
-        focus-visible:ring-[var(--link)] focus-visible:ring-offset-1
-        ${disabled ? 'opacity-40 cursor-not-allowed' : ''}
-        ${checked ? 'bg-[var(--link)]' : 'bg-[var(--fg-muted)]/30'}
-      `}
-    >
-      <span
-        className={`
-          pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm
-          transition-transform duration-200
-          ${checked ? 'translate-x-[18px]' : 'translate-x-[3px]'}
-        `}
-      />
-    </button>
-  );
-}
 
 interface TypeSectionProps {
   type: VisualizationType;
@@ -60,51 +27,45 @@ function TypeSection({ type, config, onUpdate, onReset }: TypeSectionProps) {
 
   return (
     <div
-      className={`
-        rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4
-        transition-opacity duration-200
-        ${disabled ? 'opacity-50' : ''}
-      `}
+      className={`rounded-lg border p-4 transition-opacity duration-200 ${disabled ? 'opacity-50' : ''}`}
+      style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg)' }}
     >
       {/* Header with enable toggle */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-[var(--fg)]">
+        <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
           {TYPE_LABELS[type]}
         </span>
-        <Toggle
+        <Switch
           checked={config.enabled}
-          onChange={(v) => onUpdate(type, { enabled: v })}
-          label={`Enable ${TYPE_LABELS[type]}`}
+          onCheckedChange={(v) => onUpdate(type, { enabled: v })}
+          aria-label={`Enable ${TYPE_LABELS[type]}`}
         />
       </div>
 
       {/* Settings */}
       <div className={`space-y-3 ${disabled ? 'pointer-events-none' : ''}`}>
-        {/* Auto-render */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-[var(--fg-secondary)]">Auto-render</span>
-          <Toggle
+          <span className="text-xs" style={{ color: 'var(--fg-secondary)' }}>Auto-render</span>
+          <Switch
             checked={config.autoRender}
-            onChange={(v) => onUpdate(type, { autoRender: v })}
-            label={`Auto-render ${TYPE_LABELS[type]}`}
+            onCheckedChange={(v) => onUpdate(type, { autoRender: v })}
+            aria-label={`Auto-render ${TYPE_LABELS[type]}`}
             disabled={disabled}
           />
         </div>
 
-        {/* Default expanded */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-[var(--fg-secondary)]">Default expanded</span>
-          <Toggle
+          <span className="text-xs" style={{ color: 'var(--fg-secondary)' }}>Default expanded</span>
+          <Switch
             checked={config.defaultExpanded}
-            onChange={(v) => onUpdate(type, { defaultExpanded: v })}
-            label={`Default expanded ${TYPE_LABELS[type]}`}
+            onCheckedChange={(v) => onUpdate(type, { defaultExpanded: v })}
+            aria-label={`Default expanded ${TYPE_LABELS[type]}`}
             disabled={disabled}
           />
         </div>
 
-        {/* Max height */}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-[var(--fg-secondary)]">Max height (px)</span>
+          <span className="text-xs" style={{ color: 'var(--fg-secondary)' }}>Max height (px)</span>
           <input
             type="number"
             min={0}
@@ -116,28 +77,26 @@ function TypeSection({ type, config, onUpdate, onReset }: TypeSectionProps) {
               onUpdate(type, { maxHeight: val });
             }}
             disabled={disabled}
-            className={`
-              w-20 rounded-md border border-[var(--input-border)] bg-[var(--input-bg)]
-              px-2 py-1 text-xs text-[var(--fg)] text-right
-              focus:outline-none focus:ring-1 focus:ring-[var(--link)]
-              ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-            `}
+            className={`w-20 rounded-md border px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            style={{
+              borderColor: 'var(--input-border)',
+              backgroundColor: 'var(--input-bg)',
+              color: 'var(--fg)',
+            }}
             aria-label={`Max height for ${TYPE_LABELS[type]}`}
           />
         </div>
 
-        {/* Reset button */}
         <div className="flex justify-end pt-1">
-          <button
+          <Button
+            variant="link"
+            size="sm"
+            className="text-xs h-auto p-0"
             onClick={() => onReset(type)}
             disabled={disabled}
-            className={`
-              text-xs text-[var(--link)] hover:underline
-              ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-            `}
           >
             Reset to defaults
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -166,18 +125,13 @@ export function VisualizationSettings() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[var(--fg)]">Visualization Settings</h3>
-        <button
-          onClick={resetAll}
-          className="text-xs text-[var(--link)] hover:underline"
-        >
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--fg)' }}>Visualization Settings</h3>
+        <Button variant="link" size="sm" className="text-xs h-auto p-0" onClick={resetAll}>
           Reset all to defaults
-        </button>
+        </Button>
       </div>
 
-      {/* Per-type settings */}
       <div className="grid gap-3">
         {VIZ_TYPES.map((type) => (
           <TypeSection
