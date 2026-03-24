@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { ToolCall } from '@/bridge/types';
-import { ToolCallView } from './ToolCallView';
+import { Terminal } from '@/components/ui/tool-ui/terminal';
 import {
   ChainOfThought,
   ChainOfThoughtStep,
@@ -9,9 +9,9 @@ import {
 } from '@/components/ui/prompt-kit/chain-of-thought';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { Loader2, Check, X, Clock, Circle } from 'lucide-react';
+import { Loader2, Check, X, Clock } from 'lucide-react';
 
-// ── Category helpers (reuse from ToolCallView) ──
+// ── Category helpers ──
 
 type ToolCategory = 'READ' | 'WRITE' | 'EDIT' | 'CMD' | 'SEARCH' | 'TOOL';
 
@@ -57,7 +57,11 @@ function extractTarget(args: string): string {
   return '';
 }
 
-// ── Status icon for chain trigger ──
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+// ── Status icon ──
 
 function StatusIcon({ status }: { status: ToolCall['status'] }) {
   switch (status) {
@@ -69,9 +73,74 @@ function StatusIcon({ status }: { status: ToolCall['status'] }) {
       return <X className="size-3 text-[var(--error)]" />;
     case 'PENDING':
       return <Clock className="size-3 text-[var(--fg-muted)]" />;
-    default:
-      return <Circle className="size-2 fill-current text-[var(--fg-muted)]" />;
   }
+}
+
+// ── Simple input/output for non-terminal tools ──
+
+function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
+  let input: Record<string, unknown> | null = null;
+  try { input = JSON.parse(toolCall.args) as Record<string, unknown>; } catch { /* ignore */ }
+
+  return (
+    <div className="space-y-2 py-1">
+      {input && Object.keys(input).length > 0 && (
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--fg-muted)' }}>Input</div>
+          <pre
+            className="rounded p-2 text-[11px] font-mono leading-relaxed overflow-x-auto"
+            style={{ backgroundColor: 'var(--code-bg)', color: 'var(--fg)', maxHeight: '150px', overflowY: 'auto' }}
+          >
+            {JSON.stringify(input, null, 2)}
+          </pre>
+        </div>
+      )}
+      {toolCall.result && (
+        <div>
+          <div
+            className="text-[10px] font-semibold uppercase tracking-wider mb-1"
+            style={{ color: toolCall.status === 'ERROR' ? 'var(--error)' : 'var(--fg-muted)' }}
+          >
+            {toolCall.status === 'ERROR' ? 'Error' : 'Output'}
+          </div>
+          <pre
+            className="rounded p-2 text-[11px] font-mono leading-relaxed overflow-x-auto"
+            style={{
+              backgroundColor: toolCall.status === 'ERROR' ? 'var(--diff-rem-bg)' : 'var(--code-bg)',
+              color: toolCall.status === 'ERROR' ? 'var(--error)' : 'var(--fg)',
+              maxHeight: '200px',
+              overflowY: 'auto',
+            }}
+          >
+            {toolCall.result}
+          </pre>
+        </div>
+      )}
+      {toolCall.status === 'RUNNING' && !toolCall.result && (
+        <div className="text-[11px] italic" style={{ color: 'var(--fg-muted)' }}>Executing...</div>
+      )}
+    </div>
+  );
+}
+
+// ── Terminal content for CMD tools ──
+
+function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
+  let command = toolCall.name;
+  try {
+    const parsed = JSON.parse(toolCall.args) as Record<string, unknown>;
+    if (typeof parsed.command === 'string') command = parsed.command;
+  } catch { /* ignore */ }
+
+  return (
+    <Terminal
+      command={command}
+      stdout={toolCall.status !== 'ERROR' ? toolCall.result : undefined}
+      stderr={toolCall.status === 'ERROR' ? toolCall.result : undefined}
+      exitCode={toolCall.status === 'ERROR' ? 1 : toolCall.status === 'COMPLETED' ? 0 : undefined}
+      durationMs={toolCall.durationMs}
+    />
+  );
 }
 
 // ── ToolCallChain ──
@@ -83,26 +152,17 @@ interface ToolCallChainProps {
 export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCallChainProps) {
   if (toolCalls.length === 0) return null;
 
-  // Single tool call — render directly without chain wrapper
-  if (toolCalls.length === 1) {
-    return (
-      <ToolCallView
-        toolCall={toolCalls[0]!}
-        isLatest={true}
-      />
-    );
-  }
-
   return (
     <ChainOfThought className="my-2">
       {toolCalls.map((tc, idx) => {
         const category = getCategory(tc.name);
         const catStyle = CATEGORY_STYLES[category];
         const target = extractTarget(tc.args);
-        const isLatest = idx === toolCalls.length - 1;
         const isRunning = tc.status === 'RUNNING';
-        // Auto-expand latest running, or error calls
-        const shouldDefaultOpen = (isLatest && isRunning) || tc.status === 'ERROR';
+        const isError = tc.status === 'ERROR';
+        const isLatest = idx === toolCalls.length - 1;
+        const shouldDefaultOpen = (isLatest && isRunning) || isError;
+        const isCmdTool = category === 'CMD';
 
         return (
           <ChainOfThoughtStep
@@ -113,7 +173,7 @@ export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCall
               isActive={isRunning}
               icon={<StatusIcon status={tc.status} />}
             >
-              <span className="flex items-center gap-2 w-full">
+              <span className="flex items-center gap-1.5 w-full min-w-0">
                 <Badge
                   variant="secondary"
                   className={cn(
@@ -123,24 +183,29 @@ export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCall
                 >
                   {catStyle.label}
                 </Badge>
-                <span className="font-mono font-medium text-[var(--fg)]">{tc.name}</span>
+                <span className="font-mono font-medium text-[var(--fg)] shrink-0">{tc.name}</span>
                 {target && (
                   <span className="truncate font-mono text-[var(--fg-muted)]" style={{ maxWidth: '150px' }}>
                     {target}
                   </span>
                 )}
-                {tc.durationMs != null && (
-                  <span className="ml-auto shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
-                    {tc.durationMs < 1000 ? `${tc.durationMs}ms` : `${(tc.durationMs / 1000).toFixed(1)}s`}
+                <span className="flex-1" />
+                {isRunning && (
+                  <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">running</span>
+                )}
+                {tc.durationMs != null && !isRunning && (
+                  <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
+                    {formatDuration(tc.durationMs)}
                   </span>
                 )}
               </span>
             </ChainOfThoughtTrigger>
             <ChainOfThoughtContent>
-              <ToolCallView
-                toolCall={tc}
-                isLatest={isLatest}
-              />
+              {isCmdTool ? (
+                <TerminalContent toolCall={tc} />
+              ) : (
+                <ToolCallDetails toolCall={tc} />
+              )}
             </ChainOfThoughtContent>
           </ChainOfThoughtStep>
         );

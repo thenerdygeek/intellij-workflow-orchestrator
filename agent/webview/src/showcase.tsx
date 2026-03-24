@@ -7,20 +7,12 @@ import {
   mockPlanPending, mockPlanInProgress, mockQuestions,
 } from './showcase/mock-data';
 import { AgentMessage } from './components/chat/AgentMessage';
-import { ToolCallView } from './components/agent/ToolCallView';
 import { ToolCallChain } from './components/agent/ToolCallChain';
 import { ThinkingView } from './components/agent/ThinkingView';
 import { ApprovalView } from './components/agent/ApprovalView';
 import { QuestionView } from './components/agent/QuestionView';
 import { PlanSummaryCard } from './components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from './components/agent/PlanProgressWidget';
-import {
-  ChainOfThought,
-  ChainOfThoughtStep,
-  ChainOfThoughtTrigger,
-  ChainOfThoughtContent,
-  ChainOfThoughtItem,
-} from './components/ui/prompt-kit/chain-of-thought';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import { Sun, Moon } from 'lucide-react';
@@ -81,12 +73,8 @@ function Showcase() {
         />
       </Section>
 
-      <Section title="Tool Call Chain">
+      <Section title="Tool Calls">
         <ToolCallChain toolCalls={mockToolCalls} />
-      </Section>
-
-      <Section title="Tool Call (Single)">
-        <ToolCallView toolCall={mockToolCalls[2]!} isLatest={true} />
       </Section>
 
       <Section title="Thinking / Reasoning">
@@ -114,38 +102,6 @@ function Showcase() {
 
       <Section title="Plan — In Progress">
         <PlanProgressWidget plan={mockPlanInProgress} />
-      </Section>
-
-      <Section title="Chain of Thought">
-        <ChainOfThought>
-          <ChainOfThoughtStep defaultOpen={true}>
-            <ChainOfThoughtTrigger isActive={false}>
-              Analyzed codebase structure
-            </ChainOfThoughtTrigger>
-            <ChainOfThoughtContent>
-              <ChainOfThoughtItem>Found 12 Kotlin modules with clear dependency boundaries</ChainOfThoughtItem>
-              <ChainOfThoughtItem>Core module exposes 4 service interfaces</ChainOfThoughtItem>
-              <ChainOfThoughtItem>Agent module depends only on :core</ChainOfThoughtItem>
-            </ChainOfThoughtContent>
-          </ChainOfThoughtStep>
-          <ChainOfThoughtStep>
-            <ChainOfThoughtTrigger isActive={true}>
-              Implementing authentication refactor
-            </ChainOfThoughtTrigger>
-            <ChainOfThoughtContent>
-              <ChainOfThoughtItem>Migrating from Basic auth to Bearer token scheme</ChainOfThoughtItem>
-              <ChainOfThoughtItem>Updating HttpClientFactory shared pool configuration</ChainOfThoughtItem>
-            </ChainOfThoughtContent>
-          </ChainOfThoughtStep>
-          <ChainOfThoughtStep>
-            <ChainOfThoughtTrigger>
-              Run test suite
-            </ChainOfThoughtTrigger>
-            <ChainOfThoughtContent>
-              <ChainOfThoughtItem>Pending execution</ChainOfThoughtItem>
-            </ChainOfThoughtContent>
-          </ChainOfThoughtStep>
-        </ChainOfThought>
       </Section>
 
       <Section title="Context Chips (Badge)">
