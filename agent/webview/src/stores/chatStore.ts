@@ -22,6 +22,13 @@ function nextId(prefix: string = 'msg'): string {
   return `${prefix}-${Date.now()}-${++_idCounter}`;
 }
 
+// ── Approval state ──
+interface PendingApproval {
+  title: string;
+  description?: string;
+  commandPreview?: string;
+}
+
 // ── Toast state ──
 interface Toast {
   id: string;
@@ -57,6 +64,7 @@ interface ChatState {
   skillsList: Skill[];
   tokenBudget: { used: number; max: number };
   mentionResults: MentionSearchResult[];
+  pendingApproval: PendingApproval | null;
   focusInputTrigger: number;
 
   // Actions
@@ -99,6 +107,8 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(results: MentionSearchResult[]): void;
+  showApproval(title: string, description?: string, commandPreview?: string): void;
+  resolveApproval(approved: boolean): void;
   sendMessage(text: string, mentions: Mention[]): void;
 }
 
@@ -134,6 +144,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   skillsList: [],
   tokenBudget: { used: 0, max: 0 },
   mentionResults: [],
+  pendingApproval: null,
   focusInputTrigger: 0,
 
   // Actions
@@ -445,6 +456,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   receiveMentionResults(results: MentionSearchResult[]) {
     set({ mentionResults: results });
+  },
+
+  showApproval(title: string, description?: string, commandPreview?: string) {
+    set({ pendingApproval: { title, description, commandPreview } });
+  },
+
+  resolveApproval(approved: boolean) {
+    set({ pendingApproval: null });
+    import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
+      if (approved) {
+        (kotlinBridge as any).approveToolCall();
+      } else {
+        (kotlinBridge as any).denyToolCall();
+      }
+    });
   },
 
   sendMessage(text: string, mentions: Mention[]) {

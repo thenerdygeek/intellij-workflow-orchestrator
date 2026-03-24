@@ -53,7 +53,7 @@ export const AgentMessage = memo(function AgentMessage({
       {!isUser && (
         <MessageAvatar
           fallback="A"
-          className="h-5 w-5 bg-[var(--accent,#6366f1)] text-[10px] font-bold text-white"
+          className="h-5 w-5 bg-[var(--accent,#6366f1)] text-[10px] font-bold text-[var(--bg)]"
         />
       )}
 

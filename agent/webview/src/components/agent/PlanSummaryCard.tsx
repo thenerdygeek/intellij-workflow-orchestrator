@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
-import { FileText } from 'lucide-react';
+import { FileText, Check, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { openInEditorTab } from '@/bridge/jcef-bridge';
 import type { Plan } from '@/bridge/types';
 
 interface PlanSummaryCardProps {
@@ -15,7 +16,15 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   const pendingCount = plan.steps.filter(s => s.status === 'pending').length;
 
   const handleViewPlan = useCallback(() => {
+    openInEditorTab('plan', JSON.stringify(plan));
+  }, [plan]);
+
+  const handleApprove = useCallback(() => {
     (window as any)._approvePlan?.();
+  }, []);
+
+  const handleRevise = useCallback(() => {
+    (window as any)._revisePlan?.('');
   }, []);
 
   return (
@@ -71,19 +80,45 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
         </Badge>
       </div>
 
-      {/* Action */}
-      <div className="px-4 py-3">
+      {/* Actions */}
+      <div className="flex gap-2 px-4 py-3">
         <Button
           onClick={handleViewPlan}
-          className="w-full text-[12px] font-medium"
+          className="flex-1 text-[12px] font-medium"
           size="sm"
+          variant="outline"
           style={{
-            backgroundColor: 'var(--accent, #6366f1)',
-            color: '#fff',
+            borderColor: 'var(--accent, #6366f1)',
+            color: 'var(--accent, #6366f1)',
           }}
         >
           <FileText size={14} />
           View Implementation Plan
+        </Button>
+        <Button
+          onClick={handleApprove}
+          className="text-[12px] font-medium"
+          size="sm"
+          style={{
+            backgroundColor: 'var(--accent, #6366f1)',
+            color: 'var(--bg)',
+          }}
+        >
+          <Check size={14} />
+          Approve
+        </Button>
+        <Button
+          onClick={handleRevise}
+          className="text-[12px] font-medium"
+          size="sm"
+          variant="outline"
+          style={{
+            borderColor: 'var(--border, #333)',
+            color: 'var(--fg-secondary, #aaa)',
+          }}
+        >
+          <RotateCcw size={14} />
+          Revise
         </Button>
       </div>
     </div>

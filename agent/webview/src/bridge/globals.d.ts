@@ -25,6 +25,8 @@ declare global {
     _questionsSubmitted?: () => void;
     _questionsCancelled?: () => void;
     _editQuestion?: (qid: string) => void;
+    _approveToolCall?: () => void;
+    _denyToolCall?: () => void;
     _deactivateSkill?: () => void;
     _activateSkill?: (name: string) => void;
     _openInEditorTab?: (payload: string) => void;

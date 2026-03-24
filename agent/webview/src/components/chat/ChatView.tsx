@@ -1,10 +1,11 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
 import { ToolCallView } from '@/components/agent/ToolCallView';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
+import { ApprovalView } from '@/components/agent/ApprovalView';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useVirtualScroll } from '@/hooks/useVirtualScroll';
 import type { Message } from '@/bridge/types';
@@ -18,6 +19,11 @@ export const ChatView = memo(function ChatView() {
   const plan = useChatStore(s => s.plan);
   const questions = useChatStore(s => s.questions);
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
+  const pendingApproval = useChatStore(s => s.pendingApproval);
+  const resolveApproval = useChatStore(s => s.resolveApproval);
+
+  const handleApprove = useCallback(() => resolveApproval(true), [resolveApproval]);
+  const handleDeny = useCallback(() => resolveApproval(false), [resolveApproval]);
 
   const messageCount = messages.length + (activeStream ? 1 : 0);
   const useVirtual = messageCount >= VIRTUAL_SCROLL_THRESHOLD;
@@ -134,6 +140,17 @@ export const ChatView = memo(function ChatView() {
                 isLatest={idx === toolCallsArray.length - 1}
               />
             ))}
+
+            {/* Tool call approval */}
+            {pendingApproval && (
+              <ApprovalView
+                title={pendingApproval.title}
+                description={pendingApproval.description}
+                commandPreview={pendingApproval.commandPreview}
+                onApprove={handleApprove}
+                onDeny={handleDeny}
+              />
+            )}
 
             {/* Plan */}
             {plan && !plan.approved && <PlanSummaryCard plan={plan} />}

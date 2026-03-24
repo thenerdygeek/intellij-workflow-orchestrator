@@ -144,6 +144,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendSonarBadge(badgeJson: string) {
     stores?.getChatStore().addSonarBadge(badgeJson);
   },
+  showApproval(title: string, description: string, commandPreview: string) {
+    stores?.getChatStore().showApproval(title, description || undefined, commandPreview || undefined);
+  },
   receiveMentionResults(resultsJson: string) {
     const results = JSON.parse(resultsJson);
     stores?.getChatStore().receiveMentionResults(results);
@@ -194,6 +197,8 @@ export const kotlinBridge = {
   questionsSubmitted(): void { callKotlin('_questionsSubmitted'); },
   questionsCancelled(): void { callKotlin('_questionsCancelled'); },
   editQuestion(questionId: string): void { callKotlin('_editQuestion', questionId); },
+  approveToolCall(): void { callKotlin('_approveToolCall'); },
+  denyToolCall(): void { callKotlin('_denyToolCall'); },
   deactivateSkill(): void { callKotlin('_deactivateSkill'); },
   navigateToFile(filePath: string, line?: number): void {
     const path = line && line > 0 ? `${filePath}:${line}` : filePath;

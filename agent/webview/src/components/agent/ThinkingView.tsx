@@ -89,7 +89,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
         {isStreaming && (
           <div
             className="h-[2px] w-full overflow-hidden"
-            style={{ backgroundColor: 'rgba(139, 92, 246, 0.15)' }}
+            style={{ backgroundColor: 'color-mix(in srgb, var(--accent-thinking, #8b5cf6) 15%, transparent)' }}
           >
             <div
               className="h-full w-1/4"

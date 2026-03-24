@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect } from 'react';
+import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
@@ -38,7 +38,7 @@ function ModelChip({ model }: { model: string }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[12px] font-medium">
-          <span className="h-[5px] w-[5px] rounded-full shrink-0" style={{ backgroundColor: '#8b5cf6' }} />
+          <span className="h-[5px] w-[5px] rounded-full shrink-0" style={{ backgroundColor: 'var(--accent)' }} />
           <span className="max-w-[110px] truncate">{model || 'Model'}</span>
           <ChevronDown className="h-2.5 w-2.5" />
         </Button>
@@ -288,7 +288,7 @@ export const InputBar = memo(function InputBar() {
   // that InputBarContent will call. Since InputBarContent is inside the
   // PromptInput provider, it can access usePromptInput().textareaRef.
   // We use a mutable ref holder at this level for callbacks that need the textarea.
-  const textareaRefHolder = { current: null as HTMLTextAreaElement | null };
+  const textareaRefHolder = useRef<HTMLTextAreaElement | null>(null);
 
   // Detect @ mention trigger
   const handleValueChange = useCallback((value: string) => {
