@@ -619,6 +619,19 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                 const nodeOpacity = nodeState === 'unvisited' ? 0.3 : 1;
                 const nodeFilter = nodeState === 'active' ? 'url(#node-glow)' : undefined;
 
+                // Determine sweep direction for active glow
+                // Based on flow direction + whether this step's edge is reversed
+                const activeStepData = animSteps[animStep];
+                const isReverseEntry = nodeState === 'active' && activeStepData?.reverseEdge;
+                const dir = config?.direction ?? 'TB';
+                // Sweep: entry side → exit side
+                // LR: left→right (reversed: right→left)
+                // RL: right→left (reversed: left→right)
+                // TB: top→bottom (reversed: bottom→top)
+                // BT: bottom→top (reversed: top→bottom)
+                const sweepHorizontal = dir === 'LR' || dir === 'RL';
+                const sweepForward = (dir === 'LR' || dir === 'TB') !== !!isReverseEntry;
+
                 return (
                   <g
                     key={node.id}
@@ -639,6 +652,61 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                       strokeWidth={nodeStrokeWidth}
                       filter={nodeFilter}
                     />
+
+                    {/* Directional glow sweep for active nodes */}
+                    {nodeState === 'active' && (
+                      <rect
+                        key={`sweep-${animStep}`}
+                        x={node.x - node.width / 2}
+                        y={node.y - node.height / 2}
+                        width={node.width}
+                        height={node.height}
+                        rx={8}
+                        ry={8}
+                        fill={`${nodeColor}20`}
+                        stroke="none"
+                      >
+                        {sweepHorizontal ? (
+                          <>
+                            <animate
+                              attributeName="width"
+                              from="0"
+                              to={String(node.width)}
+                              dur="0.4s"
+                              fill="freeze"
+                            />
+                            {!sweepForward && (
+                              <animate
+                                attributeName="x"
+                                from={String(node.x + node.width / 2)}
+                                to={String(node.x - node.width / 2)}
+                                dur="0.4s"
+                                fill="freeze"
+                              />
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <animate
+                              attributeName="height"
+                              from="0"
+                              to={String(node.height)}
+                              dur="0.4s"
+                              fill="freeze"
+                            />
+                            {!sweepForward && (
+                              <animate
+                                attributeName="y"
+                                from={String(node.y + node.height / 2)}
+                                to={String(node.y - node.height / 2)}
+                                dur="0.4s"
+                                fill="freeze"
+                              />
+                            )}
+                          </>
+                        )}
+                      </rect>
+                    )}
 
                     {/* Node label */}
                     <text
