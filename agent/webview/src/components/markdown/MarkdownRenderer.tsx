@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
+import { visit } from 'unist-util-visit';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
 import { MermaidDiagram } from '@/components/rich/MermaidDiagram';
 import { ChartView } from '@/components/rich/ChartView';
@@ -36,14 +37,35 @@ function closeOpenFences(text: string): string {
   return text;
 }
 
+/**
+ * Remark plugin to preserve code fence meta strings through the AST.
+ * react-markdown doesn't pass meta by default; this plugin attaches it
+ * as `data.meta` on the code node so it survives through to rehype.
+ */
+function remarkCodeMeta() {
+  return (tree: any) => {
+    visit(tree, 'code', (node: any) => {
+      if (node.meta) {
+        node.data = node.data || {};
+        node.data.meta = node.meta;
+        // Also set hProperties so it appears on the HTML element
+        node.data.hProperties = node.data.hProperties || {};
+        node.data.hProperties['data-meta'] = node.meta;
+      }
+    });
+  };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function createMarkdownComponents(isStreaming: boolean): any {
   return {
-  code({ className, children, ...props }: any) {
+  code({ className, children, node, ...props }: any) {
     const isBlock = className?.startsWith('language-');
     if (isBlock) {
       const language = className?.replace('language-', '') ?? '';
       const codeString = String(children).replace(/\n$/, '');
+      // Extract meta string from the AST node (set by remarkCodeMeta plugin)
+      const meta: string | undefined = node?.properties?.['data-meta'] ?? node?.data?.meta ?? props['data-meta'];
 
       // Route special code fence languages to rich components
       switch (language) {
@@ -77,7 +99,7 @@ function createMarkdownComponents(isStreaming: boolean): any {
       }
 
       // Default: Shiki CodeBlock
-      return <CodeBlock code={codeString} language={language} isStreaming={isStreaming} />;
+      return <CodeBlock code={codeString} language={language} isStreaming={isStreaming} meta={meta} />;
     }
     return (
       <code
@@ -213,7 +235,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   return (
     <div className="markdown-body text-[13px] leading-relaxed">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkCodeMeta]}
         rehypePlugins={[rehypeRaw]}
         components={components}
       >

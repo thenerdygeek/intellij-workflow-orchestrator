@@ -1,20 +1,123 @@
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useMemo } from 'react';
 import { useShiki } from '@/hooks/useShiki';
+
+export interface CodeMeta {
+  highlights: Set<number>;
+  annotations: Map<number, string>;
+}
+
+export function parseCodeMeta(meta: string | undefined | null): CodeMeta {
+  const highlights = new Set<number>();
+  const annotations = new Map<number, string>();
+  if (!meta) return { highlights, annotations };
+
+  // Parse highlight={3,5-7}
+  const hlMatch = meta.match(/highlight=\{([^}]+)\}/);
+  if (hlMatch && hlMatch[1]) {
+    hlMatch[1].split(',').forEach(part => {
+      const range = part.trim().split('-');
+      if (range.length === 2) {
+        const start = parseInt(range[0] ?? '0', 10);
+        const end = parseInt(range[1] ?? '0', 10);
+        for (let i = start; i <= end; i++) highlights.add(i);
+      } else {
+        const n = parseInt(range[0] ?? '0', 10);
+        if (!isNaN(n)) highlights.add(n);
+      }
+    });
+  }
+
+  // Parse annotation={3:"Bug here",7:"This fixes it"}
+  const annMatch = meta.match(/annotation=\{([^}]+)\}/);
+  if (annMatch && annMatch[1]) {
+    const pairs = annMatch[1].matchAll(/(\d+):"([^"]+)"/g);
+    for (const m of pairs) {
+      annotations.set(parseInt(m[1] ?? '0', 10), m[2] ?? '');
+    }
+  }
+
+  return { highlights, annotations };
+}
+
+/**
+ * Post-process Shiki HTML to inject line highlights and annotation markers.
+ * Shiki outputs `<span class="line">...</span>` for each line inside `<pre><code>`.
+ */
+function applyLineDecorations(html: string, meta: CodeMeta): string {
+  if (meta.highlights.size === 0 && meta.annotations.size === 0) return html;
+
+  let lineNumber = 0;
+  return html.replace(/<span class="line">/g, (match) => {
+    lineNumber++;
+    const isHighlighted = meta.highlights.has(lineNumber);
+    const annotation = meta.annotations.get(lineNumber);
+
+    let replacement = match;
+    if (isHighlighted) {
+      replacement = '<span class="line code-line-highlight">';
+    }
+
+    // For annotations, we inject a marker span AFTER the line opening tag.
+    // We use a data attribute so the annotation tooltip can be rendered via CSS.
+    if (annotation) {
+      const escapedAnnotation = annotation
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      replacement = (isHighlighted ? '<span class="line code-line-highlight code-line-annotated">' : '<span class="line code-line-annotated">');
+      // The annotation icon is appended after the line content ends.
+      // We'll handle this differently — inject before the closing </span> of the line.
+      // For now, just mark with the class + data attribute; we handle annotation icons separately.
+      replacement = replacement.replace('>', ` data-annotation="${escapedAnnotation}">`);
+    }
+
+    return replacement;
+  });
+}
+
+/**
+ * Inject annotation icons at the end of annotated lines.
+ * We find `</span>` closings for `.code-line-annotated` spans and insert before them.
+ */
+function injectAnnotationIcons(html: string): string {
+  // Replace annotated line spans: find the data-annotation on .code-line-annotated,
+  // then inject an icon span before the line's closing </span>.
+  // Strategy: split on annotated line markers and rebuild.
+  return html.replace(
+    /(<span class="line[^"]*code-line-annotated[^"]*" data-annotation="([^"]*)"[^>]*>)([\s\S]*?)(<\/span>(?=\s*(?:<span class="line"|<\/code>)))/g,
+    (_, open, annotation, content, close) => {
+      const icon = `<span class="code-annotation-icon" title="${annotation}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;margin-left:8px;opacity:0.6;color:var(--accent-edit,#6366f1)"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="code-annotation-tooltip">${annotation}</span></span>`;
+      return open + content + icon + close;
+    }
+  );
+}
 
 interface CodeBlockProps {
   code: string;
   language: string;
   isStreaming?: boolean;
+  meta?: string | null;
 }
 
 export const CodeBlock = memo(function CodeBlock({
   code,
   language,
   isStreaming = false,
+  meta,
 }: CodeBlockProps) {
-  const { html, isLoading } = useShiki(code, language);
+  const { html: rawHtml, isLoading } = useShiki(code, language);
   const [copied, setCopied] = useState(false);
   const [showLineNumbers, setShowLineNumbers] = useState(false);
+
+  const codeMeta = useMemo(() => parseCodeMeta(meta), [meta]);
+  const html = useMemo(() => {
+    if (!rawHtml || (codeMeta.highlights.size === 0 && codeMeta.annotations.size === 0)) {
+      return rawHtml;
+    }
+    const decorated = applyLineDecorations(rawHtml, codeMeta);
+    return injectAnnotationIcons(decorated);
+  }, [rawHtml, codeMeta]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code).then(() => {

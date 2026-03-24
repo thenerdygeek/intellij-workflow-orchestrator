@@ -39,3 +39,59 @@ body {
 code, pre, .font-mono {
   font-family: var(--font-mono);
 }
+
+/* ============================================================
+   CODE BLOCK LINE HIGHLIGHTS & ANNOTATIONS
+   ============================================================ */
+
+.code-line-highlight {
+  background-color: color-mix(in srgb, var(--accent-edit, #6366f1) 10%, transparent);
+  border-left: 3px solid var(--accent-edit, #6366f1);
+  margin-left: -3px;
+  padding-left: 0px;
+  display: inline-block;
+  width: 100%;
+}
+
+.code-line-annotated {
+  position: relative;
+}
+
+.code-annotation-icon {
+  position: relative;
+  display: inline;
+  cursor: pointer;
+}
+
+.code-annotation-icon svg {
+  transition: opacity 0.15s ease;
+}
+
+.code-annotation-icon:hover svg {
+  opacity: 1 !important;
+}
+
+.code-annotation-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  max-width: 280px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--tooltip-bg, var(--toolbar-bg, #1e1e2e));
+  color: var(--tooltip-fg, var(--fg, #dbd7caee));
+  border: 1px solid var(--border, #333);
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: var(--font-body);
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.code-annotation-icon:hover .code-annotation-tooltip {
+  display: block;
+}
