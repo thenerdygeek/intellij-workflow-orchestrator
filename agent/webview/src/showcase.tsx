@@ -8,6 +8,7 @@ import {
 } from './showcase/mock-data';
 import { AgentMessage } from './components/chat/AgentMessage';
 import { ToolCallView } from './components/agent/ToolCallView';
+import { ToolCallChain } from './components/agent/ToolCallChain';
 import { ThinkingView } from './components/agent/ThinkingView';
 import { ApprovalView } from './components/agent/ApprovalView';
 import { QuestionView } from './components/agent/QuestionView';
@@ -80,10 +81,12 @@ function Showcase() {
         />
       </Section>
 
-      <Section title="Tool Calls">
-        {mockToolCalls.map((tc, i) => (
-          <ToolCallView key={i} toolCall={tc} isLatest={i === 2} />
-        ))}
+      <Section title="Tool Call Chain">
+        <ToolCallChain toolCalls={mockToolCalls} />
+      </Section>
+
+      <Section title="Tool Call (Single)">
+        <ToolCallView toolCall={mockToolCalls[2]!} isLatest={true} />
       </Section>
 
       <Section title="Thinking / Reasoning">

@@ -1,7 +1,7 @@
 import { memo, useCallback } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
-import { ToolCallView } from '@/components/agent/ToolCallView';
+import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
@@ -57,14 +57,10 @@ export const ChatView = memo(function ChatView() {
           </div>
         ))}
 
-        {/* Active tool calls */}
-        {toolCallsArray.map((tc, idx) => (
-          <ToolCallView
-            key={tc.name + idx}
-            toolCall={tc}
-            isLatest={idx === toolCallsArray.length - 1}
-          />
-        ))}
+        {/* Active tool calls as connected chain */}
+        {toolCallsArray.length > 0 && (
+          <ToolCallChain toolCalls={toolCallsArray} />
+        )}
 
         {/* Tool call approval */}
         {pendingApproval && (
