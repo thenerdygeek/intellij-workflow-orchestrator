@@ -75,6 +75,11 @@
   to { opacity: 1; }
 }
 
+@keyframes node-glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px var(--accent)); }
+  50% { filter: drop-shadow(0 0 10px var(--accent)); }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
+import { PlayControls } from './PlayControls';
 import { useThemeStore } from '@/stores/themeStore';
 
 // ── Types ──
@@ -29,6 +30,9 @@ export interface FlowConfig {
   edges: FlowEdge[];
   direction?: 'TB' | 'BT' | 'LR' | 'RL';
   groups?: FlowGroup[];
+  animated?: boolean;
+  highlightPath?: string[];
+  pathLabels?: string[];
 }
 
 interface LayoutNode extends FlowNode {
@@ -47,6 +51,15 @@ interface LayoutGroup extends FlowGroup {
   y: number;
   width: number;
   height: number;
+}
+
+// ── Animation types ──
+
+interface AnimationStep {
+  activeNodeId: string;
+  activeEdgeIndex: number | null;
+  reverseEdge?: boolean;
+  label?: string;
 }
 
 // ── Singleton lazy-load for dagre ──
@@ -171,6 +184,101 @@ function buildEdgePath(points: Array<{ x: number; y: number }>): string {
   return d;
 }
 
+// ── Animation step computation ──
+
+function computeAnimationSteps(
+  config: FlowConfig,
+  layoutEdges: LayoutEdge[],
+): AnimationStep[] {
+  const { nodes, edges, highlightPath, pathLabels } = config;
+
+  // If highlightPath provided, follow it
+  if (highlightPath && highlightPath.length > 0) {
+    const steps: AnimationStep[] = [];
+    for (let i = 0; i < highlightPath.length; i++) {
+      const nodeId = highlightPath[i]!;
+      if (!nodes.some(n => n.id === nodeId)) continue; // skip invalid IDs
+
+      let edgeIdx: number | null = null;
+      let reverseEdge = false;
+      if (i > 0) {
+        const prevId = highlightPath[i - 1]!;
+        edgeIdx = layoutEdges.findIndex(e => e.from === prevId && e.to === nodeId);
+        if (edgeIdx === -1) {
+          // Try reverse (response path)
+          edgeIdx = layoutEdges.findIndex(e => e.from === nodeId && e.to === prevId);
+          if (edgeIdx !== -1) reverseEdge = true;
+          else edgeIdx = null;
+        }
+      }
+
+      steps.push({
+        activeNodeId: nodeId,
+        activeEdgeIndex: edgeIdx,
+        reverseEdge,
+        label: i > 0 ? pathLabels?.[i - 1] : undefined,
+      });
+    }
+    return steps;
+  }
+
+  // BFS from source nodes (no incoming edges)
+  const incomingCount = new Map<string, number>();
+  nodes.forEach(n => incomingCount.set(n.id, 0));
+  edges.forEach(e => incomingCount.set(e.to, (incomingCount.get(e.to) ?? 0) + 1));
+  const sources = nodes.filter(n => (incomingCount.get(n.id) ?? 0) === 0);
+  if (sources.length === 0) return [];
+
+  const visited = new Set<string>();
+  const queue: string[] = sources.map(s => s.id);
+  const steps: AnimationStep[] = [];
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    if (visited.has(nodeId)) continue;
+    visited.add(nodeId);
+
+    let edgeIdx: number | null = null;
+    if (steps.length > 0) {
+      edgeIdx = layoutEdges.findIndex(e => e.to === nodeId && visited.has(e.from));
+      if (edgeIdx === -1) edgeIdx = null;
+    }
+
+    steps.push({ activeNodeId: nodeId, activeEdgeIndex: edgeIdx });
+    edges.filter(e => e.from === nodeId && !visited.has(e.to)).forEach(e => queue.push(e.to));
+  }
+
+  return steps;
+}
+
+// ── Animation state helpers ──
+
+function getNodeState(
+  nodeId: string,
+  step: number,
+  steps: AnimationStep[],
+): 'active' | 'visited' | 'unvisited' | 'normal' {
+  if (steps.length === 0) return 'normal';
+  if (steps[step]?.activeNodeId === nodeId) return 'active';
+  for (let i = 0; i < step; i++) {
+    if (steps[i]?.activeNodeId === nodeId) return 'visited';
+  }
+  return 'unvisited';
+}
+
+function getEdgeState(
+  edgeIndex: number,
+  step: number,
+  steps: AnimationStep[],
+): 'active' | 'visited' | 'unvisited' | 'normal' {
+  if (steps.length === 0) return 'normal';
+  if (steps[step]?.activeEdgeIndex === edgeIndex) return 'active';
+  for (let i = 0; i < step; i++) {
+    if (steps[i]?.activeEdgeIndex === edgeIndex) return 'visited';
+  }
+  return 'unvisited';
+}
+
 // ── Zoom/Pan hook (shared logic) ──
 
 function useZoomPan() {
@@ -244,6 +352,8 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
     width: number;
     height: number;
   } | null>(null);
+  const [config, setConfig] = useState<FlowConfig | null>(null);
+  const [animStep, setAnimStep] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
@@ -257,19 +367,21 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
     reset();
 
     try {
-      const config: FlowConfig = JSON.parse(source);
+      const parsedConfig: FlowConfig = JSON.parse(source);
 
-      if (!config.nodes || !Array.isArray(config.nodes)) {
+      if (!parsedConfig.nodes || !Array.isArray(parsedConfig.nodes)) {
         throw new Error('FlowConfig must have a "nodes" array');
       }
-      if (!config.edges || !Array.isArray(config.edges)) {
+      if (!parsedConfig.edges || !Array.isArray(parsedConfig.edges)) {
         throw new Error('FlowConfig must have an "edges" array');
       }
 
-      const result = await computeLayout(config);
+      const result = await computeLayout(parsedConfig);
       if (currentRender !== renderIdRef.current) return;
 
       setLayout(result);
+      setConfig(parsedConfig);
+      setAnimStep(0);
       setIsLoading(false);
     } catch (err) {
       if (currentRender !== renderIdRef.current) return;
@@ -284,11 +396,20 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
 
   const zoomPercent = useMemo(() => Math.round(zoom * 100), [zoom]);
 
+  // Animation steps
+  const animSteps = useMemo(() => {
+    if (!config?.animated || !layout) return [];
+    return computeAnimationSteps(config, layout.edges);
+  }, [config, layout]);
+
+  const isAnimated = animSteps.length > 0;
+
   // Theme colors
   const fgColor = getVar('fg') || (isDark ? '#cccccc' : '#333333');
   const mutedColor = getVar('fg-muted') || (isDark ? '#888888' : '#999999');
   const borderColor = getVar('border') || (isDark ? '#444444' : '#dddddd');
   const linkColor = getVar('link') || (isDark ? '#6ca0dc' : '#2563eb');
+  const accentColor = getVar('accent') || (isDark ? '#60a5fa' : '#3b82f6');
 
   return (
     <RichBlock
@@ -331,6 +452,30 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                 >
                   <path d="M 0 0 L 10 5 L 0 10 z" fill={mutedColor} />
                 </marker>
+                {/* Active arrowhead marker for animated edges */}
+                {isAnimated && (
+                  <marker
+                    id="flow-arrowhead-active"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill={accentColor} />
+                  </marker>
+                )}
+                {/* Glow filter for active nodes */}
+                {isAnimated && (
+                  <filter id="node-glow">
+                    <feGaussianBlur stdDeviation="3" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                )}
               </defs>
 
               {/* Groups (rendered behind edges and nodes) */}
@@ -377,27 +522,67 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                 const path = buildEdgePath(edge.points);
                 const midIdx = Math.floor(edge.points.length / 2);
                 const midPoint = edge.points[midIdx];
+                const edgeState = getEdgeState(i, animStep, animSteps);
+                const currentStep = animSteps[animStep];
+                const isActiveEdge = edgeState === 'active';
+                const isReverse = isActiveEdge && currentStep?.reverseEdge;
+
+                // Determine edge visual properties based on animation state
+                const edgeStroke = edgeState === 'active' ? accentColor
+                  : edgeState === 'visited' ? mutedColor
+                  : edgeState === 'unvisited' ? borderColor
+                  : mutedColor;
+                const edgeStrokeWidth = edgeState === 'active' ? 2.5
+                  : edgeState === 'visited' ? 1.5
+                  : edgeState === 'unvisited' ? 1
+                  : 1.5;
+                const edgeOpacity = edgeState === 'active' ? 1
+                  : edgeState === 'visited' ? 0.8
+                  : edgeState === 'unvisited' ? 0.2
+                  : 1;
+                const showFlowDash = edgeState === 'normal';
+                const markerEnd = edgeState === 'active'
+                  ? 'url(#flow-arrowhead-active)'
+                  : 'url(#flow-arrowhead)';
 
                 return (
                   <g key={`edge-${i}`}>
                     {/* Edge path */}
                     <path
+                      id={`edge-path-${i}`}
                       d={path}
                       fill="none"
-                      stroke={mutedColor}
-                      strokeWidth={1.5}
-                      markerEnd="url(#flow-arrowhead)"
+                      stroke={edgeStroke}
+                      strokeWidth={edgeStrokeWidth}
+                      opacity={edgeOpacity}
+                      markerEnd={markerEnd}
                     />
-                    {/* Animated dash overlay */}
-                    <path
-                      d={path}
-                      fill="none"
-                      stroke={linkColor}
-                      strokeWidth={1.5}
-                      strokeDasharray="6 12"
-                      strokeOpacity={0.5}
-                      style={{ animation: 'flowDash 1s linear infinite' }}
-                    />
+                    {/* Animated dash overlay — only for normal (non-animated) state */}
+                    {showFlowDash && (
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke={linkColor}
+                        strokeWidth={1.5}
+                        strokeDasharray="6 12"
+                        strokeOpacity={0.5}
+                        style={{ animation: 'flowDash 1s linear infinite' }}
+                      />
+                    )}
+                    {/* Traveling dot for active edges */}
+                    {isActiveEdge && (
+                      <circle r="3" fill={accentColor}>
+                        <animateMotion
+                          dur="0.8s"
+                          repeatCount="indefinite"
+                          keyPoints={isReverse ? '1;0' : '0;1'}
+                          keyTimes="0;1"
+                          calcMode="linear"
+                        >
+                          <mpath href={`#edge-path-${i}`} />
+                        </animateMotion>
+                      </circle>
+                    )}
                     {/* Edge label */}
                     {edge.label && midPoint && (
                       <text
@@ -407,6 +592,7 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                         fontSize={10}
                         fill={mutedColor}
                         fontFamily="var(--font-body)"
+                        opacity={edgeOpacity}
                       >
                         {edge.label}
                       </text>
@@ -419,13 +605,26 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
               {layout.nodes.map((node) => {
                 const isHovered = hoveredNode === node.id;
                 const nodeColor = node.color ?? linkColor;
+                const nodeState = getNodeState(node.id, animStep, animSteps);
+
+                // Determine node visual properties based on animation state
+                const nodeStroke = nodeState === 'active' ? nodeColor
+                  : nodeState === 'visited' ? nodeColor
+                  : nodeState === 'unvisited' ? borderColor
+                  : isHovered ? nodeColor : borderColor;
+                const nodeStrokeWidth = nodeState === 'active' ? 2.5
+                  : nodeState === 'visited' ? 1.5
+                  : nodeState === 'unvisited' ? 1.5
+                  : isHovered ? 2 : 1.5;
+                const nodeOpacity = nodeState === 'unvisited' ? 0.3 : 1;
+                const nodeFilter = nodeState === 'active' ? 'url(#node-glow)' : undefined;
 
                 return (
                   <g
                     key={node.id}
                     onMouseEnter={() => setHoveredNode(node.id)}
                     onMouseLeave={() => setHoveredNode(null)}
-                    style={{ cursor: 'default' }}
+                    style={{ cursor: 'default', opacity: nodeOpacity }}
                   >
                     {/* Node rect */}
                     <rect
@@ -436,8 +635,9 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                       rx={8}
                       ry={8}
                       fill={isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'}
-                      stroke={isHovered ? nodeColor : borderColor}
-                      strokeWidth={isHovered ? 2 : 1.5}
+                      stroke={nodeStroke}
+                      strokeWidth={nodeStrokeWidth}
+                      filter={nodeFilter}
                     />
 
                     {/* Node label */}
@@ -492,6 +692,27 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
           </div>
         )}
       </div>
+
+      {/* Animation caption */}
+      {isAnimated && animSteps[animStep]?.label && (
+        <div
+          key={animStep}
+          className="text-center text-[12px] py-1 animate-[fade-in_200ms_ease-out]"
+          style={{ color: 'var(--fg-secondary, var(--fg-muted))' }}
+        >
+          {animSteps[animStep].label}
+        </div>
+      )}
+
+      {/* Play controls for animated diagrams */}
+      {isAnimated && (
+        <PlayControls
+          totalSteps={animSteps.length}
+          currentStep={animStep}
+          onStepChange={setAnimStep}
+          autoPlayInterval={1200}
+        />
+      )}
     </RichBlock>
   );
 }
