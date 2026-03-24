@@ -19,6 +19,7 @@ const defaultVisualizations: Record<VisualizationType, VisualizationConfig> = {
   output: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 400 },
   progress: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 300 },
   timeline: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 400 },
+  image: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 500 },
 };
 
 interface SettingsState {

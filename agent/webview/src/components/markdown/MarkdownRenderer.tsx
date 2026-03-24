@@ -15,6 +15,7 @@ import { DataTable } from '@/components/rich/DataTable';
 import { CollapsibleOutput } from '@/components/rich/CollapsibleOutput';
 import { ProgressView } from '@/components/rich/ProgressView';
 import { TimelineView } from '@/components/rich/TimelineView';
+import { ImageView } from '@/components/rich/ImageView';
 
 interface MarkdownRendererProps {
   content: string;
@@ -67,6 +68,8 @@ function createMarkdownComponents(isStreaming: boolean): any {
           return <ProgressView progressSource={codeString} />;
         case 'timeline':
           return <TimelineView timelineSource={codeString} />;
+        case 'image':
+          return <ImageView imageSource={codeString} />;
         case 'html-interactive':
         case 'visualization':
         case 'viz':

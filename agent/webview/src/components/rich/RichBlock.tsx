@@ -28,6 +28,7 @@ const TYPE_META: Record<VisualizationType, TypeMeta> = {
   output: { icon: '\u{1F4CB}', label: 'Output' },
   progress: { icon: '\u23F3', label: 'Progress' },
   timeline: { icon: '\u23F1', label: 'Timeline' },
+  image: { icon: '\uD83D\uDDBC', label: 'Image' },
 };
 
 // ── Loading skeleton ──

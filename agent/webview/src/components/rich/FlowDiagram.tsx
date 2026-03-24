@@ -17,10 +17,18 @@ interface FlowEdge {
   label?: string;
 }
 
+interface FlowGroup {
+  id: string;
+  label: string;
+  nodeIds: string[];
+  color?: string;
+}
+
 export interface FlowConfig {
   nodes: FlowNode[];
   edges: FlowEdge[];
   direction?: 'TB' | 'BT' | 'LR' | 'RL';
+  groups?: FlowGroup[];
 }
 
 interface LayoutNode extends FlowNode {
@@ -32,6 +40,13 @@ interface LayoutNode extends FlowNode {
 
 interface LayoutEdge extends FlowEdge {
   points: Array<{ x: number; y: number }>;
+}
+
+interface LayoutGroup extends FlowGroup {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 // ── Singleton lazy-load for dagre ──
@@ -73,6 +88,7 @@ function loadDagre(): Promise<DagreModule> {
 async function computeLayout(config: FlowConfig): Promise<{
   nodes: LayoutNode[];
   edges: LayoutEdge[];
+  groups: LayoutGroup[];
   width: number;
   height: number;
 }> {
@@ -111,10 +127,32 @@ async function computeLayout(config: FlowConfig): Promise<{
     return { ...edge, points: edgeData.points };
   });
 
+  // Compute group bounding boxes from laid-out node positions
+  const GROUP_PADDING = 20;
+  const GROUP_LABEL_HEIGHT = 20;
+  const layoutGroups: LayoutGroup[] = (config.groups ?? []).map((group) => {
+    const memberNodes = layoutNodes.filter((n) => group.nodeIds.includes(n.id));
+    if (memberNodes.length === 0) {
+      return { ...group, x: 0, y: 0, width: 0, height: 0 };
+    }
+    const minX = Math.min(...memberNodes.map((n) => n.x - n.width / 2));
+    const maxX = Math.max(...memberNodes.map((n) => n.x + n.width / 2));
+    const minY = Math.min(...memberNodes.map((n) => n.y - n.height / 2));
+    const maxY = Math.max(...memberNodes.map((n) => n.y + n.height / 2));
+    return {
+      ...group,
+      x: minX - GROUP_PADDING,
+      y: minY - GROUP_PADDING - GROUP_LABEL_HEIGHT,
+      width: maxX - minX + GROUP_PADDING * 2,
+      height: maxY - minY + GROUP_PADDING * 2 + GROUP_LABEL_HEIGHT,
+    };
+  });
+
   const graphInfo = g.graph();
   return {
     nodes: layoutNodes,
     edges: layoutEdges,
+    groups: layoutGroups,
     width: graphInfo.width ?? 400,
     height: graphInfo.height ?? 300,
   };
@@ -202,6 +240,7 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
   const [layout, setLayout] = useState<{
     nodes: LayoutNode[];
     edges: LayoutEdge[];
+    groups: LayoutGroup[];
     width: number;
     height: number;
   } | null>(null);
@@ -293,6 +332,45 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                   <path d="M 0 0 L 10 5 L 0 10 z" fill={mutedColor} />
                 </marker>
               </defs>
+
+              {/* Groups (rendered behind edges and nodes) */}
+              {layout.groups.map((group) => {
+                if (group.width === 0 && group.height === 0) return null;
+                const groupFill = group.color
+                  ? `${group.color}14`
+                  : isDark
+                    ? 'rgba(108,160,220,0.08)'
+                    : 'rgba(37,99,235,0.06)';
+                const groupStroke = group.color ?? borderColor;
+
+                return (
+                  <g key={`group-${group.id}`}>
+                    <rect
+                      x={group.x}
+                      y={group.y}
+                      width={group.width}
+                      height={group.height}
+                      rx={8}
+                      ry={8}
+                      fill={groupFill}
+                      stroke={groupStroke}
+                      strokeWidth={1}
+                      strokeDasharray="6 4"
+                      strokeOpacity={0.6}
+                    />
+                    <text
+                      x={group.x + 10}
+                      y={group.y + 14}
+                      fontSize={11}
+                      fontWeight={600}
+                      fill={mutedColor}
+                      fontFamily="var(--font-body)"
+                    >
+                      {group.label}
+                    </text>
+                  </g>
+                );
+              })}
 
               {/* Edges */}
               {layout.edges.map((edge, i) => {
