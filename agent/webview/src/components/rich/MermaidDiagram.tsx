@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
+import { PlayControls } from './PlayControls';
 import { useThemeStore } from '@/stores/themeStore';
 
 // ── Singleton lazy-load for mermaid ──
@@ -90,8 +91,14 @@ export function MermaidDiagram({ source }: MermaidDiagramProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const svgContainerRef = useRef<HTMLDivElement>(null);
   const renderIdRef = useRef(0);
   const { zoom, pan, reset, handlers } = useZoomPan();
+
+  // Sequence diagram animation state
+  const isSequenceDiagram = source.trim().startsWith('sequenceDiagram');
+  const [messageGroups, setMessageGroups] = useState<Element[][]>([]);
+  const [seqStep, setSeqStep] = useState(0);
 
   const renderMermaid = useCallback(async () => {
     const currentRender = ++renderIdRef.current;
@@ -130,6 +137,56 @@ export function MermaidDiagram({ source }: MermaidDiagramProps) {
     void renderMermaid();
   }, [renderMermaid]);
 
+  // Parse message elements from rendered SVG for sequence diagram animation
+  useEffect(() => {
+    if (!isSequenceDiagram || !svgContent || !svgContainerRef.current) return;
+
+    // Wait a frame for DOM to update after dangerouslySetInnerHTML
+    requestAnimationFrame(() => {
+      const svgEl = svgContainerRef.current?.querySelector('svg');
+      if (!svgEl) return;
+
+      // Mermaid 11.x: each message has a .messageText element.
+      // Walk up to parent <g> to get the full message group (line + arrowhead + text)
+      const messageTexts = svgEl.querySelectorAll('.messageText');
+      const groups: Element[][] = [];
+
+      messageTexts.forEach(textEl => {
+        const parentG = textEl.closest('g');
+        if (parentG) {
+          groups.push(Array.from(parentG.children));
+        } else {
+          groups.push([textEl]);
+        }
+      });
+
+      if (groups.length === 0) return;
+
+      setMessageGroups(groups);
+      setSeqStep(0);
+
+      // Initially hide all messages
+      groups.forEach(group => {
+        group.forEach(el => {
+          (el as HTMLElement).style.opacity = '0';
+          (el as HTMLElement).style.transition = 'opacity 300ms ease-out';
+        });
+      });
+    });
+  }, [svgContent, isSequenceDiagram]);
+
+  // Reveal messages based on current step
+  useEffect(() => {
+    if (messageGroups.length === 0) return;
+    messageGroups.forEach((group, i) => {
+      group.forEach(el => {
+        (el as HTMLElement).style.opacity = i <= seqStep ? '1' : '0';
+      });
+    });
+  }, [seqStep, messageGroups]);
+
+  const isAnimatedSequence = isSequenceDiagram && messageGroups.length > 0;
+
   const zoomPercent = useMemo(() => Math.round(zoom * 100), [zoom]);
 
   return (
@@ -148,6 +205,7 @@ export function MermaidDiagram({ source }: MermaidDiagramProps) {
       >
         {svgContent && (
           <div
+            ref={svgContainerRef}
             className="flex items-center justify-center p-4"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
@@ -165,6 +223,15 @@ export function MermaidDiagram({ source }: MermaidDiagramProps) {
           </div>
         )}
       </div>
+
+      {isAnimatedSequence && (
+        <PlayControls
+          totalSteps={messageGroups.length}
+          currentStep={seqStep}
+          onStepChange={setSeqStep}
+          autoPlayInterval={1500}
+        />
+      )}
     </RichBlock>
   );
 }
