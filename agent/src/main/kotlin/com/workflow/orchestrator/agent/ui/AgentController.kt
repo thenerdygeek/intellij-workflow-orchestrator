@@ -51,6 +51,7 @@ class AgentController(
     private var planModeEnabled = false
     @Volatile
     private var pendingApprovalDeferred: CompletableDeferred<Boolean>? = null
+    @Volatile private var currentApprovalGate: ApprovalGate? = null
     private val mentionContextBuilder by lazy { MentionContextBuilder(project) }
 
     init {
@@ -94,13 +95,15 @@ class AgentController(
             onSendWithMentions = { text, mentionsJson -> handleMessageWithMentions(text, mentionsJson) }
         )
 
-        // Wire tool call approval callbacks
+        // Wire tool call approval callbacks — connects JCEF approve/deny to ApprovalGate
         dashboard.setCefApprovalCallbacks(
             onApprove = {
+                currentApprovalGate?.respondToApproval(ApprovalResult.Approved)
                 pendingApprovalDeferred?.complete(true)
                 pendingApprovalDeferred = null
             },
             onDeny = {
+                currentApprovalGate?.respondToApproval(ApprovalResult.Rejected("Rejected by user"))
                 pendingApprovalDeferred?.complete(false)
                 pendingApprovalDeferred = null
             }
@@ -411,8 +414,25 @@ class AgentController(
                 val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
                 val approvalGate = ApprovalGate(
                     approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
-                    onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) }
+                    onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) },
+                    approvalCallback = { toolName, risk, params ->
+                        // Show the JCEF approval UI in the chat panel
+                        val description = buildString {
+                            append("$toolName")
+                            val path = params["path"] as? String ?: params["file_path"] as? String
+                            if (path != null) append(" — $path")
+                        }
+                        val commandPreview = if (toolName == "run_command") {
+                            params["command"] as? String
+                        } else null
+                        dashboard.showApproval(
+                            title = "Approve $toolName? (${risk.name} risk)",
+                            description = description,
+                            commandPreview = commandPreview ?: ""
+                        )
+                    }
                 )
+                currentApprovalGate = approvalGate
 
                 // Create orchestrator (lightweight — just brain + registry + project)
                 val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
