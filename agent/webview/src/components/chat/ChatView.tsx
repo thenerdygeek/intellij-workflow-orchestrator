@@ -17,26 +17,54 @@ import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
 import type { Message } from '@/bridge/types';
 
 const WORKING_PHRASES = [
+  // Classic
   'Working...',
   'Thinking...',
-  'Pondering...',
-  'Analyzing...',
-  'Cooking something up...',
   'On it...',
-  'Crunching the bits...',
-  'Consulting the codebase...',
-  'Reading the tea leaves...',
-  'Assembling the pieces...',
-  'Connecting the dots...',
-  'Summoning the answer...',
-  'Diving deep...',
-  'Spinning up neurons...',
-  'Brewing a response...',
-  'Untangling the logic...',
-  'Parsing the universe...',
-  'Refactoring reality...',
-  'Compiling thoughts...',
-  'Running mental tests...',
+
+  // Dev humor
+  'Mass-producing unit tests in my head...',
+  'Resolving merge conflicts with the universe...',
+  'git blame-ing the previous developer (it was me)...',
+  'Deleting node_modules spiritually...',
+  'Turning coffee into code...',
+  'Asking Stack Overflow... just kidding...',
+  'Rubber-ducking with myself...',
+  'Deploying to production on a Friday... wait no...',
+  'Running rm -rf doubts...',
+  'Rewriting in Rust... nah, just kidding...',
+
+  // Corporate humor
+  'Synergizing the deliverables...',
+  'Circling back to your request...',
+  'Taking this offline... with myself...',
+  'Aligning on the go-forward strategy...',
+  'Moving the needle...',
+  'Boiling the ocean, one cup at a time...',
+  'Putting a pin in my other thoughts...',
+  'Let me double-click on that...',
+  'Leveraging my core competencies...',
+  'Per my last thought...',
+
+  // Existential / self-aware
+  'Pretending I know what I\'m doing...',
+  'Consulting my imaginary senior dev...',
+  'Reading your code... no judgment...',
+  'Estimating 2 minutes (so probably 20)...',
+  'Loading... unlike my motivation on Mondays...',
+  'This is fine. Everything is fine...',
+  'Compiling thoughts... 0 warnings, 47 opinions...',
+  'BRB, arguing with the linter...',
+  'Googling... I mean, reasoning from first principles...',
+  'Finding the bug... it\'s always line 1...',
+
+  // Wholesome / encouraging
+  'Brewing something nice for you...',
+  'Almost there, promise...',
+  'Crafting artisanal, hand-typed code...',
+  'Making this look easy (it\'s not)...',
+  'Your code called. It misses you...',
+  'Powered by curiosity and questionable caffeine intake...',
 ];
 
 function useRotatingPhrase(intervalMs = 3000): string {
