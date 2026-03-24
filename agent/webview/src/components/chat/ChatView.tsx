@@ -12,6 +12,8 @@ import {
   ChatContainerScrollAnchor,
 } from '@/components/ui/prompt-kit/chat-container';
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
+import { Loader } from '@/components/ui/prompt-kit/loader';
+import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
 import type { Message } from '@/bridge/types';
 
 export const ChatView = memo(function ChatView() {
@@ -23,6 +25,7 @@ export const ChatView = memo(function ChatView() {
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
   const pendingApproval = useChatStore(s => s.pendingApproval);
   const resolveApproval = useChatStore(s => s.resolveApproval);
+  const busy = useChatStore(s => s.busy);
 
   const handleApprove = useCallback(() => resolveApproval(true), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval(false), [resolveApproval]);
@@ -90,6 +93,16 @@ export const ChatView = memo(function ChatView() {
             isStreaming={activeStream?.isStreaming ?? false}
             streamText={activeStream?.text}
           />
+        )}
+
+        {/* Working indicator — shows while agent is busy and no streaming content yet */}
+        {busy && !streamPlaceholder && toolCallsArray.length === 0 && (
+          <div className="flex items-center gap-2 px-2 py-2 animate-[fade-in_200ms_ease-out]">
+            <Loader variant="typing" size="sm" />
+            <TextShimmer duration={3} className="text-[12px]">
+              Working...
+            </TextShimmer>
+          </div>
         )}
 
         <ChatContainerScrollAnchor />
