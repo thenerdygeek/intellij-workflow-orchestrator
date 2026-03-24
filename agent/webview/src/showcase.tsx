@@ -6,6 +6,8 @@ import {
   mockMessages, mockStreamingMessage, mockToolCalls,
   mockPlanPending, mockPlanInProgress, mockQuestions,
   mockMentions,
+  mockTableData, mockTimelineData, mockProgressData,
+  mockOutputData, mockFlowWithGroups,
 } from './showcase/mock-data';
 import { AgentMessage } from './components/chat/AgentMessage';
 import { ToolCallChain } from './components/agent/ToolCallChain';
@@ -21,6 +23,11 @@ import { Loader } from './components/ui/prompt-kit/loader';
 import { TextShimmer } from './components/ui/prompt-kit/text-shimmer';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
+import { DataTable } from './components/rich/DataTable';
+import { TimelineView } from './components/rich/TimelineView';
+import { ProgressView } from './components/rich/ProgressView';
+import { CollapsibleOutput } from './components/rich/CollapsibleOutput';
+import { FlowDiagram } from './components/rich/FlowDiagram';
 import { Sun, Moon } from 'lucide-react';
 
 // Install mock bridge globals so components don't crash
@@ -171,6 +178,31 @@ function Showcase() {
       {/* ── Plan — In Progress ── */}
       <Section title="Plan — In Progress">
         <PlanProgressWidget plan={mockPlanInProgress} />
+      </Section>
+
+      {/* ── Data Table ── */}
+      <Section title="Data Table">
+        <DataTable tableSource={mockTableData} />
+      </Section>
+
+      {/* ── Timeline ── */}
+      <Section title="Timeline">
+        <TimelineView timelineSource={mockTimelineData} />
+      </Section>
+
+      {/* ── Progress ── */}
+      <Section title="Progress">
+        <ProgressView progressSource={mockProgressData} />
+      </Section>
+
+      {/* ── Collapsible Output ── */}
+      <Section title="Collapsible Output">
+        <CollapsibleOutput outputSource={mockOutputData} />
+      </Section>
+
+      {/* ── Flow Diagram (with Groups) ── */}
+      <Section title="Flow Diagram (with Groups)">
+        <FlowDiagram source={mockFlowWithGroups} />
       </Section>
 
       {/* ── Badge Variants ── */}

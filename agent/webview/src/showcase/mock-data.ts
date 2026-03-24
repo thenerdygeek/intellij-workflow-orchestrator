@@ -81,3 +81,93 @@ export const mockMentionResults: MentionSearchResult[] = [
   { type: 'tool', label: 'edit_file', description: 'Edit a file with search/replace' },
   { type: 'skill', label: 'systematic-debugging', description: 'Step-by-step debugging workflow' },
 ];
+
+// DataTable mock
+export const mockTableData = JSON.stringify({
+  columns: ['Build', 'Status', 'Duration', 'Branch', 'Triggered By'],
+  rows: [
+    ['#456', 'PASSED', '2m 30s', 'main', 'CI/CD'],
+    ['#455', 'FAILED', '1m 12s', 'feature/auth', 'manual'],
+    ['#454', 'PASSED', '3m 45s', 'main', 'CI/CD'],
+    ['#453', 'PASSED', '2m 10s', 'fix/cache', 'PR merge'],
+    ['#452', 'PASSED', '2m 55s', 'main', 'CI/CD'],
+    ['#451', 'FAILED', '0m 45s', 'feature/dashboard', 'manual'],
+    ['#450', 'PASSED', '2m 20s', 'main', 'CI/CD'],
+    ['#449', 'PASSED', '4m 01s', 'release/v1.0', 'tag'],
+  ],
+  sortable: true,
+  searchable: true,
+});
+
+// Timeline mock
+export const mockTimelineData = JSON.stringify({
+  title: 'Deployment Pipeline',
+  events: [
+    { time: '10:30', label: 'Build #456 triggered', status: 'info' },
+    { time: '10:32', label: 'Compilation complete', status: 'success' },
+    { time: '10:33', label: 'Unit tests: 124 passed', status: 'success' },
+    { time: '10:35', label: 'Integration tests: 2 failures', status: 'error', description: 'AuthServiceTest.testTokenRefresh, CacheManagerTest.testEviction' },
+    { time: '10:36', label: 'Build marked as unstable', status: 'warning' },
+    { time: '10:40', label: 'Hotfix applied, rebuild triggered', status: 'info' },
+    { time: '10:44', label: 'All tests passing', status: 'success' },
+    { time: '10:45', label: 'Deployed to staging', status: 'success' },
+  ],
+});
+
+// Progress mock
+export const mockProgressData = JSON.stringify({
+  title: 'Running Test Suite',
+  phases: [
+    { label: 'Compile', status: 'completed', duration: '12s' },
+    { label: 'Unit Tests', status: 'completed', duration: '45s' },
+    { label: 'Integration Tests', status: 'running', progress: 67 },
+    { label: 'E2E Tests', status: 'pending' },
+    { label: 'Coverage Report', status: 'pending' },
+  ],
+  overall: 52,
+});
+
+// Collapsible output mock
+export const mockOutputData = `### Build Log
+[INFO] Compiling module core...
+[INFO] 47 files compiled in 12.3s
+[INFO] Compiling module agent...
+[INFO] 23 files compiled in 8.1s
+[WARN] Deprecated API usage in AuthService.kt:45
+
+### Test Results
+Tests run: 124, Failures: 2, Errors: 0, Skipped: 3
+FAIL: AuthServiceTest.testTokenRefresh - Expected 200, got 401
+FAIL: CacheManagerTest.testEviction - Timeout after 5000ms
+PASS: All other tests
+
+### Coverage Summary
+Overall: 78.3%
+  core: 85.1% (+2.3%)
+  agent: 62.4% (-1.1%)
+  jira: 91.2% (unchanged)`;
+
+// Flow with groups mock
+export const mockFlowWithGroups = JSON.stringify({
+  title: 'Module Dependencies',
+  direction: 'TB',
+  nodes: [
+    { id: 'core', label: 'Core', color: '#3b82f6' },
+    { id: 'jira', label: 'Jira' },
+    { id: 'bamboo', label: 'Bamboo' },
+    { id: 'sonar', label: 'SonarQube' },
+    { id: 'agent', label: 'Agent', color: '#8b5cf6' },
+    { id: 'pr', label: 'Pull Request' },
+  ],
+  edges: [
+    { from: 'jira', to: 'core' },
+    { from: 'bamboo', to: 'core' },
+    { from: 'sonar', to: 'core' },
+    { from: 'agent', to: 'core' },
+    { from: 'pr', to: 'core' },
+  ],
+  groups: [
+    { id: 'features', label: 'Feature Modules', nodeIds: ['jira', 'bamboo', 'sonar', 'pr'] },
+    { id: 'ai', label: 'AI Layer', nodeIds: ['agent'] },
+  ],
+});
