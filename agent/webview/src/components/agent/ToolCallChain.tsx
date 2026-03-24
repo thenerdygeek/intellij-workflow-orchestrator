@@ -159,9 +159,7 @@ export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCall
         const catStyle = CATEGORY_STYLES[category];
         const target = extractTarget(tc.args);
         const isRunning = tc.status === 'RUNNING';
-        const isError = tc.status === 'ERROR';
-        const isLatest = idx === toolCalls.length - 1;
-        const shouldDefaultOpen = (isLatest && isRunning) || isError;
+        const shouldDefaultOpen = false;
         const isCmdTool = category === 'CMD';
 
         return (

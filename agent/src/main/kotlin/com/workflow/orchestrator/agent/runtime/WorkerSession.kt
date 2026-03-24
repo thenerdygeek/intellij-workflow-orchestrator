@@ -79,7 +79,8 @@ class WorkerSession(
         toolDefinitions: List<ToolDefinition>,
         brain: LlmBrain,
         contextManager: ContextManager,
-        project: Project
+        project: Project,
+        maxOutputTokens: Int? = null
     ): WorkerResult {
         LOG.info("WorkerSession: starting $workerType worker for task: ${task.take(100)}")
 
@@ -90,7 +91,7 @@ class WorkerSession(
         contextManager.addMessage(ChatMessage(role = "user", content = task))
         recordMessage("user", task)
 
-        return runReactLoop(tools, toolDefinitions, brain, contextManager, project)
+        return runReactLoop(tools, toolDefinitions, brain, contextManager, project, maxOutputTokens)
     }
 
     /**
@@ -102,10 +103,11 @@ class WorkerSession(
         toolDefinitions: List<ToolDefinition>,
         brain: LlmBrain,
         contextManager: ContextManager,
-        project: Project
+        project: Project,
+        maxOutputTokens: Int? = null
     ): WorkerResult {
         LOG.info("WorkerSession: resuming agent $agentId from existing context")
-        return runReactLoop(tools, toolDefinitions, brain, contextManager, project)
+        return runReactLoop(tools, toolDefinitions, brain, contextManager, project, maxOutputTokens)
     }
 
     /**
@@ -116,7 +118,8 @@ class WorkerSession(
         toolDefinitions: List<ToolDefinition>,
         brain: LlmBrain,
         contextManager: ContextManager,
-        project: Project
+        project: Project,
+        maxOutputTokens: Int? = null
     ): WorkerResult {
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
@@ -138,7 +141,7 @@ class WorkerSession(
             val messages = contextManager.getMessages()
             val activeToolDefs = if (tools.isNotEmpty()) toolDefinitions else null
 
-            val result = brain.chat(messages, activeToolDefs)
+            val result = brain.chat(messages, activeToolDefs, maxOutputTokens)
 
             when (result) {
                 is ApiResult.Success -> {

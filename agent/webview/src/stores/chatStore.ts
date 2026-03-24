@@ -148,9 +148,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   focusInputTrigger: 0,
 
   // Actions
-  startSession(_task: string) {
+  startSession(task: string) {
+    const firstMessage: Message = {
+      id: nextId('msg'),
+      role: 'user',
+      content: task,
+      timestamp: Date.now(),
+    };
     set({
-      messages: [],
+      messages: [firstMessage],
       activeStream: null,
       activeToolCalls: new Map(),
       plan: null,
@@ -474,7 +480,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage(text: string, mentions: Mention[]) {
-    get().addMessage('user', text);
+    // Do NOT add the user message here — Kotlin is authoritative.
+    // For first messages: startSession() adds it atomically.
+    // For subsequent messages: appendUserMessage() adds it from Kotlin.
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       if (mentions.length > 0) {
         kotlinBridge.sendMessageWithMentions(text, JSON.stringify(mentions));

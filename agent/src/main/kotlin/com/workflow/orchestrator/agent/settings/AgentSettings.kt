@@ -22,7 +22,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var userManuallySelectedModel by property(false)
         var maxInputTokens by property(190000)
         /** Max output tokens per LLM response. Limit varies per model — no hardcoded cap. */
-        var maxOutputTokens by property(4000)
+        var maxOutputTokens by property(64000)
         var enableFastPath by property(true)
         var approvalRequiredForEdits by property(true)
         var tokenBudgetWarningPercent by property(80)

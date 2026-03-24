@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useEffect } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
@@ -97,25 +97,13 @@ const WORKING_PHRASES = [
   'Powered by curiosity and questionable caffeine...',
 ];
 
-function useRotatingPhrase(intervalMs = 3000): string {
-  const [index, setIndex] = useState(() => Math.floor(Math.random() * WORKING_PHRASES.length));
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setIndex(prev => (prev + 1) % WORKING_PHRASES.length);
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [intervalMs]);
-
-  return WORKING_PHRASES[index]!;
-}
-
-function WorkingIndicator() {
-  const phrase = useRotatingPhrase(3000);
+export function WorkingIndicator() {
+  // Pick one phrase per mount — stays fixed for the entire busy duration.
+  const [phrase] = useState(() => WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
   return (
-    <div className="flex items-center gap-2 px-2 py-2 animate-[fade-in_200ms_ease-out]">
+    <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
       <Loader variant="wave" size="sm" />
-      <TextShimmer key={phrase} duration={3} className="text-[12px]">
+      <TextShimmer duration={3} className="text-[12px]">
         {phrase}
       </TextShimmer>
     </div>
@@ -131,7 +119,6 @@ export const ChatView = memo(function ChatView() {
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
   const pendingApproval = useChatStore(s => s.pendingApproval);
   const resolveApproval = useChatStore(s => s.resolveApproval);
-  const busy = useChatStore(s => s.busy);
 
   const handleApprove = useCallback(() => resolveApproval(true), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval(false), [resolveApproval]);
@@ -151,11 +138,11 @@ export const ChatView = memo(function ChatView() {
 
   return (
     <ChatContainerRoot
-      className="relative flex-1"
+      className="relative flex-1 min-h-0"
       aria-live="polite"
       aria-label="Agent chat messages"
     >
-      <ChatContainerContent className="px-4 py-3 gap-3">
+      <ChatContainerContent className="px-4 py-3 pb-4 gap-3">
         {/* Messages */}
         {messages.map((msg, i) => (
           <div
@@ -199,11 +186,6 @@ export const ChatView = memo(function ChatView() {
             isStreaming={activeStream?.isStreaming ?? false}
             streamText={activeStream?.text}
           />
-        )}
-
-        {/* Working indicator — shows while agent is busy and no streaming content yet */}
-        {busy && !streamPlaceholder && toolCallsArray.length === 0 && (
-          <WorkingIndicator />
         )}
 
         <ChatContainerScrollAnchor />

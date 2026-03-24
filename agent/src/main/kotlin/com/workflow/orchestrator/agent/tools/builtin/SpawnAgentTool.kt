@@ -270,7 +270,8 @@ class SpawnAgentTool : AgentTool {
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
                     contextManager = contextManager,
-                    project = project
+                    project = project,
+                    maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
                 )
             }
 
@@ -424,7 +425,8 @@ class SpawnAgentTool : AgentTool {
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
                     contextManager = contextManager,
-                    project = project
+                    project = project,
+                    maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
                 )
             }
 
@@ -503,7 +505,8 @@ class SpawnAgentTool : AgentTool {
                         toolDefinitions = toolDefinitions,
                         brain = agentService.brain,
                         contextManager = contextManager,
-                        project = project
+                        project = project,
+                        maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
                     )
                 }
 

@@ -4,13 +4,17 @@ import { installMockBridge, simulateTheme } from './bridge/mock-bridge'
 import { useChatStore } from './stores/chatStore'
 import { useThemeStore } from './stores/themeStore'
 import { useSettingsStore } from './stores/settingsStore'
-import { ChatView } from '@/components/chat/ChatView'
+import { ChatView, WorkingIndicator } from '@/components/chat/ChatView'
 import { InputBar } from '@/components/input/InputBar'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 
 function App() {
   useEscapeHandler();
+  const busy = useChatStore(s => s.busy);
+  const activeStream = useChatStore(s => s.activeStream);
+  const activeToolCalls = useChatStore(s => s.activeToolCalls);
+  const showWorkingIndicator = busy && !activeStream && activeToolCalls.size === 0;
 
   useEffect(() => {
     initBridge({
@@ -38,9 +42,10 @@ function App() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
+    <div className="flex h-screen flex-col overflow-hidden bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
       <ScreenReaderAnnouncer />
       <ChatView />
+      {showWorkingIndicator && <WorkingIndicator />}
       <InputBar />
     </div>
   );
