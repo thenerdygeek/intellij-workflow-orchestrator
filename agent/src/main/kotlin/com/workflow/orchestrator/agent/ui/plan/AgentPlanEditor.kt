@@ -72,7 +72,7 @@ class AgentPlanEditor(
             null
         }
 
-        val htmlUrl = javaClass.getResource("/webview/agent-plan.html")
+        val htmlUrl = javaClass.getResource("/webview/dist/plan-editor.html")
         if (htmlUrl != null) {
             browser.loadURL(htmlUrl.toExternalForm())
         }
