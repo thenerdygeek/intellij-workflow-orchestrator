@@ -196,6 +196,10 @@ class AgentDashboardPanel(
         cefPanel?.appendSonarBadge(badgeJson)
     }
 
+    fun showApproval(title: String, description: String, commandPreview: String) {
+        cefPanel?.showApproval(title, description, commandPreview)
+    }
+
     fun setCefSkillCallbacks(onDismiss: () -> Unit) {
         cefPanel?.onSkillDismissed = onDismiss
     }
@@ -214,6 +218,20 @@ class AgentDashboardPanel(
         cefPanel?.onQuestionsSubmitted = onSubmitted
         cefPanel?.onQuestionsCancelled = onCancelled
         cefPanel?.onEditQuestion = onEdit
+    }
+
+    fun setCefApprovalCallbacks(onApprove: () -> Unit, onDeny: () -> Unit) {
+        cefPanel?.onApproveToolCall = onApprove
+        cefPanel?.onDenyToolCall = onDeny
+    }
+
+    fun setCefInteractiveHtmlCallback(onMessage: (String) -> Unit) {
+        cefPanel?.onInteractiveHtmlMessage = onMessage
+    }
+
+    fun setCefDiffHunkCallbacks(onAccept: (String, Int, String?) -> Unit, onReject: (String, Int) -> Unit) {
+        cefPanel?.onAcceptDiffHunk = onAccept
+        cefPanel?.onRejectDiffHunk = onReject
     }
 
     // ═══════════════════════════════════════════════════

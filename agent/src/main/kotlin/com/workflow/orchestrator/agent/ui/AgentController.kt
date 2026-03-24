@@ -45,6 +45,8 @@ class AgentController(
     private var sessionAutoApprove = false
     private var currentPlanFile: com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile? = null
     private var planModeEnabled = false
+    @Volatile
+    private var pendingApprovalDeferred: CompletableDeferred<Boolean>? = null
     private val mentionContextBuilder by lazy { MentionContextBuilder(project) }
 
     init {
@@ -83,6 +85,33 @@ class AgentController(
         // Wire mention-aware send callback
         dashboard.setCefMentionCallbacks(
             onSendWithMentions = { text, mentionsJson -> handleMessageWithMentions(text, mentionsJson) }
+        )
+
+        // Wire tool call approval callbacks
+        dashboard.setCefApprovalCallbacks(
+            onApprove = {
+                pendingApprovalDeferred?.complete(true)
+                pendingApprovalDeferred = null
+            },
+            onDeny = {
+                pendingApprovalDeferred?.complete(false)
+                pendingApprovalDeferred = null
+            }
+        )
+
+        // Wire interactive HTML message callback
+        dashboard.setCefInteractiveHtmlCallback { json ->
+            LOG.info("Interactive HTML message: ${json.take(200)}")
+        }
+
+        // Wire diff hunk callbacks
+        dashboard.setCefDiffHunkCallbacks(
+            onAccept = { filePath, hunkIndex, editedContent ->
+                LOG.info("Accepted diff hunk #$hunkIndex for $filePath${if (editedContent != null) " (edited)" else ""}")
+            },
+            onReject = { filePath, hunkIndex ->
+                LOG.info("Rejected diff hunk #$hunkIndex for $filePath")
+            }
         )
 
         // Wire JCEF JS→Kotlin action callbacks (undo, view-trace, example prompts)
@@ -375,11 +404,15 @@ class AgentController(
     }
 
     fun cancelTask() {
+        pendingApprovalDeferred?.complete(false)
+        pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
         dashboard.appendStatus("Cancellation requested...", RichStreamingPanel.StatusType.WARNING)
     }
 
     fun newChat() {
+        pendingApprovalDeferred?.complete(false)
+        pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
         currentOrchestrator = null
         sessionAutoApprove = false

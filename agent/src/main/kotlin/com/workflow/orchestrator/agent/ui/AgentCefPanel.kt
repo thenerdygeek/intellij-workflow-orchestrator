@@ -71,6 +71,11 @@ class AgentCefPanel(
     private var searchMentionsQuery: JBCefJSQuery? = null
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
+    private var approveToolCallQuery: JBCefJSQuery? = null
+    private var denyToolCallQuery: JBCefJSQuery? = null
+    private var interactiveHtmlMessageQuery: JBCefJSQuery? = null
+    private var acceptDiffHunkQuery: JBCefJSQuery? = null
+    private var rejectDiffHunkQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
     @Volatile private var pageLoaded = false
@@ -125,6 +130,17 @@ class AgentCefPanel(
     var onOpenToolsPanel: (() -> Unit)? = null
     /** Callback when user clicks "Open in Tab" on a visualization. Params: type, content JSON payload. */
     var onOpenInEditorTab: ((String) -> Unit)? = null
+
+    /** Callback when user approves a tool call in the approval card. */
+    var onApproveToolCall: (() -> Unit)? = null
+    /** Callback when user denies a tool call in the approval card. */
+    var onDenyToolCall: (() -> Unit)? = null
+    /** Callback when user interacts with an interactive HTML message. Param: JSON payload. */
+    var onInteractiveHtmlMessage: ((String) -> Unit)? = null
+    /** Callback when user accepts a diff hunk. Params: filePath, hunkIndex, editedContent (nullable). */
+    var onAcceptDiffHunk: ((String, Int, String?) -> Unit)? = null
+    /** Callback when user rejects a diff hunk. Params: filePath, hunkIndex. */
+    var onRejectDiffHunk: ((String, Int) -> Unit)? = null
 
     init {
         try {
@@ -299,6 +315,44 @@ class AgentCefPanel(
             addHandler { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
         }
 
+        // Tool call approval bridges
+        approveToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onApproveToolCall?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        denyToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onDenyToolCall?.invoke(); JBCefJSQuery.Response("ok") }
+        }
+        interactiveHtmlMessageQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { json -> onInteractiveHtmlMessage?.invoke(json); JBCefJSQuery.Response("ok") }
+        }
+        acceptDiffHunkQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                try {
+                    val obj = Json.parseToJsonElement(data).jsonObject
+                    val fp = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                    val hi = obj["hunkIndex"]?.jsonPrimitive?.int ?: 0
+                    val ec = obj["editedContent"]?.jsonPrimitive?.content
+                    onAcceptDiffHunk?.invoke(fp, hi, ec)
+                } catch (e: Exception) {
+                    LOG.warn("Failed to parse acceptDiffHunk data", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+        rejectDiffHunkQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                try {
+                    val obj = Json.parseToJsonElement(data).jsonObject
+                    val fp = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                    val hi = obj["hunkIndex"]?.jsonPrimitive?.int ?: 0
+                    onRejectDiffHunk?.invoke(fp, hi)
+                } catch (e: Exception) {
+                    LOG.warn("Failed to parse rejectDiffHunk data", e)
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
+
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
@@ -413,6 +467,27 @@ class AgentCefPanel(
                     openInEditorTabQuery?.let { q ->
                         val tabJs = q.inject("payload")
                         js("window._openInEditorTab = function(payload) { $tabJs }")
+                    }
+                    // Tool call approval + diff hunk + interactive HTML bridges
+                    approveToolCallQuery?.let { q ->
+                        val approveJs = q.inject("'approve'")
+                        js("window._approveToolCall = function() { $approveJs }")
+                    }
+                    denyToolCallQuery?.let { q ->
+                        val denyJs = q.inject("'deny'")
+                        js("window._denyToolCall = function() { $denyJs }")
+                    }
+                    interactiveHtmlMessageQuery?.let { q ->
+                        val htmlJs = q.inject("json")
+                        js("window._interactiveHtmlMessage = function(json) { $htmlJs }")
+                    }
+                    acceptDiffHunkQuery?.let { q ->
+                        val acceptJs = q.inject("JSON.stringify({filePath:fp,hunkIndex:hi,editedContent:ec||null})")
+                        js("window._acceptDiffHunk = function(fp,hi,ec) { $acceptJs }")
+                    }
+                    rejectDiffHunkQuery?.let { q ->
+                        val rejectJs = q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")
+                        js("window._rejectDiffHunk = function(fp,hi) { $rejectJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -617,6 +692,12 @@ class AgentCefPanel(
         callJs("appendSonarBadge(${jsonStr(badgeJson)})")
     }
 
+    // ── Tool call approval rendering ──
+
+    fun showApproval(title: String, description: String, commandPreview: String) {
+        callJs("showApproval(${jsonStr(title)},${jsonStr(description)},${jsonStr(commandPreview)})")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {
@@ -760,6 +841,11 @@ class AgentCefPanel(
         searchMentionsQuery?.dispose()
         sendMessageWithMentionsQuery?.dispose()
         openInEditorTabQuery?.dispose()
+        approveToolCallQuery?.dispose()
+        denyToolCallQuery?.dispose()
+        interactiveHtmlMessageQuery?.dispose()
+        acceptDiffHunkQuery?.dispose()
+        rejectDiffHunkQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -787,6 +873,11 @@ class AgentCefPanel(
         searchMentionsQuery = null
         sendMessageWithMentionsQuery = null
         openInEditorTabQuery = null
+        approveToolCallQuery = null
+        denyToolCallQuery = null
+        interactiveHtmlMessageQuery = null
+        acceptDiffHunkQuery = null
+        rejectDiffHunkQuery = null
         browser = null
     }
 }
