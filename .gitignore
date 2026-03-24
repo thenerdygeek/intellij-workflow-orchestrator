@@ -22,6 +22,16 @@ Thumbs.db
 
 # Kotlin
 *.class
+.kotlin/
+
+# Playwright
+.playwright-mcp/
+
+# Screenshots / mockups in project root
+/*.png
+
+# Temporary snapshots
+/flow-snapshot.md
 
 # Plugin
 /run/

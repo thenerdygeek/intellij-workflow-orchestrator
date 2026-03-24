@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -92,18 +94,24 @@ class CurrentWorkSection(
             isOpaque = false
         }
 
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-        val currentBranch = targetRepo?.currentBranchName ?: ""
-        if (currentBranch.isNotBlank()) {
-            branchLabel.text = currentBranch
-            branchLabel.icon = AllIcons.Vcs.Branch
-            metaRow.add(branchLabel)
-        }
-
+        // Resolve branch off-EDT to avoid synchronous repository update on UI thread
+        metaRow.add(branchLabel)
         inner.add(metaRow)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repos = GitRepositoryManager.getInstance(project).repositories
+            val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+            val currentBranch = targetRepo?.currentBranchName ?: ""
+            if (currentBranch.isNotBlank()) {
+                invokeLater {
+                    branchLabel.text = currentBranch
+                    branchLabel.icon = AllIcons.Vcs.Branch
+                    revalidate()
+                    repaint()
+                }
+            }
+        }
         add(inner, BorderLayout.CENTER)
 
         // Click to select ticket in the list
