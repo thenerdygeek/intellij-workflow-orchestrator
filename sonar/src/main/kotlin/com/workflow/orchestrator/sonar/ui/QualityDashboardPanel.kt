@@ -18,6 +18,8 @@ import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
 import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.*
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Cursor
@@ -79,6 +81,13 @@ class QualityDashboardPanel(
     private val statusLabel = JBLabel("Loading...")
     private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
+    // Tab-aware rendering: track which tab is visible and what state was last rendered per tab
+    private var selectedTabIndex = 0
+    private var lastRenderedState: SonarState? = null
+    private var overviewStale = true
+    private var issuesStale = true
+    private var coverageStale = true
+
     // Toggle buttons
     private val newCodeButton = JButton("New Code").apply {
         isFocusPainted = false
@@ -128,11 +137,28 @@ class QualityDashboardPanel(
         }
         add(topSection, BorderLayout.NORTH)
 
-        // Sub-tabbed pane
+        // Sub-tabbed pane — track selected tab for lazy rendering
         val tabbedPane = JBTabbedPane().apply {
             addTab("Overview", overviewPanel)
             addTab("Issues", issueListPanel)
             addTab("Coverage", coverageTablePanel)
+            addChangeListener {
+                val newIndex = selectedIndex
+                if (newIndex != selectedTabIndex) {
+                    selectedTabIndex = newIndex
+                    // If the newly visible tab has stale data, update it now
+                    val currentState = lastRenderedState ?: return@addChangeListener
+                    when (newIndex) {
+                        0 -> if (overviewStale) { overviewPanel.update(currentState); overviewStale = false }
+                        1 -> if (issuesStale) { issueListPanel.update(currentState.activeIssues, currentState.activeTotalIssueCount); issuesStale = false }
+                        2 -> if (coverageStale) {
+                            val coverageData = currentState.activeFileCoverage.ifEmpty { currentState.fileCoverage }
+                            coverageTablePanel.update(coverageData, currentState.newCodeMode && currentState.activeFileCoverage.isNotEmpty(), currentState.totalCoverageFileCount)
+                            coverageStale = false
+                        }
+                    }
+                }
+            }
         }
         add(tabbedPane, BorderLayout.CENTER)
 
@@ -172,11 +198,15 @@ class QualityDashboardPanel(
             }
         }
 
-        // Subscribe to state updates
+        // Subscribe to state updates — debounce to coalesce rapid state changes
+        // (e.g., branch change + PR selection firing within 500ms) into a single UI update
+        @OptIn(FlowPreview::class)
         scope.launch {
-            dataService.stateFlow.collect { state ->
-                invokeLater { updateUI(state) }
-            }
+            dataService.stateFlow
+                .debounce(300)
+                .collect { state ->
+                    invokeLater { updateUI(state) }
+                }
         }
 
         // Initial refresh
@@ -229,6 +259,9 @@ class QualityDashboardPanel(
             return
         }
 
+        val prev = lastRenderedState
+
+        // --- Header section (always updated — lightweight label text changes) ---
         val gateIcon = when (state.qualityGate.status) {
             QualityGateStatus.PASSED -> "\u2713"
             QualityGateStatus.FAILED -> "\u2717"
@@ -242,6 +275,65 @@ class QualityDashboardPanel(
 
         updateToggleAppearance(state.newCodeMode)
 
+        // --- Branch info bar (only update if branch-related fields changed) ---
+        val branchChanged = prev == null
+            || prev.branch != state.branch
+            || prev.currentBranchAnalyzed != state.currentBranchAnalyzed
+            || prev.currentBranchAnalysisDate != state.currentBranchAnalysisDate
+            || prev.lastAnalysisForBranch != state.lastAnalysisForBranch
+            || prev.newCodePeriod != state.newCodePeriod
+            || prev.branches != state.branches
+
+        if (branchChanged) {
+            updateBranchInfo(state)
+        }
+
+        // --- Determine which sub-tabs have changed data ---
+        val overviewChanged = prev == null
+            || prev.qualityGate != state.qualityGate
+            || prev.activeOverallCoverage != state.activeOverallCoverage
+            || prev.activeIssues != state.activeIssues
+            || prev.newCodeMode != state.newCodeMode
+            || prev.projectHealth != state.projectHealth
+
+        val issuesChanged = prev == null
+            || prev.activeIssues != state.activeIssues
+            || prev.activeTotalIssueCount != state.activeTotalIssueCount
+
+        val coverageChanged = prev == null
+            || prev.activeFileCoverage != state.activeFileCoverage
+            || prev.fileCoverage != state.fileCoverage
+            || prev.newCodeMode != state.newCodeMode
+            || prev.totalCoverageFileCount != state.totalCoverageFileCount
+
+        // Mark stale flags for tabs whose data changed
+        if (overviewChanged) overviewStale = true
+        if (issuesChanged) issuesStale = true
+        if (coverageChanged) coverageStale = true
+
+        // Only update the CURRENTLY VISIBLE sub-tab; others will update on tab switch
+        when (selectedTabIndex) {
+            0 -> if (overviewStale) { overviewPanel.update(state); overviewStale = false }
+            1 -> if (issuesStale) { issueListPanel.update(state.activeIssues, state.activeTotalIssueCount); issuesStale = false }
+            2 -> if (coverageStale) {
+                val coverageData = state.activeFileCoverage.ifEmpty { state.fileCoverage }
+                coverageTablePanel.update(coverageData, state.newCodeMode && state.activeFileCoverage.isNotEmpty(), state.totalCoverageFileCount)
+                coverageStale = false
+            }
+        }
+
+        lastRenderedState = state
+
+        loadingIcon.isVisible = false
+        val elapsed = java.time.Duration.between(state.lastUpdated, java.time.Instant.now())
+        statusLabel.text = "Updated ${elapsed.seconds}s ago"
+    }
+
+    /**
+     * Updates branch info labels, analysis status, new code period, and branch tooltips.
+     * Extracted from updateUI to allow skipping when branch data hasn't changed.
+     */
+    private fun updateBranchInfo(state: SonarState) {
         // Update branch info bar
         if (state.currentBranchAnalyzed) {
             val analysisDate = state.currentBranchAnalysisDate?.let { formatAnalysisDate(it) } ?: "unknown"
@@ -315,19 +407,6 @@ class QualityDashboardPanel(
             }
             branchInfoLabel.toolTipText = "<html><pre>Analyzed branches:\n$tooltip</pre></html>"
         }
-
-        overviewPanel.update(state)
-        issueListPanel.update(state.activeIssues, state.activeTotalIssueCount)
-        val coverageData = state.activeFileCoverage.ifEmpty { state.fileCoverage }
-        coverageTablePanel.update(
-            coverageData,
-            state.newCodeMode && state.activeFileCoverage.isNotEmpty(),
-            state.totalCoverageFileCount
-        )
-
-        loadingIcon.isVisible = false
-        val elapsed = java.time.Duration.between(state.lastUpdated, java.time.Instant.now())
-        statusLabel.text = "Updated ${elapsed.seconds}s ago"
     }
 
     private fun formatAnalysisDate(isoDate: String): String {

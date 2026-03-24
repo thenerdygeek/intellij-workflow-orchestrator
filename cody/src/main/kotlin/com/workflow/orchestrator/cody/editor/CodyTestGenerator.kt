@@ -18,7 +18,6 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 import com.workflow.orchestrator.sonar.service.SonarDataService
 import com.intellij.openapi.progress.runBackgroundableTask
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 class CodyTestGenerator : LineMarkerProvider {
@@ -73,7 +72,7 @@ class CodyTestGenerator : LineMarkerProvider {
                         end = Position(line = methodEndLine, character = 0)
                     )
                     runBackgroundableTask("Generating test with Cody", project) {
-                        runBlocking(Dispatchers.IO) {
+                        runBlocking {
                             val contextService = project.service<CodyContextService>()
                             val testContext = contextService.gatherTestContext(
                                 filePath = virtualFile.path,

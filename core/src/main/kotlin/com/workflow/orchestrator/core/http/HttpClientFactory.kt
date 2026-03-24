@@ -41,7 +41,7 @@ class HttpClientFactory(
 
     companion object {
         /** Shared connection pool across all OkHttpClient instances in the plugin. */
-        val sharedConnectionPool = ConnectionPool(5, 3, TimeUnit.MINUTES)
+        val sharedConnectionPool = ConnectionPool(15, 5, TimeUnit.MINUTES)
 
         /** Shared HTTP response cache (10 MB) for ETag/304 support. */
         val sharedCache: Cache by lazy {

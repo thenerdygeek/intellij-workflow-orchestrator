@@ -119,9 +119,18 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             baseIntervalMs = 15_000,
             scope = scope
         ) {
+            val hadActive = hasActiveRuns()
             pollAllRuns()
-            true
+            hadActive || hasActiveRuns() // only report change when there are active runs
         }.also { it.start() }
+    }
+
+    private fun hasActiveRuns(): Boolean {
+        for (i in 0 until runListModel.size()) {
+            val status = runListModel.getElementAt(i).status
+            if (status != "Successful" && status != "Failed") return true
+        }
+        return false
     }
 
     private suspend fun pollAllRuns() {
@@ -278,7 +287,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         // Failed test names
         if (entry.failedTestNames.isNotEmpty()) {
             content.add(JBLabel("Failed Tests (${entry.failedTests}):").apply {
-                font = font.deriveFont(Font.BOLD)
+                font = JBUI.Fonts.label().deriveFont(Font.BOLD)
                 foreground = StatusColors.SECONDARY_TEXT
             })
             content.add(Box.createVerticalStrut(JBUI.scale(4)))

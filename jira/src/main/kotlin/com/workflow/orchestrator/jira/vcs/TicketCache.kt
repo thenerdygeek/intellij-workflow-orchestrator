@@ -1,8 +1,5 @@
 package com.workflow.orchestrator.jira.vcs
 
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedDeque
-
 data class TicketCacheEntry(
     val key: String,
     val summary: String,
@@ -12,42 +9,40 @@ data class TicketCacheEntry(
 
 /**
  * Thread-safe LRU cache with TTL for Jira ticket metadata.
- * Used by VCS Log Column and other integrations that need ticket details
- * without hitting the API on every render.
+ * Uses LinkedHashMap(accessOrder=true) for O(1) LRU eviction.
+ * All access is synchronized for thread safety.
+ *
+ * Previous implementation used ConcurrentHashMap + ConcurrentLinkedDeque which had
+ * O(n) removal on every get() call — a performance issue when the cache grows.
  */
 class TicketCache(
     private val maxSize: Int = 500,
     private val ttlMs: Long = 600_000 // 10 minutes
 ) {
-    private val map = ConcurrentHashMap<String, TicketCacheEntry>()
-    private val accessOrder = ConcurrentLinkedDeque<String>()
+    private val map = object : LinkedHashMap<String, TicketCacheEntry>(maxSize, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, TicketCacheEntry>): Boolean {
+            return size > maxSize
+        }
+    }
 
+    @Synchronized
     fun get(key: String): TicketCacheEntry? {
         val entry = map[key] ?: return null
         if (System.currentTimeMillis() - entry.timestamp > ttlMs) {
             map.remove(key)
-            accessOrder.remove(key)
             return null
         }
-        // Move to end (most recently used)
-        accessOrder.remove(key)
-        accessOrder.addLast(key)
         return entry
     }
 
+    @Synchronized
     fun put(key: String, entry: TicketCacheEntry) {
         map[key] = entry
-        accessOrder.remove(key)
-        accessOrder.addLast(key)
-        while (map.size > maxSize) {
-            val oldest = accessOrder.pollFirst() ?: break
-            map.remove(oldest)
-        }
     }
 
+    @Synchronized
     fun clear() {
         map.clear()
-        accessOrder.clear()
     }
 }
 

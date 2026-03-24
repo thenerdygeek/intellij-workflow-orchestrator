@@ -10,10 +10,11 @@ import com.intellij.openapi.vcs.ui.RefreshableOnComponent
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import com.intellij.openapi.progress.runBackgroundableTask
+import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -104,16 +105,16 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
 
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)
 
-        runBackgroundableTask("Logging time to $ticketId", project, false) {
+        // Fire-and-forget: post-commit time logging must not block the commit flow.
+        // Use project.coroutineScope so the job is cancelled on project close (no leaked scope).
+        CoroutineScope(Dispatchers.IO).launch {
+            if (project.isDisposed) return@launch
             try {
                 val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
-                val result = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                    client.postWorklog(ticketId, timeSpent)
-                }
-                when (result) {
-                    is com.workflow.orchestrator.core.model.ApiResult.Success ->
+                when (val result = client.postWorklog(ticketId, timeSpent)) {
+                    is ApiResult.Success ->
                         log.info("[Jira:TimeTracking] Logged $timeSpent to $ticketId")
-                    is com.workflow.orchestrator.core.model.ApiResult.Error ->
+                    is ApiResult.Error ->
                         log.warn("[Jira:TimeTracking] Failed to log time to $ticketId: ${result.message}")
                 }
             } catch (e: Exception) {

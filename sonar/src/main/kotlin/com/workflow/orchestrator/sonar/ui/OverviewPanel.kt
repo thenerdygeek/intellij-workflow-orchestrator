@@ -8,10 +8,19 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.*
+import com.intellij.util.ui.JBFont
 import java.awt.*
 import javax.swing.*
 
 class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
+
+    companion object {
+        // Cached fonts — avoid Font.deriveFont() per update (expensive GDI calls on Windows)
+        private val FONT_BOLD_18 by lazy { JBFont.regular().deriveFont(Font.BOLD, JBUI.scale(18).toFloat()) }
+        private val FONT_PLAIN_10 by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(10).toFloat()) }
+        private val FONT_PLAIN_11 by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(11).toFloat()) }
+        private val FONT_PLAIN_9 by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(9).toFloat()) }
+    }
 
     private val gateStatusLabel = JBLabel("—")
     private val gateConditionsPanel = JPanel().apply {
@@ -78,7 +87,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             isOpaque = false
             val header = JBLabel("RECENT ISSUES").apply {
                 foreground = JBColor.GRAY
-                font = font.deriveFont(Font.PLAIN, JBUI.scale(10).toFloat())
+                font = FONT_PLAIN_10
             }
             add(header, BorderLayout.NORTH)
             add(JBScrollPane(recentIssuesPanel).apply {
@@ -101,7 +110,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         }
         gateStatusLabel.text = gateText
         gateStatusLabel.foreground = gateColor
-        gateStatusLabel.font = gateStatusLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+        gateStatusLabel.font = FONT_BOLD_18
 
         gateConditionsPanel.removeAll()
         state.qualityGate.conditions.forEach { cond ->
@@ -111,7 +120,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             val isCoverageMetric = cond.metric.contains("coverage", ignoreCase = true)
             val suffix = if (isCoverageMetric) "%" else ""
             val label = JBLabel("$icon $metricName: ${cond.actualValue}$suffix (threshold: ${cond.threshold}$suffix)")
-            label.font = label.font.deriveFont(JBUI.scale(10).toFloat())
+            label.font = FONT_PLAIN_10
             // Determine condition color: green (passed), yellow (warning zone), red (failed)
             label.foreground = when {
                 cond.passed -> {
@@ -129,18 +138,18 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         // Coverage
         val lineCov = state.activeOverallCoverage.lineCoverage
         coverageLabel.text = "%.1f%%".format(lineCov)
-        coverageLabel.font = coverageLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+        coverageLabel.font = FONT_BOLD_18
         coverageLabel.foreground = CoverageThresholds.colorForCoverage(lineCov, highThreshold, mediumThreshold)
         coverageBar.setThresholds(highThreshold, mediumThreshold)
         coverageBar.value = lineCov
         branchCoverageLabel.text = "Branch: %.1f%%".format(state.activeOverallCoverage.branchCoverage)
         branchCoverageLabel.foreground = JBColor.GRAY
-        branchCoverageLabel.font = branchCoverageLabel.font.deriveFont(JBUI.scale(10).toFloat())
+        branchCoverageLabel.font = FONT_PLAIN_10
 
         // Issues
         val total = state.activeIssues.size
         issueCountLabel.text = "$total"
-        issueCountLabel.font = issueCountLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+        issueCountLabel.font = FONT_BOLD_18
         val bugs = state.activeIssues.count { it.type == IssueType.BUG }
         val vulns = state.activeIssues.count { it.type == IssueType.VULNERABILITY }
         val smells = state.activeIssues.count { it.type == IssueType.CODE_SMELL }
@@ -150,7 +159,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val effortText = formatEffortMinutes(totalEffortMinutes)
 
         issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H<br/><font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>Total effort: $effortText</font></html>"
-        issueBreakdownLabel.font = issueBreakdownLabel.font.deriveFont(JBUI.scale(10).toFloat())
+        issueBreakdownLabel.font = FONT_PLAIN_10
 
         // Recent issues (top 5 by severity)
         recentIssuesPanel.removeAll()
@@ -162,7 +171,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
                 val label = JBLabel("<html><font color='${htmlColor(color)}'>\u25CF</font> " +
                     "${issue.type} <font color='${htmlColor(color)}'>${issue.severity}</font> " +
                     "${issue.message} — ${java.io.File(issue.filePath).name}:${issue.startLine}</html>")
-                label.font = label.font.deriveFont(JBUI.scale(11).toFloat())
+                label.font = FONT_PLAIN_11
                 label.border = JBUI.Borders.emptyBottom(2)
                 recentIssuesPanel.add(label)
             }
@@ -171,18 +180,18 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val health = state.projectHealth
         if (health.maintainabilityRating.isNotEmpty()) {
             healthRatingLabel.text = health.maintainabilityRating
-            healthRatingLabel.font = healthRatingLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+            healthRatingLabel.font = FONT_BOLD_18
             healthRatingLabel.foreground = ratingColor(health.maintainabilityRating)
         } else {
             healthRatingLabel.text = "—"
             healthRatingLabel.foreground = JBColor.GRAY
-            healthRatingLabel.font = healthRatingLabel.font.deriveFont(Font.BOLD, JBUI.scale(18).toFloat())
+            healthRatingLabel.font = FONT_BOLD_18
         }
 
         healthDetailsPanel.removeAll()
         if (health.technicalDebtMinutes > 0 || health.maintainabilityRating.isNotEmpty()) {
             val debtLabel = JBLabel("Debt: ${health.formattedDebt}")
-            debtLabel.font = debtLabel.font.deriveFont(JBUI.scale(10).toFloat())
+            debtLabel.font = FONT_PLAIN_10
             debtLabel.foreground = JBColor.GRAY
             healthDetailsPanel.add(debtLabel)
 
@@ -190,17 +199,17 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
                 "Reliability: <font color='${htmlColor(ratingColor(health.reliabilityRating))}'>${health.reliabilityRating.ifEmpty { "—" }}</font> " +
                 "Security: <font color='${htmlColor(ratingColor(health.securityRating))}'>${health.securityRating.ifEmpty { "—" }}</font>" +
                 "</html>")
-            ratingsLabel.font = ratingsLabel.font.deriveFont(JBUI.scale(10).toFloat())
+            ratingsLabel.font = FONT_PLAIN_10
             healthDetailsPanel.add(ratingsLabel)
 
             val dupLabel = JBLabel("Duplication: %.1f%%".format(health.duplicatedLinesDensity))
-            dupLabel.font = dupLabel.font.deriveFont(JBUI.scale(10).toFloat())
+            dupLabel.font = FONT_PLAIN_10
             dupLabel.foreground = JBColor.GRAY
             healthDetailsPanel.add(dupLabel)
 
             if (health.cognitiveComplexity > 0) {
                 val complexityLabel = JBLabel("Cognitive Complexity: ${health.cognitiveComplexity}")
-                complexityLabel.font = complexityLabel.font.deriveFont(JBUI.scale(10).toFloat())
+                complexityLabel.font = FONT_PLAIN_10
                 complexityLabel.foreground = JBColor.GRAY
                 healthDetailsPanel.add(complexityLabel)
             }
@@ -242,7 +251,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             )
             val titleLabel = JBLabel(title).apply {
                 foreground = JBColor.GRAY
-                font = font.deriveFont(Font.PLAIN, JBUI.scale(9).toFloat())
+                font = FONT_PLAIN_9
             }
             add(titleLabel, BorderLayout.NORTH)
             add(mainContent, BorderLayout.CENTER)

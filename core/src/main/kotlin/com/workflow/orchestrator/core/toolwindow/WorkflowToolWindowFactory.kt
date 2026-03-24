@@ -14,7 +14,10 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
+import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerListener
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -28,7 +31,9 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.SwingConstants
 
 class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
 
@@ -305,12 +310,17 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     // ---------------------------------------------------------------
-    // Tab building
+    // Tab building (C-05 / X-01: lazy tab loading)
     // ---------------------------------------------------------------
+
+    // Tracks which tabs have been materialized (created for real).
+    // Reset on each buildTabs() call so settings changes re-create everything.
+    private val materializedTabs = mutableSetOf<String>()
 
     private fun buildTabs(project: Project, toolWindow: ToolWindow) {
         val contentManager = toolWindow.contentManager
         contentManager.removeAllContents(true)
+        materializedTabs.clear()
 
         val providers = WorkflowTabProvider.EP_NAME.extensionList
             .sortedBy { it.order }
@@ -326,17 +336,65 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         )
 
         defaultTabs.forEach { tab ->
-            val panel = try {
-                val provider = providers[tab.title]
-                provider?.createPanel(project)
-                    ?: EmptyStatePanel(project, tab.emptyMessage)
-            } catch (e: Exception) {
-                log.warn("[Workflow:UI] Failed to create ${tab.title} tab: ${e.message}", e)
-                EmptyStatePanel(project, "Failed to load ${tab.title} tab.\n${e.message}")
+            val isFirstTab = tab.order == 0
+            val panel = if (isFirstTab) {
+                // Eagerly create the first/default tab so the user sees content immediately
+                materializeTab(project, tab, providers)
+            } else {
+                // Lightweight placeholder -- real panel created on first selection
+                LazyTabPlaceholder()
             }
             val content = ContentFactory.getInstance().createContent(panel, tab.title, false)
             content.isCloseable = false
             contentManager.addContent(content)
+        }
+
+        // Listen for tab selection to materialize lazy tabs on demand
+        contentManager.addContentManagerListener(object : ContentManagerListener {
+            override fun selectionChanged(event: ContentManagerEvent) {
+                val content = event.content
+                val tabTitle = content.displayName
+                if (event.operation == ContentManagerEvent.ContentOperation.add
+                    && tabTitle !in materializedTabs
+                ) {
+                    val tab = defaultTabs.firstOrNull { it.title == tabTitle } ?: return
+                    val realPanel = materializeTab(project, tab, providers)
+                    content.component = realPanel
+                    log.info("[Workflow:UI] Lazy-loaded tab: $tabTitle")
+                }
+            }
+        })
+    }
+
+    /**
+     * Creates the real panel for a tab and marks it as materialized.
+     */
+    private fun materializeTab(
+        project: Project,
+        tab: DefaultTab,
+        providers: Map<String, WorkflowTabProvider>
+    ): JComponent {
+        materializedTabs.add(tab.title)
+        return try {
+            val provider = providers[tab.title]
+            provider?.createPanel(project)
+                ?: EmptyStatePanel(project, tab.emptyMessage)
+        } catch (e: Exception) {
+            log.warn("[Workflow:UI] Failed to create ${tab.title} tab: ${e.message}", e)
+            EmptyStatePanel(project, "Failed to load ${tab.title} tab.\n${e.message}")
+        }
+    }
+
+    /**
+     * Lightweight placeholder panel used for lazy tab loading (C-05).
+     * Shown briefly while the real tab is being materialized on first selection.
+     */
+    private class LazyTabPlaceholder : JPanel(BorderLayout()) {
+        init {
+            val label = JBLabel("Loading...")
+            label.horizontalAlignment = SwingConstants.CENTER
+            label.foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            add(label, BorderLayout.CENTER)
         }
     }
 

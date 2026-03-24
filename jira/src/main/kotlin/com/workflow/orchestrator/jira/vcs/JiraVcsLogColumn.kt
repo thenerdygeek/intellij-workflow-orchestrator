@@ -10,10 +10,9 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.awt.Component
 import javax.swing.JTable
 import javax.swing.table.DefaultTableCellRenderer
@@ -29,7 +28,9 @@ class JiraVcsLogColumn : VcsLogCustomColumn<String> {
     private val log = Logger.getInstance(JiraVcsLogColumn::class.java)
     private val cache = TicketCache(maxSize = 500, ttlMs = 600_000)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val pendingFetches = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val fetchSemaphore = Semaphore(3) // Limit concurrent Jira API fetches
+    private val pendingFetches = java.util.concurrent.ConcurrentHashMap<String, Long>() // ticketId -> timestamp
+    private val pendingFetchTtlMs = 5 * 60 * 1000L // 5 minutes
     private val credentialStore by lazy { CredentialStore() }
     private val clientCache = java.util.concurrent.ConcurrentHashMap<String, JiraApiClient>()
 
@@ -52,34 +53,41 @@ class JiraVcsLogColumn : VcsLogCustomColumn<String> {
             return "$ticketId | ${cached.summary} (${cached.statusName})"
         }
 
+        // Clean up stale pending fetches (older than 5 minutes)
+        val now = System.currentTimeMillis()
+        pendingFetches.entries.removeIf { now - it.value > pendingFetchTtlMs }
+
         // Schedule async fetch if not already pending
-        if (ticketId !in pendingFetches) {
-            pendingFetches.add(ticketId)
+        if (pendingFetches.putIfAbsent(ticketId, now) == null) {
             val project = model.logData.project
             val settings = PluginSettings.getInstance(project)
             val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
             if (baseUrl.isNotBlank()) {
                 scope.launch {
                     try {
-                        val client = clientCache.getOrPut(baseUrl) {
-                            JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
-                        }
-                        when (val result = client.getIssue(ticketId)) {
-                            is ApiResult.Success -> {
-                                cache.put(ticketId, TicketCacheEntry(
-                                    ticketId,
-                                    result.data.fields.summary,
-                                    result.data.fields.status.name
-                                ))
+                        fetchSemaphore.withPermit {
+                            val client = clientCache.getOrPut(baseUrl) {
+                                JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
                             }
-                            is ApiResult.Error -> {
-                                log.debug("Could not fetch $ticketId: ${result.message}")
+                            when (val result = client.getIssue(ticketId)) {
+                                is ApiResult.Success -> {
+                                    cache.put(ticketId, TicketCacheEntry(
+                                        ticketId,
+                                        result.data.fields.summary,
+                                        result.data.fields.status.name
+                                    ))
+                                }
+                                is ApiResult.Error -> {
+                                    log.debug("Could not fetch $ticketId: ${result.message}")
+                                }
                             }
                         }
                     } finally {
                         pendingFetches.remove(ticketId)
                     }
                 }
+            } else {
+                pendingFetches.remove(ticketId)
             }
         }
 

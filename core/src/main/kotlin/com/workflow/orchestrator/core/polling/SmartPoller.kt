@@ -25,6 +25,14 @@ class SmartPoller(
     private val visible = AtomicBoolean(true)
     private var currentBackoff = 1.0
 
+    // C-04: Debounce visibility changes to prevent rapid tab switching from
+    // generating bursts of HTTP requests (e.g., 5 clicks -> 5 immediate polls)
+    @Volatile
+    private var lastVisibilityChangeMs: Long = 0L
+    internal companion object {
+        const val VISIBILITY_DEBOUNCE_MS = 1_000L
+    }
+
     fun start() {
         if (job?.isActive == true) return
         currentBackoff = 1.0
@@ -67,9 +75,21 @@ class SmartPoller(
 
     fun setVisible(isVisible: Boolean) {
         val wasHidden = !visible.getAndSet(isVisible)
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastVisibilityChangeMs
+        lastVisibilityChangeMs = now
+
         if (wasHidden && isVisible) {
-            // Became visible -- reset backoff and poll immediately
+            // Became visible -- reset backoff
             currentBackoff = 1.0
+
+            // Debounce: skip immediate poll if visibility changed recently
+            // (prevents rapid tab switching from generating HTTP request bursts)
+            if (elapsed < VISIBILITY_DEBOUNCE_MS) {
+                log.debug("[Poller:$name] Visibility debounced (${elapsed}ms < ${VISIBILITY_DEBOUNCE_MS}ms), skipping immediate poll")
+                return
+            }
+
             scope.launch {
                 try {
                     action()

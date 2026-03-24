@@ -7,8 +7,9 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.cody.protocol.ProtocolTextDocument
-import java.util.Timer
-import java.util.TimerTask
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 class CodyDocumentChangeListener(
     private val project: Project,
@@ -16,19 +17,20 @@ class CodyDocumentChangeListener(
 ) : DocumentListener {
 
     private val log = Logger.getInstance(CodyDocumentChangeListener::class.java)
-    private var debounceTimer: Timer? = null
+    private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "cody-debounce").apply { isDaemon = true }
+    }
+    private var pendingTask: ScheduledFuture<*>? = null
 
     override fun documentChanged(event: DocumentEvent) {
         // Capture document reference on EDT — the event itself is only valid during this callback
         val document = event.document
-        debounceTimer?.cancel()
-        debounceTimer = Timer("cody-debounce", true).apply {
-            schedule(object : TimerTask() {
-                override fun run() {
-                    sendDidChange(document)
-                }
-            }, DEBOUNCE_MS)
-        }
+        pendingTask?.cancel(false)
+        pendingTask = scheduler.schedule(
+            { sendDidChange(document) },
+            DEBOUNCE_MS,
+            TimeUnit.MILLISECONDS
+        )
     }
 
     private fun isIntegratedMode(): Boolean = try {
@@ -64,8 +66,9 @@ class CodyDocumentChangeListener(
     }
 
     fun dispose() {
-        debounceTimer?.cancel()
-        debounceTimer = null
+        pendingTask?.cancel(false)
+        pendingTask = null
+        scheduler.shutdownNow()
     }
 
     companion object {

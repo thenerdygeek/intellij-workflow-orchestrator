@@ -154,6 +154,8 @@
         <!-- SonarQube Project Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarDataService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.sonar.service.SpringEndpointCacheService"/>
 
         <!-- SonarQube Editor Integration -->
         <codeInsight.lineMarkerProvider language="JAVA"

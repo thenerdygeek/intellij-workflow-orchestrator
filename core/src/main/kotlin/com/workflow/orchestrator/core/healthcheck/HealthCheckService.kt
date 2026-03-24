@@ -96,18 +96,36 @@ class HealthCheckService(private val project: Project) : Disposable {
         )
 
         val startTime = System.currentTimeMillis()
-        val results = mutableMapOf<String, HealthCheck.CheckResult>()
+        val perCheckTimeoutMs = settings.healthCheckTimeoutSeconds * 1000L
+        val totalTimeoutMs = minOf(perCheckTimeoutMs * checksToRun.size, TOTAL_TIMEOUT_CAP_MS)
 
-        for (check in checksToRun) {
-            val result = withTimeoutOrNull(
-                settings.healthCheckTimeoutSeconds * 1000L
-            ) {
-                check.execute(context)
-            } ?: HealthCheck.CheckResult(
+        val results: Map<String, HealthCheck.CheckResult> = withTimeoutOrNull(totalTimeoutMs) {
+            supervisorScope {
+                checksToRun.map { check ->
+                    async {
+                        val result = try {
+                            withTimeoutOrNull(perCheckTimeoutMs) {
+                                check.execute(context)
+                            } ?: HealthCheck.CheckResult(
+                                passed = false,
+                                message = "${check.displayName} timed out after ${settings.healthCheckTimeoutSeconds}s"
+                            )
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            HealthCheck.CheckResult(
+                                passed = false,
+                                message = "${check.displayName} failed: ${e.message}"
+                            )
+                        }
+                        check.id to result
+                    }
+                }.awaitAll().toMap()
+            }
+        } ?: checksToRun.associate { check ->
+            check.id to HealthCheck.CheckResult(
                 passed = false,
-                message = "${check.displayName} timed out after ${settings.healthCheckTimeoutSeconds}s"
+                message = "${check.displayName} timed out (total health check time exceeded ${totalTimeoutMs / 1000}s cap)"
             )
-            results[check.id] = result
         }
 
         val passed = results.values.all { it.passed }
@@ -129,6 +147,9 @@ class HealthCheckService(private val project: Project) : Disposable {
     }
 
     companion object {
+        /** Hard cap on total health check wall time (all checks combined). */
+        const val TOTAL_TIMEOUT_CAP_MS = 120_000L
+
         fun getInstance(project: Project): HealthCheckService =
             project.getService(HealthCheckService::class.java)
     }

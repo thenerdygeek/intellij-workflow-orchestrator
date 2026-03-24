@@ -16,6 +16,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Project-level service that maintains lists of PRs authored by and
@@ -78,6 +80,9 @@ class PrListService(private val project: Project) : Disposable {
     @Volatile
     private var cachedUsername: String? = null
 
+    /** Limits concurrent repo fetches to 3 to prevent monopolizing the connection pool. */
+    private val repoFetchSemaphore = Semaphore(3)
+
     private val credentialStore = CredentialStore()
     @Volatile private var cachedClient: BitbucketBranchClient? = null
     @Volatile private var cachedBaseUrl: String? = null
@@ -136,24 +141,27 @@ class PrListService(private val project: Project) : Disposable {
             listOf(Triple(projectKey, repoSlug, repoSlug))
         }
 
-        // Fetch PRs from all repos in parallel
+        // Fetch PRs from all repos in parallel, limited to 3 concurrent repo fetches
+        // to prevent monopolizing the connection pool (10-40 API calls otherwise)
         val allMyPrs: List<BitbucketPrDetail>
         val allReviewingPrs: List<BitbucketPrDetail>
 
         coroutineScope {
             val results = repoEntries.map { (projectKey, repoSlug, repoName) ->
                 async {
-                    log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
+                    repoFetchSemaphore.withPermit {
+                        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
 
-                    // Fetch PRs authored by the current user (paginated)
-                    val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
-                    myResults.forEach { it.repoName = repoName }
+                        // Fetch PRs authored by the current user (paginated)
+                        val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
+                        myResults.forEach { it.repoName = repoName }
 
-                    // Fetch PRs where the current user is a reviewer (paginated)
-                    val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
-                    reviewResults.forEach { it.repoName = repoName }
+                        // Fetch PRs where the current user is a reviewer (paginated)
+                        val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
+                        reviewResults.forEach { it.repoName = repoName }
 
-                    Pair(myResults, reviewResults)
+                        Pair(myResults, reviewResults)
+                    }
                 }
             }.awaitAll()
 

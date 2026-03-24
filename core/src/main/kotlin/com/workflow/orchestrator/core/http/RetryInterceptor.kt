@@ -20,9 +20,10 @@ class RetryInterceptor(
         while (response.code in retryableCodes && attempt < maxRetries) {
             attempt++
             val delay = baseDelayMs * (1L shl (attempt - 1)) // exponential: 1x, 2x, 4x
-            log.warn("[Core:HTTP] Retry attempt $attempt/$maxRetries for ${request.url} — status ${response.code}, waiting ${delay.coerceAtMost(60_000)}ms")
+            val cappedDelay = delay.coerceAtMost(5_000)
+            log.warn("[Core:HTTP] Retry attempt $attempt/$maxRetries for ${request.url} — status ${response.code}, waiting ${cappedDelay}ms")
             response.close()
-            Thread.sleep(delay.coerceAtMost(60_000))
+            Thread.sleep(cappedDelay)
             response = chain.proceed(request)
         }
 

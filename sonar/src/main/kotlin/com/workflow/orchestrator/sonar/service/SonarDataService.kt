@@ -202,6 +202,10 @@ class SonarDataService(private val project: Project) : Disposable {
         if (size > 0) {
             log.info("[Sonar:LineCoverage] Cleared line coverage cache ($size entries)")
         }
+        // Also clear the Spring endpoint cache so stale endpoint data is not used
+        try {
+            SpringEndpointCacheService.getInstance(project).clearCache()
+        } catch (_: Exception) { /* service not yet initialized */ }
     }
 
     /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */
@@ -500,6 +504,9 @@ class SonarDataService(private val project: Project) : Disposable {
 
     override fun dispose() {
         scope.cancel()
+        lineCoverageCache.clear()
+        // Clean up per-project state in CoverageLineMarkerProvider (pendingFetches map)
+        com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider.clearProjectState(project)
     }
 
     /**

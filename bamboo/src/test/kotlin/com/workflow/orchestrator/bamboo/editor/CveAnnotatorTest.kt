@@ -72,8 +72,13 @@ class CveAnnotatorTest {
     fun `collectInformation returns info when CVEs present`() {
         val project = mockk<Project>()
         val file = mockk<XmlFile>()
+        val virtualFile = mockk<com.intellij.openapi.vfs.VirtualFile>()
+        every { virtualFile.path } returns "/project/pom.xml"
         every { file.name } returns "pom.xml"
         every { file.project } returns project
+        every { file.virtualFile } returns virtualFile
+        every { file.modificationStamp } returns 1L
+        every { file.findElementAt(any()) } returns null
 
         val settings = mockk<PluginSettings>()
         val state = mockk<PluginSettings.State>()

@@ -1,7 +1,8 @@
 package com.workflow.orchestrator.cody.service
 
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.smartReadAction
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -61,11 +62,14 @@ class PsiContextEnricher(private val project: Project) {
             if (vFile != null) detectMavenModule(vFile) else null
         }
 
-        // Read 5: Related files via ReferencesSearch (slowest — smartReadAction
-        // auto-cancels on write conflict and waits for smart mode before running)
+        // Read 5: Related files via ReferencesSearch (slowest — use non-blocking
+        // read action that auto-cancels when a write action comes in and retries,
+        // preventing long read-lock holds that block editor writes)
         val relatedFiles = if (psiClass != null) {
             try {
-                smartReadAction(project) { findRelatedFiles(psiClass) }
+                ReadAction.nonBlocking<List<String>> { findRelatedFiles(psiClass) }
+                    .inSmartMode(project)
+                    .executeSynchronously()
             } catch (_: Exception) {
                 emptyList()
             }
@@ -122,8 +126,10 @@ class PsiContextEnricher(private val project: Project) {
 
     private fun findRelatedFiles(psiClass: PsiClass): List<String> {
         return try {
+            ProgressManager.checkCanceled()
             val refs = ReferencesSearch.search(psiClass).findAll().take(10)
             refs.mapNotNull { ref ->
+                ProgressManager.checkCanceled()
                 ref.element.containingFile?.virtualFile?.path
             }.distinct()
         } catch (_: Exception) {

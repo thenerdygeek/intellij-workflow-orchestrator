@@ -14,7 +14,6 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.MappedIssue
 import com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 class CodyIntentionAction : IntentionAction {
@@ -60,7 +59,7 @@ class CodyIntentionAction : IntentionAction {
         val contextService = project.service<CodyContextService>()
 
         com.intellij.openapi.progress.runBackgroundableTask("Fixing with Cody", project) {
-            runBlocking(Dispatchers.IO) {
+            runBlocking {
                 val fixContext = contextService.gatherFixContext(
                     filePath = filePath,
                     issueRange = range,
