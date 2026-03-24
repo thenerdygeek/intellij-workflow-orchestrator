@@ -4,6 +4,7 @@ import {
   ReasoningTrigger,
   ReasoningContent,
 } from '../ui/prompt-kit/reasoning';
+import { TextShimmer } from '../ui/prompt-kit/text-shimmer';
 
 // ── Thinking Timer Hook ──
 
@@ -82,7 +83,11 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
           aria-label={`${open ? 'Collapse' : 'Expand'} reasoning`}
           style={{ color: 'var(--accent-thinking, #8b5cf6)' }}
         >
-          {label}
+          {isStreaming ? (
+            <TextShimmer duration={2} spread={30}>{label}</TextShimmer>
+          ) : (
+            label
+          )}
         </ReasoningTrigger>
 
         {/* Shimmer bar during streaming */}

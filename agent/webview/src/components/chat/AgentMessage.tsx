@@ -6,6 +6,7 @@ import {
   Message as PkMessage,
   MessageAvatar,
 } from '@/components/ui/prompt-kit/message';
+import { Loader } from '@/components/ui/prompt-kit/loader';
 import { cn } from '@/lib/utils';
 
 interface AgentMessageProps {
@@ -75,7 +76,7 @@ export const AgentMessage = memo(function AgentMessage({
         <MarkdownRenderer content={content} isStreaming={isStreaming} />
 
         {isStreaming && (
-          <span className="inline-block h-4 w-[2px] translate-y-[2px] bg-[var(--fg)] animate-[cursor-blink_530ms_step-end_infinite]" />
+          <Loader variant="terminal" size="sm" className="inline-block ml-0.5 align-text-bottom" />
         )}
 
         {/* Timestamp on hover */}
