@@ -158,9 +158,37 @@ class AuthService(private val credentials: CredentialStore) {
   w.endStream?.();
 }
 
+export function clearChat(): void {
+  const w = window as any;
+  w.clearChat?.();
+}
+
 export function installMockBridge(): void {
   const w = window as any;
-  w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming };
+
+  // Mock _searchMentions so @ autocomplete works in dev mode
+  w._searchMentions = (query: string) => {
+    const mockFiles = [
+      { type: 'file', label: 'src/App.tsx', path: 'src/App.tsx', description: 'Root component', icon: '📄' },
+      { type: 'file', label: 'src/main.tsx', path: 'src/main.tsx', description: 'Entry point', icon: '📄' },
+      { type: 'file', label: 'src/stores/chatStore.ts', path: 'src/stores/chatStore.ts', description: 'Chat state', icon: '📄' },
+      { type: 'folder', label: 'src/components/', path: 'src/components', description: 'UI components', icon: '📁' },
+      { type: 'folder', label: 'src/bridge/', path: 'src/bridge', description: 'Bridge layer', icon: '📁' },
+      { type: 'tool', label: 'read_file', path: '', description: 'Read a file', icon: '🔧' },
+      { type: 'tool', label: 'edit_file', path: '', description: 'Edit a file', icon: '🔧' },
+      { type: 'skill', label: 'systematic-debugging', path: '', description: 'Debugging skill', icon: '✨' },
+    ];
+    const [typeFilter, searchTerm] = query.includes(':') ? query.split(':', 2) as [string, string] : ['file', query];
+    const filtered = typeFilter === 'categories:'
+      ? mockFiles
+      : mockFiles.filter(r =>
+          (typeFilter === 'file' ? (r.type === 'file' || r.type === 'folder') : r.type === typeFilter) &&
+          (!searchTerm || r.label.toLowerCase().includes(searchTerm.toLowerCase()))
+        );
+    w.receiveMentionResults?.(JSON.stringify(filtered));
+  };
+
+  w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming, clearChat };
   console.log(
     '%c[Mock Bridge] Dev mode active. Available simulations:\n' +
     '  __mock.simulateAgentResponse()\n' +
@@ -168,7 +196,8 @@ export function installMockBridge(): void {
     '  __mock.simulateQuestions()\n' +
     '  __mock.simulateToolCalls()\n' +
     '  __mock.simulateStreaming()\n' +
-    '  __mock.simulateTheme(true|false)',
+    '  __mock.simulateTheme(true|false)\n' +
+    '  __mock.clearChat()',
     'color: #60a5fa; font-weight: bold'
   );
 }

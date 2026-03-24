@@ -69,7 +69,7 @@ const CATEGORY_STYLES: Record<ToolCategory, { className: string; label: string }
   EDIT:   { className: 'bg-[var(--badge-edit-bg,#2d1f3d)] text-[var(--badge-edit-fg,#c084fc)]',     label: 'EDIT' },
   CMD:    { className: 'bg-[var(--badge-cmd-bg,#1a2e1a)] text-[var(--badge-cmd-fg,#6ee77a)]',       label: 'CMD' },
   SEARCH: { className: 'bg-[var(--badge-search-bg,#1a2e3b)] text-[var(--badge-search-fg,#67d4e8)]', label: 'SEARCH' },
-  TOOL:   { className: 'bg-[var(--chip-bg,#2a2a2a)] text-[var(--accent,#6366f1)]',                  label: 'TOOL' },
+  TOOL:   { className: 'bg-[var(--chip-bg,#2a2a2a)] text-[var(--accent)]',                  label: 'TOOL' },
 };
 
 // ── Live Timer Hook ──
@@ -168,41 +168,42 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
     <div
       className={cn(
         'group relative',
-        isRunning && 'ring-1 ring-[var(--accent,#6366f1)] rounded-lg',
-        isError && 'ring-1 ring-[var(--error,#f06060)] rounded-lg',
+        isRunning && 'ring-1 ring-[var(--accent)] rounded-lg',
+        isError && 'ring-1 ring-[var(--error)] rounded-lg',
       )}
     >
       {/* Override prompt-kit Tool's internal collapsible to use our open state */}
-      <div className="[&_.border-border]:border-[var(--border,#333)]">
-        <div className="border-[var(--border,#333)] mt-2 overflow-hidden rounded-lg border">
+      <div>
+        <div className="mt-2 overflow-hidden rounded-lg border" style={{ borderColor: 'var(--border)' }}>
           <button
             onClick={() => setIsOpen((prev) => !prev)}
             aria-expanded={isOpen}
             aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${name} tool call`}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors duration-100 hover:brightness-110 bg-[var(--card-bg,#252525)]"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors duration-100 hover:brightness-110"
+            style={{ backgroundColor: 'var(--tool-bg)' }}
           >
             {/* Status indicator */}
             {isRunning && (
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 animate-spin">
-                <circle cx="8" cy="8" r="6" stroke="var(--fg-muted,#555)" strokeWidth="1.5" />
-                <path d="M8 2a6 6 0 0 1 6 6" stroke="var(--accent,#6366f1)" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="8" cy="8" r="6" stroke="var(--fg-muted)" strokeWidth="1.5" />
+                <path d="M8 2a6 6 0 0 1 6 6" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             )}
             {status === 'PENDING' && (
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <circle cx="8" cy="8" r="6" stroke="var(--fg-muted,#888)" strokeWidth="1.5" />
+                <circle cx="8" cy="8" r="6" stroke="var(--fg-muted)" strokeWidth="1.5" />
               </svg>
             )}
             {isCompleted && (
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <circle cx="8" cy="8" r="6" fill="var(--badge-cmd-bg,#1a2e1a)" />
-                <path d="M5 8l2 2 4-4" stroke="var(--badge-cmd-fg,#6ee77a)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="8" cy="8" r="6" fill="var(--badge-write-bg)" />
+                <path d="M5 8l2 2 4-4" stroke="var(--success)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
             {isError && (
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0">
-                <circle cx="8" cy="8" r="6" fill="var(--error-bg,#3b1a1a)" />
-                <path d="M6 6l4 4M10 6l-4 4" stroke="var(--error-fg,#f06060)" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="8" cy="8" r="6" fill="var(--diff-rem-bg)" />
+                <path d="M6 6l4 4M10 6l-4 4" stroke="var(--error)" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             )}
 
@@ -218,14 +219,14 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
             </Badge>
 
             {/* Tool name */}
-            <span className="text-[12px] font-medium text-[var(--fg,#ccc)]">
+            <span className="text-[12px] font-medium text-[var(--fg)]">
               {name}
             </span>
 
             {/* Target */}
             {target && (
               <span
-                className="truncate text-[11px] font-mono text-[var(--fg-muted,#888)]"
+                className="truncate text-[11px] font-mono text-[var(--fg-muted)]"
                 style={{ maxWidth: '200px' }}
               >
                 {target}
@@ -237,14 +238,14 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
 
             {/* Live timer while running */}
             {isRunning && liveTimer && (
-              <span className="text-[11px] font-mono tabular-nums text-[var(--accent,#6366f1)]">
+              <span className="text-[11px] font-mono tabular-nums text-[var(--accent)]">
                 {liveTimer}
               </span>
             )}
 
             {/* Duration badge on completion */}
             {(isCompleted || isError) && durationMs != null && (
-              <span className="rounded px-1.5 py-0.5 text-[10px] font-mono bg-[var(--badge-duration-bg,#2a2a2a)] text-[var(--fg-muted,#888)]">
+              <span className="rounded px-1.5 py-0.5 text-[10px] font-mono bg-[var(--chip-bg)] text-[var(--fg-muted)]">
                 {formatDuration(durationMs)}
               </span>
             )}
@@ -256,7 +257,7 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
               viewBox="0 0 16 16"
               fill="none"
               className={cn(
-                'shrink-0 transition-transform duration-200 text-[var(--fg-muted,#888)]',
+                'shrink-0 transition-transform duration-200 text-[var(--fg-muted)]',
                 isOpen && 'rotate-180',
               )}
             >
@@ -266,9 +267,9 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
 
           {/* Indeterminate progress bar */}
           {isRunning && (
-            <div className="h-[2px] w-full overflow-hidden bg-[var(--border,#333)]">
+            <div className="h-[2px] w-full overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
               <div
-                className="h-full w-1/3 bg-[var(--accent,#6366f1)]"
+                className="h-full w-1/3 bg-[var(--accent)]"
                 style={{ animation: 'indeterminate 1.5s ease-in-out infinite' }}
               />
             </div>
@@ -276,15 +277,15 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
 
           {/* Expandable details */}
           {isOpen && (
-            <div className="border-t border-[var(--border,#333)] px-3 py-2">
+            <div className="border-t px-3 py-2" style={{ borderColor: 'var(--border)' }}>
               {/* Input args */}
               {args && args.length > 0 && (
                 <div className="mb-2">
-                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-muted,#888)]">
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--fg-muted)]">
                     Input
                   </div>
                   <pre
-                    className="overflow-x-auto rounded p-2 text-[11px] leading-relaxed font-mono bg-[var(--code-bg,#1a1a1a)] text-[var(--fg,#ccc)]"
+                    className="overflow-x-auto rounded p-2 text-[11px] leading-relaxed font-mono bg-[var(--code-bg)] text-[var(--fg)]"
                     style={{ maxHeight: '200px', overflowY: 'auto' }}
                   >
                     {prettyPrint(args)}
@@ -298,7 +299,7 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
                   <div
                     className={cn(
                       'mb-1 text-[10px] font-semibold uppercase tracking-wider',
-                      isError ? 'text-[var(--error-fg,#f06060)]' : 'text-[var(--fg-muted,#888)]',
+                      isError ? 'text-[var(--error)]' : 'text-[var(--fg-muted)]',
                     )}
                   >
                     {isError ? 'Error' : 'Output'}
@@ -307,8 +308,8 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
                     className={cn(
                       'overflow-x-auto rounded p-2 text-[11px] leading-relaxed font-mono',
                       isError
-                        ? 'bg-[var(--error-bg,#3b1a1a)] text-[var(--error-fg,#f06060)]'
-                        : 'bg-[var(--code-bg,#1a1a1a)] text-[var(--fg,#ccc)]',
+                        ? 'bg-[var(--diff-rem-bg)] text-[var(--error)]'
+                        : 'bg-[var(--code-bg)] text-[var(--fg)]',
                     )}
                     style={{ maxHeight: '300px', overflowY: 'auto' }}
                   >
@@ -319,7 +320,7 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
 
               {/* Running placeholder */}
               {isRunning && !result && (
-                <div className="text-[11px] italic text-[var(--fg-muted,#888)]">
+                <div className="text-[11px] italic text-[var(--fg-muted)]">
                   Executing...
                 </div>
               )}

@@ -1,16 +1,17 @@
 import type { ThemeVars } from '../bridge/types';
 
 export const darkThemeDefaults: ThemeVars = {
-  'bg': '#2b2d30',
-  'fg': '#cbd5e1',
-  'fg-secondary': '#94a3b8',
-  'fg-muted': '#6b7280',
-  'border': '#3f3f46',
+  // Neutral dark — no purple tint. bg is the darkest surface, input/cards are elevated above it.
+  'bg': '#131315',
+  'fg': '#e2e4e9',
+  'fg-secondary': '#9ba1ab',
+  'fg-muted': '#64666e',
+  'border': '#2a2b2f',
 
-  'user-bg': '#1e293b',
-  'tool-bg': '#1a1d23',
-  'code-bg': '#1e1e2e',
-  'thinking-bg': '#1f2937',
+  'user-bg': '#1c1e24',
+  'tool-bg': '#181a1f',
+  'code-bg': '#0f1117',
+  'thinking-bg': '#1a1c22',
 
   'badge-read-bg': '#1e3a5f',
   'badge-read-fg': '#60a5fa',
@@ -40,31 +41,33 @@ export const darkThemeDefaults: ThemeVars = {
   'link': '#60a5fa',
 
   'hover-overlay': 'rgba(255,255,255,0.03)',
-  'hover-overlay-strong': 'rgba(255,255,255,0.05)',
-  'divider-subtle': 'rgba(255,255,255,0.05)',
+  'hover-overlay-strong': 'rgba(255,255,255,0.06)',
+  'divider-subtle': 'rgba(255,255,255,0.04)',
   'row-alt': 'rgba(255,255,255,0.02)',
-  'input-bg': '#1a1c22',
-  'input-border': 'rgba(255,255,255,0.08)',
-  'toolbar-bg': '#1e2028',
-  'chip-bg': 'rgba(255,255,255,0.03)',
-  'chip-border': 'rgba(255,255,255,0.07)',
+  // Input is elevated ABOVE the page background — lighter, not darker
+  'input-bg': '#1e1f23',
+  'input-border': 'rgba(255,255,255,0.07)',
+  'toolbar-bg': '#1a1b1f',
+  'chip-bg': 'rgba(255,255,255,0.04)',
+  'chip-border': 'rgba(255,255,255,0.08)',
 
   'accent': '#60a5fa',
   'running': '#60a5fa',
-  'pending': '#6b7280',
+  'pending': '#64666e',
 };
 
 export const lightThemeDefaults: ThemeVars = {
-  'bg': '#ffffff',
-  'fg': '#1e293b',
-  'fg-secondary': '#475569',
-  'fg-muted': '#64748b',
-  'border': '#e2e8f0',
+  // Neutral light — bg is the base white, input/cards slightly off-white elevated above it
+  'bg': '#f5f5f7',
+  'fg': '#111113',
+  'fg-secondary': '#4b4d55',
+  'fg-muted': '#82848e',
+  'border': '#e0e1e6',
 
-  'user-bg': '#f1f5f9',
-  'tool-bg': '#f8fafc',
-  'code-bg': '#f1f5f9',
-  'thinking-bg': '#f9fafb',
+  'user-bg': '#eaeaef',
+  'tool-bg': '#f0f0f5',
+  'code-bg': '#e8e8ed',
+  'thinking-bg': '#f0f0f5',
 
   'badge-read-bg': '#dbeafe',
   'badge-read-fg': '#2563eb',
@@ -94,18 +97,19 @@ export const lightThemeDefaults: ThemeVars = {
   'link': '#2563eb',
 
   'hover-overlay': 'rgba(0,0,0,0.03)',
-  'hover-overlay-strong': 'rgba(0,0,0,0.05)',
-  'divider-subtle': 'rgba(0,0,0,0.05)',
+  'hover-overlay-strong': 'rgba(0,0,0,0.06)',
+  'divider-subtle': 'rgba(0,0,0,0.04)',
   'row-alt': 'rgba(0,0,0,0.02)',
+  // Input is elevated ABOVE the page background — brighter white surface
   'input-bg': '#ffffff',
-  'input-border': '#e2e8f0',
-  'toolbar-bg': '#f8fafc',
-  'chip-bg': 'rgba(0,0,0,0.03)',
-  'chip-border': '#e2e8f0',
+  'input-border': '#d8d9de',
+  'toolbar-bg': '#ebebf0',
+  'chip-bg': 'rgba(0,0,0,0.04)',
+  'chip-border': '#d8d9de',
 
   'accent': '#2563eb',
   'running': '#2563eb',
-  'pending': '#64748b',
+  'pending': '#82848e',
 };
 
 export const fontDefaults = {

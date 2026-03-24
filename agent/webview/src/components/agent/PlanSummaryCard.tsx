@@ -33,34 +33,34 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
       role="region"
       aria-label="Plan summary"
       style={{
-        borderColor: 'var(--border, #333)',
-        backgroundColor: 'var(--card-bg, #252525)',
+        borderColor: 'var(--border)',
+        backgroundColor: 'var(--tool-bg)',
       }}
     >
       {/* Header */}
       <div
         className="flex items-center gap-3 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--border, #333)' }}
+        style={{ borderBottom: '1px solid var(--border)' }}
       >
         <div
           className="flex items-center justify-center rounded-md p-2"
-          style={{ backgroundColor: 'var(--code-bg, #1a1a1a)' }}
+          style={{ backgroundColor: 'var(--code-bg)' }}
         >
           <FileText
             size={18}
-            style={{ color: 'var(--accent, #6366f1)' }}
+            style={{ color: 'var(--accent)' }}
           />
         </div>
         <div className="flex-1 min-w-0">
           <div
             className="text-[13px] font-semibold truncate"
-            style={{ color: 'var(--fg, #ccc)' }}
+            style={{ color: 'var(--fg)' }}
           >
             {plan.title}
           </div>
           <div
             className="text-[11px] mt-0.5"
-            style={{ color: 'var(--fg-secondary, #aaa)' }}
+            style={{ color: 'var(--fg-secondary)' }}
           >
             {stepCount} step{stepCount !== 1 ? 's' : ''} planned
             {pendingCount < stepCount && (
@@ -72,8 +72,8 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           variant="outline"
           className="text-[10px] shrink-0"
           style={{
-            borderColor: 'var(--accent, #6366f1)',
-            color: 'var(--accent, #6366f1)',
+            borderColor: 'var(--accent)',
+            color: 'var(--accent)',
           }}
         >
           Awaiting Approval
@@ -88,8 +88,8 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           size="sm"
           variant="outline"
           style={{
-            borderColor: 'var(--accent, #6366f1)',
-            color: 'var(--accent, #6366f1)',
+            borderColor: 'var(--accent)',
+            color: 'var(--accent)',
           }}
         >
           <FileText size={14} />
@@ -100,7 +100,7 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           className="text-[12px] font-medium"
           size="sm"
           style={{
-            backgroundColor: 'var(--accent, #6366f1)',
+            backgroundColor: 'var(--accent)',
             color: 'var(--bg)',
           }}
         >
@@ -113,8 +113,8 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           size="sm"
           variant="outline"
           style={{
-            borderColor: 'var(--border, #333)',
-            color: 'var(--fg-secondary, #aaa)',
+            borderColor: 'var(--border)',
+            color: 'var(--fg-secondary)',
           }}
         >
           <RotateCcw size={14} />

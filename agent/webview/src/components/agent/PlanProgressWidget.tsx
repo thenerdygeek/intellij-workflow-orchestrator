@@ -66,32 +66,32 @@ export function PlanProgressWidget({ plan }: PlanProgressWidgetProps) {
       role="region"
       aria-label="Plan progress"
       style={{
-        borderColor: 'var(--border, #333)',
-        backgroundColor: 'var(--card-bg, #252525)',
+        borderColor: 'var(--border)',
+        backgroundColor: 'var(--tool-bg)',
       }}
     >
       {/* Overall header */}
       <div
         className="flex items-center gap-3 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--border, #333)' }}
+        style={{ borderBottom: '1px solid var(--border)' }}
       >
         <div className="flex-1 min-w-0">
           <div
             className="text-[13px] font-semibold truncate"
-            style={{ color: 'var(--fg, #ccc)' }}
+            style={{ color: 'var(--fg)' }}
           >
             {plan.title}
           </div>
           <div
             className="text-[11px] mt-0.5"
-            style={{ color: 'var(--fg-secondary, #aaa)' }}
+            style={{ color: 'var(--fg-secondary)' }}
           >
             {totalCompleted}/{totalSteps} steps completed
           </div>
         </div>
         <span
           className="text-[12px] font-semibold tabular-nums"
-          style={{ color: 'var(--accent, #6366f1)' }}
+          style={{ color: 'var(--accent)' }}
         >
           {overallProgress}%
         </span>
@@ -103,7 +103,7 @@ export function PlanProgressWidget({ plan }: PlanProgressWidgetProps) {
           value={overallProgress}
           className="h-1.5"
           style={{
-            backgroundColor: 'var(--code-bg, #1a1a1a)',
+            backgroundColor: 'var(--code-bg)',
           }}
         />
       </div>
@@ -156,7 +156,7 @@ function PhaseRow({
       style={{
         backgroundColor: isActive ? 'var(--hover-overlay, rgba(255,255,255,0.04))' : 'transparent',
         borderLeft: isActive
-          ? '2px solid var(--accent, #6366f1)'
+          ? '2px solid var(--accent)'
           : '2px solid transparent',
       }}
     >
@@ -167,12 +167,12 @@ function PhaseRow({
             style={{
               width: 18,
               height: 18,
-              backgroundColor: 'var(--badge-cmd-bg, #1a2e1a)',
+              backgroundColor: 'var(--badge-write-bg)',
             }}
           >
             <Check
               size={12}
-              style={{ color: 'var(--badge-cmd-fg, #6ee77a)' }}
+              style={{ color: 'var(--success)' }}
             />
           </div>
         ) : (
@@ -182,8 +182,8 @@ function PhaseRow({
               width: 18,
               height: 18,
               border: isActive
-                ? '2px solid var(--accent, #6366f1)'
-                : '2px solid var(--fg-muted, #888)',
+                ? '2px solid var(--accent)'
+                : '2px solid var(--fg-muted)',
               backgroundColor: 'transparent',
             }}
           />
@@ -193,10 +193,10 @@ function PhaseRow({
           className="flex-1 text-[12px] font-medium truncate"
           style={{
             color: isDone
-              ? 'var(--fg-muted, #888)'
+              ? 'var(--fg-muted)'
               : isActive
-                ? 'var(--fg, #ccc)'
-                : 'var(--fg-secondary, #aaa)',
+                ? 'var(--fg)'
+                : 'var(--fg-secondary)',
           }}
         >
           {name}
@@ -207,8 +207,8 @@ function PhaseRow({
             variant="outline"
             className="text-[9px] px-1.5 py-0"
             style={{
-              borderColor: 'var(--accent, #6366f1)',
-              color: 'var(--accent, #6366f1)',
+              borderColor: 'var(--accent)',
+              color: 'var(--accent)',
             }}
           >
             In Progress
@@ -217,7 +217,7 @@ function PhaseRow({
 
         <span
           className="text-[10px] tabular-nums"
-          style={{ color: 'var(--fg-muted, #888)' }}
+          style={{ color: 'var(--fg-muted)' }}
         >
           {completed}/{total}
         </span>
@@ -227,7 +227,7 @@ function PhaseRow({
         value={progress}
         className="h-1"
         style={{
-          backgroundColor: 'var(--code-bg, #1a1a1a)',
+          backgroundColor: 'var(--code-bg)',
         }}
       />
     </div>
