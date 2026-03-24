@@ -338,89 +338,136 @@ class PromptAssembler(
         val RENDERING_RULES = """
             <rendering>
             Your responses are rendered in a rich UI that supports animated, interactive visualizations.
-            All diagrams and charts are animated — never produce static visuals. Use these formats
-            when they genuinely improve understanding.
+            Use these formats when they genuinely improve understanding.
 
             SUPPORTED FORMATS:
 
-            1. Animated Flow Diagrams (PREFERRED for flows/pipelines/architecture) — use ```flow code blocks:
-               - Data flows, request pipelines, authentication flows, CI/CD pipelines, architecture
-               - Output a JSON object with nodes, edges, and optional title/direction
-               - The renderer auto-layouts with dagre and adds animated flowing particles along edges
-               - Nodes appear with staggered entrance animation, edges draw themselves, then
-                 glowing dots continuously flow along the paths showing data movement
+            1. ANIMATED FLOW DIAGRAMS (```flow) — PREFERRED for architecture/pipelines/request flows:
+               JSON with nodes, edges, optional groups. Auto-layouts with dagre.
 
-               Node types: start, end, process, decision, success, error, io, database
-               Direction: "TB" (top-to-bottom, default) or "LR" (left-to-right)
+               STEP-THROUGH ANIMATION: Add "animated": true to enable play/pause step-through.
+               The user clicks Play and watches data flow through the system node by node.
+               Add "highlightPath": ["nodeId1", "nodeId2", ...] to animate a specific path.
+               Node IDs can repeat for request-response: ["client","gw","auth","db","auth","gw","client"].
+               Add "pathLabels": ["Request","Forward","Query","Response","Token","200 OK"] for captions.
 
                Example:
                ```flow
                {
-                 "title": "Authentication Flow",
-                 "direction": "TB",
+                 "title": "Auth Request Flow",
+                 "direction": "LR",
                  "nodes": [
-                   {"id": "1", "label": "HTTP Request", "type": "start"},
-                   {"id": "2", "label": "Parse Headers", "type": "process"},
-                   {"id": "3", "label": "Valid Token?", "type": "decision"},
-                   {"id": "4", "label": "Load User", "type": "database"},
-                   {"id": "5", "label": "Return 200", "type": "success"},
-                   {"id": "6", "label": "Return 401", "type": "error"}
+                   {"id": "client", "label": "Client"},
+                   {"id": "gw", "label": "API Gateway"},
+                   {"id": "auth", "label": "Auth Service"},
+                   {"id": "db", "label": "User DB"}
                  ],
                  "edges": [
-                   {"from": "1", "to": "2", "label": "JWT"},
-                   {"from": "2", "to": "3"},
-                   {"from": "3", "to": "4", "label": "yes"},
-                   {"from": "3", "to": "6", "label": "no"},
-                   {"from": "4", "to": "5"}
+                   {"from": "client", "to": "gw", "label": "POST /login"},
+                   {"from": "gw", "to": "auth", "label": "validate"},
+                   {"from": "auth", "to": "db", "label": "query"}
+                 ],
+                 "animated": true,
+                 "highlightPath": ["client","gw","auth","db","auth","gw","client"],
+                 "pathLabels": ["Login request","Forward to auth","Query DB","User record","JWT token","200 OK"]
+               }
+               ```
+
+               Groups: Add "groups": [{"id":"g1","label":"Backend","nodeIds":["auth","db"]}] for visual clustering.
+
+            2. MERMAID DIAGRAMS (```mermaid) — class, ER, state, Gantt, git graphs:
+               Sequence diagrams auto-animate: messages reveal one-by-one with play/pause controls.
+               No special flags needed — just write standard sequenceDiagram syntax.
+
+            3. INTERACTIVE CHARTS (```chart) — bar, line, pie, doughnut, radar with Chart.js JSON:
+               Add "id": "myChart" to enable incremental updates later.
+               Charts animate entrance automatically.
+
+            4. DATA TABLES (```table) — sortable, searchable tables:
+               ```table
+               {
+                 "columns": ["Build", "Status", "Duration", "Branch"],
+                 "rows": [
+                   ["#456", "PASSED", "2m 30s", "main"],
+                   ["#455", "FAILED", "1m 12s", "feature/auth"]
+                 ],
+                 "sortable": true,
+                 "searchable": true
+               }
+               ```
+               Use for: build results, test results, Jira ticket lists, any tabular data with 3+ rows.
+
+            5. TIMELINE (```timeline) — chronological events with status colors:
+               ```timeline
+               {
+                 "title": "Build Pipeline",
+                 "events": [
+                   {"time": "10:30", "label": "Build started", "status": "info"},
+                   {"time": "10:32", "label": "Tests passed", "status": "success"},
+                   {"time": "10:35", "label": "Deploy failed", "status": "error"}
                  ]
                }
                ```
+               Status: "info" (blue), "success" (green), "warning" (amber), "error" (red).
+               Use for: build history, deployment pipelines, incident timelines.
 
-            2. Mermaid Diagrams — use ```mermaid code blocks for:
-               - Class diagrams, ER diagrams, Gantt charts, git graphs, state diagrams
-               - These render with animated node entrance + flowing edges automatically
-               - Syntax rules: no quotation marks in labels, no parentheses, use <br/> for breaks
-               - Prefer ```flow over ```mermaid for flowcharts and sequence-like diagrams
-
-            3. Interactive Charts — use ```chart code blocks with Chart.js JSON config for:
-               - Numeric comparisons, trends, distributions, metrics breakdowns
-               - Charts animate automatically with staggered bar/point entrance
-               - Supported types: bar, line, pie, doughnut, radar, polarArea
-
-               Example:
-               ```chart
+            6. PROGRESS (```progress) — real-time progress with phases:
+               ```progress
                {
-                 "type": "bar",
-                 "data": {
-                   "labels": ["Module A", "Module B", "Module C"],
-                   "datasets": [{
-                     "label": "Test Coverage %",
-                     "data": [85, 72, 94],
-                     "backgroundColor": ["#4caf50", "#ff9800", "#2196f3"]
-                   }]
-                 },
-                 "options": { "scales": { "y": { "beginAtZero": true, "max": 100 } } }
+                 "title": "Running Tests",
+                 "phases": [
+                   {"label": "Compile", "status": "completed", "duration": "12s"},
+                   {"label": "Unit Tests", "status": "running", "progress": 67},
+                   {"label": "Integration", "status": "pending"}
+                 ],
+                 "overall": 45
                }
                ```
+               Use for: showing build/test/deployment progress with per-phase status.
 
-            4. Custom Visualizations — use ```visualization code blocks for:
-               - Fully custom animated HTML/CSS/JS rendered in sandboxed iframe
-               - Use when no other format fits (custom layouts, interactive elements)
-               - Theme CSS variables available: --bg, --fg, --accent, --border
-               - Keep self-contained, no external dependencies
+            7. COLLAPSIBLE OUTPUT (```output) — sectioned output with headers:
+               Use ### headers to create collapsible sections. First section expanded, rest collapsed.
+               ```output
+               ### Build Log
+               [INFO] Compiling...
+               [INFO] 47 files compiled
+               ### Test Results
+               Tests: 124 passed, 2 failed
+               ### Coverage
+               Overall: 78.3%
+               ```
+               Use for: long tool output, build logs, multi-section results.
 
-            5. LaTeX Math — use ${'$'}...${'$'} for inline, ${'$'}${'$'}...${'$'}${'$'} for block equations
+            8. IMAGE (```image) — images with click-to-zoom:
+               ```image
+               {"src": "http://workflow-agent/path/to/image.png", "alt": "Description", "caption": "Optional caption"}
+               ```
 
-            6. Diff Display — use ```diff code blocks for before/after comparisons
+            9. CODE ANNOTATIONS — line highlights and inline annotations on code blocks:
+               Add highlight={3,5-7} and annotation={3:"Bug here",7:"Fix applied"} after the language:
+               ```typescript highlight={3,5-7} annotation={3:"This line has the bug"}
+               const x = 1;
+               const y = 2;
+               const z = x + y; // highlighted + annotated
+               ```
+               Use for: explaining code, pointing out issues, showing what you changed and why.
+
+            10. CUSTOM VISUALIZATIONS (```visualization) — sandboxed HTML/CSS/JS iframe.
+
+            11. LATEX MATH — ${'$'}...${'$'} inline, ${'$'}${'$'}...${'$'}${'$'} block.
+
+            12. DIFF — ```diff for before/after comparisons. User can accept/reject/edit hunks.
 
             WHEN TO USE EACH:
-            - Data flows, pipelines, request paths, architecture → ```flow (animated particles)
-            - Class/ER/state/Gantt diagrams → ```mermaid (animated entrance + flowing edges)
-            - Numeric data, metrics, comparisons → ```chart (animated bars/lines)
-            - Fully custom interactive content → ```visualization
-            - Math notation → LaTeX
-            - Code changes → diff
-            - Simple explanations → plain markdown (don't over-visualize)
+            - System architecture, request flows, pipelines → ```flow with animated:true
+            - Sequence interactions → ```mermaid sequenceDiagram (auto-animates)
+            - Tabular data (builds, tickets, test results) → ```table
+            - Chronological events → ```timeline
+            - Build/test progress → ```progress
+            - Long output with sections → ```output
+            - Metrics, comparisons → ```chart
+            - Code explanation → highlight={} annotation={}
+            - Simple answers → plain markdown (don't over-visualize)
 
             WHEN NOT TO USE:
             - Don't create a chart for 1-2 data points — use text
