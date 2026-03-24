@@ -10,14 +10,18 @@ let cssLoaded = false;
 
 function loadDiff2Html(): Promise<Diff2HtmlModule> {
   if (!diff2htmlModulePromise) {
-    diff2htmlModulePromise = Promise.all([
-      import('diff2html'),
-      cssLoaded
-        ? Promise.resolve()
-        : import('diff2html/bundles/css/diff2html.min.css').then(() => {
-            cssLoaded = true;
-          }),
-    ]).then(([module]) => module);
+    // Load diff2html module. CSS is loaded separately to avoid hanging on
+    // dynamic CSS imports which can fail silently in JCEF's custom scheme.
+    diff2htmlModulePromise = import('diff2html').then((module) => {
+      // Try to load CSS but don't block on failure — the diff still renders,
+      // just without custom styling (fallback to inline styles).
+      if (!cssLoaded) {
+        import('diff2html/bundles/css/diff2html.min.css')
+          .then(() => { cssLoaded = true; })
+          .catch(() => { /* CSS load failed — non-fatal, diff still works */ });
+      }
+      return module;
+    });
   }
   return diff2htmlModulePromise;
 }

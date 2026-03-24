@@ -238,6 +238,10 @@ class AgentDashboardPanel(
         cefPanel?.onRejectDiffHunk = onReject
     }
 
+    fun setCefEditorTabCallback(onOpen: (String) -> Unit) {
+        cefPanel?.onOpenInEditorTab = onOpen
+    }
+
     // ═══════════════════════════════════════════════════
     //  Delegate API — routes to JCEF or fallback
     // ═══════════════════════════════════════════════════

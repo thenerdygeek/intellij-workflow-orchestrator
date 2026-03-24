@@ -114,6 +114,18 @@ class AgentController(
             LOG.info("Interactive HTML message: ${json.take(200)}")
         }
 
+        // Wire "Open in Editor Tab" button for visualizations (chart, flow, mermaid, diff, etc.)
+        dashboard.setCefEditorTabCallback { payload ->
+            try {
+                val json = kotlinx.serialization.json.Json.parseToJsonElement(payload)
+                val type = json.jsonObject["type"]?.jsonPrimitive?.content ?: "unknown"
+                val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: payload
+                AgentVisualizationTab.openVisualization(project, type, content)
+            } catch (e: Exception) {
+                LOG.warn("Failed to open visualization in editor tab: ${e.message}")
+            }
+        }
+
         // Wire diff hunk callbacks — apply or reject diff hunks via DiffHunkApplier
         dashboard.setCefDiffHunkCallbacks(
             onAccept = { filePath, hunkIndex, editedContent ->
