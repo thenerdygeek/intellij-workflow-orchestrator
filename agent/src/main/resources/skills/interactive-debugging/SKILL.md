@@ -2,7 +2,7 @@
 name: interactive-debugging
 description: Use when you need to set breakpoints, step through code, inspect runtime variables, or evaluate expressions in a live debug session. Escalation from systematic-debugging when static analysis is insufficient.
 user-invocable: false
-preferred-tools: [add_breakpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_stop, debug_pause, debug_run_to_cursor, evaluate_expression, get_stack_frames, get_variables, get_run_configurations, create_run_config, get_test_results, get_run_output, think]
+preferred-tools: [add_breakpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_stop, debug_pause, debug_run_to_cursor, evaluate_expression, get_stack_frames, get_variables, get_run_configurations, create_run_config, get_test_results, get_run_output, get_running_processes, think]
 ---
 
 # Interactive Debugging
@@ -72,6 +72,10 @@ Single-step through code. Use only when Patterns 1-2 didn't give you enough info
 - **Prefer `evaluate_expression`** over stepping to a variable assignment
 - **Prefer `debug_run_to_cursor`** over repeated `debug_step_over`
 
+## Session Failures
+
+If `start_debug_session` fails: check `compile_module` first (compilation errors prevent debugging), verify `get_run_configurations` has a valid config, create one with `create_run_config` if missing.
+
 ## Session Lifecycle
 
 ALWAYS follow this lifecycle:
@@ -116,3 +120,5 @@ add_breakpoint(file="UserController.kt", line=20, condition="request.getHeader('
 | Navigate | `debug_step_over/into/out`, `debug_run_to_cursor`, `debug_resume` | Move through code |
 | Inspect | `get_debug_state`, `get_variables`, `get_stack_frames`, `evaluate_expression` | Observe state |
 | Cleanup | `debug_stop`, `remove_breakpoint` | Always clean up |
+
+After resolving the issue, use `save_memory` to record the debugging approach and root cause for future reference.

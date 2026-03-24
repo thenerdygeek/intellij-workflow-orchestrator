@@ -1,7 +1,7 @@
 ---
 name: systematic-debugging
 description: Use when encountering any bug, test failure, build failure, or unexpected behavior — before proposing fixes. Enforces root-cause investigation with IDE-level diagnostics.
-preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, git_status, git_blame, think, run_tests, compile_module, get_test_results, get_run_output, get_running_processes]
+preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, call_hierarchy, git_status, git_blame, think, run_tests, compile_module, get_test_results, get_run_output, get_running_processes]
 ---
 
 # Systematic Debugging
@@ -74,7 +74,12 @@ Complete each phase before proceeding to the next.
    - Use `search_code` to find related patterns across the codebase
    - Where does the bad value originate? Keep tracing up until you find the source.
 
-6. **Gather Evidence in Multi-Component Systems**
+6. **For Build/CI Failures**
+   - Use `bamboo_get_build_log` and `bamboo_get_test_results` for structured failure information before investigating code
+   - For PR build failures, use `bitbucket_get_build_statuses` to check the latest CI results
+   - CI logs often reveal the root cause faster than local investigation
+
+7. **Gather Evidence in Multi-Component Systems**
    When the system has multiple layers (API → Service → Repository → Database):
    - Use `read_file` to examine each layer
    - Use `find_references` to trace the call chain
@@ -187,6 +192,9 @@ you genuinely need to observe runtime state.
 
    **Discuss with the user before attempting more fixes.**
 
+6. **Record the Fix**
+   After resolving a complex bug, use `save_memory` to record the root cause and fix approach for future sessions.
+
 ## Red Flags — STOP and Follow Process
 
 If you catch yourself thinking:
@@ -230,10 +238,3 @@ When a bug manifests deep in the call stack:
 5. **Fix at source** — not where the error appears
 
 **NEVER fix just where the error appears.** Trace back to the original trigger.
-
-## Real-World Impact
-
-- Systematic approach: 15-30 minutes to fix
-- Random fixes approach: 2-3 hours of thrashing
-- First-time fix rate: 95% vs 40%
-- New bugs introduced: Near zero vs common

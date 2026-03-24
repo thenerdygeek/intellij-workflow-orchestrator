@@ -45,17 +45,18 @@ Questions:
 
 ### Step 2: Identify Tools
 
-Use `think` to analyze which of the 52 available tools are relevant to this workflow.
+Use `think` to analyze which of the 86 available tools are relevant to this workflow.
 
-**Available tool categories:**
-- **Core:** read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, delegate_task, think
-- **IDE:** run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests
-- **VCS:** git_status, git_blame, find_implementations
-- **Spring:** spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules
+The agent has 86 tools across 10 categories. Use `think` to identify relevant tools, or refer to the tool list in the system prompt. Key categories:
+- **Core:** read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, agent, think
+- **IDE Intelligence:** run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations
+- **Runtime & Debug:** add_breakpoint, start_debug_session, get_debug_state, debug_step_over, evaluate_expression, get_variables, create_run_config, run_tests, get_test_results
+- **VCS:** git_status, git_blame, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list
+- **Spring & Framework:** spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules
 - **Jira:** jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work
 - **Bamboo:** bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results
 - **SonarQube:** sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks
-- **Bitbucket:** bitbucket_create_pr
+- **Bitbucket:** bitbucket_create_pr, bitbucket_get_pr_diff, bitbucket_get_pr_changes, bitbucket_get_pr_commits
 - **Planning:** create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill
 
 Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't restrictions — just priorities.
@@ -69,6 +70,12 @@ Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't
 - Be explicit about the workflow steps
 - Include `$ARGUMENTS` placeholder if the skill accepts input (e.g., ticket ID)
 - Explain WHY steps matter, not just WHAT to do
+
+**Advanced frontmatter fields** (use when needed):
+- `allowed-tools` — hard tool whitelist; overrides all tool selection when skill is active
+- `context: fork` — run the skill in an isolated worker session (10 iterations, 5 min timeout)
+- `agent` — subagent type to use when `context: fork` (e.g., `coder`, `explorer`)
+- `argument-hint` — autocomplete hint shown for skill arguments in the UI
 
 **Description writing tips:**
 - Be pushy — the description is how the agent decides to auto-trigger the skill

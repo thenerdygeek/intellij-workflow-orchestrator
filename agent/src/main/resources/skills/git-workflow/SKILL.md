@@ -1,7 +1,7 @@
 ---
 name: git-workflow
 description: Enterprise git workflow best practices. Use when working with branches, comparing changes, reviewing commits, investigating ticket changes, or any git-related task.
-preferred-tools: git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_blame, git_stash_list
+preferred-tools: [git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_blame, git_stash_list]
 ---
 
 # Git Workflow Best Practices
@@ -44,6 +44,18 @@ you may use run_command but ONLY for read-only operations. The following are aut
 - push, fetch, pull, clone (network operations)
 - reset --hard, clean -f, rebase, merge (destructive)
 - Any command referencing origin/ or upstream/ (remote refs)
+
+## PR-Related Tasks
+
+For PR-related git tasks, use Bitbucket tools: `bitbucket_get_pr_diff` for diffs, `bitbucket_get_pr_changes` for changed files, `bitbucket_get_pr_commits` for commit history, `bitbucket_create_pr` to create PRs.
+
+## CI Context
+
+Before confirming a branch is ready to merge, check `bamboo_build_status` or `bitbucket_get_build_statuses` for the latest build result.
+
+## Destructive Operations
+
+If the user asks to rebase, merge, or force-push, explain that these operations are blocked for safety. Offer to help prepare the command for the user to run manually.
 
 ## Common Mistakes to Avoid
 - Don't assume the base branch is "main" — enterprise repos often use "develop", "master", or custom names
