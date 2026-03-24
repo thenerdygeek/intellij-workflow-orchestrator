@@ -2,6 +2,29 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
 import { useThemeStore } from '@/stores/themeStore';
 
+// ── Chart instance registry for incremental updates ──
+
+const chartRegistry = new Map<string, any>();
+(window as any).__chartRegistry = chartRegistry;
+
+// Global function callable from Kotlin via JCEF to push incremental chart data updates
+(window as any).updateChart = (id: string, json: string) => {
+  const chart = chartRegistry.get(id);
+  if (chart && chart.canvas?.isConnected) {
+    try {
+      const update = JSON.parse(json);
+      if (update.data) {
+        Object.assign(chart.data, update.data);
+        chart.update('active');
+      }
+      if (update.options) {
+        Object.assign(chart.options, update.options);
+        chart.update('active');
+      }
+    } catch { /* ignore malformed JSON */ }
+  }
+};
+
 // ── Singleton lazy-load for Chart.js ──
 
 type ChartModule = typeof import('chart.js');
@@ -95,6 +118,27 @@ export function ChartView({ source }: ChartViewProps) {
         throw new Error('Invalid chart JSON configuration');
       }
 
+      const chartId = config.id as string | undefined;
+
+      // Handle incremental update action
+      if (config.action === 'update' && chartId) {
+        const existing = chartRegistry.get(chartId);
+        if (existing && existing.canvas?.isConnected) {
+          // Merge new data into existing chart
+          if (config.data) {
+            Object.assign(existing.data, config.data);
+          }
+          if (config.options) {
+            Object.assign(existing.options, config.options);
+          }
+          existing.update('active');
+          setIsLoading(false);
+          return;
+        }
+        // Canvas is stale — remove from registry, fall through to create new
+        chartRegistry.delete(chartId);
+      }
+
       // Apply theme-aware defaults
       const { fg, fgMuted, gridColor } = getThemeColors();
 
@@ -147,7 +191,23 @@ export function ChartView({ source }: ChartViewProps) {
         gridColor,
       );
 
+      // If previous chart had an ID, remove it from registry before creating new
+      if (chartRef.current) {
+        for (const [key, val] of chartRegistry) {
+          if (val === chartRef.current) {
+            chartRegistry.delete(key);
+            break;
+          }
+        }
+      }
+
       chartRef.current = new m.Chart(canvas, chartConfig as ConstructorParameters<typeof m.Chart>[1]);
+
+      // Register chart by ID for incremental updates
+      if (chartId) {
+        chartRegistry.set(chartId, chartRef.current);
+      }
+
       setIsLoading(false);
     } catch (err) {
       if (currentRender !== renderIdRef.current) return;
@@ -161,6 +221,13 @@ export function ChartView({ source }: ChartViewProps) {
 
     return () => {
       if (chartRef.current) {
+        // Remove from registry on unmount
+        for (const [key, val] of chartRegistry) {
+          if (val === chartRef.current) {
+            chartRegistry.delete(key);
+            break;
+          }
+        }
         chartRef.current.destroy();
         chartRef.current = null;
       }
