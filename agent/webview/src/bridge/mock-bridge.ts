@@ -3,7 +3,6 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 export async function simulateAgentResponse(): Promise<void> {
   const w = window as any;
   w.startSession?.('Explain the project structure');
-  w.appendUserMessage?.('Explain the project structure');
   w.setBusy?.(true);
   await delay(300);
 
@@ -166,20 +165,41 @@ export function clearChat(): void {
 export function installMockBridge(): void {
   const w = window as any;
 
+  // Mock _togglePlanMode for dev mode
+  w._togglePlanMode = (enabled: boolean) => {
+    console.log(`[bridge:dev] togglePlanMode(${enabled})`);
+  };
+
+  // Mock _changeModel for dev mode
+  w._changeModel = (modelId: string) => {
+    console.log(`[bridge:dev] changeModel(${modelId})`);
+    w.setModelName?.(modelId);
+  };
+
+  // Populate mock model list after bridge init
+  setTimeout(() => {
+    w.updateModelList?.(JSON.stringify([
+      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', description: 'Fast, intelligent' },
+      { id: 'claude-opus-4', name: 'Claude Opus 4', description: 'Most capable' },
+      { id: 'claude-haiku-3.5', name: 'Claude Haiku 3.5', description: 'Fastest' },
+    ]));
+    w.setModelName?.('Claude Sonnet 4');
+  }, 100);
+
   // Mock _searchMentions so @ autocomplete works in dev mode
   w._searchMentions = (query: string) => {
     const mockFiles = [
-      { type: 'file', label: 'src/App.tsx', path: 'src/App.tsx', description: 'Root component', icon: '📄' },
-      { type: 'file', label: 'src/main.tsx', path: 'src/main.tsx', description: 'Entry point', icon: '📄' },
-      { type: 'file', label: 'src/stores/chatStore.ts', path: 'src/stores/chatStore.ts', description: 'Chat state', icon: '📄' },
-      { type: 'folder', label: 'src/components/', path: 'src/components', description: 'UI components', icon: '📁' },
-      { type: 'folder', label: 'src/bridge/', path: 'src/bridge', description: 'Bridge layer', icon: '📁' },
-      { type: 'tool', label: 'read_file', path: '', description: 'Read a file', icon: '🔧' },
-      { type: 'tool', label: 'edit_file', path: '', description: 'Edit a file', icon: '🔧' },
-      { type: 'skill', label: 'systematic-debugging', path: '', description: 'Debugging skill', icon: '✨' },
+      { type: 'file', label: 'src/App.tsx', path: 'src/App.tsx', description: 'Root component' },
+      { type: 'file', label: 'src/main.tsx', path: 'src/main.tsx', description: 'Entry point' },
+      { type: 'file', label: 'src/stores/chatStore.ts', path: 'src/stores/chatStore.ts', description: 'Chat state' },
+      { type: 'folder', label: 'src/components/', path: 'src/components', description: 'UI components' },
+      { type: 'folder', label: 'src/bridge/', path: 'src/bridge', description: 'Bridge layer' },
+      { type: 'tool', label: 'read_file', path: '', description: 'Read a file' },
+      { type: 'tool', label: 'edit_file', path: '', description: 'Edit a file' },
+      { type: 'skill', label: 'systematic-debugging', path: '', description: 'Debugging skill' },
     ];
     const [typeFilter, searchTerm] = query.includes(':') ? query.split(':', 2) as [string, string] : ['file', query];
-    const filtered = typeFilter === 'categories:'
+    const filtered = typeFilter === 'categories'
       ? mockFiles
       : mockFiles.filter(r =>
           (typeFilter === 'file' ? (r.type === 'file' || r.type === 'folder') : r.type === typeFilter) &&

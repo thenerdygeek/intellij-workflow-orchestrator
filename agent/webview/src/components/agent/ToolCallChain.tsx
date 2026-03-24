@@ -154,7 +154,7 @@ export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCall
 
   return (
     <ChainOfThought className="my-2">
-      {toolCalls.map((tc, idx) => {
+      {toolCalls.map((tc) => {
         const category = getCategory(tc.name);
         const catStyle = CATEGORY_STYLES[category];
         const target = extractTarget(tc.args);
@@ -164,7 +164,7 @@ export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCall
 
         return (
           <ChainOfThoughtStep
-            key={tc.name + idx}
+            key={tc.id}
             defaultOpen={shouldDefaultOpen}
           >
             <ChainOfThoughtTrigger

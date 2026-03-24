@@ -32,8 +32,13 @@
   --ring: var(--accent);
   --card: var(--tool-bg);
   --card-foreground: var(--fg);
-  --popover: var(--tool-bg);
+  --popover: var(--bg);
   --popover-foreground: var(--fg);
+  --popover-border: var(--border);
+
+  /* Elevated surface for floating panels (dropdowns, popovers) —
+     set by theme controller, fallback uses toolbar-bg */
+  --surface-elevated: var(--toolbar-bg);
 
   /* === Agent-specific semantic tokens === */
   --tool-read: var(--accent-read);

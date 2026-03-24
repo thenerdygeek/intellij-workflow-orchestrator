@@ -532,6 +532,10 @@ class AgentCefPanel(
         callJs("endStream()")
     }
 
+    fun finalizeToolChain() {
+        callJs("finalizeToolChain()")
+    }
+
     fun appendToolCall(
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING

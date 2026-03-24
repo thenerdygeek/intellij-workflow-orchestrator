@@ -63,13 +63,24 @@ function ModelChip({ model }: { model: string }) {
 // ── PlanChip ──
 
 function PlanChip({ active }: { active: boolean }) {
+  const togglePlan = useCallback(() => {
+    // Toggle locally for immediate feedback, then notify Kotlin
+    const store = useChatStore.getState();
+    const newMode = active ? 'agent' : 'plan';
+    store.setInputMode?.(newMode as any);
+    window._togglePlanMode?.(!active);
+  }, [active]);
+
   return (
     <Button
       variant="ghost"
       size="sm"
       className="h-7 gap-1 px-1.5 text-[12px] font-medium"
-      style={{ color: active ? 'var(--accent, #60a5fa)' : undefined }}
-      onClick={() => window._togglePlanMode?.(!active)}
+      style={{
+        color: active ? 'var(--accent, #60a5fa)' : undefined,
+        backgroundColor: active ? 'var(--hover-overlay-strong, rgba(255,255,255,0.05))' : undefined,
+      }}
+      onClick={togglePlan}
       title={active ? 'Disable plan mode' : 'Enable plan mode'}
     >
       <ListChecks className="h-3 w-3" />

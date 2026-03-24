@@ -42,7 +42,8 @@ interface ChatState {
   // State
   messages: Message[];
   activeStream: { text: string; isStreaming: boolean } | null;
-  activeToolCalls: Map<string, ToolCall>;
+  activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
+  completedToolChains: ToolCall[][];       // finalized tool call groups (rendered inline with messages)
   plan: Plan | null;
   questions: Question[] | null;
   activeQuestionIndex: number;
@@ -75,6 +76,7 @@ interface ChatState {
   endStream(): void;
   addToolCall(name: string, args: string, status: ToolCallStatus): void;
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number): void;
+  finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
@@ -85,6 +87,7 @@ interface ChatState {
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
   setInputLocked(locked: boolean): void;
+  setInputMode(mode: 'agent' | 'plan'): void;
   setBusy(busy: boolean): void;
   setModelName(model: string): void;
   updateTokenBudget(used: number, max: number): void;
@@ -117,6 +120,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   activeStream: null,
   activeToolCalls: new Map(),
+  completedToolChains: [],
   plan: null,
   questions: null,
   activeQuestionIndex: 0,
@@ -159,6 +163,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [firstMessage],
       activeStream: null,
       activeToolCalls: new Map(),
+      completedToolChains: [],
       plan: null,
       questions: null,
       questionSummary: null,
@@ -175,10 +180,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   completeSession(info: SessionInfo) {
+    // Finalize any remaining active tool calls into completedToolChains
+    const state = get();
+    const remaining = Array.from(state.activeToolCalls.values());
+    const chains = remaining.length > 0
+      ? [...state.completedToolChains, remaining]
+      : state.completedToolChains;
     set({
       session: info,
       busy: false,
       activeStream: null,
+      activeToolCalls: new Map(),
+      completedToolChains: chains,
     });
   },
 
@@ -196,7 +209,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   appendToken(token: string) {
     set(state => {
+      const isFirstToken = state.activeStream == null;
       const stream = state.activeStream ?? { text: '', isStreaming: true };
+
+      // Auto-finalize the tool chain when the first token of a new text response arrives.
+      // This ensures tool calls render BEFORE the text that follows them.
+      if (isFirstToken && state.activeToolCalls.size > 0) {
+        const tools = Array.from(state.activeToolCalls.values());
+        return {
+          activeStream: { text: token, isStreaming: true },
+          completedToolChains: [...state.completedToolChains, tools],
+          activeToolCalls: new Map(),
+        };
+      }
+
       return {
         activeStream: {
           text: stream.text + token,
@@ -207,7 +233,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   endStream() {
-    const stream = get().activeStream;
+    const state = get();
+    const stream = state.activeStream;
+
     if (stream && stream.text.length > 0) {
       const message: Message = {
         id: nextId('msg'),
@@ -215,10 +243,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: stream.text,
         timestamp: Date.now(),
       };
-      set(state => ({
+      set({
         messages: [...state.messages, message],
         activeStream: null,
-      }));
+      });
     } else {
       set({ activeStream: null });
     }
@@ -226,8 +254,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addToolCall(name: string, args: string, status: ToolCallStatus) {
     set(state => {
+      const id = nextId('tc');
       const newMap = new Map(state.activeToolCalls);
-      newMap.set(name, { name, args, status });
+      newMap.set(id, { id, name, args, status });
       return { activeToolCalls: newMap };
     });
   },
@@ -235,11 +264,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
-      const existing = newMap.get(name);
-      if (existing) {
-        newMap.set(name, { ...existing, status, result, durationMs });
+      // Find the most recent tool call with this name (last entry wins for updates)
+      let targetKey: string | null = null;
+      for (const [key, tc] of newMap) {
+        if (tc.name === name) targetKey = key;
+      }
+      if (targetKey) {
+        const existing = newMap.get(targetKey)!;
+        newMap.set(targetKey, { ...existing, status, result, durationMs });
       } else {
-        newMap.set(name, { name, args: '', status, result, durationMs });
+        const id = nextId('tc');
+        newMap.set(id, { id, name, args: '', status, result, durationMs });
       }
       return { activeToolCalls: newMap };
     });
@@ -275,11 +310,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(state => ({ messages: [...state.messages, thinkingMessage] }));
   },
 
+  finalizeToolChain() {
+    // Move current active tool calls into completed chains (called before streaming final output)
+    const state = get();
+    const tools = Array.from(state.activeToolCalls.values());
+    if (tools.length === 0) return;
+    set({
+      completedToolChains: [...state.completedToolChains, tools],
+      activeToolCalls: new Map(),
+    });
+  },
+
   clearChat() {
     set({
       messages: [],
       activeStream: null,
       activeToolCalls: new Map(),
+      completedToolChains: [],
       plan: null,
       questions: null,
       questionSummary: null,
@@ -316,6 +363,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setInputLocked(locked: boolean) {
     set(state => ({
       inputState: { ...state.inputState, locked },
+    }));
+  },
+
+  setInputMode(mode: 'agent' | 'plan') {
+    set(state => ({
+      inputState: { ...state.inputState, mode },
     }));
   },
 

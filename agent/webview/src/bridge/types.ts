@@ -14,6 +14,7 @@ export interface Message {
 export type ToolCallStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERROR';
 
 export interface ToolCall {
+  id: string;
   name: string;
   args: string;
   status: ToolCallStatus;

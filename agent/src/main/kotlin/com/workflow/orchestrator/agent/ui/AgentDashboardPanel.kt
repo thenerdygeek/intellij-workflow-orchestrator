@@ -262,6 +262,10 @@ class AgentDashboardPanel(
         cefPanel?.flushStreamBuffer() ?: fallbackPanel?.flushStreamBuffer()
     }
 
+    fun finalizeToolChain() {
+        cefPanel?.finalizeToolChain()
+    }
+
     fun appendToolCall(
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING

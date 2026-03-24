@@ -555,6 +555,18 @@ class PromptAssembler(
               "Check SonarQube for new issues", "Create a PR for these changes"). Never use generic
               filler like "Let me know if you need help." Make the suggestions actionable and relevant.
             </rules>
+
+            <communication>
+            IMPORTANT: Include brief text alongside your tool calls to keep the user informed.
+            The user sees your text messages interleaved with tool call chains in the chat UI.
+            After a batch of reads/searches (exploration phase), include a 1-2 sentence status update
+            explaining what you found and what you'll do next. For example:
+            - After reading several files: "I now understand the data flow — the issue is in the validation layer. Let me fix it."
+            - After searching for a pattern: "Found 3 usages of the deprecated API. I'll update them one by one."
+            - Before starting edits: "The root cause is X. Here's my plan: update A, then B, then run tests."
+            These intermediate messages help the user follow your reasoning without waiting for the final response.
+            Do NOT write lengthy explanations — keep status updates to 1-2 sentences between tool call batches.
+            </communication>
         """.trimIndent()
 
         // --- Integration-specific rules (conditionally included based on active tools) ---

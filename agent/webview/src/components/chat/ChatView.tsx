@@ -114,6 +114,8 @@ export const ChatView = memo(function ChatView() {
   const messages = useChatStore(s => s.messages);
   const activeStream = useChatStore(s => s.activeStream);
   const activeToolCalls = useChatStore(s => s.activeToolCalls);
+  const completedToolChains = useChatStore(s => s.completedToolChains);
+  const busy = useChatStore(s => s.busy);
   const plan = useChatStore(s => s.plan);
   const questions = useChatStore(s => s.questions);
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
@@ -123,7 +125,7 @@ export const ChatView = memo(function ChatView() {
   const handleApprove = useCallback(() => resolveApproval(true), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval(false), [resolveApproval]);
 
-  // Convert tool calls map to sorted array
+  // Convert tool calls map to sorted array (preserves insertion order)
   const toolCallsArray = Array.from(activeToolCalls.values());
 
   // Stream placeholder message for rendering
@@ -136,6 +138,15 @@ export const ChatView = memo(function ChatView() {
       }
     : null;
 
+  // Interleave messages with their preceding completed tool chains.
+  // completedToolChains[i] corresponds to the chain that ran before messages[chainStartIdx + i].
+  // The first user message has no preceding chain, so chains align with agent messages.
+  // We track which chain to render next and insert it before the corresponding agent message.
+  let nextChainIdx = 0;
+
+  // Show working indicator between tool calls and final output (busy but nothing actively streaming or running)
+  const showThinkingBetweenCalls = busy && !activeStream && toolCallsArray.length === 0;
+
   return (
     <ChatContainerRoot
       className="relative flex-1 min-h-0"
@@ -143,17 +154,28 @@ export const ChatView = memo(function ChatView() {
       aria-label="Agent chat messages"
     >
       <ChatContainerContent className="px-4 py-3 pb-4 gap-3">
-        {/* Messages */}
-        {messages.map((msg, i) => (
-          <div
-            key={msg.id}
-            style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
-          >
-            <AgentMessage message={msg} />
-          </div>
+        {/* Messages interleaved with completed tool chains */}
+        {messages.map((msg, i) => {
+          // Render the completed tool chain before each agent message
+          const chain = msg.role === 'agent' && nextChainIdx < completedToolChains.length
+            ? completedToolChains[nextChainIdx++]
+            : null;
+          return (
+            <div key={msg.id}>
+              {chain && <ToolCallChain toolCalls={chain} />}
+              <div style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}>
+                <AgentMessage message={msg} />
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Render any remaining completed chains that haven't been paired with a message yet */}
+        {completedToolChains.slice(nextChainIdx).map((chain, i) => (
+          <ToolCallChain key={`chain-remaining-${i}`} toolCalls={chain} />
         ))}
 
-        {/* Active tool calls as connected chain */}
+        {/* Active (in-progress) tool calls */}
         {toolCallsArray.length > 0 && (
           <ToolCallChain toolCalls={toolCallsArray} />
         )}
@@ -177,6 +199,9 @@ export const ChatView = memo(function ChatView() {
         {questions && questions.length > 0 && (
           <QuestionView questions={questions} activeIndex={activeQuestionIndex} />
         )}
+
+        {/* Working indicator — shown when busy but between tool calls (waiting for LLM) */}
+        {showThinkingBetweenCalls && <WorkingIndicator />}
 
         {/* Streaming message */}
         {streamPlaceholder && (

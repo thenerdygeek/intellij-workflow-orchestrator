@@ -95,3 +95,17 @@ code, pre, .font-mono {
 .code-annotation-icon:hover .code-annotation-tooltip {
   display: block;
 }
+
+/* ============================================================
+   RADIX POPPER FIX
+   @floating-ui miscalculates the portal wrapper transform when
+   the trigger sits inside a deeply nested flex/overflow layout.
+   The wrapper gets position:fixed + transform:matrix(1,0,0,1,X,Y)
+   where Y is wrong (negative). Fix: anchor from bottom, keep
+   only the X translation via a CSS var set by a MutationObserver.
+   ============================================================ */
+[data-radix-popper-content-wrapper] {
+  top: auto !important;
+  bottom: 60px !important;
+  transform: translateX(var(--popper-fix-x, 0px)) !important;
+}

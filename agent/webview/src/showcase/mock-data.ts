@@ -12,11 +12,11 @@ export const mockStreamingMessage: Message = {
 };
 
 export const mockToolCalls: ToolCall[] = [
-  { name: 'read_file', args: '{"path": "src/config.ts"}', status: 'COMPLETED', result: 'File content (247 lines)', durationMs: 120 },
-  { name: 'search_code', args: '{"query": "deprecated", "glob": "**/*.ts"}', status: 'COMPLETED', result: '3 matches found', durationMs: 340 },
-  { name: 'edit_file', args: '{"path": "src/config.ts", "old": "legacy: true", "new": "modern: true"}', status: 'RUNNING', result: undefined, durationMs: undefined },
-  { name: 'run_command', args: '{"command": "npm test"}', status: 'COMPLETED', result: 'Tests: 47 passed, 2 failed\nTime: 12.4s', durationMs: 12400 },
-  { name: 'run_command', args: '{"command": "rm -rf dist/"}', status: 'ERROR', result: 'Permission denied', durationMs: 50 },
+  { id: 'tc-1', name: 'read_file', args: '{"path": "src/config.ts"}', status: 'COMPLETED', result: 'File content (247 lines)', durationMs: 120 },
+  { id: 'tc-2', name: 'search_code', args: '{"query": "deprecated", "glob": "**/*.ts"}', status: 'COMPLETED', result: '3 matches found', durationMs: 340 },
+  { id: 'tc-3', name: 'edit_file', args: '{"path": "src/config.ts", "old": "legacy: true", "new": "modern: true"}', status: 'RUNNING', result: undefined, durationMs: undefined },
+  { id: 'tc-4', name: 'run_command', args: '{"command": "npm test"}', status: 'COMPLETED', result: 'Tests: 47 passed, 2 failed\nTime: 12.4s', durationMs: 12400 },
+  { id: 'tc-5', name: 'run_command', args: '{"command": "rm -rf dist/"}', status: 'ERROR', result: 'Permission denied', durationMs: 50 },
 ];
 
 export const mockPlanPending: Plan = {

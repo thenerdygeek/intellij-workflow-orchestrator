@@ -9,13 +9,22 @@ import {
   CommandGroup,
   CommandItem,
 } from '@/components/ui/command';
+import { File, Folder, Hash, Wrench, Sparkles, AtSign } from 'lucide-react';
 
-const typeIcons: Record<string, string> = {
-  file: '📄',
-  folder: '📁',
-  symbol: '#',
-  tool: '🔧',
-  skill: '✨',
+const typeIconComponents: Record<string, React.ElementType> = {
+  file: File,
+  folder: Folder,
+  symbol: Hash,
+  tool: Wrench,
+  skill: Sparkles,
+};
+
+const typeIconColors: Record<string, string> = {
+  file: 'var(--accent-read, #3b82f6)',
+  folder: 'var(--accent-read, #3b82f6)',
+  symbol: '#a78bfa',
+  tool: 'var(--accent-write, #22c55e)',
+  skill: 'var(--accent-edit, #f59e0b)',
 };
 
 const typeLabels: Record<string, string> = {
@@ -62,8 +71,12 @@ export const MentionDropdown = memo(function MentionDropdown({
   return (
     <div className="absolute bottom-full left-0 mb-1 w-72 z-50">
       <Command
-        className="rounded-lg border shadow-lg"
-        style={{ backgroundColor: 'var(--popover)', borderColor: 'var(--border)' }}
+        className="rounded-lg"
+        style={{
+          backgroundColor: 'var(--surface-elevated, var(--toolbar-bg, var(--popover)))',
+          border: '1px solid var(--border)',
+          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)',
+        }}
       >
         <CommandInput
           placeholder="Search files, symbols, tools..."
@@ -83,7 +96,11 @@ export const MentionDropdown = memo(function MentionDropdown({
                   onSelect={handleSelect}
                   className="text-xs gap-2"
                 >
-                  <span className="text-[10px] opacity-60">{r.icon ?? typeIcons[r.type] ?? '@'}</span>
+                  {(() => {
+                    const IconComponent = typeIconComponents[r.type] ?? AtSign;
+                    const iconColor = typeIconColors[r.type] ?? 'var(--fg-muted)';
+                    return <IconComponent className="size-3.5 shrink-0" style={{ color: iconColor }} />;
+                  })()}
                   <span className="truncate">{r.label}</span>
                   {r.description && (
                     <span className="ml-auto text-[10px] truncate max-w-[120px]" style={{ color: 'var(--fg-muted)' }}>

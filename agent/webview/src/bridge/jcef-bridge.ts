@@ -47,6 +47,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateToolResult(result: string, durationMs: number, toolName: string) {
     stores?.getChatStore().updateToolCall(toolName, 'COMPLETED', result, durationMs);
   },
+  finalizeToolChain() {
+    stores?.getChatStore().finalizeToolChain();
+  },
   appendDiff(filePath: string, oldLines: string[], newLines: string[], accepted: boolean | null) {
     stores?.getChatStore().addDiff({ filePath, oldLines, newLines, accepted });
   },
