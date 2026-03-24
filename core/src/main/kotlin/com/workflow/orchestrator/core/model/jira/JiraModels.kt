@@ -16,7 +16,20 @@ data class JiraTicketData(
     val priority: String?,
     val description: String?,
     val labels: List<String> = emptyList(),
-    val transitions: List<JiraTransitionData> = emptyList()
+    val transitions: List<JiraTransitionData> = emptyList(),
+    val attachments: List<JiraAttachmentData> = emptyList()
+)
+
+/**
+ * Lightweight attachment metadata — enough for the LLM to know what's available
+ * and call downloadAttachment with the correct ID.
+ */
+@Serializable
+data class JiraAttachmentData(
+    val id: String,
+    val filename: String,
+    val mimeType: String? = null,
+    val sizeBytes: Long = 0
 )
 
 /**

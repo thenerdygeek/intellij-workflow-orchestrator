@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.model.jira.BoardData
 import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
+import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
 import com.workflow.orchestrator.core.model.jira.SprintData
@@ -67,6 +68,14 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             is ApiResult.Success -> {
                 val issue = result.data
                 val fields = issue.fields
+                val attachments = fields.attachment.map { att ->
+                    JiraAttachmentData(
+                        id = att.id,
+                        filename = att.filename,
+                        mimeType = att.mimeType,
+                        sizeBytes = att.size
+                    )
+                }
                 val data = JiraTicketData(
                     key = issue.key,
                     summary = fields.summary,
@@ -75,7 +84,8 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     type = fields.issuetype?.name ?: "Unknown",
                     priority = fields.priority?.name,
                     description = fields.description?.take(500),
-                    labels = fields.labels
+                    labels = fields.labels,
+                    attachments = attachments
                 )
                 ToolResult.success(
                     data = data,
@@ -84,6 +94,13 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                         append("\nStatus: ${data.status} | Type: ${data.type} | Assignee: ${data.assignee ?: "Unassigned"}")
                         if (data.priority != null) append(" | Priority: ${data.priority}")
                         if (data.labels.isNotEmpty()) append("\nLabels: ${data.labels.joinToString(", ")}")
+                        if (attachments.isNotEmpty()) {
+                            append("\nAttachments (${attachments.size}):")
+                            attachments.take(5).forEach { att ->
+                                append("\n  - ${att.filename} (id: ${att.id}, ${formatSize(att.sizeBytes)})")
+                            }
+                            if (attachments.size > 5) append("\n  ... and ${attachments.size - 5} more")
+                        }
                     }
                 )
             }
@@ -711,6 +728,12 @@ class JiraServiceImpl(private val project: Project) : JiraService {
      * This avoids duplicate client construction and ensures consistent auth handling.
      */
     fun getApiClient(): JiraApiClient? = client
+
+    private fun formatSize(bytes: Long): String = when {
+        bytes < 1024 -> "${bytes}B"
+        bytes < 1024 * 1024 -> "${bytes / 1024}KB"
+        else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))}MB"
+    }
 
     companion object {
         @JvmStatic
