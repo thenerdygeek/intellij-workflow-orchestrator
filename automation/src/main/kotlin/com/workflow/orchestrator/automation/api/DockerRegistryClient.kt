@@ -26,7 +26,9 @@ class DockerRegistryClient(
     private val registryUrl: String,
     private val tokenProvider: () -> String?,
     private val connectTimeoutSeconds: Long = 15,
-    private val readTimeoutSeconds: Long = 30
+    private val readTimeoutSeconds: Long = 30,
+    /** Set to true in tests using localhost mock servers to bypass private-IP realm rejection. */
+    internal var skipRealmValidation: Boolean = false
 ) {
     private val log = Logger.getInstance(DockerRegistryClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -176,7 +178,7 @@ class DockerRegistryClient(
         val service = params["service"] ?: ""
         val scope = params["scope"] ?: ""
 
-        if (!isRealmSafe(realm, registryUrl)) {
+        if (!skipRealmValidation && !isRealmSafe(realm, registryUrl)) {
             log.warn("[Docker] Rejected unsafe realm URL: $realm (registry: $registryUrl)")
             return null
         }

@@ -23,7 +23,8 @@ class DockerRegistryClientTest {
         server.start()
         client = DockerRegistryClient(
             registryUrl = server.url("/").toString().trimEnd('/'),
-            tokenProvider = { "test-basic-token" }
+            tokenProvider = { "test-basic-token" },
+            skipRealmValidation = true // localhost mock server would fail private-IP check
         )
     }
 
