@@ -1768,8 +1768,10 @@ class PrDetailPanel(
             return "<html><body style='font-family: sans-serif; color: $textColor;'>$html</body></html>"
         }
 
-        private fun sanitizeHref(url: String): String =
-            if (url.startsWith("http://") || url.startsWith("https://")) url else "#"
+        private fun sanitizeHref(url: String): String {
+            val trimmed = url.trim().lowercase()
+            return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) url else "#"
+        }
 
         private fun saveDescription() {
             val prId = currentPrId ?: return

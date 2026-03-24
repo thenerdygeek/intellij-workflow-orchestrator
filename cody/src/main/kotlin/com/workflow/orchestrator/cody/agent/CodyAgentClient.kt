@@ -33,20 +33,20 @@ class CodyAgentClient(private val project: Project) {
 
     @JsonRequest("secrets/get")
     fun secretsGet(params: SecretsKeyParams): CompletableFuture<String?> {
-        log.info("Agent requesting secret for key: ${params.key}")
+        log.debug("Agent requesting secret (key length: ${params.key.length})")
         return CompletableFuture.completedFuture(secrets[params.key])
     }
 
     @JsonRequest("secrets/store")
     fun secretsStore(params: SecretsStoreParams): CompletableFuture<Unit?> {
-        log.info("Agent storing secret for key: ${params.key}")
+        log.debug("Agent storing secret (key length: ${params.key.length})")
         secrets[params.key] = params.value
         return CompletableFuture.completedFuture(null)
     }
 
     @JsonRequest("secrets/delete")
     fun secretsDelete(params: SecretsKeyParams): CompletableFuture<Unit?> {
-        log.info("Agent deleting secret for key: ${params.key}")
+        log.debug("Agent deleting secret (key length: ${params.key.length})")
         secrets.remove(params.key)
         return CompletableFuture.completedFuture(null)
     }

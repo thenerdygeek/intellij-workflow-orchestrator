@@ -225,8 +225,22 @@ class DockerRegistryClient(
             return false
         }
 
-        // Realm host must match the registry host
-        return realmHost == registryHost
+        // Realm host must match or share the same parent domain as the registry host.
+        // Docker Hub uses registry-1.docker.io but auth.docker.io for token realm.
+        return realmHost == registryHost || sharesParentDomain(realmHost, registryHost)
+    }
+
+    /**
+     * Checks if two hosts share the same parent domain (e.g., auth.docker.io and registry-1.docker.io
+     * both share docker.io). Requires at least 2 domain segments to match.
+     */
+    private fun sharesParentDomain(host1: String, host2: String): Boolean {
+        val parts1 = host1.split('.')
+        val parts2 = host2.split('.')
+        if (parts1.size < 2 || parts2.size < 2) return false
+        val parent1 = parts1.takeLast(2).joinToString(".")
+        val parent2 = parts2.takeLast(2).joinToString(".")
+        return parent1 == parent2
     }
 
     private fun fetchBearerToken(challenge: DockerAuthChallenge): String? {
