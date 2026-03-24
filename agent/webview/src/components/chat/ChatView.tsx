@@ -104,7 +104,13 @@ export function WorkingIndicator() {
   return (
     <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
       <Loader variant="wave" size="md" />
-      <TextShimmer duration={3} className="text-[12px]">
+      <TextShimmer
+        duration={3}
+        className="text-[12px]"
+        style={{
+          backgroundImage: `linear-gradient(to right, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 30%, var(--accent-write, #22C55E) 50%, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 70%)`,
+        }}
+      >
         {phrase}
       </TextShimmer>
     </div>
