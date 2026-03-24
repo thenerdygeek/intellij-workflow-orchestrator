@@ -608,16 +608,16 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                 const nodeState = getNodeState(node.id, animStep, animSteps);
 
                 // Determine node visual properties based on animation state
+                // Active nodes: NO instant glow filter — the directional sweep IS the glow
                 const nodeStroke = nodeState === 'active' ? nodeColor
                   : nodeState === 'visited' ? nodeColor
                   : nodeState === 'unvisited' ? borderColor
                   : isHovered ? nodeColor : borderColor;
-                const nodeStrokeWidth = nodeState === 'active' ? 2.5
+                const nodeStrokeWidth = nodeState === 'active' ? 2
                   : nodeState === 'visited' ? 1.5
                   : nodeState === 'unvisited' ? 1.5
                   : isHovered ? 2 : 1.5;
                 const nodeOpacity = nodeState === 'unvisited' ? 0.3 : 1;
-                const nodeFilter = nodeState === 'active' ? 'url(#node-glow)' : undefined;
 
                 // Determine sweep direction for active glow
                 // Based on flow direction + whether this step's edge is reversed
@@ -650,7 +650,6 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                       fill={isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'}
                       stroke={nodeStroke}
                       strokeWidth={nodeStrokeWidth}
-                      filter={nodeFilter}
                     />
 
                     {/* Directional glow sweep for active nodes */}
@@ -663,9 +662,13 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                         height={node.height}
                         rx={8}
                         ry={8}
-                        fill={`${nodeColor}20`}
-                        stroke="none"
+                        fill={`${nodeColor}30`}
+                        stroke={nodeColor}
+                        strokeWidth={2.5}
+                        strokeOpacity={0}
                       >
+                        {/* Fade in the stroke */}
+                        <animate attributeName="stroke-opacity" from="0" to="1" dur="0.4s" fill="freeze" />
                         {sweepHorizontal ? (
                           <>
                             <animate
