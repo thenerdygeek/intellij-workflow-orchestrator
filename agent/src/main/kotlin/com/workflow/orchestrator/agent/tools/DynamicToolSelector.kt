@@ -9,8 +9,24 @@ package com.workflow.orchestrator.agent.tools
  * - PSI tools (file_structure, find_definition, etc.) always included — they're small and useful
  * - Post-edit tools (format, imports, semantic diagnostics) always included
  * - Integration tools injected when user message mentions relevant keywords
+ *
+ * Tool selection uses semantic groups instead of a flat keyword map.
+ * Each group bundles related keywords with their corresponding tools,
+ * making it easy to add new integrations and reason about coverage.
+ * Tools only expand across messages in a session — they never shrink.
  */
 object DynamicToolSelector {
+
+    /**
+     * A semantic group of related tools triggered by a set of keywords.
+     * When any keyword in the group matches the conversation context,
+     * all tools in the group are included.
+     */
+    data class ToolGroup(
+        val name: String,
+        val keywords: Set<String>,
+        val tools: Set<String>
+    )
 
     /** Core tools always available (small, essential for any coding task). */
     private val ALWAYS_INCLUDE = setOf(
@@ -22,174 +38,175 @@ object DynamicToolSelector {
         "think"
     )
 
-    /** Keyword patterns that trigger tool group injection. */
-    private val TOOL_TRIGGERS = mapOf(
-        // Jira tools triggered by ticket/issue/jira keywords
-        "jira" to setOf("jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_comment", "jira_get_comments", "jira_log_work", "jira_get_worklogs", "jira_get_sprints", "jira_get_linked_prs", "jira_get_boards", "jira_get_sprint_issues", "jira_get_board_issues", "jira_search_issues", "jira_get_dev_branches", "jira_start_work"),
-        "ticket" to setOf("jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_comment", "jira_get_comments", "jira_log_work", "jira_get_worklogs"),
-        "issue" to setOf("jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_search_issues"),
-        "sprint" to setOf("jira_get_ticket", "jira_get_sprints", "jira_get_sprint_issues"),
-        "transition" to setOf("jira_get_ticket", "jira_get_transitions", "jira_transition"),
-        "log work" to setOf("jira_log_work", "jira_get_worklogs"),
-        "log time" to setOf("jira_log_work", "jira_get_worklogs"),
-        "worklog" to setOf("jira_get_worklogs", "jira_log_work"),
-        "board" to setOf("jira_get_boards", "jira_get_board_issues"),
-        "start work" to setOf("jira_start_work"),
-        "linked pr" to setOf("jira_get_linked_prs"),
-        "dev status" to setOf("jira_get_dev_branches", "jira_get_linked_prs"),
-        "search issue" to setOf("jira_search_issues"),
+    // --- Tool name sets for each integration ---
 
-        // Bamboo tools triggered by build/ci/deploy keywords
-        "bamboo" to setOf("bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build", "bamboo_get_build_log", "bamboo_get_test_results", "bamboo_stop_build", "bamboo_cancel_build", "bamboo_get_artifacts", "bamboo_recent_builds", "bamboo_get_plans", "bamboo_get_plan_branches", "bamboo_get_running_builds", "bamboo_get_build_variables", "bamboo_get_plan_variables"),
-        "build" to setOf("compile_module", "bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build", "bamboo_recent_builds"),
-        "compile" to setOf("compile_module", "semantic_diagnostics"),
-        "ci" to setOf("bamboo_build_status", "bamboo_trigger_build", "bamboo_get_plans"),
-        "pipeline" to setOf("bamboo_build_status", "bamboo_trigger_build", "bamboo_get_plans"),
-        "test results" to setOf("bamboo_get_test_results"),
-        "build log" to setOf("bamboo_get_build_log"),
-        "deploy" to setOf("bamboo_trigger_build", "bamboo_trigger_stage"),
-        "artifact" to setOf("bamboo_get_artifacts"),
-        "stop build" to setOf("bamboo_stop_build"),
-        "cancel build" to setOf("bamboo_cancel_build"),
-        "running build" to setOf("bamboo_get_running_builds"),
-        "plan" to setOf("bamboo_get_plans", "bamboo_get_plan_branches", "bamboo_search_plans"),
-        "rerun" to setOf("bamboo_rerun_failed_jobs"),
-        "stage" to setOf("bamboo_trigger_stage"),
-        "variable" to setOf("bamboo_get_plan_variables", "bamboo_get_build_variables"),
+    private val JIRA_TOOL_NAMES = setOf(
+        "jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_comment",
+        "jira_get_comments", "jira_log_work", "jira_get_worklogs", "jira_get_sprints",
+        "jira_get_linked_prs", "jira_get_boards", "jira_get_sprint_issues",
+        "jira_get_board_issues", "jira_search_issues", "jira_get_dev_branches", "jira_start_work"
+    )
 
-        // Sonar tools triggered by quality/coverage/sonar keywords
-        "sonar" to setOf("sonar_issues", "sonar_quality_gate", "sonar_coverage", "sonar_search_projects", "sonar_analysis_tasks", "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"),
-        "quality" to setOf("sonar_issues", "sonar_quality_gate", "sonar_project_measures"),
-        "coverage" to setOf("sonar_coverage", "sonar_source_lines"),
-        "code smell" to setOf("sonar_issues", "sonar_issues_paged"),
-        "vulnerability" to setOf("sonar_issues", "sonar_issues_paged"),
-        "quality gate" to setOf("sonar_quality_gate", "sonar_branches"),
-        "analysis" to setOf("sonar_analysis_tasks"),
-        "compute engine" to setOf("sonar_analysis_tasks"),
-        "tech debt" to setOf("sonar_project_measures"),
-        "technical debt" to setOf("sonar_project_measures"),
-        "rating" to setOf("sonar_project_measures"),
-        "duplication" to setOf("sonar_project_measures"),
-        "source line" to setOf("sonar_source_lines"),
-        "measures" to setOf("sonar_project_measures"),
+    private val BAMBOO_TOOL_NAMES = setOf(
+        "bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build",
+        "bamboo_get_build_log", "bamboo_get_test_results", "bamboo_stop_build",
+        "bamboo_cancel_build", "bamboo_get_artifacts", "bamboo_recent_builds",
+        "bamboo_get_plans", "bamboo_get_plan_branches", "bamboo_get_running_builds",
+        "bamboo_get_build_variables", "bamboo_get_plan_variables",
+        "bamboo_get_project_plans", "bamboo_search_plans",
+        "bamboo_rerun_failed_jobs", "bamboo_trigger_stage"
+    )
 
-        // Runtime & Debug tools
-        "debug" to setOf("add_breakpoint", "remove_breakpoint", "list_breakpoints", "start_debug_session", "get_debug_state", "debug_step_over", "debug_step_into", "debug_step_out", "debug_resume", "debug_pause", "debug_run_to_cursor", "debug_stop", "evaluate_expression", "get_stack_frames", "get_variables", "get_run_configurations", "create_run_config"),
-        "breakpoint" to setOf("add_breakpoint", "remove_breakpoint", "list_breakpoints"),
-        "step over" to setOf("debug_step_over", "get_debug_state", "get_variables"),
-        "step into" to setOf("debug_step_into", "get_debug_state", "get_variables"),
-        "step through" to setOf("debug_step_over", "debug_step_into", "debug_step_out", "start_debug_session"),
-        "test result" to setOf("get_test_results", "get_run_output"),
-        "test output" to setOf("get_test_results", "get_run_output"),
-        "test fail" to setOf("get_test_results", "run_tests"),
-        "run config" to setOf("get_run_configurations", "create_run_config", "modify_run_config"),
-        "run configuration" to setOf("get_run_configurations", "create_run_config", "modify_run_config"),
-        "console" to setOf("get_run_output", "get_running_processes"),
-        "log output" to setOf("get_run_output"),
-        "evaluate" to setOf("evaluate_expression"),
-        "stack trace" to setOf("get_stack_frames"),
-        "stack frame" to setOf("get_stack_frames"),
+    private val SONAR_TOOL_NAMES = setOf(
+        "sonar_issues", "sonar_quality_gate", "sonar_coverage",
+        "sonar_search_projects", "sonar_analysis_tasks", "sonar_branches",
+        "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"
+    )
 
-        // Bitbucket tools triggered by PR/pull request keywords
-        "bitbucket" to setOf("bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment", "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status", "bitbucket_get_file_content", "bitbucket_add_reviewer", "bitbucket_update_pr_title", "bitbucket_get_branches", "bitbucket_create_branch", "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_approve_pr", "bitbucket_merge_pr", "bitbucket_decline_pr", "bitbucket_update_pr_description", "bitbucket_add_pr_comment", "bitbucket_check_merge_status", "bitbucket_remove_reviewer", "bitbucket_list_repos"),
-        "repo" to setOf("bitbucket_list_repos"),
-        "pull request" to setOf("bitbucket_create_pr", "bitbucket_get_pr_detail", "bitbucket_get_pr_commits", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_approve_pr", "bitbucket_merge_pr"),
-        "pr" to setOf("bitbucket_create_pr", "bitbucket_get_pr_detail", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_approve_pr", "bitbucket_merge_pr"),
-        "review" to setOf("bitbucket_get_reviewing_prs", "bitbucket_add_reviewer", "bitbucket_set_reviewer_status", "bitbucket_remove_reviewer", "bitbucket_approve_pr"),
-        "reviewer" to setOf("bitbucket_add_reviewer", "bitbucket_remove_reviewer", "bitbucket_set_reviewer_status", "bitbucket_search_users"),
-        "approve" to setOf("bitbucket_approve_pr", "bitbucket_set_reviewer_status"),
-        "inline comment" to setOf("bitbucket_add_inline_comment"),
-        "code review" to setOf("bitbucket_get_pr_diff", "bitbucket_get_pr_changes", "bitbucket_add_inline_comment", "bitbucket_get_pr_activities"),
-        "merge status" to setOf("bitbucket_check_merge_status"),
-        "decline" to setOf("bitbucket_decline_pr"),
-        "build status" to setOf("bitbucket_get_build_statuses"),
+    private val BITBUCKET_TOOL_NAMES = setOf(
+        "bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment",
+        "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status",
+        "bitbucket_get_file_content", "bitbucket_add_reviewer", "bitbucket_update_pr_title",
+        "bitbucket_get_branches", "bitbucket_create_branch", "bitbucket_search_users",
+        "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail",
+        "bitbucket_get_pr_activities", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff",
+        "bitbucket_get_build_statuses", "bitbucket_approve_pr", "bitbucket_merge_pr",
+        "bitbucket_decline_pr", "bitbucket_update_pr_description", "bitbucket_add_pr_comment",
+        "bitbucket_check_merge_status", "bitbucket_remove_reviewer", "bitbucket_list_repos"
+    )
 
-        // Spring tools triggered by spring/bean/endpoint keywords
-        "spring" to setOf("spring_context", "spring_endpoints", "spring_bean_graph", "spring_config", "spring_version_info", "spring_profiles", "spring_repositories", "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"),
-        "bean" to setOf("spring_context", "spring_bean_graph"),
-        "endpoint" to setOf("spring_endpoints"),
-        "controller" to setOf("spring_endpoints"),
-        "service" to setOf("spring_context"),
-        "repository" to setOf("bitbucket_list_repos", "spring_context", "spring_repositories"),
-        "injection" to setOf("spring_bean_graph"),
-        "autowired" to setOf("spring_bean_graph"),
+    private val DEBUG_TOOL_NAMES = setOf(
+        "add_breakpoint", "remove_breakpoint", "list_breakpoints",
+        "start_debug_session", "get_debug_state", "debug_step_over",
+        "debug_step_into", "debug_step_out", "debug_resume", "debug_pause",
+        "debug_run_to_cursor", "debug_stop", "evaluate_expression",
+        "get_stack_frames", "get_variables"
+    )
 
-        // IDE tools — triggered by code quality keywords
-        "format" to setOf("format_code"),
-        "reformat" to setOf("format_code"),
-        "import" to setOf("optimize_imports"),
-        "imports" to setOf("optimize_imports"),
-        "inspection" to setOf("run_inspections"),
-        "inspect" to setOf("run_inspections", "get_variables", "get_stack_frames", "get_debug_state"),
-        "lint" to setOf("run_inspections"),
-        "rename" to setOf("refactor_rename"),
-        "refactor" to setOf("refactor_rename"),
-        "quick fix" to setOf("list_quickfixes"),
-        "intention" to setOf("list_quickfixes"),
-        "test" to setOf("run_tests", "bamboo_get_test_results"),
-        "tests" to setOf("run_tests"),
-        "run test" to setOf("run_tests"),
+    private val VCS_TOOL_NAMES = setOf(
+        "git_status", "git_blame", "git_diff", "git_log", "git_branches",
+        "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base",
+        "git_file_history"
+    )
 
-        // VCS tools — triggered by git keywords
-        "git" to setOf("git_status", "git_blame", "git_diff", "git_log", "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history"),
-        "blame" to setOf("git_blame"),
-        "who changed" to setOf("git_blame"),
-        "branch" to setOf("git_status", "git_branches"),
-        "commit" to setOf("git_status", "git_log", "git_show_commit"),
-        "diff" to setOf("git_diff", "git_status"),
-        "changed files" to setOf("git_status", "git_diff"),
-        "log" to setOf("git_log"),
-        "history" to setOf("git_log", "git_file_history"),
-        "stash" to setOf("git_stash_list"),
-        "merge" to setOf("bitbucket_create_pr", "bitbucket_merge_pr", "bitbucket_check_merge_status", "git_merge_base"),
-        "implement" to setOf("find_implementations"),
-        "implementation" to setOf("find_implementations"),
-        "override" to setOf("find_implementations"),
+    private val SPRING_TOOL_NAMES = setOf(
+        "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
+        "spring_version_info", "spring_profiles", "spring_repositories",
+        "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"
+    )
 
-        // Framework tools
-        "config" to setOf("spring_config"),
-        "properties" to setOf("spring_config", "maven_properties"),
-        "application.properties" to setOf("spring_config"),
-        "application.yml" to setOf("spring_config"),
-        "entity" to setOf("jpa_entities"),
-        "table" to setOf("jpa_entities"),
-        "jpa" to setOf("jpa_entities"),
-        "hibernate" to setOf("jpa_entities"),
-        "module" to setOf("project_modules"),
-        "dependency" to setOf("maven_dependencies", "project_modules"),
-        "dependencies" to setOf("maven_dependencies", "project_modules"),
-        "pom" to setOf("maven_dependencies", "maven_properties", "maven_plugins", "project_modules"),
+    private val MAVEN_TOOL_NAMES = setOf(
+        "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
+        "project_modules"
+    )
 
-        // Maven tools
-        "maven" to setOf("maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles"),
-        "version" to setOf("spring_version_info"),
-        "plugin" to setOf("maven_plugins"),
-        "profile" to setOf("spring_profiles", "maven_profiles"),
+    private val RUNTIME_TOOL_NAMES = setOf(
+        "get_run_configurations", "create_run_config", "modify_run_config",
+        "delete_run_config", "get_running_processes", "get_run_output",
+        "get_test_results", "run_tests", "compile_module"
+    )
 
-        // Spring advanced tools
-        "security" to setOf("spring_security_config"),
-        "auth" to setOf("spring_security_config"),
-        "authentication" to setOf("spring_security_config"),
-        "authorization" to setOf("spring_security_config"),
-        "scheduled" to setOf("spring_scheduled_tasks"),
-        "cron" to setOf("spring_scheduled_tasks"),
-        "event" to setOf("spring_event_listeners"),
-        "listener" to setOf("spring_event_listeners"),
+    private val IDE_TOOL_NAMES = setOf(
+        "run_inspections", "refactor_rename", "list_quickfixes",
+        "find_implementations", "semantic_diagnostics"
+    )
 
-        // Memory tools
-        "remember" to setOf("save_memory"),
-        "memory" to setOf("save_memory"),
-        "learn" to setOf("save_memory"),
+    private val MEMORY_TOOL_NAMES = setOf("save_memory")
 
-        // Skill tools
-        "skill" to setOf("activate_skill", "deactivate_skill"),
-        "workflow" to setOf("activate_skill"),
+    private val SKILL_TOOL_NAMES = setOf("activate_skill", "deactivate_skill")
 
-        // File discovery tools
-        "find file" to setOf("glob_files"),
-        "list files" to setOf("glob_files"),
-        "what files" to setOf("glob_files"),
-        "file structure" to setOf("glob_files", "file_structure")
+    private val JPA_TOOL_NAMES = setOf("jpa_entities")
+
+    /** Semantic tool groups — each bundles related keywords with their tools. */
+    internal val TOOL_GROUPS = listOf(
+        ToolGroup(
+            "jira",
+            setOf("jira", "ticket", "issue", "sprint", "transition", "log work", "log time",
+                "worklog", "board", "backlog", "story", "epic", "assignee", "start work",
+                "linked pr", "dev status", "search issue"),
+            JIRA_TOOL_NAMES
+        ),
+        ToolGroup(
+            "bamboo",
+            setOf("bamboo", "build", "ci", "pipeline", "deploy", "artifact", "stage",
+                "compile", "test results", "build log", "stop build", "cancel build",
+                "running build", "plan", "rerun", "variable"),
+            BAMBOO_TOOL_NAMES + setOf("compile_module", "semantic_diagnostics")
+        ),
+        ToolGroup(
+            "sonar",
+            setOf("sonar", "quality", "coverage", "code smell", "vulnerability",
+                "quality gate", "gate", "analysis", "compute engine", "tech debt",
+                "technical debt", "rating", "duplication", "source line", "measures"),
+            SONAR_TOOL_NAMES
+        ),
+        ToolGroup(
+            "bitbucket",
+            setOf("bitbucket", "pr", "pull request", "merge", "review", "reviewer",
+                "approve", "decline", "inline comment", "code review", "merge status",
+                "build status", "repo"),
+            BITBUCKET_TOOL_NAMES
+        ),
+        ToolGroup(
+            "debug",
+            setOf("debug", "breakpoint", "step over", "step into", "step through",
+                "step out", "evaluate", "stack trace", "stack frame", "watch",
+                "console", "log output"),
+            DEBUG_TOOL_NAMES + setOf("get_run_output", "get_running_processes")
+        ),
+        ToolGroup(
+            "vcs",
+            setOf("git", "commit", "diff", "blame", "who changed", "log", "stash",
+                "rebase", "branch", "cherry", "changed files", "history",
+                "implement", "implementation", "override"),
+            VCS_TOOL_NAMES + setOf("find_implementations")
+        ),
+        ToolGroup(
+            "spring",
+            setOf("spring", "bean", "endpoint", "controller", "service", "repository",
+                "autowired", "injection", "config", "application.properties",
+                "application.yml", "security", "auth", "authentication", "authorization",
+                "scheduled", "cron", "event", "listener"),
+            SPRING_TOOL_NAMES
+        ),
+        ToolGroup(
+            "maven",
+            setOf("maven", "pom", "dependency", "dependencies", "plugin", "profile",
+                "module", "version", "gradle"),
+            MAVEN_TOOL_NAMES + setOf("spring_version_info")
+        ),
+        ToolGroup(
+            "runtime",
+            setOf("run", "execute", "process", "launch", "test result", "test output",
+                "test fail", "run config", "run configuration", "test", "tests", "run test"),
+            RUNTIME_TOOL_NAMES
+        ),
+        ToolGroup(
+            "ide",
+            setOf("format", "reformat", "import", "imports", "inspection", "inspect",
+                "lint", "rename", "refactor", "quick fix", "intention"),
+            IDE_TOOL_NAMES
+        ),
+        ToolGroup(
+            "jpa",
+            setOf("entity", "table", "jpa", "hibernate"),
+            JPA_TOOL_NAMES + setOf("spring_repositories")
+        ),
+        ToolGroup(
+            "memory",
+            setOf("remember", "memory", "learn"),
+            MEMORY_TOOL_NAMES
+        ),
+        ToolGroup(
+            "skill",
+            setOf("skill", "workflow"),
+            SKILL_TOOL_NAMES
+        ),
+        ToolGroup(
+            "file_discovery",
+            setOf("find file", "list files", "what files", "file structure"),
+            setOf("glob_files", "file_structure")
+        )
     )
 
     /** Maven tools to auto-include when project is detected as Maven. */
@@ -250,7 +267,8 @@ object DynamicToolSelector {
     }
 
     /**
-     * Select tools relevant to the conversation.
+     * Select tools relevant to the conversation using semantic group matching.
+     *
      * @param allTools All registered tools
      * @param conversationContext Recent user messages to scan for keywords
      * @param projectTools Tools auto-detected from project type (Maven/Spring/JPA). Pass from session cache.
@@ -283,10 +301,11 @@ object DynamicToolSelector {
         // Include project-type-detected tools (Maven/Spring/JPA — detected at session start)
         selectedNames.addAll(projectTools)
 
-        // Scan context for trigger keywords
-        for ((keyword, toolNames) in TOOL_TRIGGERS) {
-            if (lowerContext.contains(keyword)) {
-                selectedNames.addAll(toolNames)
+        // Scan context against semantic groups — when any keyword in a group matches,
+        // all tools in that group are included
+        for (group in TOOL_GROUPS) {
+            if (group.keywords.any { lowerContext.contains(it) }) {
+                selectedNames.addAll(group.tools)
             }
         }
 
@@ -311,10 +330,12 @@ object DynamicToolSelector {
 
     /**
      * Check if any integration tools are needed based on context.
-     * Used to decide if we should include the full tool set.
+     * Uses semantic groups for matching instead of flat keyword scan.
      */
     fun hasIntegrationTriggers(text: String): Boolean {
         val lower = text.lowercase()
-        return TOOL_TRIGGERS.keys.any { lower.contains(it) }
+        return TOOL_GROUPS.any { group ->
+            group.keywords.any { lower.contains(it) }
+        }
     }
 }
