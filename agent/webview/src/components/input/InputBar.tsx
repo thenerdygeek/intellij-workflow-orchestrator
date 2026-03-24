@@ -239,27 +239,25 @@ function InputBarContent({
         />
       )}
 
-      {/* Context chips */}
-      {mentions.length > 0 && (
-        <div className="flex flex-wrap gap-1 px-3 pt-2.5">
-          {mentions.map((mention, i) => (
-            <ContextChip
-              key={`${mention.type}-${mention.label}-${i}`}
-              mention={mention}
-              onRemove={() => onRemoveMention(i)}
-            />
-          ))}
+      {/* Inline chips + textarea — chips flow on the same line as the text input */}
+      <div className="flex flex-wrap items-center gap-1 px-3 pt-1.5 pb-0.5">
+        {mentions.map((mention, i) => (
+          <ContextChip
+            key={`${mention.type}-${mention.label}-${i}`}
+            mention={mention}
+            onRemove={() => onRemoveMention(i)}
+          />
+        ))}
+        <div className="flex-1 min-w-[120px]">
+          <PromptInputTextarea
+            placeholder={mentions.length > 0 ? 'Type your message...' : 'Ask anything... (@ context, # ticket, / skill)'}
+            className="text-[13px] leading-relaxed !min-h-[28px] !px-0 !py-0"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') onDismissMentions();
+            }}
+          />
         </div>
-      )}
-
-      {/* Textarea */}
-      <PromptInputTextarea
-        placeholder="Ask anything... (@ context, # ticket, / skill)"
-        className="text-[13px] leading-relaxed px-3"
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') onDismissMentions();
-        }}
-      />
+      </div>
 
       {/* Action row */}
       <PromptInputActions className="justify-between px-2 pb-2 pt-0.5">
