@@ -4,8 +4,8 @@ import { installMockBridge, simulateTheme } from './bridge/mock-bridge'
 import { useChatStore } from './stores/chatStore'
 import { useThemeStore } from './stores/themeStore'
 import { useSettingsStore } from './stores/settingsStore'
-import { MessageList } from '@/components/chat/MessageList'
-import { ChatInput } from '@/components/input/ChatInput'
+import { ChatView } from '@/components/chat/ChatView'
+import { InputBar } from '@/components/input/InputBar'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 
@@ -30,8 +30,7 @@ function App() {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        const chatInput = document.querySelector<HTMLTextAreaElement>('[data-chat-input]');
-        chatInput?.focus();
+        useChatStore.getState().focusInput();
       }
     }
     document.addEventListener('keydown', handleKeyDown);
@@ -41,8 +40,8 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
       <ScreenReaderAnnouncer />
-      <MessageList />
-      <ChatInput />
+      <ChatView />
+      <InputBar />
     </div>
   );
 }
