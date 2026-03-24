@@ -9,6 +9,7 @@ import {
   mockMentions,
   mockTableData, mockTimelineData, mockProgressData,
   mockOutputData, mockFlowWithGroups,
+  mockAnimatedFlow, mockSequenceDiagram,
 } from './showcase/mock-data';
 import { AgentMessage } from './components/chat/AgentMessage';
 import { ToolCallChain } from './components/agent/ToolCallChain';
@@ -29,6 +30,7 @@ import { TimelineView } from './components/rich/TimelineView';
 import { ProgressView } from './components/rich/ProgressView';
 import { CollapsibleOutput } from './components/rich/CollapsibleOutput';
 import { FlowDiagram } from './components/rich/FlowDiagram';
+import { MermaidDiagram } from './components/rich/MermaidDiagram';
 import { Sun, Moon } from 'lucide-react';
 
 // Install mock bridge globals so components don't crash
@@ -199,6 +201,22 @@ function Showcase() {
       {/* ── Collapsible Output ── */}
       <Section title="Collapsible Output">
         <CollapsibleOutput outputSource={mockOutputData} />
+      </Section>
+
+      {/* ── Animated Flow (Request Path) ── */}
+      <Section title="Animated Flow (Request Path)">
+        <p className="text-[10px] mb-2" style={{ color: 'var(--fg-muted)' }}>
+          Click Play to step through the authentication flow. Nodes glow on activation, traveling dots show data flow direction. Uses highlightPath for request + response.
+        </p>
+        <FlowDiagram source={mockAnimatedFlow} />
+      </Section>
+
+      {/* ── Animated Sequence Diagram ── */}
+      <Section title="Animated Sequence Diagram">
+        <p className="text-[10px] mb-2" style={{ color: 'var(--fg-muted)' }}>
+          Messages reveal one at a time. Click Play or use step controls.
+        </p>
+        <MermaidDiagram source={mockSequenceDiagram} />
       </Section>
 
       {/* ── Flow Diagram (with Groups) ── */}

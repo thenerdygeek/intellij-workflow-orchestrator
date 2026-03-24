@@ -147,6 +147,36 @@ Overall: 78.3%
   agent: 62.4% (-1.1%)
   jira: 91.2% (unchanged)`;
 
+// Animated flow mock
+export const mockAnimatedFlow = JSON.stringify({
+  title: 'Authentication Request Flow',
+  direction: 'LR',
+  nodes: [
+    { id: 'client', label: 'Client', color: '#3b82f6' },
+    { id: 'gateway', label: 'API Gateway' },
+    { id: 'auth', label: 'Auth Service', color: '#8b5cf6' },
+    { id: 'db', label: 'User DB', color: '#f59e0b' },
+  ],
+  edges: [
+    { from: 'client', to: 'gateway', label: 'POST /login' },
+    { from: 'gateway', to: 'auth', label: 'validate' },
+    { from: 'auth', to: 'db', label: 'query user' },
+  ],
+  animated: true,
+  highlightPath: ['client', 'gateway', 'auth', 'db', 'auth', 'gateway', 'client'],
+  pathLabels: ['Login request', 'Forward to auth', 'Query user DB', 'Return user record', 'Issue JWT token', '200 OK + JWT'],
+});
+
+// Mermaid sequence diagram mock
+export const mockSequenceDiagram = `sequenceDiagram
+    Client->>Gateway: POST /login {username, password}
+    Gateway->>Auth: validateCredentials(username, password)
+    Auth->>DB: SELECT * FROM users WHERE username=?
+    DB-->>Auth: UserRecord {id, hash, roles}
+    Auth->>Auth: bcrypt.compare(password, hash)
+    Auth-->>Gateway: {valid: true, token: "eyJ..."}
+    Gateway-->>Client: 200 OK {token, refreshToken}`;
+
 // Flow with groups mock
 export const mockFlowWithGroups = JSON.stringify({
   title: 'Module Dependencies',
