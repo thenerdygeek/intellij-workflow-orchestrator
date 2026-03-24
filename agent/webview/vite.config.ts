@@ -1,19 +1,24 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
+import { resolve } from 'path'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      '@': resolve(__dirname, 'src'),
     },
   },
   build: {
     outDir: '../src/main/resources/webview/dist',
     emptyOutDir: true,
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        // Showcase is dev-only — excluded from production build
+        ...(mode === 'development' ? { showcase: resolve(__dirname, 'showcase.html') } : {}),
+      },
       output: {
         manualChunks(id) {
           // Viz libraries get predictable chunk names for debugging
@@ -31,4 +36,4 @@ export default defineConfig({
       compress: { drop_console: true, drop_debugger: true },
     },
   },
-})
+}))
