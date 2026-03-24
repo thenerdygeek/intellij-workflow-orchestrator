@@ -127,6 +127,7 @@ export const ChatView = memo(function ChatView() {
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
   const pendingApproval = useChatStore(s => s.pendingApproval);
   const resolveApproval = useChatStore(s => s.resolveApproval);
+  const retryMessage = useChatStore(s => s.retryMessage);
 
   const handleApprove = useCallback(() => resolveApproval(true), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval(false), [resolveApproval]);
@@ -209,6 +210,33 @@ export const ChatView = memo(function ChatView() {
             isStreaming={activeStream?.isStreaming ?? false}
             streamText={activeStream?.text}
           />
+        )}
+
+        {/* Retry button — shown after agent failure */}
+        {retryMessage && !busy && (
+          <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
+            <button
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
+              style={{
+                color: 'var(--accent, #6366f1)',
+                backgroundColor: 'var(--hover-overlay, rgba(255,255,255,0.03))',
+                border: '1px solid var(--border)',
+              }}
+              onClick={() => {
+                const msg = retryMessage;
+                useChatStore.getState().sendMessage(msg, []);
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M12 1v3.5h-3.5M4 15v-3.5h3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Retry
+            </button>
+            <span className="text-[11px] truncate max-w-[300px]" style={{ color: 'var(--fg-muted)' }}>
+              {retryMessage}
+            </span>
+          </div>
         )}
 
         <ChatContainerScrollAnchor />
