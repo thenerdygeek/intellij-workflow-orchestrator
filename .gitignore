@@ -39,6 +39,10 @@ Thumbs.db
 # Temporary snapshots
 /flow-snapshot.md
 
+# Vite
+agent/webview/.vite/
+agent/webview/tsconfig.tsbuildinfo
+
 # Plugin
 /run/
 .superpowers/

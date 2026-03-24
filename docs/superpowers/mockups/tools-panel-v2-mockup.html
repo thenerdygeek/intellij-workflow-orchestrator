@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tools Panel v2 — Full Featured Mockup</title>
+<style>
+:root {
+  --bg: #2B2D30; --bg-dark: #1E1F22; --card: #1E293B; --border: #3F3F46;
+  --fg: #E2E8F0; --fg-secondary: #94A3B8; --muted: #64748B;
+  --blue: #3B82F6; --green: #22C55E; --amber: #F59E0B; --red: #EF4444;
+  --cyan: #06B6D4; --purple: #A855F7; --pink: #EC4899;
+  --badge-read-bg: rgba(59,130,246,0.12); --badge-read-fg: #60A5FA;
+  --badge-edit-bg: rgba(245,158,11,0.12); --badge-edit-fg: #FBBF24;
+  --badge-cmd-bg: rgba(239,68,68,0.12); --badge-cmd-fg: #F87171;
+  --badge-search-bg: rgba(6,182,212,0.12); --badge-search-fg: #22D3EE;
+  --badge-api-bg: rgba(168,85,247,0.12); --badge-api-fg: #C084FC;
+  --badge-plan-bg: rgba(34,197,94,0.12); --badge-plan-fg: #4ADE80;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; background: var(--bg-dark); color: var(--fg); padding: 20px; display: flex; gap: 20px; }
+
+/* ════════════════════════════════════════════
+   TOOLS PANEL (Left)
+   ════════════════════════════════════════════ */
+.tools-panel {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  width: 460px; max-height: 720px; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  flex-shrink: 0;
+}
+.tools-panel::-webkit-scrollbar { width: 6px; }
+.tools-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.panel-header {
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; background: var(--bg); z-index: 10;
+}
+.panel-header .title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.panel-header .title .icon { font-size: 16px; }
+.panel-header .stats {
+  font-size: 11px; color: var(--muted); font-family: monospace;
+  display: flex; align-items: center; gap: 6px;
+}
+.panel-header .stats .active-count { color: var(--green); font-weight: 600; }
+
+.search-bar {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 52px; background: var(--bg); z-index: 10;
+}
+.search-input {
+  width: 100%; padding: 7px 10px 7px 30px; background: var(--bg-dark); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--fg); font-size: 12px; outline: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: 8px center;
+}
+.search-input:focus { border-color: var(--blue); }
+
+/* Category */
+.category-header {
+  padding: 10px 16px 4px; display: flex; align-items: center; gap: 8px;
+  cursor: pointer; user-select: none;
+}
+.category-header:hover { background: rgba(255,255,255,0.02); }
+.category-header .chevron { font-size: 10px; color: var(--muted); transition: transform 0.2s; width: 14px; }
+.category-header .chevron.open { transform: rotate(90deg); }
+.category-header .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.category-header .cat-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; flex: 1; }
+.category-header .cat-count { font-size: 10px; color: var(--muted); font-family: monospace; }
+
+/* Tool Item */
+.tool-item {
+  display: flex; align-items: center; gap: 8px; padding: 5px 16px 5px 12px;
+  cursor: pointer; transition: background 0.1s; position: relative;
+}
+.tool-item:hover { background: rgba(255,255,255,0.04); }
+.tool-item.selected { background: rgba(59,130,246,0.08); }
+.tool-item.disabled { opacity: 0.35; }
+
+.tool-item .checkbox {
+  width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  cursor: pointer; transition: all 0.15s; font-size: 10px; color: transparent;
+}
+.tool-item .checkbox.checked { background: var(--blue); border-color: var(--blue); color: white; }
+.tool-item .checkbox:hover { border-color: var(--blue); }
+
+.tool-item .badge {
+  font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 0.3px; flex-shrink: 0; min-width: 32px; text-align: center;
+}
+.badge.read { background: var(--badge-read-bg); color: var(--badge-read-fg); }
+.badge.edit { background: var(--badge-edit-bg); color: var(--badge-edit-fg); }
+.badge.cmd { background: var(--badge-cmd-bg); color: var(--badge-cmd-fg); }
+.badge.search { background: var(--badge-search-bg); color: var(--badge-search-fg); }
+.badge.api { background: var(--badge-api-bg); color: var(--badge-api-fg); }
+.badge.plan { background: var(--badge-plan-bg); color: var(--badge-plan-fg); }
+
+.tool-item .name { font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--fg); min-width: 130px; }
+.tool-item .desc { font-size: 11px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-item .active-indicator { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+.separator { height: 1px; background: var(--border); margin: 4px 12px; }
+
+/* ════════════════════════════════════════════
+   TOOL DETAIL POPUP (Right)
+   ════════════════════════════════════════════ */
+.tool-detail {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  width: 500px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); overflow: hidden;
+  flex-shrink: 0;
+}
+.detail-header {
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.detail-header .badge { font-size: 11px; padding: 2px 8px; }
+.detail-header .tool-name { font-size: 16px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+
+.detail-section { padding: 12px 18px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.detail-section:last-child { border-bottom: none; }
+.detail-section .section-title {
+  font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 6px;
+}
+.detail-section .section-content { font-size: 13px; line-height: 1.6; color: var(--fg-secondary); }
+
+.detail-section .param-row {
+  display: flex; gap: 8px; padding: 4px 0; align-items: baseline;
+}
+.detail-section .param-name { font-family: monospace; font-size: 12px; color: var(--fg); min-width: 100px; }
+.detail-section .param-type { font-size: 11px; color: var(--blue); font-family: monospace; min-width: 50px; }
+.detail-section .param-desc { font-size: 11px; color: var(--muted); flex: 1; }
+.detail-section .param-required { font-size: 9px; color: var(--red); font-weight: 600; }
+
+.json-block {
+  background: var(--bg-dark); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  line-height: 1.5; overflow-x: auto; margin-top: 6px; position: relative;
+}
+.json-block .key { color: var(--badge-read-fg); }
+.json-block .str { color: var(--green); }
+.json-block .num { color: var(--amber); }
+.json-block .comment { color: var(--muted); font-style: italic; }
+.json-block .copy-btn {
+  position: absolute; top: 6px; right: 6px; background: var(--border); border: none;
+  border-radius: 4px; padding: 3px 8px; font-size: 10px; color: var(--muted);
+  cursor: pointer; opacity: 0; transition: opacity 0.15s;
+}
+.json-block:hover .copy-btn { opacity: 1; }
+
+.detail-tabs {
+  display: flex; border-bottom: 1px solid var(--border); padding: 0 18px;
+}
+.detail-tab {
+  padding: 8px 14px; font-size: 12px; color: var(--muted); cursor: pointer;
+  border-bottom: 2px solid transparent; transition: all 0.15s;
+}
+.detail-tab:hover { color: var(--fg); }
+.detail-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+</style>
+</head>
+<body>
+
+<!-- ════════ TOOLS PANEL ════════ -->
+<div class="tools-panel">
+  <div class="panel-header">
+    <div class="title"><span class="icon">🔧</span> Agent Tools</div>
+    <div class="stats"><span class="active-count">12</span> active / 44 total</div>
+  </div>
+  <div class="search-bar">
+    <input class="search-input" placeholder="Search tools..." />
+  </div>
+
+  <!-- ── Core (Always Active) ── -->
+  <div class="category-header">
+    <span class="chevron open">▶</span>
+    <span class="dot" style="background:var(--green)"></span>
+    <span class="cat-title">Core — Always Active</span>
+    <span class="cat-count">12</span>
+  </div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">READ</span><span class="name">read_file</span><span class="desc">Read file with line numbers</span><span class="active-indicator"></span></div>
+  <div class="tool-item selected"><div class="checkbox checked">✓</div><span class="badge edit">EDIT</span><span class="name">edit_file</span><span class="desc">Exact string replacement</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge search">FIND</span><span class="name">search_code</span><span class="desc">Pattern search across files</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge cmd">CMD</span><span class="name">run_command</span><span class="desc">Execute shell command</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">CHECK</span><span class="name">diagnostics</span><span class="desc">Syntax + semantic error check</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge edit">FMT</span><span class="name">format_code</span><span class="desc">Reformat to project code style</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge edit">IMP</span><span class="name">optimize_imports</span><span class="desc">Add missing / remove unused imports</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">PSI</span><span class="name">file_structure</span><span class="desc">Class/method signatures</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge search">PSI</span><span class="name">find_definition</span><span class="desc">Go to declaration</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge search">PSI</span><span class="name">find_references</span><span class="desc">Find all usages</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">PSI</span><span class="name">type_hierarchy</span><span class="desc">Class supertypes + subtypes</span><span class="active-indicator"></span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">PSI</span><span class="name">call_hierarchy</span><span class="desc">Method callers + callees</span><span class="active-indicator"></span></div>
+
+  <div class="separator"></div>
+
+  <!-- ── IDE Intelligence ── -->
+  <div class="category-header">
+    <span class="chevron open">▶</span>
+    <span class="dot" style="background:var(--amber)"></span>
+    <span class="cat-title">IDE Intelligence</span>
+    <span class="cat-count">5</span>
+  </div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">LINT</span><span class="name">run_inspections</span><span class="desc">500+ code quality checks</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge edit">REF</span><span class="name">refactor_rename</span><span class="desc">Safe project-wide rename</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">FIX</span><span class="name">list_quickfixes</span><span class="desc">Available Alt+Enter fixes</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge cmd">BLD</span><span class="name">compile_module</span><span class="desc">Incremental compile (2-5s)</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge cmd">TST</span><span class="name">run_tests</span><span class="desc">Run specific test class/method</span></div>
+
+  <div class="separator"></div>
+
+  <!-- ── VCS & Navigation ── -->
+  <div class="category-header">
+    <span class="chevron open">▶</span>
+    <span class="dot" style="background:var(--cyan)"></span>
+    <span class="cat-title">VCS & Navigation</span>
+    <span class="cat-count">3</span>
+  </div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">GIT</span><span class="name">git_status</span><span class="desc">Branch, changes, untracked</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">GIT</span><span class="name">git_blame</span><span class="desc">Who changed each line</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge search">PSI</span><span class="name">find_implementations</span><span class="desc">Interface method implementations</span></div>
+
+  <div class="separator"></div>
+
+  <!-- ── Spring & Framework ── -->
+  <div class="category-header">
+    <span class="chevron open">▶</span>
+    <span class="dot" style="background:var(--green)"></span>
+    <span class="cat-title">Spring & Framework</span>
+    <span class="cat-count">6</span>
+  </div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">SPR</span><span class="name">spring_context</span><span class="desc">List all Spring beans</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">SPR</span><span class="name">spring_endpoints</span><span class="desc">HTTP endpoints</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">SPR</span><span class="name">spring_bean_graph</span><span class="desc">DI dependency graph</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">CFG</span><span class="name">spring_config</span><span class="desc">application.properties values</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JPA</span><span class="name">jpa_entities</span><span class="desc">Entity classes + table mappings</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge read">MOD</span><span class="name">project_modules</span><span class="desc">Module structure + Maven</span></div>
+
+  <div class="separator"></div>
+
+  <!-- ── Jira ── -->
+  <div class="category-header">
+    <span class="chevron open">▶</span>
+    <span class="dot" style="background:var(--purple)"></span>
+    <span class="cat-title">Jira</span>
+    <span class="cat-count">6</span>
+  </div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JIRA</span><span class="name">jira_get_ticket</span><span class="desc">Ticket details + transitions</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JIRA</span><span class="name">jira_get_transitions</span><span class="desc">Available status changes</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JIRA</span><span class="name">jira_transition</span><span class="desc">Change ticket status</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JIRA</span><span class="name">jira_comment</span><span class="desc">Add comment</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JIRA</span><span class="name">jira_get_comments</span><span class="desc">Read comments</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge api">JIRA</span><span class="name">jira_log_work</span><span class="desc">Log time</span></div>
+
+  <div class="separator"></div>
+
+  <!-- ── CI/CD ── -->
+  <div class="category-header">
+    <span class="chevron">▶</span>
+    <span class="dot" style="background:var(--red)"></span>
+    <span class="cat-title">CI/CD — Bamboo</span>
+    <span class="cat-count">5</span>
+  </div>
+
+  <div class="separator"></div>
+
+  <!-- ── Quality ── -->
+  <div class="category-header">
+    <span class="chevron">▶</span>
+    <span class="dot" style="background:var(--pink)"></span>
+    <span class="cat-title">Quality — SonarQube</span>
+    <span class="cat-count">4</span>
+  </div>
+
+  <div class="separator"></div>
+
+  <!-- ── Pull Requests ── -->
+  <div class="category-header">
+    <span class="chevron">▶</span>
+    <span class="dot" style="background:var(--blue)"></span>
+    <span class="cat-title">Pull Requests — Bitbucket</span>
+    <span class="cat-count">1</span>
+  </div>
+
+  <div class="separator"></div>
+
+  <!-- ── Planning ── -->
+  <div class="category-header">
+    <span class="chevron open">▶</span>
+    <span class="dot" style="background:var(--amber)"></span>
+    <span class="cat-title">Planning</span>
+    <span class="cat-count">2</span>
+  </div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge plan">PLAN</span><span class="name">create_plan</span><span class="desc">Create implementation plan</span></div>
+  <div class="tool-item"><div class="checkbox checked">✓</div><span class="badge plan">PLAN</span><span class="name">update_plan_step</span><span class="desc">Update step status</span></div>
+</div>
+
+<!-- ════════ TOOL DETAIL POPUP ════════ -->
+<div class="tool-detail">
+  <div class="detail-header">
+    <span class="badge edit" style="font-size:11px; padding:2px 8px;">EDIT</span>
+    <span class="detail-header .tool-name" style="font-size:16px; font-weight:600; font-family:monospace;">edit_file</span>
+  </div>
+
+  <div class="detail-tabs">
+    <div class="detail-tab active">Description</div>
+    <div class="detail-tab">Parameters</div>
+    <div class="detail-tab">JSON Schema</div>
+    <div class="detail-tab">Example</div>
+  </div>
+
+  <!-- Description Tab -->
+  <div class="detail-section">
+    <div class="section-title">Description</div>
+    <div class="section-content">Perform an exact string replacement in a file. The old_string must match exactly once in the file. After editing, the file is automatically checked for syntax errors.</div>
+  </div>
+
+  <div class="detail-section">
+    <div class="section-title">Parameters</div>
+    <div class="param-row">
+      <span class="param-name">path</span>
+      <span class="param-type">string</span>
+      <span class="param-required">REQUIRED</span>
+      <span class="param-desc">Absolute or project-relative file path</span>
+    </div>
+    <div class="param-row">
+      <span class="param-name">old_string</span>
+      <span class="param-type">string</span>
+      <span class="param-required">REQUIRED</span>
+      <span class="param-desc">The exact text to find. Must be unique in the file.</span>
+    </div>
+    <div class="param-row">
+      <span class="param-name">new_string</span>
+      <span class="param-type">string</span>
+      <span class="param-required">REQUIRED</span>
+      <span class="param-desc">The replacement text.</span>
+    </div>
+  </div>
+
+  <div class="detail-section">
+    <div class="section-title">JSON Schema (sent to LLM)</div>
+    <div class="json-block">
+      <button class="copy-btn">Copy</button>
+{<br>
+&nbsp;&nbsp;<span class="key">"type"</span>: <span class="str">"function"</span>,<br>
+&nbsp;&nbsp;<span class="key">"function"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"name"</span>: <span class="str">"edit_file"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"description"</span>: <span class="str">"Perform an exact string replacement..."</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"parameters"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"type"</span>: <span class="str">"object"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"properties"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"path"</span>: { <span class="key">"type"</span>: <span class="str">"string"</span> },<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"old_string"</span>: { <span class="key">"type"</span>: <span class="str">"string"</span> },<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"new_string"</span>: { <span class="key">"type"</span>: <span class="str">"string"</span> }<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;},<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"required"</span>: [<span class="str">"path"</span>, <span class="str">"old_string"</span>, <span class="str">"new_string"</span>]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;}<br>
+}
+    </div>
+  </div>
+
+  <div class="detail-section">
+    <div class="section-title">Example Request → Response</div>
+    <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">LLM sends:</div>
+    <div class="json-block">
+{<br>
+&nbsp;&nbsp;<span class="key">"name"</span>: <span class="str">"edit_file"</span>,<br>
+&nbsp;&nbsp;<span class="key">"arguments"</span>: {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"path"</span>: <span class="str">"src/main/kotlin/UserService.kt"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"old_string"</span>: <span class="str">"return repo.findById(id)"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"new_string"</span>: <span class="str">"return repo?.findById(id)"</span><br>
+&nbsp;&nbsp;}<br>
+}
+    </div>
+    <div style="font-size:11px; color:var(--muted); margin: 8px 0 6px;">Agent returns:</div>
+    <div class="json-block">
+<span class="comment">// Tool result (sent back to LLM as context)</span><br>
+<span class="str">"Replaced 25 chars with 26 chars in UserService.kt"</span><br><br>
+<span class="comment">// If syntax errors detected (warning):</span><br>
+<span class="str">"Replaced 25 chars... WARNING: 1 syntax error(s):\n  Line 23:5: Unexpected token"</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

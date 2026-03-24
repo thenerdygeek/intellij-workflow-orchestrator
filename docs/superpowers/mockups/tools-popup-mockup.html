@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tools Popup — Current vs Proposed</title>
+<style>
+:root {
+  --bg: #2B2D30; --card: #1E293B; --border: #3F3F46; --fg: #E2E8F0;
+  --muted: #64748B; --blue: #3B82F6; --green: #22C55E; --amber: #F59E0B;
+  --red: #EF4444; --cyan: #06B6D4; --purple: #A855F7;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; background: #1E1F22; color: var(--fg); padding: 30px; }
+h2 { color: var(--fg); font-size: 16px; margin: 30px 0 10px; }
+.label { color: var(--amber); font-size: 11px; font-weight: 600; letter-spacing: 1px; margin-bottom: 6px; }
+.side-by-side { display: flex; gap: 30px; align-items: flex-start; }
+
+/* Current popup (flat list) */
+.popup-current {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  width: 380px; max-height: 500px; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+.popup-current .header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+}
+.popup-current .search {
+  width: 100%; padding: 6px 10px; background: #1E1F22; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; margin: 8px 10px; box-sizing: border-box; width: calc(100% - 20px);
+}
+.popup-current .item {
+  padding: 6px 14px; font-size: 12px; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.popup-current .item:hover { background: rgba(255,255,255,0.05); }
+.popup-current .item .name { font-family: monospace; color: var(--fg); }
+.popup-current .item .desc { color: var(--muted); margin-left: 4px; }
+
+/* Proposed popup (categorized, badges, active indicator) */
+.popup-new {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  width: 440px; max-height: 600px; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+.popup-new .header {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.popup-new .header .title { font-size: 14px; font-weight: 600; }
+.popup-new .header .count { font-size: 11px; color: var(--muted); font-family: monospace; }
+.popup-new .search {
+  width: calc(100% - 24px); padding: 7px 10px; background: #1E1F22; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--fg); font-size: 12px; outline: none; margin: 8px 12px;
+}
+.popup-new .search:focus { border-color: var(--blue); }
+
+.category {
+  padding: 8px 16px 4px; font-size: 10px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 1px;
+  display: flex; align-items: center; gap: 6px;
+}
+.category .dot { width: 6px; height: 6px; border-radius: 50%; }
+.category .dot.blue { background: var(--blue); }
+.category .dot.green { background: var(--green); }
+.category .dot.amber { background: var(--amber); }
+.category .dot.red { background: var(--red); }
+.category .dot.cyan { background: var(--cyan); }
+.category .dot.purple { background: var(--purple); }
+
+.tool-item {
+  padding: 6px 16px 6px 28px; display: flex; align-items: center; gap: 8px;
+  cursor: pointer; transition: background 0.1s;
+}
+.tool-item:hover { background: rgba(255,255,255,0.04); }
+.tool-item .badge {
+  font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 3px;
+  letter-spacing: 0.3px; flex-shrink: 0; min-width: 36px; text-align: center;
+}
+.tool-item .badge.read { background: rgba(59,130,246,0.15); color: var(--blue); }
+.tool-item .badge.edit { background: rgba(245,158,11,0.15); color: var(--amber); }
+.tool-item .badge.cmd { background: rgba(239,68,68,0.15); color: var(--red); }
+.tool-item .badge.search { background: rgba(6,182,212,0.15); color: var(--cyan); }
+.tool-item .badge.write { background: rgba(34,197,94,0.15); color: var(--green); }
+.tool-item .badge.api { background: rgba(168,85,247,0.15); color: var(--purple); }
+
+.tool-item .name { font-size: 12px; font-family: monospace; color: var(--fg); flex: 1; }
+.tool-item .desc { font-size: 11px; color: var(--muted); flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-item .active-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.tool-item .inactive { opacity: 0.4; }
+
+.separator { height: 1px; background: var(--border); margin: 4px 0; }
+</style>
+</head>
+<body>
+
+<div class="side-by-side">
+
+<!-- CURRENT: Flat list -->
+<div>
+<div class="label">CURRENT — Flat list (no categories, no badges)</div>
+<div class="popup-current">
+  <div class="header">🔧 Agent Tools (44)</div>
+  <input class="search" placeholder="Filter tools..." />
+  <div class="item"><span class="name">read_file:</span><span class="desc"> Read the contents of a file. Use offset and limit fo...</span></div>
+  <div class="item"><span class="name">edit_file:</span><span class="desc"> Perform an exact string replacement in a file...</span></div>
+  <div class="item"><span class="name">search_code:</span><span class="desc"> Search for a pattern across project files...</span></div>
+  <div class="item"><span class="name">run_command:</span><span class="desc"> Execute a shell command in the project directory...</span></div>
+  <div class="item"><span class="name">diagnostics:</span><span class="desc"> Check a file for errors: syntax errors, unresolved...</span></div>
+  <div class="item"><span class="name">file_structure:</span><span class="desc"> Get the structure of a file: class declarations...</span></div>
+  <div class="item"><span class="name">find_definition:</span><span class="desc"> Find the declaration/definition location...</span></div>
+  <div class="item"><span class="name">find_references:</span><span class="desc"> Find all usages/references of a symbol...</span></div>
+  <div class="item"><span class="name">type_hierarchy:</span><span class="desc"> Get the class hierarchy: supertypes and subtypes...</span></div>
+  <div class="item"><span class="name">call_hierarchy:</span><span class="desc"> Get callers and callees of a method...</span></div>
+  <div class="item"><span class="name">spring_context:</span><span class="desc"> List all Spring beans in the project...</span></div>
+  <div class="item"><span class="name">spring_endpoints:</span><span class="desc"> List all HTTP endpoints in the Spring project...</span></div>
+  <div class="item"><span class="name">jira_get_ticket:</span><span class="desc"> Get Jira ticket details: summary, status...</span></div>
+  <div class="item"><span class="name">bamboo_build_status:</span><span class="desc"> Get the latest build status for a Bamboo plan...</span></div>
+  <div class="item"><span class="name">sonar_issues:</span><span class="desc"> Get open SonarQube issues for a project...</span></div>
+  <div class="item" style="color:var(--muted); font-style:italic; padding: 8px 14px;">... 29 more tools (no way to see categories)</div>
+</div>
+</div>
+
+<!-- PROPOSED: Categorized with badges -->
+<div>
+<div class="label">PROPOSED — Categorized, color-coded, active indicators</div>
+<div class="popup-new">
+  <div class="header">
+    <span class="title">Agent Tools</span>
+    <span class="count">12 active / 44 total</span>
+  </div>
+  <input class="search" placeholder="Search tools..." />
+
+  <!-- Always Active -->
+  <div class="category"><div class="dot green"></div> ALWAYS ACTIVE (12)</div>
+  <div class="tool-item"><span class="badge read">READ</span><span class="name">read_file</span><span class="desc">Read file contents with line numbers</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge edit">EDIT</span><span class="name">edit_file</span><span class="desc">Exact string replacement in a file</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge search">FIND</span><span class="name">search_code</span><span class="desc">Search for a pattern across files</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge cmd">CMD</span><span class="name">run_command</span><span class="desc">Execute a shell command</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge read">CHECK</span><span class="name">diagnostics</span><span class="desc">Syntax + semantic error check</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge edit">FMT</span><span class="name">format_code</span><span class="desc">Reformat to project code style</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge edit">IMP</span><span class="name">optimize_imports</span><span class="desc">Add missing / remove unused imports</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge read">PSI</span><span class="name">file_structure</span><span class="desc">Class/method signatures overview</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge search">PSI</span><span class="name">find_definition</span><span class="desc">Go to declaration of a symbol</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge search">PSI</span><span class="name">find_references</span><span class="desc">Find all usages of a symbol</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge read">PSI</span><span class="name">type_hierarchy</span><span class="desc">Class supertypes and subtypes</span><span class="active-dot"></span></div>
+  <div class="tool-item"><span class="badge read">PSI</span><span class="name">call_hierarchy</span><span class="desc">Method callers and callees</span><span class="active-dot"></span></div>
+
+  <div class="separator"></div>
+
+  <!-- IDE Intelligence -->
+  <div class="category"><div class="dot amber"></div> IDE INTELLIGENCE (5) — triggered by keywords</div>
+  <div class="tool-item inactive"><span class="badge read">LINT</span><span class="name">run_inspections</span><span class="desc">Run 500+ code quality inspections</span></div>
+  <div class="tool-item inactive"><span class="badge edit">REF</span><span class="name">refactor_rename</span><span class="desc">Safe project-wide symbol rename</span></div>
+  <div class="tool-item inactive"><span class="badge read">FIX</span><span class="name">list_quickfixes</span><span class="desc">Available Alt+Enter quick fixes</span></div>
+  <div class="tool-item inactive"><span class="badge cmd">BLD</span><span class="name">compile_module</span><span class="desc">Incremental compile (2-5s)</span></div>
+  <div class="tool-item inactive"><span class="badge cmd">TST</span><span class="name">run_tests</span><span class="desc">Run specific test class/method</span></div>
+
+  <div class="separator"></div>
+
+  <!-- VCS -->
+  <div class="category"><div class="dot cyan"></div> VCS & NAVIGATION (3) — triggered by git/blame/implement</div>
+  <div class="tool-item inactive"><span class="badge read">GIT</span><span class="name">git_status</span><span class="desc">Branch, changed files, untracked</span></div>
+  <div class="tool-item inactive"><span class="badge read">GIT</span><span class="name">git_blame</span><span class="desc">Who changed each line, when</span></div>
+  <div class="tool-item inactive"><span class="badge search">PSI</span><span class="name">find_implementations</span><span class="desc">Concrete method implementations</span></div>
+
+  <div class="separator"></div>
+
+  <!-- Framework -->
+  <div class="category"><div class="dot green"></div> FRAMEWORK (6) — triggered by spring/jpa/module</div>
+  <div class="tool-item inactive"><span class="badge api">SPR</span><span class="name">spring_context</span><span class="desc">List all Spring beans</span></div>
+  <div class="tool-item inactive"><span class="badge api">SPR</span><span class="name">spring_endpoints</span><span class="desc">HTTP endpoints (GET/POST/...)</span></div>
+  <div class="tool-item inactive"><span class="badge api">SPR</span><span class="name">spring_bean_graph</span><span class="desc">Bean dependency injection graph</span></div>
+  <div class="tool-item inactive"><span class="badge api">CFG</span><span class="name">spring_config</span><span class="desc">Read application.properties/yml</span></div>
+  <div class="tool-item inactive"><span class="badge api">JPA</span><span class="name">jpa_entities</span><span class="desc">Entity classes, tables, columns</span></div>
+  <div class="tool-item inactive"><span class="badge read">MOD</span><span class="name">project_modules</span><span class="desc">Module structure + Maven coords</span></div>
+
+  <div class="separator"></div>
+
+  <!-- Enterprise Integration -->
+  <div class="category"><div class="dot purple"></div> ENTERPRISE (15) — triggered by jira/build/sonar/pr</div>
+  <div class="tool-item inactive"><span class="badge api">JIRA</span><span class="name">jira_get_ticket</span><span class="desc">Ticket details + transitions</span></div>
+  <div class="tool-item inactive"><span class="badge api">JIRA</span><span class="name">jira_transition</span><span class="desc">Change ticket status</span></div>
+  <div class="tool-item inactive"><span class="badge api">JIRA</span><span class="name">jira_comment</span><span class="desc">Add comment to ticket</span></div>
+  <div class="tool-item inactive"><span class="badge api">JIRA</span><span class="name">jira_get_comments</span><span class="desc">Read ticket comments</span></div>
+  <div class="tool-item inactive"><span class="badge api">JIRA</span><span class="name">jira_get_transitions</span><span class="desc">Available status transitions</span></div>
+  <div class="tool-item inactive"><span class="badge api">JIRA</span><span class="name">jira_log_work</span><span class="desc">Log time on a ticket</span></div>
+  <div class="tool-item inactive"><span class="badge api">CI</span><span class="name">bamboo_build_status</span><span class="desc">Latest build result</span></div>
+  <div class="tool-item inactive"><span class="badge api">CI</span><span class="name">bamboo_trigger_build</span><span class="desc">Trigger a new build</span></div>
+  <div class="tool-item inactive"><span class="badge api">CI</span><span class="name">bamboo_get_build_log</span><span class="desc">Read build log</span></div>
+  <div class="tool-item inactive"><span class="badge api">CI</span><span class="name">bamboo_get_test_results</span><span class="desc">Build test results</span></div>
+  <div class="tool-item inactive"><span class="badge api">QA</span><span class="name">sonar_issues</span><span class="desc">Open quality issues</span></div>
+  <div class="tool-item inactive"><span class="badge api">QA</span><span class="name">sonar_quality_gate</span><span class="desc">Quality gate pass/fail</span></div>
+  <div class="tool-item inactive"><span class="badge api">QA</span><span class="name">sonar_coverage</span><span class="desc">Line + branch coverage</span></div>
+  <div class="tool-item inactive"><span class="badge api">PR</span><span class="name">bitbucket_create_pr</span><span class="desc">Create a pull request</span></div>
+  <div class="tool-item" style="color:var(--muted); font-size:11px; padding-left:28px;">+ bamboo_get_build, sonar_search_projects</div>
+
+  <div class="separator"></div>
+
+  <!-- Planning -->
+  <div class="category"><div class="dot red"></div> PLANNING (2) — agent decides when to use</div>
+  <div class="tool-item inactive"><span class="badge write">PLAN</span><span class="name">create_plan</span><span class="desc">Create implementation plan for review</span></div>
+  <div class="tool-item inactive"><span class="badge write">PLAN</span><span class="name">update_plan_step</span><span class="desc">Update plan step status</span></div>
+
+</div>
+</div>
+
+</div>
+
+<div style="color: var(--muted); font-size: 11px; margin-top: 30px;">
+  Left: Current flat list. Right: Proposed with categories, color badges, active/inactive indicators.<br>
+  Green dot = always active. No dot = triggered by keywords when relevant.
+</div>
+
+</body>
+</html>
