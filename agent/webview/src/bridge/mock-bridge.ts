@@ -225,6 +225,22 @@ export function installMockBridge(): void {
     w.receiveMentionResults?.(JSON.stringify(filtered));
   };
 
+  // Mock _searchTickets for # ticket autocomplete
+  w._searchTickets = (query: string) => {
+    const mockTickets = [
+      { type: 'ticket', label: 'PROJ-123', path: 'PROJ-123', description: 'Fix login redirect on mobile', icon: 'In Progress' },
+      { type: 'ticket', label: 'PROJ-124', path: 'PROJ-124', description: 'Add dark mode support', icon: 'To Do' },
+      { type: 'ticket', label: 'PROJ-125', path: 'PROJ-125', description: 'Update API documentation', icon: 'In Review' },
+      { type: 'ticket', label: 'PROJ-120', path: 'PROJ-120', description: 'Refactor auth middleware', icon: 'Done' },
+      { type: 'ticket', label: 'PROJ-118', path: 'PROJ-118', description: 'Performance audit findings', icon: 'In Progress' },
+    ];
+    const q = query.toLowerCase();
+    const filtered = q
+      ? mockTickets.filter(t => t.label.toLowerCase().includes(q) || t.description.toLowerCase().includes(q))
+      : mockTickets;
+    (window as any).__ticketSearchCallback?.(JSON.stringify(filtered));
+  };
+
   // Populate mock skills list for / autocomplete
   setTimeout(() => {
     w.updateSkillsList?.(JSON.stringify([

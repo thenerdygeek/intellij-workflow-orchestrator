@@ -92,6 +92,14 @@ class JiraApiClient(
         ).map { it.issues }
     }
 
+    suspend fun searchByJql(jql: String, maxResults: Int = 8): ApiResult<List<JiraIssue>> {
+        val encodedJql = URLEncoder.encode(jql, "UTF-8")
+        log.debug("[Jira:API] GET /rest/api/2/search (jql=$jql, maxResults=$maxResults)")
+        return get<JiraIssueSearchResult>(
+            "/rest/api/2/search?jql=$encodedJql&maxResults=$maxResults&fields=summary,status,issuetype,priority,assignee,attachment"
+        ).map { it.issues }
+    }
+
     suspend fun getTransitions(
         issueKey: String,
         expandFields: Boolean = false

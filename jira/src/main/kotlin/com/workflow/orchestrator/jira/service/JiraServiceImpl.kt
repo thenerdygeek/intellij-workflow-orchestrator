@@ -716,7 +716,10 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             type = fields.issuetype?.name ?: "Unknown",
             priority = fields.priority?.name,
             description = fields.description?.take(500),
-            labels = fields.labels
+            labels = fields.labels,
+            attachments = fields.attachment.map { att ->
+                JiraAttachmentData(id = att.id, filename = att.filename, mimeType = att.mimeType, sizeBytes = att.size)
+            }
         )
     }
 
@@ -728,6 +731,33 @@ class JiraServiceImpl(private val project: Project) : JiraService {
      * This avoids duplicate client construction and ensures consistent auth handling.
      */
     fun getApiClient(): JiraApiClient? = client
+
+    override suspend fun searchTickets(jql: String, maxResults: Int): ToolResult<List<JiraTicketData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.searchByJql(jql, maxResults)) {
+            is ApiResult.Success -> {
+                val tickets = result.data.map { it.toTicketData() }
+                ToolResult.success(
+                    data = tickets,
+                    summary = "${tickets.size} ticket(s) found"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Ticket search failed: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error searching tickets: ${result.message}",
+                    isError = true
+                )
+            }
+        }
+    }
 
     private fun formatSize(bytes: Long): String = when {
         bytes < 1024 -> "${bytes}B"

@@ -71,4 +71,7 @@ interface JiraService {
 
     /** Download an attachment from a Jira issue. */
     suspend fun downloadAttachment(issueKey: String, attachmentId: String): ToolResult<AttachmentContentData>
+
+    /** Search tickets by JQL query. Used for # ticket mention autocomplete. */
+    suspend fun searchTickets(jql: String, maxResults: Int = 8): ToolResult<List<JiraTicketData>>
 }

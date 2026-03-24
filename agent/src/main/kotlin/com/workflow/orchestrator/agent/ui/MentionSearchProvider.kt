@@ -5,6 +5,8 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.search.PsiShortNamesCache
+import com.workflow.orchestrator.core.services.JiraService
+import com.workflow.orchestrator.core.services.ToolResult
 import kotlinx.serialization.json.*
 
 /**
@@ -234,5 +236,54 @@ class MentionSearchProvider(private val project: Project) {
                 })
             }
         }.toString()
+    }
+
+    /**
+     * Search Jira tickets by key or summary.
+     * Returns JSON array of results for the ticket dropdown.
+     *
+     * @param query Ticket key (e.g. "PROJ-123"), key prefix (e.g. "PROJ"), or summary text
+     */
+    suspend fun searchTickets(query: String): String {
+        return try {
+            val jiraService = try {
+                project.getService(JiraService::class.java)
+            } catch (_: Exception) { return "[]" }
+
+            // Build JQL based on query pattern
+            val jql = when {
+                query.isBlank() -> {
+                    // Show active ticket + recent assigned tickets
+                    val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                    val activeKey = settings.state.activeTicketId
+                    if (!activeKey.isNullOrBlank()) {
+                        "key = $activeKey OR assignee = currentUser() ORDER BY updated DESC"
+                    } else {
+                        "assignee = currentUser() ORDER BY updated DESC"
+                    }
+                }
+                query.matches(Regex("[A-Za-z]+-\\d+")) -> "key = \"${query.uppercase()}\""
+                query.matches(Regex("[A-Za-z]+-?")) -> "key >= \"${query.uppercase()}\" AND key <= \"${query.uppercase()}z\" ORDER BY key ASC"
+                else -> "summary ~ \"${query.replace("\"", "\\\"")}\" ORDER BY updated DESC"
+            }
+
+            val result = jiraService.searchTickets(jql, maxResults = 8)
+            if (result.isError) return "[]"
+            val tickets = result.data
+            buildJsonArray {
+                for (ticket in tickets) {
+                    add(buildJsonObject {
+                        put("type", JsonPrimitive("ticket"))
+                        put("label", JsonPrimitive(ticket.key))
+                        put("path", JsonPrimitive(ticket.key))
+                        put("description", JsonPrimitive(ticket.summary.take(60)))
+                        put("icon", JsonPrimitive(ticket.status))  // Used for status badge
+                    })
+                }
+            }.toString()
+        } catch (e: Exception) {
+            LOG.debug("MentionSearchProvider: ticket search failed for query=$query: ${e.message}")
+            "[]"
+        }
     }
 }

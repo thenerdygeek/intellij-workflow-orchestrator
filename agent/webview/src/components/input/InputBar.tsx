@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useRef } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash, SquareKanban } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { MentionDropdown } from './MentionDropdown';
 import { SkillDropdown } from './SkillDropdown';
+import { TicketDropdown } from './TicketDropdown';
 import { ContextChip } from './ContextChip';
 
 // ── Types ──
@@ -160,8 +161,10 @@ interface InputBarContentProps {
   mentions: Mention[];
   showMentions: boolean;
   showSkills: boolean;
+  showTickets: boolean;
   mentionQuery: string;
   skillQuery: string;
+  ticketQuery: string;
   busy: boolean;
   locked: boolean;
   planActive: boolean;
@@ -169,11 +172,12 @@ interface InputBarContentProps {
   onTextChange: (value: string) => void;
   onMentionSelect: (result: MentionSearchResult) => void;
   onSkillSelect: (skillName: string) => void;
+  onTicketSelect: (result: MentionSearchResult) => void;
   onDismissMentions: () => void;
   onRemoveMention: (index: number) => void;
   onSend: () => void;
   onStop: () => void;
-  onTriggerInsert: (char: '@' | '/') => void;
+  onTriggerInsert: (char: '@' | '/' | '#') => void;
   canSend: boolean;
 }
 
@@ -181,13 +185,16 @@ function InputBarContent({
   mentions,
   showMentions,
   showSkills,
+  showTickets,
   mentionQuery,
   skillQuery,
+  ticketQuery,
   busy,
   planActive,
   model,
   onMentionSelect,
   onSkillSelect,
+  onTicketSelect,
   onDismissMentions,
   onRemoveMention,
   onSend,
@@ -223,6 +230,15 @@ function InputBarContent({
         />
       )}
 
+      {/* Ticket dropdown (# tickets) — floats above */}
+      {showTickets && (
+        <TicketDropdown
+          query={ticketQuery}
+          onSelect={onTicketSelect}
+          onDismiss={onDismissMentions}
+        />
+      )}
+
       {/* Context chips */}
       {mentions.length > 0 && (
         <div className="flex flex-wrap gap-1 px-3 pt-2.5">
@@ -238,7 +254,7 @@ function InputBarContent({
 
       {/* Textarea */}
       <PromptInputTextarea
-        placeholder="Ask anything... (@ for context, / for skills)"
+        placeholder="Ask anything... (@ context, # ticket, / skill)"
         className="text-[13px] leading-relaxed px-3"
         onKeyDown={(e) => {
           if (e.key === 'Escape') onDismissMentions();
@@ -271,6 +287,11 @@ function InputBarContent({
                 <Hash className="size-3.5" style={{ color: '#a78bfa' }} />
                 <span>Symbol</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onTriggerInsert('#')}>
+                <SquareKanban className="size-3.5" style={{ color: 'var(--accent-read, #3b82f6)' }} />
+                <span>Ticket</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>#</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onTriggerInsert('/')}>
                 <Sparkles className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
@@ -329,8 +350,10 @@ export const InputBar = memo(function InputBar() {
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [showMentions, setShowMentions] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  const [showTickets, setShowTickets] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [skillQuery, setSkillQuery] = useState('');
+  const [ticketQuery, setTicketQuery] = useState('');
 
   const textareaRefHolder = useRef<HTMLTextAreaElement | null>(null);
 
@@ -350,19 +373,32 @@ export const InputBar = memo(function InputBar() {
       return;
     }
 
+    // Check for # ticket trigger
+    const hashMatch = textBeforeCursor.match(/#(\S*)$/);
+    if (hashMatch) {
+      setShowTickets(true);
+      setShowMentions(false);
+      setShowSkills(false);
+      setTicketQuery(hashMatch[1] ?? '');
+      return;
+    }
+
     // Check for / skill trigger (only at start of line or after space)
     const slashMatch = textBeforeCursor.match(/(?:^|\s)\/(\S*)$/);
     if (slashMatch) {
       setShowSkills(true);
       setShowMentions(false);
+      setShowTickets(false);
       setSkillQuery(slashMatch[1] ?? '');
       return;
     }
 
     setShowMentions(false);
     setShowSkills(false);
+    setShowTickets(false);
     setMentionQuery('');
     setSkillQuery('');
+    setTicketQuery('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -379,6 +415,23 @@ export const InputBar = memo(function InputBar() {
     });
     setShowMentions(false);
     setMentionQuery('');
+    textareaRefHolder.current?.focus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleTicketSelect = useCallback((result: MentionSearchResult) => {
+    const mention: Mention = { type: 'ticket', label: result.label, path: result.path, icon: result.icon };
+    setMentions(prev => [...prev, mention]);
+    setText(prev => {
+      const el = textareaRefHolder.current;
+      const cursorPos = el?.selectionStart ?? prev.length;
+      const textBeforeCursor = prev.slice(0, cursorPos);
+      const hashIndex = textBeforeCursor.lastIndexOf('#');
+      if (hashIndex >= 0) return prev.slice(0, hashIndex) + prev.slice(cursorPos);
+      return prev;
+    });
+    setShowTickets(false);
+    setTicketQuery('');
     textareaRefHolder.current?.focus();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -410,6 +463,7 @@ export const InputBar = memo(function InputBar() {
     setMentions([]);
     setShowMentions(false);
     setShowSkills(false);
+    setShowTickets(false);
   }, [text, mentions]);
 
   const handleStop = useCallback(() => {
@@ -417,7 +471,7 @@ export const InputBar = memo(function InputBar() {
   }, []);
 
   // Insert @ or / into the textarea (called from + button picker)
-  const triggerInsert = useCallback((char: '@' | '/') => {
+  const triggerInsert = useCallback((char: '@' | '/' | '#') => {
     setText(prev => {
       const el = textareaRefHolder.current;
       if (!el) return prev + char;
@@ -429,10 +483,17 @@ export const InputBar = memo(function InputBar() {
     if (char === '@') {
       setShowMentions(true);
       setShowSkills(false);
+      setShowTickets(false);
       setMentionQuery('');
+    } else if (char === '#') {
+      setShowTickets(true);
+      setShowMentions(false);
+      setShowSkills(false);
+      setTicketQuery('');
     } else {
       setShowSkills(true);
       setShowMentions(false);
+      setShowTickets(false);
       setSkillQuery('');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -441,8 +502,10 @@ export const InputBar = memo(function InputBar() {
   const handleDismissMentions = useCallback(() => {
     setShowMentions(false);
     setShowSkills(false);
+    setShowTickets(false);
     setMentionQuery('');
     setSkillQuery('');
+    setTicketQuery('');
   }, []);
 
   const handleRemoveMention = useCallback((index: number) => {
@@ -473,8 +536,10 @@ export const InputBar = memo(function InputBar() {
           mentions={mentions}
           showMentions={showMentions}
           showSkills={showSkills}
+          showTickets={showTickets}
           mentionQuery={mentionQuery}
           skillQuery={skillQuery}
+          ticketQuery={ticketQuery}
           busy={busy}
           locked={inputState.locked}
           planActive={planActive}
@@ -482,6 +547,7 @@ export const InputBar = memo(function InputBar() {
           onTextChange={handleValueChange}
           onMentionSelect={handleMentionSelect}
           onSkillSelect={handleSkillSelect}
+          onTicketSelect={handleTicketSelect}
           onDismissMentions={handleDismissMentions}
           onRemoveMention={handleRemoveMention}
           onSend={handleSend}

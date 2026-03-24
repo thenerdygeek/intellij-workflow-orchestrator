@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { Mention } from '@/bridge/types';
-import { File, Folder, Hash, Wrench, Sparkles, AtSign } from 'lucide-react';
+import { File, Folder, Hash, Wrench, Sparkles, AtSign, SquareKanban } from 'lucide-react';
 
 interface ContextChipProps {
   mention: Mention;
@@ -15,6 +15,7 @@ const typeStyles: Record<string, { color: string; bg: string; border: string; ic
   symbol: { color: '#a78bfa',                        bg: 'rgba(139,92,246,0.1)',   border: 'rgba(139,92,246,0.25)',   icon: Hash },
   tool:   { color: 'var(--accent-write, #22c55e)',   bg: 'rgba(34,197,94,0.1)',    border: 'rgba(34,197,94,0.25)',    icon: Wrench },
   skill:  { color: 'var(--accent-edit, #f59e0b)',    bg: 'rgba(251,191,36,0.1)',   border: 'rgba(251,191,36,0.25)',   icon: Sparkles },
+  ticket: { color: 'var(--accent-read, #3b82f6)',   bg: 'rgba(59,130,246,0.1)',   border: 'rgba(59,130,246,0.25)',   icon: SquareKanban },
 };
 
 const fallback = { color: 'var(--fg-secondary)', bg: 'var(--chip-bg)', border: 'var(--chip-border)', icon: AtSign };

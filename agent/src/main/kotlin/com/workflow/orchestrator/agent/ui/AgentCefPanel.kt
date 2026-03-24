@@ -69,6 +69,7 @@ class AgentCefPanel(
     private var openSettingsQuery: JBCefJSQuery? = null
     private var openToolsPanelQuery: JBCefJSQuery? = null
     private var searchMentionsQuery: JBCefJSQuery? = null
+    private var searchTicketsQuery: JBCefJSQuery? = null
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
@@ -297,6 +298,15 @@ class AgentCefPanel(
                 JBCefJSQuery.Response("ok")
             }
         }
+        searchTicketsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { query ->
+                scope.launch {
+                    val results = mentionSearchProvider?.searchTickets(query) ?: "[]"
+                    callJs("(window.__ticketSearchCallback)(${jsonStr(results)})")
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
         sendMessageWithMentionsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { payload ->
                 try {
@@ -459,6 +469,10 @@ class AgentCefPanel(
                     searchMentionsQuery?.let { q ->
                         val searchJs = q.inject("data")
                         js("window._searchMentions = function(data) { $searchJs }")
+                    }
+                    searchTicketsQuery?.let { q ->
+                        val ticketJs = q.inject("query")
+                        js("window._searchTickets = function(query) { $ticketJs }")
                     }
                     sendMessageWithMentionsQuery?.let { q ->
                         val sendJs = q.inject("payload")
@@ -847,6 +861,7 @@ class AgentCefPanel(
         openSettingsQuery?.dispose()
         openToolsPanelQuery?.dispose()
         searchMentionsQuery?.dispose()
+        searchTicketsQuery?.dispose()
         sendMessageWithMentionsQuery?.dispose()
         openInEditorTabQuery?.dispose()
         approveToolCallQuery?.dispose()
@@ -879,6 +894,7 @@ class AgentCefPanel(
         openSettingsQuery = null
         openToolsPanelQuery = null
         searchMentionsQuery = null
+        searchTicketsQuery = null
         sendMessageWithMentionsQuery = null
         openInEditorTabQuery = null
         approveToolCallQuery = null

@@ -76,7 +76,7 @@ export interface SessionInfo {
 
 // ── Mention types ──
 
-export type MentionType = 'file' | 'folder' | 'symbol' | 'tool' | 'skill';
+export type MentionType = 'file' | 'folder' | 'symbol' | 'tool' | 'skill' | 'ticket';
 
 export interface Mention {
   type: MentionType;
