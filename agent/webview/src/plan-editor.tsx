@@ -1,6 +1,7 @@
-import { StrictMode, useState, useCallback } from 'react';
+import { StrictMode, useState, useCallback, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
+import './styles/animations.css';
 import { Button } from './components/ui/button';
 import { MessageSquare, Check, RotateCcw } from 'lucide-react';
 
@@ -11,13 +12,15 @@ interface PlanData {
   comments: Record<string, string>;
 }
 
-let planData: PlanData | null = null;
 let rootInstance: ReturnType<typeof createRoot> | null = null;
 
+// Global setter — called from React state updater
+let setPlanDataExternal: ((data: PlanData) => void) | null = null;
+
 (window as any).renderPlan = (json: string) => {
-  planData = JSON.parse(json);
-  if (rootInstance) {
-    rootInstance.render(<StrictMode><PlanEditor /></StrictMode>);
+  const data = JSON.parse(json) as PlanData;
+  if (setPlanDataExternal) {
+    setPlanDataExternal(data);
   }
 };
 
@@ -26,18 +29,18 @@ let rootInstance: ReturnType<typeof createRoot> | null = null;
 };
 
 function PlanEditor() {
-  const [comments, setComments] = useState<Record<string, string>>(planData?.comments ?? {});
+  const [planData, setPlanData] = useState<PlanData | null>(null);
+  const [comments, setComments] = useState<Record<string, string>>({});
   const [activeComment, setActiveComment] = useState<string | null>(null);
 
-  if (!planData) {
-    return (
-      <div className="flex h-screen items-center justify-center" style={{ backgroundColor: 'var(--bg)', color: 'var(--fg-muted)' }}>
-        Loading plan...
-      </div>
-    );
-  }
-
-  const lines = planData.markdown.split('\n');
+  // Expose state setter for the global renderPlan function
+  useEffect(() => {
+    setPlanDataExternal = (data: PlanData) => {
+      setPlanData(data);
+      setComments(data.comments ?? {});
+    };
+    return () => { setPlanDataExternal = null; };
+  }, []);
 
   const addComment = useCallback((lineId: string, text: string) => {
     setComments(prev => ({ ...prev, [lineId]: text }));
@@ -53,10 +56,21 @@ function PlanEditor() {
     (window as any)._revisePlan?.(json);
   }, [comments]);
 
+  // Loading state
+  if (!planData) {
+    return (
+      <div className="flex h-screen items-center justify-center" style={{ backgroundColor: 'var(--bg)', color: 'var(--fg-muted)' }}>
+        Loading plan...
+      </div>
+    );
+  }
+
+  const lines = planData.markdown.split('\n');
   const hasComments = Object.keys(comments).length > 0;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--bg)', color: 'var(--fg)' }}>
+      {/* Sticky header */}
       <div className="sticky top-0 z-10 flex items-center justify-between border-b px-6 py-3"
            style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
         <h1 className="text-base font-semibold">{planData.title || 'Implementation Plan'}</h1>
@@ -72,6 +86,7 @@ function PlanEditor() {
         </div>
       </div>
 
+      {/* Plan content with comment gutters */}
       <div className="px-6 py-4 max-w-4xl mx-auto">
         {lines.map((line, idx) => {
           const lineId = `line-${idx}`;
@@ -79,6 +94,7 @@ function PlanEditor() {
 
           return (
             <div key={idx} className="group relative flex">
+              {/* Comment gutter */}
               <div className="w-8 shrink-0 flex justify-center pt-1">
                 {comment ? (
                   <button
@@ -99,8 +115,10 @@ function PlanEditor() {
                 )}
               </div>
 
+              {/* Line content */}
               <div className="flex-1 py-0.5">
                 <MarkdownLine content={line} />
+                {/* Inline comment editor */}
                 {activeComment === lineId && (
                   <CommentEditor
                     value={comment ?? ''}
@@ -108,6 +126,7 @@ function PlanEditor() {
                     onCancel={() => setActiveComment(null)}
                   />
                 )}
+                {/* Show existing comment */}
                 {comment && activeComment !== lineId && (
                   <div
                     className="mt-1 ml-2 text-xs px-2 py-1 rounded border-l-2"
@@ -156,6 +175,7 @@ function CommentEditor({ value, onSave, onCancel }: { value: string; onSave: (te
   );
 }
 
+// Initialize root
 const container = document.getElementById('root');
 if (container) {
   rootInstance = createRoot(container);
