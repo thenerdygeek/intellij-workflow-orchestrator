@@ -97,6 +97,15 @@ code, pre, .font-mono {
 }
 
 /* ============================================================
+   RICH INPUT (contenteditable) PLACEHOLDER
+   ============================================================ */
+.rich-input[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--fg-muted, #6b7280);
+  pointer-events: none;
+}
+
+/* ============================================================
    RADIX POPPER FIX
    @floating-ui miscalculates the portal wrapper transform when
    the trigger sits inside a deeply nested flex/overflow layout.

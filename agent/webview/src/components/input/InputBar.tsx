@@ -3,11 +3,9 @@ import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder,
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
-  PromptInput,
-  PromptInputTextarea,
   PromptInputActions,
-  usePromptInput,
 } from '@/components/ui/prompt-kit/prompt-input';
+import { RichInput, type RichInputHandle } from './RichInput';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -18,7 +16,6 @@ import {
 import { MentionDropdown } from './MentionDropdown';
 import { SkillDropdown } from './SkillDropdown';
 import { TicketDropdown } from './TicketDropdown';
-import { ContextChip } from './ContextChip';
 
 // ── Types ──
 
@@ -157,8 +154,6 @@ function MoreChip() {
 // ── InputBarContent (inside PromptInput context) ──
 
 interface InputBarContentProps {
-  text: string;
-  mentions: Mention[];
   showMentions: boolean;
   showSkills: boolean;
   showTickets: boolean;
@@ -169,20 +164,19 @@ interface InputBarContentProps {
   locked: boolean;
   planActive: boolean;
   model: string;
-  onTextChange: (value: string) => void;
+  richInputRef: React.RefObject<RichInputHandle>;
   onMentionSelect: (result: MentionSearchResult) => void;
   onSkillSelect: (skillName: string) => void;
   onTicketSelect: (result: MentionSearchResult) => void;
   onDismissMentions: () => void;
-  onRemoveMention: (index: number) => void;
   onSend: () => void;
   onStop: () => void;
   onTriggerInsert: (char: '@' | '/' | '#') => void;
+  onRichInputChange: (text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => void;
   canSend: boolean;
 }
 
 function InputBarContent({
-  mentions,
   showMentions,
   showSkills,
   showTickets,
@@ -192,23 +186,22 @@ function InputBarContent({
   busy,
   planActive,
   model,
+  richInputRef,
   onMentionSelect,
   onSkillSelect,
   onTicketSelect,
   onDismissMentions,
-  onRemoveMention,
   onSend,
   onStop,
   onTriggerInsert,
+  onRichInputChange,
   canSend,
 }: InputBarContentProps) {
-  const { textareaRef } = usePromptInput();
-
   // Focus on trigger from store
   const focusTrigger = useChatStore(s => s.focusInputTrigger);
   useEffect(() => {
-    if (focusTrigger > 0) textareaRef.current?.focus();
-  }, [focusTrigger, textareaRef]);
+    if (focusTrigger > 0) richInputRef.current?.focus();
+  }, [focusTrigger, richInputRef]);
 
   return (
     <>
@@ -239,24 +232,16 @@ function InputBarContent({
         />
       )}
 
-      {/* Inline chips + textarea — chips flow on the same line as the text input */}
-      <div className="flex flex-wrap items-center gap-1 px-3 pt-1.5 pb-0.5">
-        {mentions.map((mention, i) => (
-          <ContextChip
-            key={`${mention.type}-${mention.label}-${i}`}
-            mention={mention}
-            onRemove={() => onRemoveMention(i)}
-          />
-        ))}
-        <div className="flex-1 min-w-[120px]">
-          <PromptInputTextarea
-            placeholder={mentions.length > 0 ? 'Type your message...' : 'Ask anything... (@ context, # ticket, / skill)'}
-            className="text-[13px] leading-relaxed !min-h-[28px] !px-0 !py-0"
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') onDismissMentions();
-            }}
-          />
-        </div>
+      {/* Rich contenteditable input — chips render inline with text */}
+      <div className="px-3 pt-2 pb-1">
+        <RichInput
+          ref={richInputRef}
+          placeholder="Ask anything... (@ context, # ticket, / skill)"
+          disabled={busy}
+          onSubmit={onSend}
+          onChange={onRichInputChange}
+          onEscape={onDismissMentions}
+        />
       </div>
 
       {/* Action row */}
@@ -343,9 +328,9 @@ function InputBarContent({
 export const InputBar = memo(function InputBar() {
   const inputState = useChatStore(s => s.inputState);
   const busy = useChatStore(s => s.busy);
+  const richInputRef = useRef<RichInputHandle>(null);
 
-  const [text, setText] = useState('');
-  const [mentions, setMentions] = useState<Mention[]>([]);
+  const [hasText, setHasText] = useState(false);
   const [showMentions, setShowMentions] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [showTickets, setShowTickets] = useState(false);
@@ -353,185 +338,77 @@ export const InputBar = memo(function InputBar() {
   const [skillQuery, setSkillQuery] = useState('');
   const [ticketQuery, setTicketQuery] = useState('');
 
-  const textareaRefHolder = useRef<HTMLTextAreaElement | null>(null);
-
-  // Detect @ (context mention) and / (skill) triggers
-  const handleValueChange = useCallback((value: string) => {
-    setText(value);
-    const el = textareaRefHolder.current;
-    const cursorPos = el?.selectionStart ?? value.length;
-    const textBeforeCursor = value.slice(0, cursorPos);
-
-    // Check for @ mention trigger (files/folders/symbols)
-    const atMatch = textBeforeCursor.match(/@(\S*)$/);
-    if (atMatch) {
-      setShowMentions(true);
-      setShowSkills(false);
-      setMentionQuery(atMatch[1] ?? '');
-      return;
+  // RichInput change handler — detects @, #, / triggers
+  const handleRichInputChange = useCallback((_text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => {
+    setHasText(_text.length > 0);
+    if (trigger) {
+      if (trigger.type === '@') {
+        setShowMentions(true); setShowSkills(false); setShowTickets(false);
+        setMentionQuery(trigger.query);
+      } else if (trigger.type === '#') {
+        setShowTickets(true); setShowMentions(false); setShowSkills(false);
+        setTicketQuery(trigger.query);
+      } else {
+        setShowSkills(true); setShowMentions(false); setShowTickets(false);
+        setSkillQuery(trigger.query);
+      }
+    } else {
+      setShowMentions(false); setShowSkills(false); setShowTickets(false);
+      setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
     }
-
-    // Check for # ticket trigger
-    const hashMatch = textBeforeCursor.match(/#(\S*)$/);
-    if (hashMatch) {
-      setShowTickets(true);
-      setShowMentions(false);
-      setShowSkills(false);
-      setTicketQuery(hashMatch[1] ?? '');
-      return;
-    }
-
-    // Check for / skill trigger (only at start of line or after space)
-    const slashMatch = textBeforeCursor.match(/(?:^|\s)\/(\S*)$/);
-    if (slashMatch) {
-      setShowSkills(true);
-      setShowMentions(false);
-      setShowTickets(false);
-      setSkillQuery(slashMatch[1] ?? '');
-      return;
-    }
-
-    setShowMentions(false);
-    setShowSkills(false);
-    setShowTickets(false);
-    setMentionQuery('');
-    setSkillQuery('');
-    setTicketQuery('');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleMentionSelect = useCallback((result: MentionSearchResult) => {
     const mention: Mention = { type: result.type, label: result.label, path: result.path, icon: result.icon };
-    setMentions(prev => [...prev, mention]);
-    setText(prev => {
-      const el = textareaRefHolder.current;
-      const cursorPos = el?.selectionStart ?? prev.length;
-      const textBeforeCursor = prev.slice(0, cursorPos);
-      const atIndex = textBeforeCursor.lastIndexOf('@');
-      if (atIndex >= 0) return prev.slice(0, atIndex) + prev.slice(cursorPos);
-      return prev;
-    });
-    setShowMentions(false);
-    setMentionQuery('');
-    textareaRefHolder.current?.focus();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    (richInputRef.current as any)?.insertChip?.(mention, '@');
+    setShowMentions(false); setMentionQuery('');
   }, []);
 
   const handleTicketSelect = useCallback((result: MentionSearchResult) => {
     const mention: Mention = { type: 'ticket', label: result.label, path: result.path, icon: result.icon };
-    setMentions(prev => [...prev, mention]);
-    setText(prev => {
-      const el = textareaRefHolder.current;
-      const cursorPos = el?.selectionStart ?? prev.length;
-      const textBeforeCursor = prev.slice(0, cursorPos);
-      const hashIndex = textBeforeCursor.lastIndexOf('#');
-      if (hashIndex >= 0) return prev.slice(0, hashIndex) + prev.slice(cursorPos);
-      return prev;
-    });
-    setShowTickets(false);
-    setTicketQuery('');
-    textareaRefHolder.current?.focus();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    (richInputRef.current as any)?.insertChip?.(mention, '#');
+    setShowTickets(false); setTicketQuery('');
   }, []);
 
-  const handleSkillSelect = useCallback((skillName: string) => {
-    // Replace /query with the full skill command
-    setText(prev => {
-      const el = textareaRefHolder.current;
-      const cursorPos = el?.selectionStart ?? prev.length;
-      const textBeforeCursor = prev.slice(0, cursorPos);
-      const slashIndex = textBeforeCursor.lastIndexOf('/');
-      if (slashIndex >= 0) return prev.slice(0, slashIndex) + `/${skillName} ` + prev.slice(cursorPos);
-      return `/${skillName} `;
-    });
-    setShowSkills(false);
-    setSkillQuery('');
-    textareaRefHolder.current?.focus();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleSkillSelect = useCallback((_skillName: string) => {
+    setShowSkills(false); setSkillQuery('');
   }, []);
 
   const handleSend = useCallback(() => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const currentInputState = useChatStore.getState().inputState;
-    const currentBusy = useChatStore.getState().busy;
-    if (currentInputState.locked || currentBusy) return;
-    useChatStore.getState().sendMessage(trimmed, mentions);
-    setText('');
-    setMentions([]);
-    setShowMentions(false);
-    setShowSkills(false);
-    setShowTickets(false);
-  }, [text, mentions]);
-
-  const handleStop = useCallback(() => {
-    window._cancelTask?.();
+    const ri = richInputRef.current;
+    if (!ri) return;
+    const text = ri.getText();
+    const mentions = ri.getMentions();
+    if (!text.trim() && mentions.length === 0) return;
+    if (useChatStore.getState().inputState.locked || useChatStore.getState().busy) return;
+    useChatStore.getState().sendMessage(text.trim(), mentions);
+    ri.clear();
+    setHasText(false);
+    setShowMentions(false); setShowSkills(false); setShowTickets(false);
   }, []);
 
-  // Insert @ or / into the textarea (called from + button picker)
+  const handleStop = useCallback(() => { window._cancelTask?.(); }, []);
+
   const triggerInsert = useCallback((char: '@' | '/' | '#') => {
-    setText(prev => {
-      const el = textareaRefHolder.current;
-      if (!el) return prev + char;
-      const pos = el.selectionStart;
-      const newText = prev.slice(0, pos) + char + prev.slice(pos);
-      setTimeout(() => { el.focus(); el.setSelectionRange(pos + 1, pos + 1); }, 0);
-      return newText;
-    });
-    if (char === '@') {
-      setShowMentions(true);
-      setShowSkills(false);
-      setShowTickets(false);
-      setMentionQuery('');
-    } else if (char === '#') {
-      setShowTickets(true);
-      setShowMentions(false);
-      setShowSkills(false);
-      setTicketQuery('');
-    } else {
-      setShowSkills(true);
-      setShowMentions(false);
-      setShowTickets(false);
-      setSkillQuery('');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    richInputRef.current?.insertTrigger(char);
   }, []);
 
-  const handleDismissMentions = useCallback(() => {
-    setShowMentions(false);
-    setShowSkills(false);
-    setShowTickets(false);
-    setMentionQuery('');
-    setSkillQuery('');
-    setTicketQuery('');
+  const handleDismiss = useCallback(() => {
+    setShowMentions(false); setShowSkills(false); setShowTickets(false);
+    setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
   }, []);
 
-  const handleRemoveMention = useCallback((index: number) => {
-    setMentions(prev => prev.filter((_, j) => j !== index));
-  }, []);
-
-  const canSend = !!text.trim() && !inputState.locked && !busy;
+  const canSend = hasText && !inputState.locked && !busy;
   const planActive = inputState.mode === 'plan';
 
   return (
     <div className="px-3 pb-3 pt-2">
-      <PromptInput
-        value={text}
-        onValueChange={handleValueChange}
-        onSubmit={handleSend}
-        isLoading={busy}
-        disabled={inputState.locked}
-        maxHeight={200}
-        className="relative rounded-xl"
-        style={{
-          backgroundColor: 'var(--input-bg)',
-          borderColor: 'var(--input-border)',
-        }}
+      <div
+        className="relative rounded-xl border p-2 cursor-text"
+        style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--input-border)' }}
+        onClick={() => richInputRef.current?.focus()}
       >
-        <InputBarContentWithRef
-          textareaRefHolder={textareaRefHolder}
-          text={text}
-          mentions={mentions}
+        <InputBarContent
           showMentions={showMentions}
           showSkills={showSkills}
           showTickets={showTickets}
@@ -542,39 +419,18 @@ export const InputBar = memo(function InputBar() {
           locked={inputState.locked}
           planActive={planActive}
           model={inputState.model ?? ''}
-          onTextChange={handleValueChange}
+          richInputRef={richInputRef}
           onMentionSelect={handleMentionSelect}
           onSkillSelect={handleSkillSelect}
           onTicketSelect={handleTicketSelect}
-          onDismissMentions={handleDismissMentions}
-          onRemoveMention={handleRemoveMention}
+          onDismissMentions={handleDismiss}
           onSend={handleSend}
           onStop={handleStop}
           onTriggerInsert={triggerInsert}
+          onRichInputChange={handleRichInputChange}
           canSend={canSend}
         />
-      </PromptInput>
+      </div>
     </div>
   );
 });
-
-// Bridge component that syncs the PromptInput context's textareaRef to the parent's holder
-function InputBarContentWithRef({
-  textareaRefHolder,
-  ...props
-}: InputBarContentProps & { textareaRefHolder: { current: HTMLTextAreaElement | null } }) {
-  const { textareaRef } = usePromptInput();
-
-  // Sync the context's textareaRef to the parent's holder on every render
-  useEffect(() => {
-    const sync = () => { textareaRefHolder.current = textareaRef.current; };
-    sync();
-    // Re-sync periodically until textarea is mounted
-    if (!textareaRef.current) {
-      const timer = setTimeout(sync, 50);
-      return () => clearTimeout(timer);
-    }
-  }, [textareaRef, textareaRefHolder]);
-
-  return <InputBarContent {...props} />;
-}
