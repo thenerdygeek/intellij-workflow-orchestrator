@@ -331,10 +331,19 @@ class WorkflowConfigurable(private val project: Project) : SearchableConfigurabl
         }
         settings.state.workflowMappings = store.toJson()
 
-        // Write ticket key regex
-        connSettings.state.ticketKeyRegex =
-            ticketKeyRegexField?.text?.trim()?.ifBlank { "\\b([A-Z][A-Z0-9]+-\\d+)\\b" }
-                ?: "\\b([A-Z][A-Z0-9]+-\\d+)\\b"
+        // Write ticket key regex (SEC-22: validate pattern before saving)
+        val candidateRegex = ticketKeyRegexField?.text?.trim()?.ifBlank { null }
+        val defaultRegex = "\\b([A-Z][A-Z0-9]+-\\d+)\\b"
+        connSettings.state.ticketKeyRegex = if (candidateRegex != null) {
+            try {
+                Regex(candidateRegex) // validate that it compiles
+                candidateRegex
+            } catch (e: java.util.regex.PatternSyntaxException) {
+                defaultRegex // fall back to default on invalid pattern
+            }
+        } else {
+            defaultRegex
+        }
     }
 
     override fun reset() {

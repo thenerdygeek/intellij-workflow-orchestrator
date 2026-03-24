@@ -20,8 +20,8 @@ class AuthTestService {
     private val testClient = com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     /**
@@ -200,6 +200,14 @@ class AuthTestService {
             response.use {
                 val body = it.body?.string() ?: ""
                 when (it.code) {
+                    in 300..399 -> {
+                        val location = it.header("Location") ?: "unknown"
+                        log.warn("[Core:Auth] Connection test for ${serviceType.name} returned redirect (${it.code}) to $location")
+                        ApiResult.Error(
+                            ErrorType.SERVER_ERROR,
+                            "Server returned redirect (${it.code}). Please update the URL to: $location"
+                        )
+                    }
                     in 200..299 -> {
                         log.info("[Core:Auth] Connection test successful for ${serviceType.name} at $normalizedBaseUrl (${it.code})")
 

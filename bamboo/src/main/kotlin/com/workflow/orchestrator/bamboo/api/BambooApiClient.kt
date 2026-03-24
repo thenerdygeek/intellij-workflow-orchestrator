@@ -40,25 +40,25 @@ class BambooApiClient(
     }
 
     suspend fun getPlans(): ApiResult<List<BambooPlanDto>> {
-        log.info("[Bamboo:API] Fetching all plans")
+        log.debug("[Bamboo:API] Fetching all plans")
         return get<BambooPlanListResponse>("/rest/api/latest/plan?expand=plans.plan&max-results=100")
             .map { it.plans.plan }
     }
 
     suspend fun getProjects(): ApiResult<List<BambooProjectDto>> {
-        log.info("[Bamboo:API] Fetching all projects")
+        log.debug("[Bamboo:API] Fetching all projects")
         return get<BambooProjectListResponse>("/rest/api/latest/project?max-results=100")
             .map { it.projects.project }
     }
 
     suspend fun getProjectPlans(projectKey: String): ApiResult<List<BambooPlanDto>> {
-        log.info("[Bamboo:API] Fetching plans for project $projectKey")
+        log.debug("[Bamboo:API] Fetching plans for project $projectKey")
         return get<BambooProjectDetailResponse>("/rest/api/latest/project/$projectKey?expand=plans.plan")
             .map { it.plans.plan }
     }
 
     suspend fun searchPlans(query: String): ApiResult<List<BambooSearchEntity>> {
-        log.info("[Bamboo:API] Searching plans with query='$query'")
+        log.debug("[Bamboo:API] Searching plans with query='$query'")
         val encoded = URLEncoder.encode(query, "UTF-8")
         return get<BambooSearchResponse>("/rest/api/latest/search/plans?searchTerm=$encoded&fuzzy=true&max-results=25")
             .map { it.searchResults.map { r -> r.searchEntity } }
@@ -82,12 +82,12 @@ class BambooApiClient(
         } else {
             "/rest/api/latest/result/$planKey/latest?expand=stages.stage.results.result"
         }
-        log.info("[Bamboo:API] Fetching latest result: $path")
+        log.debug("[Bamboo:API] Fetching latest result: $path")
         return get(path)
     }
 
     suspend fun getBuildLog(resultKey: String): ApiResult<String> {
-        log.info("[Bamboo:API] Fetching build log for resultKey=$resultKey")
+        log.debug("[Bamboo:API] Fetching build log for resultKey=$resultKey")
         // Use the download endpoint for plain text logs (not the REST API logEntries which returns XML)
         return getRaw("/download/$resultKey/build_logs/$resultKey.log")
     }
@@ -97,7 +97,7 @@ class BambooApiClient(
      * GET /rest/api/latest/result/{jobResultKey}?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult
      */
     suspend fun getTestResults(jobResultKey: String): ApiResult<BambooJobTestResultDto> {
-        log.info("[Bamboo:API] Fetching test results for jobResultKey=$jobResultKey")
+        log.debug("[Bamboo:API] Fetching test results for jobResultKey=$jobResultKey")
         return get("/rest/api/latest/result/$jobResultKey?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult")
     }
 
@@ -110,7 +110,7 @@ class BambooApiClient(
         variables: Map<String, String> = emptyMap(),
         stageName: String? = null
     ): ApiResult<BambooQueueResponse> {
-        log.info("[Bamboo:API] Triggering build for planKey=$planKey, stage=$stageName, variables=${variables.keys}")
+        log.debug("[Bamboo:API] Triggering build for planKey=$planKey, stage=$stageName, variables=${variables.keys}")
         val params = buildString {
             if (stageName != null) {
                 append("?stage=${URLEncoder.encode(stageName, "UTF-8")}&executeAllStages=false")
@@ -159,14 +159,14 @@ class BambooApiClient(
         withContext(Dispatchers.IO) {
             try {
                 val url = "$baseUrl/build/admin/restartBuild.action?planKey=$planKey&buildNumber=$buildNumber"
-                log.info("[Bamboo:API] Rerunning failed jobs: POST $url")
+                log.debug("[Bamboo:API] Rerunning failed jobs for planKey=$planKey, buildNumber=$buildNumber")
                 val request = Request.Builder().url(url)
                     .post("".toRequestBody(null))
                     .header("Accept", "application/json")
                     .build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
-                    log.info("[Bamboo:API] restartBuild response: ${it.code}")
+                    log.debug("[Bamboo:API] restartBuild response: ${it.code}")
                     when (it.code) {
                         in 200..399 -> ApiResult.Success(Unit) // 302 redirect = success
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
@@ -176,20 +176,20 @@ class BambooApiClient(
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Bamboo:API] restartBuild network error: ${e.message}", e)
+                log.warn("[Bamboo:API] restartBuild network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }
 
     /** Cancel a queued (not yet running) build. */
     suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
-        log.info("[Bamboo:API] Cancelling queued build resultKey=$resultKey")
+        log.debug("[Bamboo:API] Cancelling queued build resultKey=$resultKey")
         return delete("/rest/api/latest/queue/$resultKey")
     }
 
     /** Stop a running build. */
     suspend fun stopBuild(resultKey: String): ApiResult<Unit> {
-        log.info("[Bamboo:API] Stopping running build resultKey=$resultKey")
+        log.debug("[Bamboo:API] Stopping running build resultKey=$resultKey")
         return put("/rest/api/latest/result/$resultKey/stop")
     }
 
@@ -206,27 +206,36 @@ class BambooApiClient(
                     .build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
-                    log.info("[Bamboo:API] GET $path -> ${it.code}")
+                    log.debug("[Bamboo:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
+                            val contentType = it.header("Content-Type") ?: ""
+                            if (contentType.isNotBlank() &&
+                                !contentType.contains("application/json", ignoreCase = true) &&
+                                !contentType.contains("text/json", ignoreCase = true)) {
+                                return@withContext ApiResult.Error(
+                                    ErrorType.PARSE_ERROR,
+                                    "Unexpected response Content-Type: $contentType (expected JSON)"
+                                )
+                            }
                             val bodyStr = it.body?.string() ?: ""
                             try {
                                 ApiResult.Success(json.decodeFromString<T>(bodyStr))
                             } catch (e: Exception) {
-                                log.warn("[Bamboo:API] Parse failed for GET $path: ${e.message}")
-                                log.info("[Bamboo:API] Response body (first 500): ${bodyStr.take(500)}")
+                                log.warn("[Bamboo:API] Parse failed: ${e.message}")
+                                log.debug("[Bamboo:API] Response body (first 200): ${bodyStr.take(200)}")
                                 ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse response: ${e.message}")
                             }
                         }
-                        401 -> { log.error("[Bamboo:API] Authentication failed for GET $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
-                        403 -> { log.error("[Bamboo:API] Forbidden for GET $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        404 -> { log.warn("[Bamboo:API] Not found for GET $path (plan key or branch may be incorrect)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
-                        429 -> { log.error("[Bamboo:API] Rate limited for GET $path"); ApiResult.Error(ErrorType.RATE_LIMITED, "Bamboo rate limit exceeded") }
-                        else -> { log.error("[Bamboo:API] Server error ${it.code} for GET $path"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
+                        401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
+                        403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
+                        404 -> { log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
+                        429 -> { log.warn("[Bamboo:API] Rate limited (429)"); ApiResult.Error(ErrorType.RATE_LIMITED, "Bamboo rate limit exceeded") }
+                        else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Bamboo:API] Network error for GET $path: ${e.message}", e)
+                log.warn("[Bamboo:API] Network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }
@@ -240,14 +249,14 @@ class BambooApiClient(
                     log.debug("[Bamboo:API] GET (raw) $path responded with status=${it.code}")
                     when (it.code) {
                         in 200..299 -> ApiResult.Success(it.body?.string() ?: "")
-                        401 -> { log.error("[Bamboo:API] Authentication failed for GET $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
-                        403 -> { log.error("[Bamboo:API] Forbidden for GET $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        404 -> { log.warn("[Bamboo:API] Not found for GET $path (plan key or branch may be incorrect)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
-                        else -> { log.error("[Bamboo:API] Server error ${it.code} for GET $path"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
+                        401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
+                        403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
+                        404 -> { log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
+                        else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Bamboo:API] Network error for GET (raw) $path: ${e.message}", e)
+                log.warn("[Bamboo:API] Network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }
@@ -264,22 +273,31 @@ class BambooApiClient(
                     log.debug("[Bamboo:API] POST $path responded with status=${it.code}")
                     when (it.code) {
                         in 200..299 -> {
+                            val contentType = it.header("Content-Type") ?: ""
+                            if (contentType.isNotBlank() &&
+                                !contentType.contains("application/json", ignoreCase = true) &&
+                                !contentType.contains("text/json", ignoreCase = true)) {
+                                return@withContext ApiResult.Error(
+                                    ErrorType.PARSE_ERROR,
+                                    "Unexpected response Content-Type: $contentType (expected JSON)"
+                                )
+                            }
                             val bodyStr = it.body?.string() ?: ""
                             ApiResult.Success(json.decodeFromString<T>(bodyStr))
                         }
-                        401 -> { log.error("[Bamboo:API] Authentication failed for POST $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
-                        403 -> { log.error("[Bamboo:API] Forbidden for POST $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        else -> { log.error("[Bamboo:API] Server error ${it.code} for POST $path"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
+                        401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
+                        403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
+                        else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Bamboo:API] Network error for POST $path: ${e.message}", e)
+                log.warn("[Bamboo:API] Network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }
 
     suspend fun getArtifacts(resultKey: String): ApiResult<List<BambooArtifact>> {
-        log.info("[Bamboo:API] Fetching artifacts for resultKey=$resultKey")
+        log.debug("[Bamboo:API] Fetching artifacts for resultKey=$resultKey")
         return get<BambooArtifactResponse>(
             "/rest/api/latest/result/$resultKey?expand=artifacts.artifact"
         ).map { it.artifacts.artifact }
@@ -302,12 +320,12 @@ class BambooApiClient(
                         }
                         true
                     } else {
-                        log.warn("[Bamboo:API] Download artifact failed: ${it.code} for $artifactUrl")
+                        log.warn("[Bamboo:API] Download artifact failed with status ${it.code}")
                         false
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Bamboo:API] Download artifact network error: ${e.message}", e)
+                log.warn("[Bamboo:API] Download artifact network error: ${e.message}")
                 false
             }
         }
@@ -349,14 +367,14 @@ class BambooApiClient(
                     log.debug("[Bamboo:API] DELETE $path responded with status=${it.code}")
                     when (it.code) {
                         in 200..299 -> ApiResult.Success(Unit)
-                        401 -> { log.error("[Bamboo:API] Authentication failed for DELETE $path"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
-                        403 -> { log.error("[Bamboo:API] Forbidden for DELETE $path"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        404 -> { log.error("[Bamboo:API] Not found for DELETE $path"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
-                        else -> { log.error("[Bamboo:API] Server error ${it.code} for DELETE $path"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
+                        401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
+                        403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
+                        404 -> { log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
+                        else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Bamboo:API] Network error for DELETE $path: ${e.message}", e)
+                log.warn("[Bamboo:API] Network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }

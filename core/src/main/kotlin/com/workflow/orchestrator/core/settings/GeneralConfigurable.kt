@@ -239,6 +239,12 @@ class GeneralConfigurable(
                     .columns(40)
                     .bindText(urlGetter, urlSetter)
                     .onChanged { field -> currentUrl = field.text }
+                    .validationOnApply {
+                        val url = it.text.trim()
+                        if (url.isNotBlank() && !url.startsWith("https://")) {
+                            warning("Using HTTP is insecure. Credentials will be sent in plaintext. Use HTTPS instead.")
+                        } else null
+                    }
                     .comment("e.g., https://${serviceType.name.lowercase()}.company.com")
             }
             row("Access Token:") {
@@ -314,6 +320,12 @@ class GeneralConfigurable(
                     .columns(40)
                     .bindText(urlGetter, urlSetter)
                     .onChanged { field -> currentUrl = field.text }
+                    .validationOnApply {
+                        val url = it.text.trim()
+                        if (url.isNotBlank() && !url.startsWith("https://")) {
+                            warning("Using HTTP is insecure. Credentials will be sent in plaintext. Use HTTPS instead.")
+                        } else null
+                    }
                     .comment("e.g., https://bitbucket.company.com")
             }
             row("Access Token:") {
@@ -412,6 +424,12 @@ class GeneralConfigurable(
                     .columns(40)
                     .bindText(urlGetter, urlSetter)
                     .onChanged { field -> currentUrl = field.text }
+                    .validationOnApply {
+                        val url = it.text.trim()
+                        if (url.isNotBlank() && !url.startsWith("https://")) {
+                            warning("Using HTTP is insecure. Credentials will be sent in plaintext. Use HTTPS instead.")
+                        } else null
+                    }
                     .comment("e.g., https://nexus.company.com/repository/docker-hosted")
             }
             row("Username:") {

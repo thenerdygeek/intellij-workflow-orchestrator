@@ -28,11 +28,12 @@ class CodyTextGenerationService : TextGenerationService {
 
             val contextItems = contextFilePaths.map { ContextFile.fromPath(it) }
 
+            val sanitizedPrompt = SensitiveContentSanitizer.sanitizeForExternalTransmission(prompt)
             val response = server.chatSubmitMessage(
                 ChatSubmitParams(
                     id = chatId,
                     message = ChatMessage(
-                        text = prompt,
+                        text = sanitizedPrompt,
                         contextItems = contextItems
                     )
                 )

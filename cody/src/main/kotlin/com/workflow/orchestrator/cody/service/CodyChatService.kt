@@ -219,7 +219,7 @@ class CodyChatService(private val project: Project) {
             try {
                 val file = File(filePath)
                 if (file.exists() && file.isFile) {
-                    val content = file.readText()
+                    val content = SensitiveContentSanitizer.sanitizeForExternalTransmission(file.readText())
                     server.textDocumentDidOpen(
                         ProtocolTextDocument(
                             uri = "file://$filePath",
@@ -247,11 +247,12 @@ class CodyChatService(private val project: Project) {
         text: String,
         contextItems: List<ContextFile> = emptyList()
     ): String? {
+        val sanitizedText = SensitiveContentSanitizer.sanitizeForExternalTransmission(text)
         val response = session.server.chatSubmitMessage(
             ChatSubmitParams(
                 id = session.chatId,
                 message = ChatMessage(
-                    text = text,
+                    text = sanitizedText,
                     contextItems = contextItems
                 )
             )

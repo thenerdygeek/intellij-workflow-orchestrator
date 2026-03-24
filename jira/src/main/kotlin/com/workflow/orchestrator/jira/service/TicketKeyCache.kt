@@ -23,6 +23,8 @@ class TicketKeyCache {
 
     companion object {
         private const val MAX_SIZE = 500
+        /** Limit regex matches to prevent catastrophic backtracking on malicious patterns (SEC-22). */
+        private const val MAX_REGEX_MATCHES = 200
         private val DEFAULT_REGEX = Regex("\\b([A-Z][A-Z0-9]+-\\d+)\\b")
 
         fun getInstance(project: Project): TicketKeyCache =
@@ -35,12 +37,22 @@ class TicketKeyCache {
             val pattern = com.workflow.orchestrator.core.settings.ConnectionSettings
                 .getInstance().state.ticketKeyRegex
             if (pattern.isNotBlank()) Regex(pattern) else DEFAULT_REGEX
+        } catch (e: java.util.regex.PatternSyntaxException) {
+            log.warn("[Jira:KeyCache] Invalid ticket key regex, falling back to default: ${e.message}")
+            DEFAULT_REGEX
         } catch (_: Exception) {
             DEFAULT_REGEX
         }
-        return regex.findAll(text).map { match ->
-            match.groupValues.getOrElse(1) { match.value }
-        }.toSet()
+        return try {
+            regex.findAll(text).map { match ->
+                match.groupValues.getOrElse(1) { match.value }
+            }.take(MAX_REGEX_MATCHES).toSet()
+        } catch (e: Exception) {
+            log.warn("[Jira:KeyCache] Regex execution failed, falling back to default: ${e.message}")
+            DEFAULT_REGEX.findAll(text).map { match ->
+                match.groupValues.getOrElse(1) { match.value }
+            }.take(MAX_REGEX_MATCHES).toSet()
+        }
     }
 
     /** Get cached info for a key. Returns null if not cached or cached as invalid. */

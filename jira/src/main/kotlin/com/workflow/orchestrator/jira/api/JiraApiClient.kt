@@ -40,7 +40,7 @@ class JiraApiClient(
     }
 
     suspend fun getBoards(boardType: String = "", nameFilter: String = ""): ApiResult<List<JiraBoard>> {
-        log.info("[Jira:API] GET /rest/agile/1.0/board (type=$boardType, name=$nameFilter)")
+        log.debug("[Jira:API] GET /rest/agile/1.0/board (type=$boardType, name=$nameFilter)")
         val params = mutableListOf<String>()
         if (boardType.isNotBlank()) params.add("type=$boardType")
         if (nameFilter.isNotBlank()) params.add("name=${URLEncoder.encode(nameFilter, "UTF-8")}")
@@ -50,7 +50,7 @@ class JiraApiClient(
     }
 
     suspend fun getActiveSprints(boardId: Int): ApiResult<List<JiraSprint>> {
-        log.info("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=active")
+        log.debug("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=active")
         return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=active")
             .map { it.values }
     }
@@ -63,7 +63,7 @@ class JiraApiClient(
         } else {
             "maxResults=200"
         }
-        log.info("[Jira:API] GET sprint issues for sprintId=$sprintId (allUsers=$allUsers)")
+        log.debug("[Jira:API] GET sprint issues for sprintId=$sprintId (allUsers=$allUsers)")
         return get<JiraIssueSearchResult>("/rest/agile/1.0/sprint/$sprintId/issue?$query")
             .map { it.issues }
     }
@@ -72,13 +72,13 @@ class JiraApiClient(
         val jqlParts = mutableListOf("resolution=Unresolved")
         if (!allUsers) jqlParts.add("assignee=currentUser()")
         val jql = URLEncoder.encode(jqlParts.joinToString(" AND "), "UTF-8")
-        log.info("[Jira:API] GET board issues for boardId=$boardId (allUsers=$allUsers)")
+        log.debug("[Jira:API] GET board issues for boardId=$boardId (allUsers=$allUsers)")
         return get<JiraIssueSearchResult>("/rest/agile/1.0/board/$boardId/issue?jql=$jql&maxResults=200")
             .map { it.issues }
     }
 
     suspend fun getIssue(key: String): ApiResult<JiraIssue> {
-        log.info("[Jira:API] GET /rest/api/2/issue/$key")
+        log.debug("[Jira:API] GET /rest/api/2/issue/$key")
         return get("/rest/api/2/issue/$key?expand=issuelinks")
     }
 
@@ -86,7 +86,7 @@ class JiraApiClient(
         val escaped = escapeJql(text)
         val jql = "(text ~ \"$escaped\" OR key = \"$escaped\") AND assignee = currentUser() ORDER BY updated DESC"
         val encodedJql = URLEncoder.encode(jql, "UTF-8")
-        log.info("[Jira:API] GET /rest/api/2/search (text=$text, maxResults=$maxResults)")
+        log.debug("[Jira:API] GET /rest/api/2/search (text=$text, maxResults=$maxResults)")
         return get<JiraIssueSearchResult>(
             "/rest/api/2/search?jql=$encodedJql&maxResults=$maxResults&fields=summary,status,issuetype,priority,assignee"
         ).map { it.issues }
@@ -96,14 +96,14 @@ class JiraApiClient(
         issueKey: String,
         expandFields: Boolean = false
     ): ApiResult<List<JiraTransition>> {
-        log.info("[Jira:API] Fetching transitions for $issueKey (expandFields=$expandFields)")
+        log.debug("[Jira:API] Fetching transitions for $issueKey (expandFields=$expandFields)")
         val expand = if (expandFields) "?expand=transitions.fields" else ""
         return get<JiraTransitionList>("/rest/api/2/issue/$issueKey/transitions$expand")
             .map { it.transitions }
     }
 
     suspend fun postWorklog(issueKey: String, timeSpent: String, comment: String? = null): ApiResult<Unit> {
-        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/worklog (timeSpent=$timeSpent, comment=${comment != null})")
+        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/worklog (timeSpent=$timeSpent, comment=${comment != null})")
         val body = buildJsonObject {
             put("timeSpent", timeSpent)
             if (comment != null) put("comment", comment)
@@ -116,7 +116,7 @@ class JiraApiClient(
      * POST /rest/api/2/issue/{key}/comment
      */
     suspend fun addComment(issueKey: String, body: String): ApiResult<Unit> {
-        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/comment")
+        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/comment")
         val payload = buildJsonObject {
             put("body", body)
         }.toString()
@@ -128,7 +128,7 @@ class JiraApiClient(
      * GET /rest/api/2/myself
      */
     suspend fun getCurrentUser(): ApiResult<JsonObject> {
-        log.info("[Jira:API] GET /rest/api/2/myself")
+        log.debug("[Jira:API] GET /rest/api/2/myself")
         return get("/rest/api/2/myself")
     }
 
@@ -138,7 +138,7 @@ class JiraApiClient(
         fields: Map<String, Any>? = null,
         comment: String? = null
     ): ApiResult<Unit> {
-        log.info("[Jira:API] POST /rest/api/2/issue/$issueKey/transitions (transitionId=$transitionId)")
+        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/transitions (transitionId=$transitionId)")
         val body = buildTransitionPayload(transitionId, fields, comment)
         return post("/rest/api/2/issue/$issueKey/transitions", body)
     }
@@ -193,7 +193,7 @@ class JiraApiClient(
      * stable since Jira 7.x and powers Jira's own Development Panel.
      */
     suspend fun getDevStatusBranches(issueId: String): ApiResult<List<DevStatusBranch>> {
-        log.info("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=branch)")
+        log.debug("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=branch)")
         return try {
             val result = get<DevStatusResponse>(
                 "/rest/dev-status/1.0/issue/detail?issueId=$issueId&applicationType=stash&dataType=branch"
@@ -215,7 +215,7 @@ class JiraApiClient(
         issueKey: String,
         maxResults: Int = 50
     ): ApiResult<List<JiraComment>> {
-        log.info("[Jira:API] GET /rest/api/2/issue/$issueKey/comment")
+        log.debug("[Jira:API] GET /rest/api/2/issue/$issueKey/comment")
         return get<JiraCommentSearchResult>(
             "/rest/api/2/issue/$issueKey/comment?maxResults=$maxResults&orderBy=-created"
         ).map { it.comments }
@@ -233,7 +233,7 @@ class JiraApiClient(
         for (batch in keys.chunked(100)) {
             val jql = "key in (${batch.joinToString(",")})"
             val encodedJql = URLEncoder.encode(jql, "UTF-8")
-            log.info("[Jira:API] Validating ${batch.size} ticket keys")
+            log.debug("[Jira:API] Validating ${batch.size} ticket keys")
             val result = get<JiraIssueSearchResult>(
                 "/rest/api/2/search?jql=$encodedJql&maxResults=${batch.size}&fields=summary,status"
             )
@@ -257,18 +257,18 @@ class JiraApiClient(
 
     suspend fun getWorklogs(issueKey: String, maxResults: Int = 20): ApiResult<JiraWorklogResponse> {
         val encoded = URLEncoder.encode(issueKey, "UTF-8")
-        log.info("[Jira:API] GET /rest/api/2/issue/$encoded/worklog")
+        log.debug("[Jira:API] GET /rest/api/2/issue/$encoded/worklog")
         return get<JiraWorklogResponse>("/rest/api/2/issue/$encoded/worklog?maxResults=$maxResults")
     }
 
     suspend fun getClosedSprints(boardId: Int, maxResults: Int = 5): ApiResult<List<JiraSprint>> {
-        log.info("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=closed")
+        log.debug("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=closed")
         return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=closed&maxResults=$maxResults")
             .map { it.values }
     }
 
     suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> {
-        log.info("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=pullrequest)")
+        log.debug("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=pullrequest)")
         return try {
             val response = get<DevStatusResponse>(
                 "/rest/dev-status/1.0/issue/detail?issueId=$issueId&applicationType=stash&dataType=pullrequest"
@@ -296,31 +296,40 @@ class JiraApiClient(
                 val request = Request.Builder().url("$baseUrl$path").get().build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
-                    log.info("[Jira:API] GET $path -> ${it.code}")
+                    log.debug("[Jira:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
+                            val contentType = it.header("Content-Type") ?: ""
+                            if (contentType.isNotBlank() &&
+                                !contentType.contains("application/json", ignoreCase = true) &&
+                                !contentType.contains("text/json", ignoreCase = true)) {
+                                return@withContext ApiResult.Error(
+                                    ErrorType.PARSE_ERROR,
+                                    "Unexpected response Content-Type: $contentType (expected JSON)"
+                                )
+                            }
                             val bodyStr = it.body?.string() ?: ""
                             ApiResult.Success(json.decodeFromString<T>(bodyStr))
                         }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
-                            log.error("[Jira:API] Authentication failed for GET $path")
+                            log.warn("[Jira:API] Authentication failed (401)")
                         }
                         403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
-                            log.error("[Jira:API] Forbidden for GET $path")
+                            log.warn("[Jira:API] Forbidden (403)")
                         }
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found").also {
-                            log.warn("[Jira:API] Resource not found: GET $path")
+                            log.warn("[Jira:API] Resource not found (404)")
                         }
                         429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also {
-                            log.warn("[Jira:API] Rate limited on GET $path")
+                            log.warn("[Jira:API] Rate limited (429)")
                         }
                         else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
-                            log.error("[Jira:API] Server error ${response.code} for GET $path")
+                            log.warn("[Jira:API] Server error (${response.code})")
                         }
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Jira:API] Network error for GET $path: ${e.message}", e)
+                log.warn("[Jira:API] Network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }
@@ -332,22 +341,22 @@ class JiraApiClient(
                 val request = Request.Builder().url("$baseUrl$path").post(body).build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
-                    log.info("[Jira:API] POST $path -> ${it.code}")
+                    log.debug("[Jira:API] POST $path -> ${it.code}")
                     when (it.code) {
                         in 200..299, 204 -> ApiResult.Success(Unit)
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
-                            log.error("[Jira:API] Authentication failed for POST $path")
+                            log.warn("[Jira:API] Authentication failed (401)")
                         }
                         403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
-                            log.error("[Jira:API] Forbidden for POST $path")
+                            log.warn("[Jira:API] Forbidden (403)")
                         }
                         else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
-                            log.error("[Jira:API] Server error ${response.code} for POST $path")
+                            log.warn("[Jira:API] Server error (${response.code})")
                         }
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Jira:API] Network error for POST $path: ${e.message}", e)
+                log.warn("[Jira:API] Network error: ${e.message}")
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }

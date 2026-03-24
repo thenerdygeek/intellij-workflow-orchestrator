@@ -28,6 +28,9 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         var sonarUrl: String = "",
         var sourcegraphUrl: String = "",
         var nexusUrl: String = "",
+        // SEC-16: nexusUsername stored in plaintext XML — accepted risk (LOW).
+        // Username alone without password is non-sensitive. Password is in PasswordSafe.
+        // Full migration to PasswordSafe deferred to avoid multi-file refactor.
         var nexusUsername: String = "",
         var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b"
     )

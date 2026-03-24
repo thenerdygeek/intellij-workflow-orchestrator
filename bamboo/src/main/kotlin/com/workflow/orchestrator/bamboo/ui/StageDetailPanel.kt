@@ -386,7 +386,13 @@ class StageDetailPanel(
         try {
             val tempFile = java.io.File.createTempFile("bamboo-build-", ".log")
             tempFile.writeText(text)
-            tempFile.deleteOnExit()
+
+            // Explicit cleanup when panel is disposed instead of unreliable deleteOnExit()
+            Disposer.register(parentDisposable, Disposable {
+                if (tempFile.exists()) {
+                    tempFile.delete()
+                }
+            })
 
             val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(tempFile)
             if (vf != null) {

@@ -26,6 +26,11 @@ class CodyAgentClient(private val project: Project) {
         secrets[key] = value
     }
 
+    /** Clear all stored secrets. Called during dispose to avoid retaining tokens in memory. */
+    fun clearSecrets() {
+        secrets.clear()
+    }
+
     @JsonRequest("secrets/get")
     fun secretsGet(params: SecretsKeyParams): CompletableFuture<String?> {
         log.info("Agent requesting secret for key: ${params.key}")
