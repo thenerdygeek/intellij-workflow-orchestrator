@@ -23,7 +23,7 @@ interface DropdownItem { id: string; name: string; description?: string }
 
 // ── ModelChip ──
 
-function ModelChip({ model }: { model: string }) {
+const ModelChip = memo(function ModelChip({ model }: { model: string }) {
   const [items, setItems] = useState<DropdownItem[]>([]);
 
   useEffect(() => {
@@ -56,11 +56,11 @@ function ModelChip({ model }: { model: string }) {
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
+});
 
 // ── PlanChip ──
 
-function PlanChip({ active }: { active: boolean }) {
+const PlanChip = memo(function PlanChip({ active }: { active: boolean }) {
   const togglePlan = useCallback(() => {
     // Toggle locally for immediate feedback, then notify Kotlin
     const store = useChatStore.getState();
@@ -85,11 +85,11 @@ function PlanChip({ active }: { active: boolean }) {
       Plan
     </Button>
   );
-}
+});
 
 // ── SkillsChip ──
 
-function SkillsChip() {
+const SkillsChip = memo(function SkillsChip() {
   const [items, setItems] = useState<DropdownItem[]>([]);
 
   useEffect(() => {
@@ -121,11 +121,11 @@ function SkillsChip() {
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
+});
 
 // ── MoreChip ──
 
-function MoreChip() {
+const MoreChip = memo(function MoreChip() {
   const actions = [
     { label: 'New conversation', action: () => window._newChat?.() },
     { label: 'Undo last action', action: () => window._requestUndo?.() },
@@ -149,7 +149,7 @@ function MoreChip() {
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
+});
 
 // ── InputBarContent (inside PromptInput context) ──
 

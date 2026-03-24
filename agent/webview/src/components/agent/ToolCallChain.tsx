@@ -143,6 +143,61 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
   );
 }
 
+// ── ToolCallItem (memoized) ──
+
+const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
+  const category = getCategory(tc.name);
+  const catStyle = CATEGORY_STYLES[category];
+  const target = extractTarget(tc.args);
+  const isRunning = tc.status === 'RUNNING';
+  const isCmdTool = category === 'CMD';
+
+  return (
+    <ChainOfThoughtStep
+      defaultOpen={false}
+    >
+      <ChainOfThoughtTrigger
+        isActive={isRunning}
+        icon={<StatusIcon status={tc.status} />}
+      >
+        <span className="flex items-center gap-1.5 w-full min-w-0">
+          <Badge
+            variant="secondary"
+            className={cn(
+              'rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-wider border-0 shrink-0',
+              catStyle.className,
+            )}
+          >
+            {catStyle.label}
+          </Badge>
+          <span className="font-mono font-medium text-[var(--fg)] shrink-0">{tc.name}</span>
+          {target && (
+            <span className="truncate font-mono text-[var(--fg-muted)]" style={{ maxWidth: '150px' }}>
+              {target}
+            </span>
+          )}
+          <span className="flex-1" />
+          {isRunning && (
+            <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">running</span>
+          )}
+          {tc.durationMs != null && !isRunning && (
+            <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
+              {formatDuration(tc.durationMs)}
+            </span>
+          )}
+        </span>
+      </ChainOfThoughtTrigger>
+      <ChainOfThoughtContent>
+        {isCmdTool ? (
+          <TerminalContent toolCall={tc} />
+        ) : (
+          <ToolCallDetails toolCall={tc} />
+        )}
+      </ChainOfThoughtContent>
+    </ChainOfThoughtStep>
+  );
+});
+
 // ── ToolCallChain ──
 
 interface ToolCallChainProps {
@@ -154,60 +209,7 @@ export const ToolCallChain = memo(function ToolCallChain({ toolCalls }: ToolCall
 
   return (
     <ChainOfThought className="my-2">
-      {toolCalls.map((tc) => {
-        const category = getCategory(tc.name);
-        const catStyle = CATEGORY_STYLES[category];
-        const target = extractTarget(tc.args);
-        const isRunning = tc.status === 'RUNNING';
-        const shouldDefaultOpen = false;
-        const isCmdTool = category === 'CMD';
-
-        return (
-          <ChainOfThoughtStep
-            key={tc.id}
-            defaultOpen={shouldDefaultOpen}
-          >
-            <ChainOfThoughtTrigger
-              isActive={isRunning}
-              icon={<StatusIcon status={tc.status} />}
-            >
-              <span className="flex items-center gap-1.5 w-full min-w-0">
-                <Badge
-                  variant="secondary"
-                  className={cn(
-                    'rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-wider border-0 shrink-0',
-                    catStyle.className,
-                  )}
-                >
-                  {catStyle.label}
-                </Badge>
-                <span className="font-mono font-medium text-[var(--fg)] shrink-0">{tc.name}</span>
-                {target && (
-                  <span className="truncate font-mono text-[var(--fg-muted)]" style={{ maxWidth: '150px' }}>
-                    {target}
-                  </span>
-                )}
-                <span className="flex-1" />
-                {isRunning && (
-                  <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">running</span>
-                )}
-                {tc.durationMs != null && !isRunning && (
-                  <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
-                    {formatDuration(tc.durationMs)}
-                  </span>
-                )}
-              </span>
-            </ChainOfThoughtTrigger>
-            <ChainOfThoughtContent>
-              {isCmdTool ? (
-                <TerminalContent toolCall={tc} />
-              ) : (
-                <ToolCallDetails toolCall={tc} />
-              )}
-            </ChainOfThoughtContent>
-          </ChainOfThoughtStep>
-        );
-      })}
+      {toolCalls.map(tc => <ToolCallItem key={tc.id} tc={tc} />)}
     </ChainOfThought>
   );
 });

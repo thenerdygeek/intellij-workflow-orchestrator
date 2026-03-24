@@ -17,7 +17,7 @@ function useThinkingTimer(isStreaming: boolean): number {
     if (isStreaming) {
       startRef.current = Date.now();
       setElapsed(0);
-      const interval = setInterval(() => setElapsed(Date.now() - startRef.current), 100);
+      const interval = setInterval(() => setElapsed(Date.now() - startRef.current), 1000);
       return () => clearInterval(interval);
     }
   }, [isStreaming]);
