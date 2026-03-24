@@ -30,6 +30,8 @@ declare global {
     _deactivateSkill?: () => void;
     _activateSkill?: (name: string) => void;
     _openInEditorTab?: (payload: string) => void;
+    _acceptDiffHunk?: (filePath: string, hunkIndex: number, editedContent?: string) => void;
+    _rejectDiffHunk?: (filePath: string, hunkIndex: number) => void;
     __mock?: Record<string, (...args: any[]) => any>;
   }
 }
