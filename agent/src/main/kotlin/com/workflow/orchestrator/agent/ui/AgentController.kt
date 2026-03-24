@@ -18,6 +18,10 @@ import com.workflow.orchestrator.agent.runtime.AgentPlan
 import com.workflow.orchestrator.agent.runtime.ConversationSession
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.tools.ToolCategoryRegistry
 import kotlinx.coroutines.*
@@ -150,11 +154,28 @@ class AgentController(
         // Wire JCEF plan card callbacks (approve, revise)
         dashboard.setCefPlanCallbacks(
             onApprove = { session?.planManager?.approvePlan() },
-            onRevise = { commentsJson ->
+            onRevise = { revisionJson ->
                 try {
-                    val comments = kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(commentsJson)
-                    session?.planManager?.revisePlan(comments)
+                    val json = kotlinx.serialization.json.Json.parseToJsonElement(revisionJson).jsonObject
+                    // New format: { comments: [{line, comment}], fullMarkdown }
+                    val commentsArray = json["comments"]?.jsonArray
+                    val fullMarkdown = json["fullMarkdown"]?.jsonPrimitive?.contentOrNull
+
+                    if (commentsArray != null) {
+                        val revisions = commentsArray.map { item ->
+                            val obj = item.jsonObject
+                            val line = obj["line"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val comment = obj["comment"]?.jsonPrimitive?.contentOrNull ?: ""
+                            PlanRevisionComment(line = line, comment = comment)
+                        }
+                        session?.planManager?.revisePlanWithContext(revisions, fullMarkdown)
+                    } else {
+                        // Legacy format: { lineId: commentText }
+                        val comments = kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(revisionJson)
+                        session?.planManager?.revisePlan(comments)
+                    }
                 } catch (e: Exception) {
+                    LOG.warn("AgentController: failed to parse plan revision", e)
                     dashboard.appendError("Failed to parse plan comments. Please try again.")
                 }
             }

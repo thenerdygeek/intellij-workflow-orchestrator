@@ -111,6 +111,32 @@ class CreatePlanTool : AgentTool {
                     isError = true
                 )
             }
+            is PlanApprovalResult.RevisedWithContext -> {
+                // Build revision prompt with contextual quotes + full plan markdown
+                val feedbackLines = result.revisions.joinToString("\n\n") { rev ->
+                    "On: \"${rev.line}\"\n→ User: \"${rev.comment}\""
+                }
+                val planSection = if (result.fullMarkdown != null) {
+                    "\n\n<current_plan_markdown>\n${result.fullMarkdown}\n</current_plan_markdown>"
+                } else ""
+                val content = buildString {
+                    appendLine("User requested revisions to the plan. Their inline feedback:")
+                    appendLine()
+                    appendLine(feedbackLines)
+                    appendLine()
+                    append("Here is the full plan for reference:")
+                    append(planSection)
+                    appendLine()
+                    appendLine()
+                    append("Please create a revised plan by calling create_plan again, addressing all feedback above.")
+                }
+                ToolResult(
+                    content = content,
+                    summary = "Plan revision requested (${result.revisions.size} comments)",
+                    tokenEstimate = TokenEstimator.estimate(content),
+                    isError = true
+                )
+            }
         }
     }
 }

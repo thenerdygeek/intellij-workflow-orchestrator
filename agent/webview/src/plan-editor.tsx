@@ -52,9 +52,21 @@ function PlanEditor() {
   }, []);
 
   const handleRevise = useCallback(() => {
-    const json = JSON.stringify(comments);
-    (window as any)._revisePlan?.(json);
-  }, [comments]);
+    if (!planData) return;
+    const lines = planData.markdown.split('\n');
+    // Build revision payload: each comment paired with the actual line content
+    const revisions = Object.entries(comments).map(([lineId, comment]) => {
+      const idx = parseInt(lineId.replace('line-', ''), 10);
+      const lineContent = lines[idx] ?? '';
+      return { line: lineContent.trim(), comment };
+    }).filter(r => r.comment.trim().length > 0);
+
+    const payload = JSON.stringify({
+      comments: revisions,
+      fullMarkdown: planData.markdown,
+    });
+    (window as any)._revisePlan?.(payload);
+  }, [comments, planData]);
 
   // Loading state
   if (!planData) {

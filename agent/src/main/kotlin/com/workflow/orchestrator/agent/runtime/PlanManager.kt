@@ -29,9 +29,21 @@ data class AgentPlan(
     var approved: Boolean = false
 )
 
+/** A single user comment on a specific line of the plan. */
+data class PlanRevisionComment(
+    val line: String,     // The actual plan line content the comment refers to
+    val comment: String   // The user's feedback
+)
+
 sealed class PlanApprovalResult {
     object Approved : PlanApprovalResult()
+    /** Legacy: line-ID keyed comments (from old plan card UI). */
     data class Revised(val comments: Map<String, String>) : PlanApprovalResult()
+    /** New: contextual comments with line content + full plan markdown. */
+    data class RevisedWithContext(
+        val revisions: List<PlanRevisionComment>,
+        val fullMarkdown: String?
+    ) : PlanApprovalResult()
 }
 
 class PlanManager {
@@ -115,13 +127,20 @@ class PlanManager {
             comments[step.id]?.let { step.userComment = it }
         }
         LOG.info("PlanManager: plan revision requested with ${comments.size} comments")
-        // Persist revised comments to disk
         sessionDir?.let { dir -> currentPlan?.let { PlanPersistence.save(it, dir) } }
         val result = PlanApprovalResult.Revised(comments)
-        // Resolve the async deferred if using submitPlanAndWait
         approvalDeferred?.complete(result)
         approvalDeferred = null
-        // Complete the legacy CompletableFuture if using submitPlan
+        approvalFuture?.complete(result)
+    }
+
+    /** New revision method: carries the actual line content + full markdown for LLM context. */
+    fun revisePlanWithContext(revisions: List<PlanRevisionComment>, fullMarkdown: String?) {
+        LOG.info("PlanManager: contextual revision requested with ${revisions.size} comments")
+        sessionDir?.let { dir -> currentPlan?.let { PlanPersistence.save(it, dir) } }
+        val result = PlanApprovalResult.RevisedWithContext(revisions, fullMarkdown)
+        approvalDeferred?.complete(result)
+        approvalDeferred = null
         approvalFuture?.complete(result)
     }
 
