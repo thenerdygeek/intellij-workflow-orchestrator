@@ -80,6 +80,24 @@
   50% { filter: drop-shadow(0 0 10px var(--accent)); }
 }
 
+/* Directional sweep animations for flow diagram active nodes */
+@keyframes sweep-lr {
+  0%   { clip-path: inset(0 100% 0 0); opacity: 0; }
+  100% { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+@keyframes sweep-rl {
+  0%   { clip-path: inset(0 0 0 100%); opacity: 0; }
+  100% { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+@keyframes sweep-tb {
+  0%   { clip-path: inset(0 0 100% 0); opacity: 0; }
+  100% { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+@keyframes sweep-bt {
+  0%   { clip-path: inset(100% 0 0 0); opacity: 0; }
+  100% { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

@@ -652,63 +652,33 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
                       strokeWidth={nodeStrokeWidth}
                     />
 
-                    {/* Directional glow sweep for active nodes */}
+                    {/* Directional glow sweep for active nodes — uses CSS clip-path animation */}
                     {nodeState === 'active' && (
-                      <rect
+                      <foreignObject
                         key={`sweep-${animStep}`}
-                        x={node.x - node.width / 2}
-                        y={node.y - node.height / 2}
-                        width={node.width}
-                        height={node.height}
-                        rx={8}
-                        ry={8}
-                        fill={`${nodeColor}30`}
-                        stroke={nodeColor}
-                        strokeWidth={2.5}
-                        strokeOpacity={0}
+                        x={node.x - node.width / 2 - 2}
+                        y={node.y - node.height / 2 - 2}
+                        width={node.width + 4}
+                        height={node.height + 4}
                       >
-                        {/* Fade in the stroke */}
-                        <animate attributeName="stroke-opacity" from="0" to="1" dur="0.4s" fill="freeze" />
-                        {sweepHorizontal ? (
-                          <>
-                            <animate
-                              attributeName="width"
-                              from="0"
-                              to={String(node.width)}
-                              dur="0.4s"
-                              fill="freeze"
-                            />
-                            {!sweepForward && (
-                              <animate
-                                attributeName="x"
-                                from={String(node.x + node.width / 2)}
-                                to={String(node.x - node.width / 2)}
-                                dur="0.4s"
-                                fill="freeze"
-                              />
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <animate
-                              attributeName="height"
-                              from="0"
-                              to={String(node.height)}
-                              dur="0.4s"
-                              fill="freeze"
-                            />
-                            {!sweepForward && (
-                              <animate
-                                attributeName="y"
-                                from={String(node.y + node.height / 2)}
-                                to={String(node.y - node.height / 2)}
-                                dur="0.4s"
-                                fill="freeze"
-                              />
-                            )}
-                          </>
-                        )}
-                      </rect>
+                        <div
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            borderRadius: 8,
+                            background: `${nodeColor}30`,
+                            border: `2.5px solid ${nodeColor}`,
+                            boxSizing: 'border-box',
+                            animation: sweepHorizontal
+                              ? (sweepForward
+                                ? 'sweep-lr 0.8s ease-out forwards'
+                                : 'sweep-rl 0.8s ease-out forwards')
+                              : (sweepForward
+                                ? 'sweep-tb 0.8s ease-out forwards'
+                                : 'sweep-bt 0.8s ease-out forwards'),
+                          }}
+                        />
+                      </foreignObject>
                     )}
 
                     {/* Node label */}
