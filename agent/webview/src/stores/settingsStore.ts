@@ -15,6 +15,10 @@ const defaultVisualizations: Record<VisualizationType, VisualizationConfig> = {
   math: { ...defaultVisualizationConfig, defaultExpanded: true, maxHeight: 0 },
   diff: { ...defaultVisualizationConfig, defaultExpanded: true, maxHeight: 400 },
   interactiveHtml: { ...defaultVisualizationConfig, maxHeight: 500 },
+  table: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 400 },
+  output: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 400 },
+  progress: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 300 },
+  timeline: { enabled: true, autoRender: true, defaultExpanded: true, maxHeight: 400 },
 };
 
 interface SettingsState {

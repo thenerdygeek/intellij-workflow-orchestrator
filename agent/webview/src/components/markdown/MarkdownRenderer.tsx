@@ -11,6 +11,10 @@ import { MathBlock } from '@/components/rich/MathBlock';
 import { DiffHtml } from '@/components/rich/DiffHtml';
 import { AnsiOutput } from '@/components/rich/AnsiOutput';
 import { InteractiveHtml } from '@/components/rich/InteractiveHtml';
+import { DataTable } from '@/components/rich/DataTable';
+import { CollapsibleOutput } from '@/components/rich/CollapsibleOutput';
+import { ProgressView } from '@/components/rich/ProgressView';
+import { TimelineView } from '@/components/rich/TimelineView';
 
 interface MarkdownRendererProps {
   content: string;
@@ -55,6 +59,14 @@ function createMarkdownComponents(isStreaming: boolean): any {
           return <DiffHtml diffSource={codeString} />;
         case 'ansi':
           return <AnsiOutput text={codeString} />;
+        case 'table':
+          return <DataTable tableSource={codeString} />;
+        case 'output':
+          return <CollapsibleOutput outputSource={codeString} />;
+        case 'progress':
+          return <ProgressView progressSource={codeString} />;
+        case 'timeline':
+          return <TimelineView timelineSource={codeString} />;
         case 'html-interactive':
         case 'visualization':
         case 'viz':

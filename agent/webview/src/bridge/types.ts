@@ -184,7 +184,7 @@ export interface EditDiff {
 
 // ── Visualization settings ──
 
-export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml';
+export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline';
 
 export interface VisualizationConfig {
   enabled: boolean;

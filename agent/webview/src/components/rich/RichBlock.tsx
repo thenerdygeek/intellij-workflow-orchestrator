@@ -24,6 +24,10 @@ const TYPE_META: Record<VisualizationType, TypeMeta> = {
   math: { icon: '\u03A3', label: 'Math' },
   diff: { icon: '\u00B1', label: 'Diff' },
   interactiveHtml: { icon: '\u25A3', label: 'Interactive' },
+  table: { icon: '\u229E', label: 'Table' },
+  output: { icon: '\u{1F4CB}', label: 'Output' },
+  progress: { icon: '\u23F3', label: 'Progress' },
+  timeline: { icon: '\u23F1', label: 'Timeline' },
 };
 
 // ── Loading skeleton ──
