@@ -178,16 +178,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     chip.dataset.chipStatus = status;
     chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline transition-colors duration-300';
     chip.style.cssText = `color:${colors.color};background:${colors.bg};border:1px solid ${colors.border};user-select:none;cursor:default;line-height:1.6;`;
-    chip.innerHTML = `<span>${mention.label}</span><button style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;" onclick="this.parentElement.remove()">&times;</button>`;
-
-    // Remove the chip from mentionsRef when it's removed from DOM
-    const observer = new MutationObserver(() => {
-      if (!el.contains(chip)) {
-        mentionsRef.current = mentionsRef.current.filter(m => m !== mention);
-        observer.disconnect();
-      }
-    });
-    observer.observe(el, { childList: true, subtree: true });
+    chip.innerHTML = `<span>${mention.label}</span><button data-remove style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;">&times;</button>`;
 
     // Replace the text node content
     textNode.textContent = before;
@@ -288,6 +279,39 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   useEffect(() => {
     handleFocusBlur();
   }, [handleFocusBlur]);
+
+  // Single editor-level MutationObserver: sync mentionsRef when chips are removed from DOM
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+
+    const chipObserver = new MutationObserver(() => {
+      const existingLabels = new Set<string>();
+      el.querySelectorAll<HTMLElement>('[data-mention-label]').forEach(chip => {
+        existingLabels.add(chip.dataset.mentionLabel!);
+      });
+      mentionsRef.current = mentionsRef.current.filter(m => existingLabels.has(m.label));
+    });
+    chipObserver.observe(el, { childList: true, subtree: true });
+
+    return () => chipObserver.disconnect();
+  }, []);
+
+  // Event delegation: handle chip remove button clicks on the editor div
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.hasAttribute('data-remove')) {
+        target.parentElement?.remove();
+        fireChange();
+      }
+    };
+    el.addEventListener('click', handleClick);
+    return () => el.removeEventListener('click', handleClick);
+  }, [fireChange]);
 
   // Prevent pasting rich HTML — paste as plain text only
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
