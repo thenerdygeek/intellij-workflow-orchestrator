@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import type { Message } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
-import { ThinkingBlock } from '@/components/agent/ThinkingBlock';
+import { ThinkingView } from '@/components/agent/ThinkingView';
 import {
   Message as PkMessage,
   MessageAvatar,
@@ -27,7 +27,7 @@ export const AgentMessage = memo(function AgentMessage({
     try {
       const parsed = JSON.parse(message.content) as { type?: string; text?: string; message?: string };
       if (parsed.type === 'thinking') {
-        return <ThinkingBlock content={parsed.text ?? ''} isStreaming={false} />;
+        return <ThinkingView content={parsed.text ?? ''} isStreaming={false} />;
       }
       if (parsed.type === 'status') {
         return (

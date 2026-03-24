@@ -3,7 +3,12 @@ import type { VisualizationType } from '@/bridge/types';
 import { openInEditorTab } from '@/bridge/jcef-bridge';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useThemeStore } from '@/stores/themeStore';
-import { FullscreenOverlay } from '@/components/common/FullscreenOverlay';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 // ── Type metadata ──
 
@@ -258,12 +263,19 @@ export function RichBlock({
         </div>
       </div>
 
-      {/* Fullscreen overlay */}
-      {isFullscreen && (
-        <FullscreenOverlay title={meta?.label ?? type} onClose={handleCloseFullscreen}>
-          {renderedContent}
-        </FullscreenOverlay>
-      )}
+      {/* Fullscreen dialog */}
+      <Dialog open={isFullscreen} onOpenChange={(open) => !open && handleCloseFullscreen()}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-auto bg-[var(--bg)] border-[var(--border)]">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold text-[var(--fg)]">
+              {meta?.label ?? type}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto">
+            {renderedContent}
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
