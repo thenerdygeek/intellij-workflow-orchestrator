@@ -137,6 +137,9 @@ class ConversationStore(
     }
 
     companion object {
+        /** Maximum recent messages to keep verbatim when recovering a session with many messages. */
+        private const val RECOVERY_RECENT_MESSAGE_LIMIT = 20
+
         /**
          * Get the root sessions directory.
          * Uses [baseDir] override for testing, otherwise PathManager.
@@ -166,5 +169,242 @@ class ConversationStore(
                 dir.deleteRecursively()
             }
         }
+
+        /**
+         * Load a session from disk for recovery after IDE restart or crash.
+         *
+         * Reads messages from `messages.jsonl` and metadata from `metadata.json`
+         * in the session directory. If more than [RECOVERY_RECENT_MESSAGE_LIMIT] messages
+         * exist, older messages are compressed into a summary to stay within context limits.
+         *
+         * A recovery injection message is appended to orient the LLM about the
+         * recovered session state.
+         *
+         * @param sessionDir The session directory containing messages.jsonl and metadata.json
+         * @return [RecoveredSession] containing messages, metadata, and optional plan, or null
+         *         if the session directory is missing or unreadable
+         */
+        fun loadSession(sessionDir: File): RecoveredSession? {
+            val messagesFile = File(sessionDir, "messages.jsonl")
+            if (!messagesFile.exists()) return null
+
+            val allMessages = messagesFile.readLines()
+                .filter { it.isNotBlank() }
+                .mapNotNull { line ->
+                    try {
+                        json.decodeFromString<PersistedMessage>(line)
+                    } catch (_: Exception) {
+                        null // Skip corrupted lines
+                    }
+                }
+
+            if (allMessages.isEmpty()) return null
+
+            val metadataFile = File(sessionDir, "metadata.json")
+            val metadata = if (metadataFile.exists()) {
+                try {
+                    json.decodeFromString<SessionMetadata>(metadataFile.readText())
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+
+            // Load persisted plan if available
+            val plan = PlanPersistence.load(sessionDir)
+
+            // Compress old messages if there are too many
+            val recoveredMessages: List<PersistedMessage>
+            val compressionSummary: String?
+
+            if (allMessages.size > RECOVERY_RECENT_MESSAGE_LIMIT) {
+                val oldMessages = allMessages.dropLast(RECOVERY_RECENT_MESSAGE_LIMIT)
+                compressionSummary = summarizeOldMessages(oldMessages)
+                recoveredMessages = allMessages.takeLast(RECOVERY_RECENT_MESSAGE_LIMIT)
+            } else {
+                compressionSummary = null
+                recoveredMessages = allMessages
+            }
+
+            // Build recovery injection message
+            val statusText = metadata?.status ?: "unknown"
+            val recoveryMessage = buildString {
+                append("Session recovered from previous run. Last status: $statusText.")
+                if (plan != null) {
+                    val completedSteps = plan.steps.count { it.status == "done" }
+                    val totalSteps = plan.steps.size
+                    append(" Plan progress: $completedSteps/$totalSteps steps completed.")
+                    val lastDone = plan.steps.lastOrNull { it.status == "done" }
+                    if (lastDone != null) {
+                        append(" Last completed step: ${lastDone.title}.")
+                    }
+                }
+                append(" Resume from where you left off.")
+            }
+
+            return RecoveredSession(
+                messages = recoveredMessages,
+                metadata = metadata,
+                plan = plan,
+                compressionSummary = compressionSummary,
+                recoveryMessage = recoveryMessage,
+                totalMessageCount = allMessages.size
+            )
+        }
+
+        /**
+         * List all available sessions with their metadata, sorted by last message time (newest first).
+         *
+         * Unlike [listSessionIds] which returns only IDs, this method returns full metadata
+         * for each session, enabling UI display of session history.
+         *
+         * @param baseDir Override for testing; when null, uses PathManager
+         * @return List of [SessionSummary] entries sorted by last message time descending
+         */
+        fun listSessions(baseDir: File? = null): List<SessionSummary> {
+            val dir = getSessionsDir(baseDir)
+            if (!dir.exists()) return emptyList()
+
+            return dir.listFiles()
+                ?.filter { it.isDirectory }
+                ?.mapNotNull { sessionDir ->
+                    val metadataFile = File(sessionDir, "metadata.json")
+                    if (!metadataFile.exists()) return@mapNotNull null
+
+                    val metadata = try {
+                        json.decodeFromString<SessionMetadata>(metadataFile.readText())
+                    } catch (_: Exception) {
+                        return@mapNotNull null
+                    }
+
+                    val messagesFile = File(sessionDir, "messages.jsonl")
+                    val hasPlan = File(sessionDir, "plan.json").exists()
+
+                    SessionSummary(
+                        sessionId = metadata.sessionId,
+                        title = metadata.title,
+                        projectName = metadata.projectName,
+                        projectPath = metadata.projectPath,
+                        model = metadata.model,
+                        status = metadata.status,
+                        createdAt = metadata.createdAt,
+                        lastMessageAt = metadata.lastMessageAt,
+                        messageCount = metadata.messageCount,
+                        totalTokens = metadata.totalTokens,
+                        hasPlan = hasPlan,
+                        hasMessages = messagesFile.exists() && messagesFile.length() > 0,
+                        sessionDir = sessionDir
+                    )
+                }
+                ?.sortedByDescending { it.lastMessageAt }
+                ?: emptyList()
+        }
+
+        /**
+         * Summarize old messages into a compressed text summary.
+         *
+         * Extracts key information: user requests, assistant responses (truncated),
+         * tool calls (name + arguments preview), and file paths referenced.
+         * This is a heuristic summarizer — no LLM call required.
+         */
+        internal fun summarizeOldMessages(messages: List<PersistedMessage>): String {
+            val sb = StringBuilder()
+            sb.appendLine("## Recovered Session Summary (${messages.size} older messages compressed)")
+            sb.appendLine()
+
+            val filePaths = mutableSetOf<String>()
+            val filePathRegex = Regex("""[\w./\\-]+\.\w{1,10}""")
+            val toolsUsed = mutableSetOf<String>()
+
+            for (msg in messages) {
+                when (msg.role) {
+                    "user" -> {
+                        val preview = msg.content?.take(300) ?: ""
+                        sb.appendLine("- User: $preview")
+                    }
+                    "assistant" -> {
+                        if (msg.toolCalls != null) {
+                            for (tc in msg.toolCalls) {
+                                toolsUsed.add(tc.name)
+                                val argsPreview = tc.arguments.take(150)
+                                sb.appendLine("- Tool call: ${tc.name}($argsPreview)")
+                            }
+                        } else if (!msg.content.isNullOrBlank() && msg.content.length > 5) {
+                            sb.appendLine("- Agent: ${msg.content.take(300)}")
+                        }
+                    }
+                    "tool" -> {
+                        // Extract file paths from tool results
+                        msg.content?.let { content ->
+                            filePathRegex.findAll(content).forEach { match ->
+                                val path = match.value
+                                if (path.contains('/') || path.contains('\\')) {
+                                    filePaths.add(path)
+                                }
+                            }
+                        }
+                    }
+                }
+                // Limit summary size
+                if (sb.length > 4000) {
+                    sb.appendLine("... (${messages.size - messages.indexOf(msg)} more messages omitted)")
+                    break
+                }
+            }
+
+            if (toolsUsed.isNotEmpty()) {
+                sb.appendLine()
+                sb.appendLine("### Tools Used")
+                sb.appendLine(toolsUsed.joinToString(", "))
+            }
+
+            if (filePaths.isNotEmpty()) {
+                sb.appendLine()
+                sb.appendLine("### Referenced Files")
+                filePaths.take(20).forEach { sb.appendLine("- $it") }
+            }
+
+            return sb.toString().take(6000)
+        }
     }
 }
+
+/**
+ * Result of loading a session from disk for recovery.
+ *
+ * Contains the messages to replay (possibly compressed), metadata,
+ * optional plan state, and a recovery injection message for the LLM.
+ */
+data class RecoveredSession(
+    /** Messages to replay into context (last [ConversationStore.RECOVERY_RECENT_MESSAGE_LIMIT] if compressed). */
+    val messages: List<PersistedMessage>,
+    /** Session metadata, or null if metadata.json was missing/corrupt. */
+    val metadata: SessionMetadata?,
+    /** Persisted plan, or null if no plan was active. */
+    val plan: AgentPlan?,
+    /** Summary of compressed older messages, or null if no compression was needed. */
+    val compressionSummary: String?,
+    /** Recovery injection message to orient the LLM about the recovered state. */
+    val recoveryMessage: String,
+    /** Total number of messages in the original JSONL (before compression). */
+    val totalMessageCount: Int
+)
+
+/**
+ * Summary of a session for listing in the UI or programmatic access.
+ * Includes metadata and basic file-existence checks without reading full JSONL.
+ */
+data class SessionSummary(
+    val sessionId: String,
+    val title: String,
+    val projectName: String,
+    val projectPath: String,
+    val model: String,
+    val status: String,
+    val createdAt: Long,
+    val lastMessageAt: Long,
+    val messageCount: Int,
+    val totalTokens: Int,
+    val hasPlan: Boolean,
+    val hasMessages: Boolean,
+    val sessionDir: File
+)
