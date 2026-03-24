@@ -16,7 +16,7 @@ Turn vague ideas into concrete, implementable designs through structured dialogu
 
 ## Why This Matters
 
-Code written without understanding requirements gets rewritten. The 20 minutes spent brainstorming saves days of rework. Every non-trivial feature goes through this process — no exceptions.
+Code written without understanding requirements gets rewritten. The 20 minutes spent brainstorming saves days of rework. Every non-trivial feature benefits from this process.
 
 ## The Flow
 
@@ -35,13 +35,17 @@ User's idea
 
 ## Step 1: Understand the Context
 
-Before asking the user anything, gather context silently:
+Before asking the user anything, gather context silently. Spend **2-4 tool calls** understanding the landscape — don't map the entire codebase, focus on the area the user's idea touches.
 
-1. **Read the codebase** — use `read_file`, `search_code`, `file_structure`, `find_definition` to understand existing patterns, architecture, and conventions. If the idea touches multiple areas, spawn an `explorer` subagent to map the landscape.
+1. **Check @mentions first** — if the user included @file or @folder mentions, those are already in context. Don't re-read them.
 
-2. **Check existing work** — search for related code, similar features, or previous attempts. The user may not know what already exists.
+2. **Read the codebase** — use `read_file`, `search_code`, `file_structure`, `find_definition` to understand existing patterns, architecture, and conventions. If the idea touches multiple areas, spawn an `explorer` subagent with `thoroughness: "quick"`.
 
-3. **Assess scope** — if the idea describes multiple independent subsystems, flag this immediately. Don't brainstorm a monolith. Suggest decomposition into independent sub-projects.
+3. **Check existing work** — search for related code, similar features, or previous attempts. The user may not know what already exists.
+
+4. **Assess scope** — if the idea describes multiple independent subsystems, flag this immediately. Don't brainstorm a monolith. Ask the user which idea to start with, or suggest a priority order.
+
+5. **Check memory** — if previous brainstorm decisions exist in memory for this topic, summarize them and ask if the user wants to continue, revise, or start fresh.
 
 Only after you have context should you start asking questions.
 
@@ -114,6 +118,8 @@ Format:
 
 If one approach is clearly superior, say so. Don't present false balance.
 
+If the user rejects all approaches, ask them to describe what they have in mind. They may have a specific solution they want validated, not brainstormed.
+
 After presenting, use `ask_questions` to let the user pick:
 ```json
 [{
@@ -131,7 +137,7 @@ After presenting, use `ask_questions` to let the user pick:
 
 ## Step 5: Present the Design
 
-Once the user picks a direction, present the design **section by section**. Scale each section to its complexity — a few sentences if straightforward, more detail if nuanced.
+Once the user picks a direction, present the full design. Scale each section to its complexity — a few sentences if straightforward, more detail if nuanced.
 
 Sections to cover (skip if not relevant):
 1. **Architecture** — how components fit together
@@ -141,7 +147,7 @@ Sections to cover (skip if not relevant):
 5. **Testing strategy** — what to test and how
 6. **Impact** — what existing code is affected
 
-After each section, ask: "Does this look right, or should I adjust anything?"
+Present all sections together, then ask: "Does this design look right, or should I adjust anything?" Only break into section-by-section review if the design is highly complex (architecture change affecting 10+ files).
 
 ### Design principles:
 - **Follow existing patterns** — don't invent new architecture unless the existing one is broken
@@ -188,6 +194,7 @@ Not everything needs full brainstorming. Skip directly to implementation for:
 - Adding a single test
 - Configuration changes
 - Direct user instruction: "change X to Y"
+- When the user explicitly says they don't need brainstorming ("just do it", "I already have a plan") — acknowledge their direction and proceed to `create_plan` or implementation
 
 Use brainstorming for:
 - New features
