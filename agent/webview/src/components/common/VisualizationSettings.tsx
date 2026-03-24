@@ -11,9 +11,13 @@ const TYPE_LABELS: Record<VisualizationType, string> = {
   math: 'Math (KaTeX)',
   diff: 'Diff Viewer (diff2html)',
   interactiveHtml: 'Interactive HTML',
+  table: 'Data Tables',
+  output: 'Command Output',
+  progress: 'Progress Indicators',
+  timeline: 'Timeline',
 };
 
-const VIZ_TYPES: VisualizationType[] = ['mermaid', 'chart', 'flow', 'math', 'diff', 'interactiveHtml'];
+const VIZ_TYPES: VisualizationType[] = ['mermaid', 'chart', 'flow', 'math', 'diff', 'interactiveHtml', 'table', 'output', 'progress', 'timeline'];
 
 interface TypeSectionProps {
   type: VisualizationType;
