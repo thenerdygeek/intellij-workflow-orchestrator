@@ -1,234 +1,31 @@
-import { useMemo } from 'react';
-import { Check } from 'lucide-react';
-import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import type { Plan, PlanStep } from '@/bridge/types';
-
-// ── Phase grouping ──
-
-interface Phase {
-  name: string;
-  steps: PlanStep[];
-}
-
-function groupStepsIntoPhases(steps: PlanStep[]): Phase[] {
-  const phases: Phase[] = [];
-  let currentPhase: Phase | null = null;
-
-  for (const step of steps) {
-    const phaseMatch = step.title.match(/^Phase\s+(\d+)\s*:\s*(.*)/i);
-
-    if (phaseMatch) {
-      currentPhase = {
-        name: `Phase ${phaseMatch[1]}: ${phaseMatch[2]}`,
-        steps: [],
-      };
-      phases.push(currentPhase);
-    } else if (!currentPhase) {
-      // Steps before any phase header go into a default group
-      currentPhase = { name: 'Implementation', steps: [] };
-      phases.push(currentPhase);
-    }
-
-    currentPhase.steps.push(step);
-  }
-
-  return phases.length > 0 ? phases : [{ name: 'Implementation', steps }];
-}
-
-function getPhaseStatus(steps: PlanStep[]): 'completed' | 'in-progress' | 'pending' {
-  const allCompleted = steps.every(s => s.status === 'completed' || s.status === 'skipped');
-  const anyActive = steps.some(s => s.status === 'running' || s.status === 'completed' || s.status === 'failed');
-
-  if (allCompleted) return 'completed';
-  if (anyActive) return 'in-progress';
-  return 'pending';
-}
-
-// ── PlanProgressWidget ──
+import type { Plan as PlanType } from '@/bridge/types';
+import { Plan as PlanCard } from '@/components/ui/tool-ui/plan';
 
 interface PlanProgressWidgetProps {
-  plan: Plan;
+  plan: PlanType;
 }
 
 export function PlanProgressWidget({ plan }: PlanProgressWidgetProps) {
   if (!plan.approved) return null;
 
-  const phases = useMemo(() => groupStepsIntoPhases(plan.steps), [plan.steps]);
-
-  const totalCompleted = plan.steps.filter(s => s.status === 'completed').length;
-  const totalSteps = plan.steps.length;
-  const overallProgress = totalSteps > 0 ? Math.round((totalCompleted / totalSteps) * 100) : 0;
-
-  return (
-    <div
-      className="my-3 overflow-hidden rounded-lg border"
-      role="region"
-      aria-label="Plan progress"
-      style={{
-        borderColor: 'var(--border)',
-        backgroundColor: 'var(--tool-bg)',
-      }}
-    >
-      {/* Overall header */}
-      <div
-        className="flex items-center gap-3 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--border)' }}
-      >
-        <div className="flex-1 min-w-0">
-          <div
-            className="text-[13px] font-semibold truncate"
-            style={{ color: 'var(--fg)' }}
-          >
-            {plan.title}
-          </div>
-          <div
-            className="text-[11px] mt-0.5"
-            style={{ color: 'var(--fg-secondary)' }}
-          >
-            {totalCompleted}/{totalSteps} steps completed
-          </div>
-        </div>
-        <span
-          className="text-[12px] font-semibold tabular-nums"
-          style={{ color: 'var(--accent)' }}
-        >
-          {overallProgress}%
-        </span>
-      </div>
-
-      {/* Overall progress bar */}
-      <div className="px-4 pt-2">
-        <Progress
-          value={overallProgress}
-          className="h-1.5"
-          style={{
-            backgroundColor: 'var(--code-bg)',
-          }}
-        />
-      </div>
-
-      {/* Phase list */}
-      <div className="px-4 py-3 space-y-3">
-        {phases.map((phase, i) => {
-          const status = getPhaseStatus(phase.steps);
-          const completed = phase.steps.filter(s => s.status === 'completed').length;
-          const total = phase.steps.length;
-          const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-          return (
-            <PhaseRow
-              key={i}
-              name={phase.name}
-              status={status}
-              completed={completed}
-              total={total}
-              progress={progress}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── PhaseRow ──
-
-function PhaseRow({
-  name,
-  status,
-  completed,
-  total,
-  progress,
-}: {
-  name: string;
-  status: 'completed' | 'in-progress' | 'pending';
-  completed: number;
-  total: number;
-  progress: number;
-}) {
-  const isActive = status === 'in-progress';
-  const isDone = status === 'completed';
+  // Map our PlanStep to tool-ui PlanTodo
+  const todos = plan.steps.map(step => ({
+    id: step.id,
+    label: step.title,
+    status: step.status === 'failed' ? 'cancelled' as const
+      : step.status === 'skipped' ? 'cancelled' as const
+      : step.status === 'running' ? 'in_progress' as const
+      : step.status as 'pending' | 'completed',
+    description: step.description,
+  }));
 
   return (
-    <div
-      className="rounded-md px-3 py-2 transition-colors"
-      style={{
-        backgroundColor: isActive ? 'var(--hover-overlay, rgba(255,255,255,0.04))' : 'transparent',
-        borderLeft: isActive
-          ? '2px solid var(--accent)'
-          : '2px solid transparent',
-      }}
-    >
-      <div className="flex items-center gap-2 mb-1.5">
-        {isDone ? (
-          <div
-            className="flex items-center justify-center rounded-full"
-            style={{
-              width: 18,
-              height: 18,
-              backgroundColor: 'var(--badge-write-bg)',
-            }}
-          >
-            <Check
-              size={12}
-              style={{ color: 'var(--success)' }}
-            />
-          </div>
-        ) : (
-          <div
-            className="rounded-full"
-            style={{
-              width: 18,
-              height: 18,
-              border: isActive
-                ? '2px solid var(--accent)'
-                : '2px solid var(--fg-muted)',
-              backgroundColor: 'transparent',
-            }}
-          />
-        )}
-
-        <span
-          className="flex-1 text-[12px] font-medium truncate"
-          style={{
-            color: isDone
-              ? 'var(--fg-muted)'
-              : isActive
-                ? 'var(--fg)'
-                : 'var(--fg-secondary)',
-          }}
-        >
-          {name}
-        </span>
-
-        {isActive && (
-          <Badge
-            variant="outline"
-            className="text-[9px] px-1.5 py-0"
-            style={{
-              borderColor: 'var(--accent)',
-              color: 'var(--accent)',
-            }}
-          >
-            In Progress
-          </Badge>
-        )}
-
-        <span
-          className="text-[10px] tabular-nums"
-          style={{ color: 'var(--fg-muted)' }}
-        >
-          {completed}/{total}
-        </span>
-      </div>
-
-      <Progress
-        value={progress}
-        className="h-1"
-        style={{
-          backgroundColor: 'var(--code-bg)',
-        }}
+    <div className="my-3" role="region" aria-label="Plan progress">
+      <PlanCard
+        id={`plan-${plan.title}`}
+        title={plan.title}
+        todos={todos}
+        maxVisibleTodos={8}
       />
     </div>
   );

@@ -18,3 +18,12 @@ export {
   type QuestionFlowSummaryItem,
   type QuestionFlowChoice,
 } from "./question-flow";
+
+export {
+  Plan,
+  PlanCompact,
+  type PlanProps,
+  type PlanCompactProps,
+  type PlanTodo,
+  type PlanTodoStatus,
+} from "./plan";

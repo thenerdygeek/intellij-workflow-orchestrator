@@ -1,9 +1,11 @@
 import { useCallback } from 'react';
 import { FileText, Check, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
+import { PlanCompact } from '@/components/ui/tool-ui/plan';
 import { openInEditorTab } from '@/bridge/jcef-bridge';
 import type { Plan } from '@/bridge/types';
+import { Badge } from '@/components/ui/badge';
 
 interface PlanSummaryCardProps {
   plan: Plan;
@@ -14,6 +16,14 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
 
   const stepCount = plan.steps.length;
   const pendingCount = plan.steps.filter(s => s.status === 'pending').length;
+
+  // Map our PlanStep to tool-ui PlanTodo (all pending for unapproved plans)
+  const todos = plan.steps.map(step => ({
+    id: step.id,
+    label: step.title,
+    status: 'pending' as const,
+    description: step.description,
+  }));
 
   const handleViewPlan = useCallback(() => {
     openInEditorTab('plan', JSON.stringify(plan));
@@ -28,14 +38,10 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   }, []);
 
   return (
-    <div
-      className="my-3 overflow-hidden rounded-lg border"
+    <Card
+      className="my-3 gap-0 overflow-hidden py-0 border-[var(--border)] bg-[var(--tool-bg,hsl(var(--card)))]"
       role="region"
       aria-label="Plan summary"
-      style={{
-        borderColor: 'var(--border)',
-        backgroundColor: 'var(--tool-bg)',
-      }}
     >
       {/* Header */}
       <div
@@ -80,8 +86,13 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
         </Badge>
       </div>
 
+      {/* Todo preview */}
+      <CardContent className="px-4 py-3">
+        <PlanCompact todos={todos} maxVisibleTodos={4} />
+      </CardContent>
+
       {/* Actions */}
-      <div className="flex gap-2 px-4 py-3">
+      <CardFooter className="gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
         <Button
           onClick={handleViewPlan}
           className="flex-1 text-[12px] font-medium"
@@ -120,7 +131,7 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           <RotateCcw size={14} />
           Revise
         </Button>
-      </div>
-    </div>
+      </CardFooter>
+    </Card>
   );
 }

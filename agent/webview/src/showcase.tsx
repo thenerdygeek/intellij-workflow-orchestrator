@@ -13,6 +13,14 @@ import { ApprovalView } from './components/agent/ApprovalView';
 import { QuestionView } from './components/agent/QuestionView';
 import { PlanSummaryCard } from './components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from './components/agent/PlanProgressWidget';
+import { Plan } from './components/ui/tool-ui/plan';
+import {
+  ChainOfThought,
+  ChainOfThoughtStep,
+  ChainOfThoughtTrigger,
+  ChainOfThoughtContent,
+  ChainOfThoughtItem,
+} from './components/ui/prompt-kit/chain-of-thought';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import { Sun, Moon } from 'lucide-react';
@@ -104,6 +112,56 @@ function Showcase() {
 
       <Section title="Plan — In Progress">
         <PlanProgressWidget plan={mockPlanInProgress} />
+      </Section>
+
+      <Section title="tool-ui Plan (Standalone)">
+        <Plan
+          id="showcase-plan"
+          title="Migrate to React 19"
+          description="Full migration of the webview layer from vanilla JS to React 19 with TypeScript."
+          todos={[
+            { id: '1', label: 'Set up Vite + React scaffold', status: 'completed' },
+            { id: '2', label: 'Create bridge protocol layer', status: 'completed' },
+            { id: '3', label: 'Build Zustand state stores', status: 'in_progress', description: 'Chat store, theme store, and settings store with persistence.' },
+            { id: '4', label: 'Implement chat message components', status: 'pending', description: 'AgentMessage, UserMessage, streaming support.' },
+            { id: '5', label: 'Add tool call visualization', status: 'pending' },
+            { id: '6', label: 'Wire approval gate UI', status: 'pending' },
+            { id: '7', label: 'Integration testing', status: 'pending' },
+          ]}
+          maxVisibleTodos={4}
+        />
+      </Section>
+
+      <Section title="Chain of Thought">
+        <ChainOfThought>
+          <ChainOfThoughtStep defaultOpen={true}>
+            <ChainOfThoughtTrigger isActive={false}>
+              Analyzed codebase structure
+            </ChainOfThoughtTrigger>
+            <ChainOfThoughtContent>
+              <ChainOfThoughtItem>Found 12 Kotlin modules with clear dependency boundaries</ChainOfThoughtItem>
+              <ChainOfThoughtItem>Core module exposes 4 service interfaces</ChainOfThoughtItem>
+              <ChainOfThoughtItem>Agent module depends only on :core</ChainOfThoughtItem>
+            </ChainOfThoughtContent>
+          </ChainOfThoughtStep>
+          <ChainOfThoughtStep>
+            <ChainOfThoughtTrigger isActive={true}>
+              Implementing authentication refactor
+            </ChainOfThoughtTrigger>
+            <ChainOfThoughtContent>
+              <ChainOfThoughtItem>Migrating from Basic auth to Bearer token scheme</ChainOfThoughtItem>
+              <ChainOfThoughtItem>Updating HttpClientFactory shared pool configuration</ChainOfThoughtItem>
+            </ChainOfThoughtContent>
+          </ChainOfThoughtStep>
+          <ChainOfThoughtStep>
+            <ChainOfThoughtTrigger>
+              Run test suite
+            </ChainOfThoughtTrigger>
+            <ChainOfThoughtContent>
+              <ChainOfThoughtItem>Pending execution</ChainOfThoughtItem>
+            </ChainOfThoughtContent>
+          </ChainOfThoughtStep>
+        </ChainOfThought>
       </Section>
 
       <Section title="Context Chips (Badge)">
