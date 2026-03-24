@@ -31,8 +31,8 @@ class HandoverStateServiceTest {
         every { settings.state } returns PluginSettings.State().apply {
             activeTicketId = "PROJ-123"
             activeTicketSummary = "Add login feature"
-            bambooUrl = "https://bamboo.example.com"
         }
+        every { settings.connections.bambooUrl } returns "https://bamboo.example.com"
         scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
         service = HandoverStateService(eventBus, settings, scope)
     }
@@ -86,6 +86,9 @@ class HandoverStateServiceTest {
     fun `AutomationTriggered adds suite with null passed`() = runTest {
         service.stateFlow.test {
             skipItems(1)
+
+            // Yield to ensure the service's event collector coroutine is fully subscribed
+            kotlinx.coroutines.yield()
 
             eventBus.emit(WorkflowEvent.AutomationTriggered(
                 suitePlanKey = "PROJ-REGR",

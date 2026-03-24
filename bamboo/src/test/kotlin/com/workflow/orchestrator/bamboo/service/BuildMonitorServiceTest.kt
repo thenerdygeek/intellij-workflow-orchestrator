@@ -65,10 +65,16 @@ class BuildMonitorServiceTest {
 
     @Test
     fun `pollOnce emits BuildFinished event on status change`() = runTest {
-        val successResult = makeResult("Successful", "Finished")
-        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(successResult)
+        // First poll returns in-progress build (initializes state, no event)
+        val inProgressResult = makeResult("InProgress", "InProgress")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(inProgressResult)
 
         val service = BuildMonitorService(apiClient, eventBus, this)
+        service.pollOnce("PROJ-BUILD", "main")
+
+        // Second poll returns completed build → status changed → event emitted
+        val successResult = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(successResult)
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -103,10 +109,16 @@ class BuildMonitorServiceTest {
 
     @Test
     fun `pollOnce emits FAILED event on failed build`() = runTest {
-        val failedResult = makeResult("Failed", "Finished")
-        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failedResult)
+        // First poll returns in-progress build (initializes state, no event)
+        val inProgressResult = makeResult("InProgress", "InProgress")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(inProgressResult)
 
         val service = BuildMonitorService(apiClient, eventBus, this)
+        service.pollOnce("PROJ-BUILD", "main")
+
+        // Second poll returns failed build → status changed → event emitted
+        val failedResult = makeResult("Failed", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failedResult)
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
