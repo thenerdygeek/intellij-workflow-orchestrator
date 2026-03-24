@@ -234,8 +234,8 @@ export function WaveLoader({
   size?: "sm" | "md" | "lg"
 }) {
   const barWidths = {
-    sm: "w-0.5",
-    md: "w-0.5",
+    sm: "w-[2px]",
+    md: "w-[3px]",
     lg: "w-1",
   }
 
@@ -269,6 +269,7 @@ export function WaveLoader({
           style={{
             animationDelay: `${i * 100}ms`,
             height: heights[size][i],
+            backgroundColor: 'var(--accent, var(--color-primary, currentColor))',
           }}
         />
       ))}

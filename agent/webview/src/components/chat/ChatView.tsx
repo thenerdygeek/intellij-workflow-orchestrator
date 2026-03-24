@@ -103,7 +103,7 @@ export function WorkingIndicator() {
   const [phrase] = useState(() => WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
   return (
     <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
-      <Loader variant="wave" size="sm" />
+      <Loader variant="wave" size="md" />
       <TextShimmer duration={3} className="text-[12px]">
         {phrase}
       </TextShimmer>
