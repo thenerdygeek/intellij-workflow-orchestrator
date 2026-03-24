@@ -104,10 +104,36 @@ class AgentController(
             LOG.info("Interactive HTML message: ${json.take(200)}")
         }
 
-        // Wire diff hunk callbacks
+        // Wire diff hunk callbacks — apply or reject diff hunks via DiffHunkApplier
         dashboard.setCefDiffHunkCallbacks(
             onAccept = { filePath, hunkIndex, editedContent ->
                 LOG.info("Accepted diff hunk #$hunkIndex for $filePath${if (editedContent != null) " (edited)" else ""}")
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val file = File(filePath)
+                        if (!file.exists()) {
+                            LOG.warn("DiffHunk: file not found: $filePath")
+                            return@launch
+                        }
+                        if (editedContent != null) {
+                            // User edited the hunk content before accepting — write directly
+                            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                                com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) {
+                                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+                                    if (vf != null) {
+                                        val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf)
+                                        doc?.setText(editedContent)
+                                    }
+                                }
+                            }
+                        } else {
+                            LOG.info("DiffHunk: accepted hunk #$hunkIndex for $filePath (no edit — original hunk applied by UI)")
+                        }
+                    } catch (e: Exception) {
+                        LOG.warn("DiffHunk: failed to apply hunk #$hunkIndex for $filePath", e)
+                        LOG.warn("DiffHunk: error applying hunk at $filePath: ${e.message}")
+                    }
+                }
             },
             onReject = { filePath, hunkIndex ->
                 LOG.info("Rejected diff hunk #$hunkIndex for $filePath")

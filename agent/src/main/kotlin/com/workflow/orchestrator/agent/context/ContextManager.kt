@@ -317,6 +317,9 @@ class ContextManager(
         // Remove compressed messages (reverse order to preserve indices)
         indicesToRemove.reversed().forEach { messages.removeAt(it) }
 
+        // Inject post-compression continuation message so the LLM knows context was compressed
+        injectPostCompressionGuidance()
+
         // Recalculate total tokens
         totalTokens = TokenEstimator.estimate(getMessages())
     }
@@ -449,6 +452,9 @@ critical for continuing the task.
 
         // Remove compressed messages (reverse order to preserve indices)
         indicesToRemove.reversed().forEach { messages.removeAt(it) }
+
+        // Inject post-compression continuation message so the LLM knows context was compressed
+        injectPostCompressionGuidance()
 
         // Recalculate total tokens
         totalTokens = TokenEstimator.estimate(getMessages())
@@ -657,6 +663,29 @@ critical for continuing the task.
     /** Summarize messages using the truncation summarizer. */
     private fun summarizeMessages(messagesToSummarize: List<ChatMessage>): String {
         return summarizer(messagesToSummarize)
+    }
+
+    /**
+     * Inject a system message after compression to orient the LLM.
+     * Tells the model that context was compressed, earlier messages are lossy,
+     * and it should re-read files before editing.
+     */
+    private fun injectPostCompressionGuidance() {
+        val continuationMsg = ChatMessage(
+            role = "system",
+            content = "Context was compressed to stay within limits. Earlier messages are now a lossy summary. " +
+                "Your key findings are preserved in <agent_facts>. ALWAYS re-read files before editing. " +
+                "Continue from where you left off."
+        )
+        messages.add(continuationMsg)
+    }
+
+    /**
+     * Add a system message to the conversation.
+     * Used for injecting warnings, guidance, or context notes.
+     */
+    fun addSystemMessage(content: String) {
+        addMessage(ChatMessage(role = "system", content = content))
     }
 
     /** Reset the context (for a new worker session). */

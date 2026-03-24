@@ -226,6 +226,15 @@ class SessionTrace(
         ))
     }
 
+    // --- Session metrics ---
+
+    fun sessionMetrics(metricsJson: String) {
+        append(TraceEntry(
+            type = "session_metrics",
+            metricsJson = metricsJson
+        ))
+    }
+
     // --- Internal ---
 
     private fun append(entry: TraceEntry) {
@@ -300,7 +309,10 @@ class SessionTrace(
 
         // Conversation dump
         val dumpReason: String? = null,
-        val messageSummaries: List<MessageSummary>? = null
+        val messageSummaries: List<MessageSummary>? = null,
+
+        // Session metrics
+        val metricsJson: String? = null
     )
 
     @Serializable

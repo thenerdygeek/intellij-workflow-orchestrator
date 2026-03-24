@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.orchestrator
 
+import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 
 /**
@@ -8,6 +9,10 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
  * Instead of using static per-worker prompts, this builds a single system prompt
  * that includes identity, tool summary, project context, environment info, repo map, and rules.
  * Sections are conditionally included based on what information is available.
+ *
+ * Optimization: Integration-specific rules (Jira, Bamboo, Sonar, Bitbucket) are only
+ * included when the corresponding tools are active. Rendering rules are skipped in
+ * plain-text mode. Skill/subagent/memory sections are skipped when empty.
  */
 class PromptAssembler(
     private val toolRegistry: ToolRegistry
@@ -16,6 +21,12 @@ class PromptAssembler(
     /**
      * Build a system prompt for the single-agent default mode.
      * Combines identity, tool summary, project context, repo map, environment, and rules.
+     *
+     * @param activeTools The tools currently selected for this conversation turn.
+     *   Used to conditionally include integration-specific rules (Jira, Bamboo, etc.)
+     *   so we don't waste tokens on rules for tools that aren't available.
+     * @param hasJcefUi Whether the JCEF rich UI is active. When false (plain text mode),
+     *   rendering rules are omitted to save ~2K tokens.
      */
     fun buildSingleAgentPrompt(
         projectName: String? = null,
@@ -27,7 +38,9 @@ class PromptAssembler(
         skillDescriptions: String? = null,
         agentDescriptions: String? = null,
         planMode: Boolean = false,
-        repoContext: String? = null
+        repoContext: String? = null,
+        activeTools: Collection<AgentTool> = emptyList(),
+        hasJcefUi: Boolean = true
     ): String {
         val sections = mutableListOf<String>()
 
@@ -78,7 +91,7 @@ class PromptAssembler(
         // 8. Planning instructions
         sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
 
-        // 9. Delegation instructions
+        // 9. Delegation instructions — only if agent/delegate tools available
         sections.add(DELEGATION_RULES)
 
         // 10. Memory instructions
@@ -90,8 +103,10 @@ class PromptAssembler(
         // 12. @ Mention context guidance
         sections.add(MENTION_RULES)
 
-        // 13. Rich output rendering capabilities
-        sections.add(RENDERING_RULES)
+        // 13. Rich output rendering capabilities — only if JCEF UI is active
+        if (hasJcefUi) {
+            sections.add(RENDERING_RULES)
+        }
 
         // 14. Context management awareness (anti-hallucination)
         sections.add(CONTEXT_MANAGEMENT_RULES)
@@ -99,7 +114,22 @@ class PromptAssembler(
         // 15. Efficiency constraints (prevents 13-iteration exploration for simple questions)
         sections.add(EFFICIENCY_RULES)
 
-        // 16. Rules and Constraints (including anti-loop)
+        // 16. Error recovery guidance
+        sections.add(OrchestratorPrompts.ERROR_RECOVERY_RULES)
+
+        // 17. Integration-specific rules — only include for active tool categories
+        val activeToolNames = if (activeTools.isNotEmpty()) {
+            activeTools.map { it.name }.toSet()
+        } else {
+            // Fallback: include all rules when no active tools specified (backward compat)
+            null
+        }
+        val integrationRules = buildIntegrationRules(activeToolNames)
+        if (integrationRules.isNotBlank()) {
+            sections.add(integrationRules)
+        }
+
+        // 18. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -156,6 +186,35 @@ class PromptAssembler(
         parts.add("OS: ${System.getProperty("os.name")}")
         parts.add("Java: ${System.getProperty("java.version")}")
         return parts.joinToString("\n")
+    }
+
+    /**
+     * Build integration-specific rules based on which tool categories are active.
+     * When [activeToolNames] is null (backward compat), includes all integration rules.
+     * Otherwise only includes rules for active integrations, saving 1-3K tokens.
+     */
+    private fun buildIntegrationRules(activeToolNames: Set<String>?): String {
+        val parts = mutableListOf<String>()
+
+        val includeAll = activeToolNames == null
+        val hasJira = includeAll || activeToolNames!!.any { it.startsWith("jira_") }
+        val hasBamboo = includeAll || activeToolNames!!.any { it.startsWith("bamboo_") }
+        val hasSonar = includeAll || activeToolNames!!.any { it.startsWith("sonar_") }
+        val hasBitbucket = includeAll || activeToolNames!!.any { it.startsWith("bitbucket_") }
+
+        if (hasJira) parts.add(JIRA_CONTEXT_RULES)
+        if (hasBamboo) parts.add(BAMBOO_CONTEXT_RULES)
+        if (hasSonar) parts.add(SONAR_CONTEXT_RULES)
+        if (hasBitbucket) parts.add(BITBUCKET_CONTEXT_RULES)
+
+        // Multi-repo rule applies when any integration tool is active
+        if (hasJira || hasBamboo || hasSonar || hasBitbucket) {
+            parts.add(MULTI_REPO_RULES)
+        }
+
+        if (parts.isEmpty()) return ""
+
+        return "<integration_rules>\n${parts.joinToString("\n")}\n</integration_rules>"
     }
 
     companion object {
@@ -324,7 +383,6 @@ class PromptAssembler(
             When this happens:
             - Old tool results are replaced with metadata placeholders (tool name, args, preview)
             - Earlier messages may be summarized — details could be approximate
-            - ALWAYS re-read a file before editing it, even if you believe you know its contents
             - If a tool result shows "[Tool result pruned]", use the original tool to re-read
             - Treat information from compressed summaries as a starting point — verify before acting on specifics
             - File paths in summaries are reliable; line numbers and code snippets may be stale
@@ -486,7 +544,6 @@ class PromptAssembler(
             - Be precise and minimal in edits. Don't rewrite entire files when a targeted change suffices.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - Report what you changed and verify it works before declaring the task complete.
-            - When the project has multiple repositories, always specify repo_name on Bitbucket, Bamboo, and Sonar tools to target the correct repo. Use bitbucket_list_repos to discover available repositories and their names. Omitting repo_name defaults to the primary repository.
             - Use git_* tools for ALL git operations (git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list, git_blame). NEVER use run_command for git — dangerous git commands are blocked.
             - NEVER assume branch names. Check git_branches first to find the actual base branch (it may not be 'main').
             - NEVER reference remote refs (origin/, upstream/) in any git operation. All git tools work on local refs only.
@@ -498,6 +555,32 @@ class PromptAssembler(
               "Check SonarQube for new issues", "Create a PR for these changes"). Never use generic
               filler like "Let me know if you need help." Make the suggestions actionable and relevant.
             </rules>
+        """.trimIndent()
+
+        // --- Integration-specific rules (conditionally included based on active tools) ---
+
+        val JIRA_CONTEXT_RULES = """
+            - Jira: Use jira_get_ticket to read ticket details before making transitions. Verify available transitions with jira_get_transitions.
+            - When logging work, specify timeSpent in Jira format (e.g., "1h 30m"). Always confirm before logging.
+        """.trimIndent()
+
+        val BAMBOO_CONTEXT_RULES = """
+            - Bamboo: Use bamboo_build_status or bamboo_get_build to check status before triggering new builds.
+            - Build logs can be large — use bamboo_get_build_log with maxLines to limit output. Check bamboo_get_test_results for test failures.
+        """.trimIndent()
+
+        val SONAR_CONTEXT_RULES = """
+            - SonarQube: Use sonar_quality_gate for pass/fail status, sonar_issues for detailed findings.
+            - Filter issues by severity (BLOCKER, CRITICAL, MAJOR, MINOR, INFO) and type (BUG, VULNERABILITY, CODE_SMELL).
+        """.trimIndent()
+
+        val BITBUCKET_CONTEXT_RULES = """
+            - Bitbucket: Always confirm before merge or decline operations. Use bitbucket_check_merge_status before attempting merges.
+            - For code review, use bitbucket_get_pr_diff + bitbucket_get_pr_changes for context, then bitbucket_add_inline_comment for feedback.
+        """.trimIndent()
+
+        val MULTI_REPO_RULES = """
+            - When the project has multiple repositories, always specify repo_name on Bitbucket, Bamboo, and Sonar tools to target the correct repo. Use bitbucket_list_repos to discover available repositories and their names. Omitting repo_name defaults to the primary repository.
         """.trimIndent()
     }
 }

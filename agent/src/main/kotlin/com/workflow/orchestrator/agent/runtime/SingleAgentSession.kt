@@ -70,7 +70,9 @@ sealed class SingleAgentResult {
  */
 class SingleAgentSession(
     private val maxIterations: Int = 50,
-    val cancelled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)
+    val cancelled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
+    /** Per-session metrics collector — records tool calls, circuit breaker, session counters. */
+    val metrics: AgentMetrics = AgentMetrics()
 ) {
     companion object {
         private val LOG = Logger.getInstance(SingleAgentSession::class.java)
@@ -197,6 +199,7 @@ class SingleAgentSession(
             }
 
             LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
+            metrics.turnCount = iteration
             sessionTrace?.iterationStarted(iteration, contextManager.currentTokens, budgetEnforcer.utilizationPercent())
             onProgress(AgentProgress(
                 step = "Thinking... (iteration $iteration)",
@@ -248,6 +251,7 @@ class SingleAgentSession(
                         ))
                         // Compress to free space at high utilization
                         contextManager.compressWithLlm(brain)
+                        metrics.compressionCount++
                         loopGuard.clearAllFileReads()
                     }
                 }
@@ -268,6 +272,7 @@ class SingleAgentSession(
                     val messagesBefore = contextManager.messageCount
                     // Use LLM-powered compression when brain is available
                     contextManager.compressWithLlm(brain)
+                    metrics.compressionCount++
                     loopGuard.clearAllFileReads()
                     sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, contextManager.currentTokens, messagesBefore - contextManager.messageCount)
                 }
@@ -342,6 +347,7 @@ class SingleAgentSession(
                 contextManager.pruneOldToolResults()
                 // Phase 2: Full compression (LLM if brain available, otherwise truncation)
                 try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
+                metrics.compressionCount++
                 loopGuard.clearAllFileReads()
                 // Re-fetch messages after compression
                 val compressedMessages = contextManager.getMessages()
@@ -547,6 +553,7 @@ class SingleAgentSession(
 
             eventLog?.log(AgentEventType.SESSION_COMPLETED, "Completed after $iteration iterations, $totalTokensUsed tokens")
             sessionTrace?.iterationCompleted(iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, emptyList(), choice.finishReason)
+            sessionTrace?.sessionMetrics(metrics.toJson())
             sessionTrace?.sessionCompleted(totalTokensUsed, iteration, allArtifacts)
 
             return SingleAgentResult.Completed(
@@ -621,6 +628,14 @@ class SingleAgentSession(
                     sessionTrace?.toolExecuted(toolName, durMs, tr.tokenEstimate, false)
                 }
 
+                // Record metrics and check circuit breaker
+                metrics.recordToolCall(toolName, durMs, !tr.isError, tr.tokenEstimate.toLong())
+                if (metrics.isCircuitBroken(toolName)) {
+                    contextManager.addSystemMessage(
+                        "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
+                    )
+                }
+
                 onProgress(AgentProgress(
                     step = "Used tool: $toolName",
                     tokensUsed = contextManager.currentTokens,
@@ -673,6 +688,17 @@ class SingleAgentSession(
                 sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, true, toolResult.summary)
             } else {
                 sessionTrace?.toolExecuted(toolName, toolDurationMs, toolResult.tokenEstimate, false)
+            }
+
+            // Record metrics and check circuit breaker
+            metrics.recordToolCall(toolName, toolDurationMs, !toolResult.isError, toolResult.tokenEstimate.toLong())
+            if ((toolName == "agent" || toolName == "delegate_task") && !toolResult.isError) {
+                metrics.subagentCount++
+            }
+            if (metrics.isCircuitBroken(toolName)) {
+                contextManager.addSystemMessage(
+                    "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
+                )
             }
 
             // Build rich tool call info for the UI
@@ -810,6 +836,7 @@ class SingleAgentSession(
             }
             eventLog?.log(AgentEventType.APPROVAL_REQUESTED, "$toolName (risk: ${ApprovalGate.classifyRisk(toolName, paramsMap)})")
             val approval = approvalGate.check(toolName, paramsMap)
+            metrics.approvalCount++
             when (approval) {
                 is ApprovalResult.Rejected -> {
                     eventLog?.log(AgentEventType.APPROVAL_DENIED, toolName)
@@ -1006,10 +1033,8 @@ class SingleAgentSession(
             </capabilities>
 
             <rules>
-            - Always read files before editing them to understand the full context.
             - Make minimal, focused edits. Don't rewrite entire files.
             - Preserve existing code style (indentation, naming, comments).
-            - After editing, run diagnostics to verify no compilation errors.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - Handle errors gracefully and report what happened.
             - Never store, log, or output credentials, tokens, or secrets.
