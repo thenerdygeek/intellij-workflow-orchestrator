@@ -2,7 +2,9 @@ import { useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 
 import type { Mention } from '@/bridge/types';
 import { cn } from '@/lib/utils';
 
-// ── Chip color config (matches ContextChip) ──
+// ── Chip color config ──
+
+type ChipStatus = 'default' | 'pending' | 'valid' | 'invalid';
 
 const chipColors: Record<string, { color: string; bg: string; border: string }> = {
   file:   { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
@@ -11,12 +13,22 @@ const chipColors: Record<string, { color: string; bg: string; border: string }> 
   ticket: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
 };
 
+// Status-based colors for ticket validation states
+const statusColors: Record<ChipStatus, { color: string; bg: string; border: string }> = {
+  default: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
+  pending: { color: '#ca8a04',                      bg: 'rgba(202,138,4,0.12)',  border: 'rgba(202,138,4,0.3)' },
+  valid:   { color: 'var(--success, #22c55e)',      bg: 'rgba(34,197,94,0.1)',   border: 'rgba(34,197,94,0.25)' },
+  invalid: { color: 'var(--error, #ef4444)',        bg: 'rgba(239,68,68,0.1)',   border: 'rgba(239,68,68,0.25)' },
+};
+
 const defaultChipColor = { color: 'var(--fg-secondary)', bg: 'var(--chip-bg)', border: 'var(--chip-border)' };
 
 export interface RichInputHandle {
   focus: () => void;
   insertTrigger: (char: string) => void;
-  insertChip: (mention: Mention, triggerChar: string) => void;
+  insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => void;
+  /** Update the visual status of a chip by label (for async ticket validation) */
+  updateChipStatus: (label: string, status: ChipStatus, tooltip?: string) => void;
   clear: () => void;
   getText: () => string;
   getMentions: () => Mention[];
@@ -45,6 +57,28 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   // ── Public API ──
 
+  // ── Update chip visual status (for async validation) ──
+
+  const updateChipStatus = useCallback((label: string, status: ChipStatus, tooltip?: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    const chips = el.querySelectorAll<HTMLElement>(`[data-mention-label="${label}"]`);
+    const colors = statusColors[status];
+    chips.forEach(chip => {
+      chip.dataset.chipStatus = status;
+      chip.style.color = colors.color;
+      chip.style.background = colors.bg;
+      chip.style.borderColor = colors.border;
+      if (tooltip) {
+        chip.title = tooltip;
+      }
+      if (status === 'invalid') {
+        chip.style.textDecoration = 'line-through';
+        chip.style.opacity = '0.7';
+      }
+    });
+  }, []);
+
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
     insertTrigger: (char: string) => {
@@ -53,7 +87,8 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       el.focus();
       document.execCommand('insertText', false, char);
     },
-    insertChip: (mention: Mention, triggerChar: string) => insertChip(mention, triggerChar),
+    insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => insertChip(mention, triggerChar, status),
+    updateChipStatus,
     clear: () => {
       if (editorRef.current) {
         editorRef.current.innerHTML = '';
@@ -85,7 +120,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   // ── Insert a chip at the current cursor position, replacing trigger text ──
 
-  const insertChip = useCallback((mention: Mention, triggerChar: string) => {
+  const insertChip = useCallback((mention: Mention, triggerChar: string, status: ChipStatus = 'default') => {
     const el = editorRef.current;
     if (!el) return;
 
@@ -106,14 +141,19 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     const before = text.slice(0, triggerIdx);
     const after = text.slice(cursorOffset);
 
+    // Use status-based colors for tickets, type-based for everything else
+    const colors = mention.type === 'ticket'
+      ? statusColors[status]
+      : (chipColors[mention.type] ?? defaultChipColor);
+
     // Create chip element
-    const colors = chipColors[mention.type] ?? defaultChipColor;
     const chip = document.createElement('span');
     chip.contentEditable = 'false';
     chip.dataset.mentionType = mention.type;
     chip.dataset.mentionLabel = mention.label;
     chip.dataset.mentionPath = mention.path ?? '';
-    chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline';
+    chip.dataset.chipStatus = status;
+    chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline transition-colors duration-300';
     chip.style.cssText = `color:${colors.color};background:${colors.bg};border:1px solid ${colors.border};user-select:none;cursor:default;line-height:1.6;`;
     chip.innerHTML = `<span>${mention.label}</span><button style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;" onclick="this.parentElement.remove()">&times;</button>`;
 

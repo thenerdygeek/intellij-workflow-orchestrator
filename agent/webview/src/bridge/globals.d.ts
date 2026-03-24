@@ -6,6 +6,7 @@ declare global {
     _sendMessageWithMentions?: (payload: string) => void;
     _searchMentions?: (data: string) => void;
     _searchTickets?: (query: string) => void;
+    _validateTicket?: (ticketKey: string, callbackName: string) => void;
     _cancelTask?: () => void;
     _newChat?: () => void;
     _requestUndo?: () => void;

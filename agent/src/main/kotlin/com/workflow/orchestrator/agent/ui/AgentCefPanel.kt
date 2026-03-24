@@ -70,6 +70,7 @@ class AgentCefPanel(
     private var openToolsPanelQuery: JBCefJSQuery? = null
     private var searchMentionsQuery: JBCefJSQuery? = null
     private var searchTicketsQuery: JBCefJSQuery? = null
+    private var validateTicketQuery: JBCefJSQuery? = null
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
@@ -307,6 +308,24 @@ class AgentCefPanel(
                 JBCefJSQuery.Response("ok")
             }
         }
+        validateTicketQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { data ->
+                // data format: "TICKETKEY|callbackName"
+                val parts = data.split("|", limit = 2)
+                val ticketKey = parts.getOrElse(0) { "" }
+                val callbackName = parts.getOrElse(1) { "" }
+                scope.launch {
+                    try {
+                        val result = mentionSearchProvider?.validateTicket(ticketKey)
+                        val json = result ?: """{"valid":false}"""
+                        callJs("(window[${jsonStr(callbackName)}])(${jsonStr(json)})")
+                    } catch (_: Exception) {
+                        callJs("(window[${jsonStr(callbackName)}])(${jsonStr("""{"valid":false}""")})")
+                    }
+                }
+                JBCefJSQuery.Response("ok")
+            }
+        }
         sendMessageWithMentionsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { payload ->
                 try {
@@ -473,6 +492,10 @@ class AgentCefPanel(
                     searchTicketsQuery?.let { q ->
                         val ticketJs = q.inject("query")
                         js("window._searchTickets = function(query) { $ticketJs }")
+                    }
+                    validateTicketQuery?.let { q ->
+                        val validateJs = q.inject("key + '|' + cb")
+                        js("window._validateTicket = function(key, cb) { $validateJs }")
                     }
                     sendMessageWithMentionsQuery?.let { q ->
                         val sendJs = q.inject("payload")
@@ -862,6 +885,7 @@ class AgentCefPanel(
         openToolsPanelQuery?.dispose()
         searchMentionsQuery?.dispose()
         searchTicketsQuery?.dispose()
+        validateTicketQuery?.dispose()
         sendMessageWithMentionsQuery?.dispose()
         openInEditorTabQuery?.dispose()
         approveToolCallQuery?.dispose()
@@ -895,6 +919,7 @@ class AgentCefPanel(
         openToolsPanelQuery = null
         searchMentionsQuery = null
         searchTicketsQuery = null
+        validateTicketQuery = null
         sendMessageWithMentionsQuery = null
         openInEditorTabQuery = null
         approveToolCallQuery = null

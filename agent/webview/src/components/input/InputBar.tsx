@@ -338,6 +338,8 @@ export const InputBar = memo(function InputBar() {
   const [skillQuery, setSkillQuery] = useState('');
   const [ticketQuery, setTicketQuery] = useState('');
 
+  const prevTicketQueryRef = useRef('');
+
   // RichInput change handler — detects @, #, / triggers
   const handleRichInputChange = useCallback((_text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => {
     setHasText(_text.length > 0);
@@ -348,14 +350,49 @@ export const InputBar = memo(function InputBar() {
       } else if (trigger.type === '#') {
         setShowTickets(true); setShowMentions(false); setShowSkills(false);
         setTicketQuery(trigger.query);
+        prevTicketQueryRef.current = trigger.query;
       } else {
         setShowSkills(true); setShowMentions(false); setShowTickets(false);
         setSkillQuery(trigger.query);
       }
     } else {
+      // If # trigger just ended (user pressed space) and the query looks like a ticket key,
+      // auto-create a pending chip and validate it asynchronously
+      const prevQuery = prevTicketQueryRef.current;
+      if (prevQuery && /^[A-Za-z]+-\d+$/.test(prevQuery)) {
+        const ticketKey = prevQuery.toUpperCase();
+        const mention: Mention = { type: 'ticket', label: ticketKey, path: ticketKey };
+        richInputRef.current?.insertChip(mention, '#', 'pending');
+
+        // Async validation via Kotlin bridge
+        validateTicket(ticketKey);
+      }
+      prevTicketQueryRef.current = '';
       setShowMentions(false); setShowSkills(false); setShowTickets(false);
       setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Validate a manually-typed ticket key asynchronously
+  const validateTicket = useCallback((ticketKey: string) => {
+    // Set up a one-time callback for the validation result
+    const callbackKey = `__validateTicket_${ticketKey}`;
+    (window as any)[callbackKey] = (json: string) => {
+      delete (window as any)[callbackKey];
+      try {
+        const result = JSON.parse(json);
+        if (result.valid) {
+          richInputRef.current?.updateChipStatus(ticketKey, 'valid', `${ticketKey}: ${result.summary}`);
+        } else {
+          richInputRef.current?.updateChipStatus(ticketKey, 'invalid', `${ticketKey}: Ticket not found`);
+        }
+      } catch {
+        richInputRef.current?.updateChipStatus(ticketKey, 'invalid', 'Validation failed');
+      }
+    };
+    // Call Kotlin bridge to validate
+    window._validateTicket?.(ticketKey, callbackKey);
   }, []);
 
   const handleMentionSelect = useCallback((result: MentionSearchResult) => {
@@ -366,7 +403,7 @@ export const InputBar = memo(function InputBar() {
 
   const handleTicketSelect = useCallback((result: MentionSearchResult) => {
     const mention: Mention = { type: 'ticket', label: result.label, path: result.path, icon: result.icon };
-    (richInputRef.current as any)?.insertChip?.(mention, '#');
+    richInputRef.current?.insertChip(mention, '#', 'valid');
     setShowTickets(false); setTicketQuery('');
   }, []);
 

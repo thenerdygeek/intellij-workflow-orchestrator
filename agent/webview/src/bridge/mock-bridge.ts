@@ -241,6 +241,26 @@ export function installMockBridge(): void {
     (window as any).__ticketSearchCallback?.(JSON.stringify(filtered));
   };
 
+  // Mock _validateTicket for async ticket key validation
+  w._validateTicket = (ticketKey: string, callbackName: string) => {
+    console.log(`[bridge:dev] validateTicket(${ticketKey})`);
+    // Simulate async validation with a short delay
+    setTimeout(() => {
+      const validTickets: Record<string, string> = {
+        'PROJ-123': 'Fix login redirect on mobile',
+        'PROJ-124': 'Add dark mode support',
+        'PROJ-125': 'Update API documentation',
+        'PROJ-120': 'Refactor auth middleware',
+        'PROJ-118': 'Performance audit findings',
+      };
+      const summary = validTickets[ticketKey.toUpperCase()];
+      const result = summary
+        ? JSON.stringify({ valid: true, summary })
+        : JSON.stringify({ valid: false });
+      (window as any)[callbackName]?.(result);
+    }, 800); // Simulate network latency
+  };
+
   // Populate mock skills list for / autocomplete
   setTimeout(() => {
     w.updateSkillsList?.(JSON.stringify([

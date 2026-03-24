@@ -286,4 +286,26 @@ class MentionSearchProvider(private val project: Project) {
             "[]"
         }
     }
+
+    /**
+     * Validate a ticket key by fetching it from Jira.
+     * Returns JSON: {"valid":true,"summary":"..."} or {"valid":false}
+     */
+    suspend fun validateTicket(ticketKey: String): String {
+        return try {
+            val jiraService = try {
+                project.getService(JiraService::class.java)
+            } catch (_: Exception) { return """{"valid":false}""" }
+
+            val result = jiraService.getTicket(ticketKey)
+            if (!result.isError) {
+                """{"valid":true,"summary":"${result.data.summary.replace("\"", "\\\"")}"}"""
+            } else {
+                """{"valid":false}"""
+            }
+        } catch (e: Exception) {
+            LOG.debug("MentionSearchProvider: ticket validation failed for $ticketKey: ${e.message}")
+            """{"valid":false}"""
+        }
+    }
 }
