@@ -245,7 +245,7 @@ class SonarApiClient(
                             ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient SonarQube permissions")
                         }
                         404 -> {
-                            log.error("[Sonar:API] $path -> 404 Not found")
+                            log.info("[Sonar:API] $path -> 404 Not found")
                             ApiResult.Error(ErrorType.NOT_FOUND, "SonarQube resource not found")
                         }
                         429 -> {
