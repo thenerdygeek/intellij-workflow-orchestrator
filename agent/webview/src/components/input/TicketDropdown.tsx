@@ -42,20 +42,30 @@ export const TicketDropdown = memo(function TicketDropdown({
 
   // Search tickets via Kotlin bridge
   useEffect(() => {
+    const cbId = `__ticketSearch_${Math.random().toString(36).slice(2)}`;
+
     const handler = (json: string) => {
-      try {
-        setResults(JSON.parse(json));
-      } catch { /* ignore */ }
+      try { setResults(JSON.parse(json)); } catch { /* ignore */ }
     };
+    (window as any)[cbId] = handler;
+
+    // For now, since _searchTickets uses the global callback name,
+    // we still set the global BUT also set our unique one as fallback
     (window as any).__ticketSearchCallback = handler;
 
     if (query) {
       window._searchTickets?.(query);
     } else {
-      window._searchTickets?.('');  // Show recent/active tickets
+      window._searchTickets?.('');
     }
 
-    return () => { delete (window as any).__ticketSearchCallback; };
+    return () => {
+      delete (window as any)[cbId];
+      // Only delete global if it's still ours
+      if ((window as any).__ticketSearchCallback === handler) {
+        delete (window as any).__ticketSearchCallback;
+      }
+    };
   }, [query]);
 
   const handleSelect = useCallback((value: string) => {

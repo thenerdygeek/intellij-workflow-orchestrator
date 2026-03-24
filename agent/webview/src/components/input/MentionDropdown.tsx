@@ -1,4 +1,4 @@
-import { memo, useEffect, useCallback } from 'react';
+import { memo, useEffect, useCallback, useMemo } from 'react';
 import type { MentionSearchResult } from '@/bridge/types';
 import { useChatStore } from '@/stores/chatStore';
 import {
@@ -28,6 +28,8 @@ const typeLabels: Record<string, string> = {
   folder: 'Folders',
   symbol: 'Symbols',
 };
+
+const TYPE_ORDER: Record<string, number> = { file: 0, folder: 1, symbol: 2 };
 
 /**
  * Score a result against a query for relevance ranking.
@@ -84,28 +86,26 @@ export const MentionDropdown = memo(function MentionDropdown({
 
   // Request search results from Kotlin — search files, folders, symbols
   useEffect(() => {
-    if (query) {
-      // Search across all context types simultaneously
-      window._searchMentions?.(`file:${query}`);
-    } else {
-      // Show initial results (top files, folders, symbols)
-      window._searchMentions?.('categories:');
-    }
+    const timer = setTimeout(() => {
+      if (query) {
+        window._searchMentions?.(`file:${query}`);
+      } else {
+        window._searchMentions?.('categories:');
+      }
+    }, 200);
+    return () => clearTimeout(timer);
   }, [query]);
 
   // Filter to only file/folder/symbol types and sort by relevance
-  const contextResults = mentionResults
-    .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
-    .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }))
-    .sort((a, b) => {
-      if (query) {
-        // When searching, sort by relevance score (descending)
-        if (b.score !== a.score) return b.score - a.score;
-      }
-      // Secondary: group by type (files, folders, symbols)
-      const typeOrder: Record<string, number> = { file: 0, folder: 1, symbol: 2 };
-      return (typeOrder[a.type] ?? 3) - (typeOrder[b.type] ?? 3);
-    });
+  const contextResults = useMemo(() => {
+    return mentionResults
+      .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
+      .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }))
+      .sort((a, b) => {
+        if (query && b.score !== a.score) return b.score - a.score;
+        return (TYPE_ORDER[a.type] ?? 3) - (TYPE_ORDER[b.type] ?? 3);
+      });
+  }, [mentionResults, query]);
 
   // When there's a query, show as a flat relevance-ranked list
   // When empty, group by type with 2 items each

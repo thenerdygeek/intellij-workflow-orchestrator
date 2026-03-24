@@ -1,6 +1,7 @@
 import { memo, useCallback, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
@@ -151,15 +152,18 @@ export const ChatView = memo(function ChatView() {
         {messages.map((msg, i) => {
           // Render completed tool chains (system messages with toolChain)
           if (msg.toolChain) {
-            return <ToolCallChain key={msg.id} toolCalls={msg.toolChain} />;
+            return (
+              <ErrorBoundary key={msg.id}>
+                <ToolCallChain toolCalls={msg.toolChain} />
+              </ErrorBoundary>
+            );
           }
           return (
-            <div
-              key={msg.id}
-              style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
-            >
-              <AgentMessage message={msg} />
-            </div>
+            <ErrorBoundary key={msg.id}>
+              <div style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}>
+                <AgentMessage message={msg} />
+              </div>
+            </ErrorBoundary>
           );
         })}
 
