@@ -114,7 +114,7 @@ function WorkingIndicator() {
   const phrase = useRotatingPhrase(3000);
   return (
     <div className="flex items-center gap-2 px-2 py-2 animate-[fade-in_200ms_ease-out]">
-      <Loader variant="typing" size="sm" />
+      <Loader variant="wave" size="sm" />
       <TextShimmer key={phrase} duration={3} className="text-[12px]">
         {phrase}
       </TextShimmer>

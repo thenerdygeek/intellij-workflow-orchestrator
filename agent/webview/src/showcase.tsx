@@ -110,7 +110,7 @@ function Showcase() {
       {/* ── Working Indicator ── */}
       <Section title="Working Indicator">
         <div className="flex items-center gap-2 px-2 py-2 border rounded-lg" style={{ borderColor: 'var(--border)' }}>
-          <Loader variant="typing" size="sm" />
+          <Loader variant="wave" size="sm" />
           <TextShimmer duration={3} className="text-[12px]">
             git blame says it was me all along...
           </TextShimmer>
