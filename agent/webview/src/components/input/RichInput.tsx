@@ -97,10 +97,28 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       }
     },
     getText: () => extractText(),
-    getMentions: () => [...mentionsRef.current],
+    getMentions: () => {
+      // Only return valid/pending mentions. Invalid (red) chips are excluded —
+      // they get rendered as plain text by getText() instead.
+      const el = editorRef.current;
+      if (!el) return [...mentionsRef.current];
+      const validMentions: Mention[] = [];
+      const chipEls = el.querySelectorAll<HTMLElement>('[data-mention-label]');
+      chipEls.forEach(chip => {
+        const status = chip.dataset.chipStatus;
+        if (status !== 'invalid') {
+          const mention = mentionsRef.current.find(m => m.label === chip.dataset.mentionLabel);
+          if (mention) validMentions.push(mention);
+        }
+      });
+      return validMentions;
+    },
   }));
 
-  // ── Extract plain text (chips become their label) ──
+  // ── Extract plain text ──
+  // Valid/pending chips are skipped (they're sent as mentions separately).
+  // Invalid (red) chips are converted back to "#LABEL" plain text so
+  // the user's intended hashtag reaches the LLM.
 
   const extractText = useCallback(() => {
     const el = editorRef.current;
@@ -110,7 +128,12 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       if (node.nodeType === Node.TEXT_NODE) {
         text += node.textContent ?? '';
       } else if (node instanceof HTMLElement && node.dataset.mentionLabel) {
-        // Skip chips in text extraction — they're tracked in mentionsRef
+        const status = node.dataset.chipStatus;
+        if (status === 'invalid') {
+          // Red chip → convert back to plain text with # prefix
+          text += `#${node.dataset.mentionLabel}`;
+        }
+        // Valid/pending chips are excluded from text — they're in getMentions()
       } else {
         text += node.textContent ?? '';
       }
