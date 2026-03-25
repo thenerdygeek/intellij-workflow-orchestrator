@@ -43,6 +43,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
@@ -76,6 +77,7 @@ class PrDetailPanel(
     private var currentPr: BitbucketPrDetail? = null
     private var currentMergeStatus: BitbucketMergeStatus? = null
     private var loadJob: Job? = null
+    private var createRepoConfig: RepoConfig? = null
 
     // Card names
     private companion object {
@@ -408,16 +410,21 @@ class PrDetailPanel(
     // Create PR form
     // ---------------------------------------------------------------
 
-    fun showCreateForm() {
+    fun showCreateForm(repoConfig: RepoConfig? = null) {
         currentPrId = null
         currentPr = null
         loadJob?.cancel()
+        createRepoConfig = repoConfig
 
-        // Get current git branch
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        // Get current git branch using the provided repo config or falling back to context detection
         val gitRepos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = gitRepos.find { it.root.path == repoConfig?.localVcsRootPath } ?: gitRepos.firstOrNull()
+        val targetRepo = if (repoConfig?.localVcsRootPath?.isNotBlank() == true) {
+            gitRepos.find { it.root.path == repoConfig.localVcsRootPath } ?: gitRepos.firstOrNull()
+        } else {
+            val resolver = RepoContextResolver.getInstance(project)
+            val detected = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            gitRepos.find { it.root.path == detected?.localVcsRootPath } ?: gitRepos.firstOrNull()
+        }
         val currentBranch = targetRepo?.currentBranch?.name ?: "unknown"
         createSourceBranchLabel.text = currentBranch
 
@@ -455,8 +462,10 @@ class PrDetailPanel(
                 }
                 return@launch
             }
-            val projectKey = settings.bitbucketProjectKey.orEmpty()
-            val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+            val projectKey = createRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+                ?: settings.bitbucketProjectKey.orEmpty()
+            val repoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+                ?: settings.bitbucketRepoSlug.orEmpty()
             if (projectKey.isBlank() || repoSlug.isBlank()) {
                 SwingUtilities.invokeLater {
                     createTargetBranchCombo.removeAllItems()
@@ -639,8 +648,10 @@ class PrDetailPanel(
         val settings = PluginSettings.getInstance(project).state
         val connSettings = ConnectionSettings.getInstance().state
         val url = connSettings.bitbucketUrl.trimEnd('/')
-        val projectKey = settings.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+        val projectKey = createRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+            ?: settings.bitbucketProjectKey.orEmpty()
+        val repoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+            ?: settings.bitbucketRepoSlug.orEmpty()
 
         if (url.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
             showNotification("Bitbucket connection not configured. Check Settings > Tools > Workflow Orchestrator.")

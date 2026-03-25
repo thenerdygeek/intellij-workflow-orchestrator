@@ -16,6 +16,7 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import kotlinx.coroutines.*
 import com.workflow.orchestrator.core.ui.TimeFormatter
@@ -383,7 +384,15 @@ class PrDashboardPanel(
     ) {
         override fun actionPerformed(e: AnActionEvent) {
             listPanel.prList.clearSelection()
-            detailPanel.showCreateForm()
+            // Resolve repo from filter dropdown, or fall back to context detection
+            val repos = PluginSettings.getInstance(project).getRepos().filter { it.isConfigured }
+            val repoConfig = if (activeRepoFilter != null) {
+                repos.find { it.displayLabel == activeRepoFilter }
+            } else {
+                RepoContextResolver.getInstance(project).resolveFromCurrentEditor()
+                    ?: RepoContextResolver.getInstance(project).getPrimary()
+            }
+            detailPanel.showCreateForm(repoConfig)
         }
     }
 
