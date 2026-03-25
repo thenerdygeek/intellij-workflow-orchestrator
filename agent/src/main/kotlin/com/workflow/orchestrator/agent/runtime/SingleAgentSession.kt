@@ -95,6 +95,17 @@ class SingleAgentSession(
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think")
 
+        /** Patterns that indicate the model intended to use a tool but stopped without calling it. */
+        private val TOOL_INTENT_PATTERNS = listOf(
+            "let me check", "let me run", "let me read", "let me look",
+            "i'll check", "i'll run", "i'll read", "i'll look",
+            "i will check", "i will run", "i will read", "i will look",
+            "let me search", "let me find", "i'll search", "i'll find",
+            "let me examine", "let me inspect", "let me verify",
+            "i'll examine", "i'll inspect", "i'll verify",
+            "let me see", "i'll see what", "let me get", "i'll get",
+        )
+
         /** Read-only tools safe to execute in parallel (no side effects on project state). */
         private val READ_ONLY_TOOLS = setOf(
             "read_file", "search_code", "glob_files", "file_structure",
@@ -600,14 +611,29 @@ class SingleAgentSession(
             }
 
             // No tool calls — about to return final response
+
+            // Detect truncated tool intent: the model said it would use a tool but stopped
+            // without actually calling it (common when API silently caps output tokens).
+            val content = message.content ?: ""
+            val lowerContent = content.lowercase()
+            val hasUnfulfilledIntent = TOOL_INTENT_PATTERNS.any { lowerContent.contains(it) }
+            if (hasUnfulfilledIntent && iteration < maxIterations - 1) {
+                LOG.info("SingleAgentSession: detected unfulfilled tool intent in text, nudging model to follow through")
+                onDebugLog?.invoke("warn", "nudge", "Detected unfulfilled tool intent — nudging model to act", null)
+                contextManager.addMessage(ChatMessage(
+                    role = "user",
+                    content = "You said you would use a tool but your response ended without making the tool call. " +
+                        "Please make the actual tool call now — don't describe what you'll do, just do it."
+                ))
+                return null // continue loop
+            }
+
             // LoopGuard: check if verification is needed before completing
             val verificationMsg = loopGuard.beforeCompletion()
             if (verificationMsg != null) {
                 contextManager.addMessage(verificationMsg)
                 return null // continue loop for verification
             }
-
-            val content = message.content ?: ""
 
             // Validate output for sensitive data and redact if needed
             val securityIssues = OutputValidator.validate(content)

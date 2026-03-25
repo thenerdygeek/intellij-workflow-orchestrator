@@ -556,6 +556,7 @@ class PromptAssembler(
             - If you call the same tool 3 times with the same arguments, try a different approach.
             - When debugging, start with get_test_results and get_run_output for structured error data. Only escalate to interactive debugging (breakpoints, stepping) when static analysis is insufficient. The interactive-debugging skill teaches efficient debugging patterns.
             - If a tool call returns an error, address the error before continuing with other actions.
+            - CRITICAL: Always call tools FIRST, then explain what you found. Never say "Let me check X" or "I'll run Y" without immediately making the tool call in the same response. Act first, narrate second. If you intend to use a tool, include it as a tool_call — do not just describe your intention in text.
             - After completing a task, suggest 1-3 concrete, contextual next steps the user might want to take.
               These should be specific to what was just done (e.g., "Run tests for the changed module",
               "Check SonarQube for new issues", "Create a PR for these changes"). Never use generic
