@@ -25,17 +25,17 @@ class MavenPluginsTool : AgentTool {
         return try {
             val moduleFilter = params["module"]?.jsonPrimitive?.content
 
-            val manager = getMavenManager(project)
-                ?: return ToolResult("Maven not configured. This tool requires a Maven project.", "No Maven", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            val manager = MavenUtils.getMavenManager(project)
+                ?: return MavenUtils.noMavenError()
 
-            val mavenProjects = getMavenProjects(manager)
+            val mavenProjects = MavenUtils.getMavenProjects(manager)
             if (mavenProjects.isEmpty()) {
                 return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
             }
 
-            val targetProject = findMavenProject(mavenProjects, manager, moduleFilter)
+            val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
                 ?: return ToolResult(
-                    "Module '${moduleFilter}' not found. Available: ${getProjectNames(mavenProjects)}",
+                    "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
                     "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
                 )
 
@@ -46,7 +46,7 @@ class MavenPluginsTool : AgentTool {
             }
 
             val content = buildString {
-                val projectName = getDisplayName(targetProject)
+                val projectName = MavenUtils.getDisplayName(targetProject)
                 appendLine("Build Plugins for $projectName (${plugins.size}):")
                 appendLine()
                 for (plugin in plugins.sortedBy { "${it.groupId}:${it.artifactId}" }) {
@@ -84,55 +84,5 @@ class MavenPluginsTool : AgentTool {
                 } catch (_: Exception) { null }
             }
         } catch (_: Exception) { emptyList() }
-    }
-
-    private fun getMavenManager(project: Project): Any? {
-        return try {
-            val clazz = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
-            val getInstance = clazz.getMethod("getInstance", Project::class.java)
-            val manager = getInstance.invoke(null, project)
-            val isMaven = clazz.getMethod("isMavenizedProject").invoke(manager) as Boolean
-            if (isMaven) manager else null
-        } catch (_: Exception) { null }
-    }
-
-    private fun getMavenProjects(manager: Any): List<Any> {
-        return try {
-            @Suppress("UNCHECKED_CAST")
-            manager.javaClass.getMethod("getProjects").invoke(manager) as List<Any>
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun findMavenProject(projects: List<Any>, manager: Any, moduleFilter: String?): Any? {
-        if (moduleFilter == null) return projects.firstOrNull()
-        for (mavenProject in projects) {
-            val moduleName = try {
-                val managerClass = manager.javaClass
-                val findModuleMethod = managerClass.getMethod("findModule", mavenProject.javaClass)
-                val module = findModuleMethod.invoke(manager, mavenProject)
-                if (module != null) module.javaClass.getMethod("getName").invoke(module) as? String else null
-            } catch (_: Exception) { null }
-
-            val displayName = getDisplayName(mavenProject)
-            val artifactId = try {
-                val mavenId = mavenProject.javaClass.getMethod("getMavenId").invoke(mavenProject)
-                mavenId.javaClass.getMethod("getArtifactId").invoke(mavenId) as? String
-            } catch (_: Exception) { null }
-
-            if (moduleName == moduleFilter || displayName == moduleFilter || artifactId == moduleFilter) {
-                return mavenProject
-            }
-        }
-        return null
-    }
-
-    private fun getDisplayName(mavenProject: Any): String {
-        return try {
-            mavenProject.javaClass.getMethod("getDisplayName").invoke(mavenProject) as? String ?: "unknown"
-        } catch (_: Exception) { "unknown" }
-    }
-
-    private fun getProjectNames(projects: List<Any>): String {
-        return projects.mapNotNull { getDisplayName(it).takeIf { n -> n != "unknown" } }.joinToString(", ")
     }
 }

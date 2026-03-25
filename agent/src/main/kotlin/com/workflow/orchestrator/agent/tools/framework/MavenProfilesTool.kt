@@ -16,10 +16,10 @@ class MavenProfilesTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         return try {
-            val manager = getMavenManager(project)
-                ?: return ToolResult("Maven not configured. This tool requires a Maven project.", "No Maven", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            val manager = MavenUtils.getMavenManager(project)
+                ?: return MavenUtils.noMavenError()
 
-            val mavenProjects = getMavenProjects(manager)
+            val mavenProjects = MavenUtils.getMavenProjects(manager)
             if (mavenProjects.isEmpty()) {
                 return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
             }
@@ -67,8 +67,6 @@ class MavenProfilesTool : AgentTool {
 
     private fun getExplicitProfiles(manager: Any, enabled: Boolean): List<String> {
         return try {
-            // MavenProjectsManager.getExplicitProfiles() returns MavenExplicitProfiles
-            // which has getEnabledProfiles() and getDisabledProfiles() returning Collection<String>
             val explicitProfiles = manager.javaClass.getMethod("getExplicitProfiles").invoke(manager)
             val methodName = if (enabled) "getEnabledProfiles" else "getDisabledProfiles"
             @Suppress("UNCHECKED_CAST")
@@ -79,7 +77,6 @@ class MavenProfilesTool : AgentTool {
 
     private fun getProfilesFromModel(mavenProject: Any): List<String> {
         return try {
-            // MavenProject.getMavenModel() or getModel() -> Model -> getProfiles()
             val model = try {
                 mavenProject.javaClass.getMethod("getMavenModel").invoke(mavenProject)
             } catch (_: Exception) {
@@ -92,23 +89,6 @@ class MavenProfilesTool : AgentTool {
                     profile.javaClass.getMethod("getId").invoke(profile) as? String
                 } catch (_: Exception) { null }
             }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun getMavenManager(project: Project): Any? {
-        return try {
-            val clazz = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
-            val getInstance = clazz.getMethod("getInstance", Project::class.java)
-            val manager = getInstance.invoke(null, project)
-            val isMaven = clazz.getMethod("isMavenizedProject").invoke(manager) as Boolean
-            if (isMaven) manager else null
-        } catch (_: Exception) { null }
-    }
-
-    private fun getMavenProjects(manager: Any): List<Any> {
-        return try {
-            @Suppress("UNCHECKED_CAST")
-            manager.javaClass.getMethod("getProjects").invoke(manager) as List<Any>
         } catch (_: Exception) { emptyList() }
     }
 }

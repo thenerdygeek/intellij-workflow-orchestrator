@@ -25,27 +25,27 @@ class SpringVersionTool : AgentTool {
         return try {
             val moduleFilter = params["module"]?.jsonPrimitive?.content
 
-            val manager = getMavenManager(project)
-                ?: return ToolResult("Maven not configured. This tool requires a Maven project.", "No Maven", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            val manager = MavenUtils.getMavenManager(project)
+                ?: return MavenUtils.noMavenError()
 
-            val mavenProjects = getMavenProjects(manager)
+            val mavenProjects = MavenUtils.getMavenProjects(manager)
             if (mavenProjects.isEmpty()) {
                 return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
             }
 
-            val targetProject = findMavenProject(mavenProjects, manager, moduleFilter)
+            val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
                 ?: return ToolResult(
-                    "Module '${moduleFilter}' not found. Available: ${getProjectNames(mavenProjects)}",
+                    "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
                     "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
                 )
 
             // Get project identity
-            val projectName = getDisplayName(targetProject)
-            val projectVersion = getProjectVersion(targetProject)
+            val projectName = MavenUtils.getDisplayName(targetProject)
+            val projectVersion = MavenUtils.getMavenId(targetProject, "getVersion") ?: "unknown"
 
             // Get all dependencies and properties
-            val dependencies = getDependencies(targetProject)
-            val properties = getProperties(targetProject)
+            val dependencies = MavenUtils.getDependencies(targetProject)
+            val properties = MavenUtils.getProperties(targetProject)
 
             // Detect versions from dependencies and properties
             val versions = mutableMapOf<String, String>()
@@ -136,49 +136,14 @@ class SpringVersionTool : AgentTool {
         }
     }
 
-    private data class DependencyInfo(
-        val groupId: String,
-        val artifactId: String,
-        val version: String
-    )
-
     /** Find version for any matching artifactId within a groupId */
-    private fun findVersion(dependencies: List<DependencyInfo>, groupId: String, vararg artifactIds: String): String? {
+    private fun findVersion(dependencies: List<MavenUtils.MavenDependencyInfo>, groupId: String, vararg artifactIds: String): String? {
         for (artifactId in artifactIds) {
             val dep = dependencies.find { it.groupId == groupId && it.artifactId == artifactId && it.version.isNotBlank() }
             if (dep != null) return dep.version
         }
         // Fallback: any artifact in the group
         return dependencies.find { it.groupId == groupId && it.version.isNotBlank() }?.version
-    }
-
-    private fun getDependencies(mavenProject: Any): List<DependencyInfo> {
-        return try {
-            @Suppress("UNCHECKED_CAST")
-            val deps = mavenProject.javaClass.getMethod("getDependencies").invoke(mavenProject) as List<Any>
-            deps.mapNotNull { dep ->
-                try {
-                    val groupId = dep.javaClass.getMethod("getGroupId").invoke(dep) as? String ?: return@mapNotNull null
-                    val artifactId = dep.javaClass.getMethod("getArtifactId").invoke(dep) as? String ?: return@mapNotNull null
-                    val version = dep.javaClass.getMethod("getVersion").invoke(dep) as? String ?: ""
-                    DependencyInfo(groupId, artifactId, version)
-                } catch (_: Exception) { null }
-            }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun getProperties(mavenProject: Any): Map<String, String> {
-        return try {
-            val props = mavenProject.javaClass.getMethod("getProperties").invoke(mavenProject) as java.util.Properties
-            props.entries.associate { (k, v) -> k.toString() to v.toString() }
-        } catch (_: Exception) { emptyMap() }
-    }
-
-    private fun getProjectVersion(mavenProject: Any): String {
-        return try {
-            val mavenId = mavenProject.javaClass.getMethod("getMavenId").invoke(mavenProject)
-            mavenId.javaClass.getMethod("getVersion").invoke(mavenId) as? String ?: "unknown"
-        } catch (_: Exception) { "unknown" }
     }
 
     private fun getParentVersion(mavenProject: Any, parentGroupId: String): String? {
@@ -189,55 +154,5 @@ class SpringVersionTool : AgentTool {
                 parentId.javaClass.getMethod("getVersion").invoke(parentId) as? String
             } else null
         } catch (_: Exception) { null }
-    }
-
-    private fun getMavenManager(project: Project): Any? {
-        return try {
-            val clazz = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
-            val getInstance = clazz.getMethod("getInstance", Project::class.java)
-            val manager = getInstance.invoke(null, project)
-            val isMaven = clazz.getMethod("isMavenizedProject").invoke(manager) as Boolean
-            if (isMaven) manager else null
-        } catch (_: Exception) { null }
-    }
-
-    private fun getMavenProjects(manager: Any): List<Any> {
-        return try {
-            @Suppress("UNCHECKED_CAST")
-            manager.javaClass.getMethod("getProjects").invoke(manager) as List<Any>
-        } catch (_: Exception) { emptyList() }
-    }
-
-    private fun findMavenProject(projects: List<Any>, manager: Any, moduleFilter: String?): Any? {
-        if (moduleFilter == null) return projects.firstOrNull()
-        for (mavenProject in projects) {
-            val moduleName = try {
-                val managerClass = manager.javaClass
-                val findModuleMethod = managerClass.getMethod("findModule", mavenProject.javaClass)
-                val module = findModuleMethod.invoke(manager, mavenProject)
-                if (module != null) module.javaClass.getMethod("getName").invoke(module) as? String else null
-            } catch (_: Exception) { null }
-
-            val displayName = getDisplayName(mavenProject)
-            val artifactId = try {
-                val mavenId = mavenProject.javaClass.getMethod("getMavenId").invoke(mavenProject)
-                mavenId.javaClass.getMethod("getArtifactId").invoke(mavenId) as? String
-            } catch (_: Exception) { null }
-
-            if (moduleName == moduleFilter || displayName == moduleFilter || artifactId == moduleFilter) {
-                return mavenProject
-            }
-        }
-        return null
-    }
-
-    private fun getDisplayName(mavenProject: Any): String {
-        return try {
-            mavenProject.javaClass.getMethod("getDisplayName").invoke(mavenProject) as? String ?: "unknown"
-        } catch (_: Exception) { "unknown" }
-    }
-
-    private fun getProjectNames(projects: List<Any>): String {
-        return projects.mapNotNull { getDisplayName(it).takeIf { n -> n != "unknown" } }.joinToString(", ")
     }
 }
