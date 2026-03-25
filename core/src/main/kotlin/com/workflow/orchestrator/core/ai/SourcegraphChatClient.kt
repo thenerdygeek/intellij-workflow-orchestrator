@@ -321,6 +321,7 @@ class SourcegraphChatClient(
                                         tc.id?.let { builder.id = it }
                                         tc.function?.name?.let { builder.name = it }
                                         tc.function?.arguments?.let { builder.arguments.append(it) }
+                                        log.debug("[Agent:API] SSE tool delta: idx=${tc.index} id=${tc.id} name=${tc.function?.name} args=${tc.function?.arguments?.take(50)}")
                                     }
                                 }
                             }
@@ -364,6 +365,14 @@ class SourcegraphChatClient(
                         .filter { it.function.name.isNotBlank() } // Drop tool calls with empty names
                         .ifEmpty { null }
                 } else null
+
+                // Log assembled tool calls for debugging
+                if (toolCallBuilders.isNotEmpty()) {
+                    toolCallBuilders.entries.sortedBy { it.key }.forEach { (idx, b) ->
+                        log.info("[Agent:API] Assembled tool call #$idx: name='${b.name}' id='${b.id}' args(${b.arguments.length} chars)='${b.arguments.toString().take(100)}'")
+                    }
+                    log.info("[Agent:API] Final valid tool calls: ${toolCalls?.size ?: 0}, finishReason=$finishReason")
+                }
 
                 val finalMessage = ChatMessage(
                     role = role,

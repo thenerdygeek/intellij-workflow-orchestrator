@@ -76,6 +76,10 @@ class SingleAgentSession(
     /** Structured JSONL file logger — null-safe so callers that don't wire it pay zero cost. */
     private val agentFileLogger: AgentFileLogger? = null
 ) {
+    /** Tracks consecutive iterations where tool calls were malformed/empty. Reset on success. */
+    private var consecutiveMalformedRetries = 0
+    /** Set to true after MAX_MALFORMED_RETRIES to force text-only response from LLM. */
+    private var forceTextOnly = false
     companion object {
         private val LOG = Logger.getInstance(SingleAgentSession::class.java)
         private val json = Json { ignoreUnknownKeys = true }
@@ -85,6 +89,8 @@ class SingleAgentSession(
         private const val BASE_BACKOFF_MS = 1000L
         /** Maximum backoff cap. */
         private const val MAX_BACKOFF_MS = 30000L
+        /** Max consecutive malformed tool call retries before forcing text-only. */
+        private const val MAX_MALFORMED_RETRIES = 3
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think")
@@ -191,7 +197,8 @@ class SingleAgentSession(
         var activeToolDefs = toolDefinitions
         var activeTools = tools
         var verificationPending = false
-        var forceTextOnly = false
+        forceTextOnly = false
+        consecutiveMalformedRetries = 0
 
         for (iteration in 1..maxIterations) {
             // Mid-loop cancellation check
@@ -560,16 +567,33 @@ class SingleAgentSession(
             // finishReason="tool_calls" with empty toolCalls means the LLM tried to call tools
             // but the arguments were invalid (e.g., concatenated JSON objects).
             if (choice.finishReason == "tool_calls") {
-                LOG.warn("SingleAgentSession: finishReason=tool_calls but no valid tool calls — asking LLM to retry")
-                agentFileLogger?.logRetry(sessionId, "finishReason=tool_calls but no valid tool calls", iteration)
-                agentFileLogger?.logMalformedToolCall(sessionId, null, message.toolCalls?.firstOrNull()?.function?.arguments?.take(200), "finishReason=tool_calls but all tool calls filtered as malformed")
-                onDebugLog?.invoke("error", "malformed_tc", "finishReason=tool_calls but 0 valid — raw args: ${message.toolCalls?.firstOrNull()?.function?.arguments?.take(150) ?: "null"}", mapOf("iteration" to iteration))
-                contextManager.addMessage(ChatMessage(
-                    role = "user",
-                    content = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
-                        "arguments were malformed and could not be parsed. This can happen when multiple tool calls " +
-                        "get their JSON arguments concatenated. Please retry — call ONE tool at a time with valid JSON arguments."
-                ))
+                consecutiveMalformedRetries++
+                val rawArgs = message.toolCalls?.firstOrNull()?.function?.arguments?.take(200) ?: "(null)"
+                val rawName = message.toolCalls?.firstOrNull()?.function?.name ?: "(null)"
+                val rawCount = message.toolCalls?.size ?: 0
+                LOG.warn("SingleAgentSession: finishReason=tool_calls but no valid tool calls (attempt $consecutiveMalformedRetries/$MAX_MALFORMED_RETRIES) — name=$rawName, args=$rawArgs, count=$rawCount")
+                agentFileLogger?.logRetry(sessionId, "finishReason=tool_calls but no valid tool calls (attempt $consecutiveMalformedRetries)", iteration)
+                agentFileLogger?.logMalformedToolCall(sessionId, rawName, rawArgs, "finishReason=tool_calls but all tool calls filtered as malformed")
+                onDebugLog?.invoke("error", "malformed_tc", "0 valid tool calls (retry $consecutiveMalformedRetries/$MAX_MALFORMED_RETRIES) — name=$rawName args=${rawArgs.take(100)}", mapOf("iteration" to iteration, "rawCount" to rawCount))
+
+                if (consecutiveMalformedRetries >= MAX_MALFORMED_RETRIES) {
+                    LOG.warn("SingleAgentSession: $MAX_MALFORMED_RETRIES consecutive malformed tool calls — forcing text-only response")
+                    onDebugLog?.invoke("error", "force_text", "Forcing text-only after $MAX_MALFORMED_RETRIES failed tool call attempts", null)
+                    contextManager.addMessage(ChatMessage(
+                        role = "user",
+                        content = "IMPORTANT: Your last $MAX_MALFORMED_RETRIES attempts to call tools all failed because the tool call " +
+                            "arguments were empty or malformed. The streaming API is not delivering your tool call arguments correctly. " +
+                            "DO NOT attempt any more tool calls. Instead, respond with a TEXT message explaining what you were " +
+                            "trying to do, and I will help you accomplish it another way."
+                    ))
+                    forceTextOnly = true
+                } else {
+                    contextManager.addMessage(ChatMessage(
+                        role = "user",
+                        content = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
+                            "arguments were empty or malformed and could not be parsed. Please retry — call ONE tool at a time with valid JSON arguments."
+                    ))
+                }
                 return null // continue loop with retry guidance
             }
 
@@ -612,6 +636,9 @@ class SingleAgentSession(
                 artifacts = allArtifacts
             )
         }
+
+        // Reset malformed retry counter — we have valid tool calls
+        consecutiveMalformedRetries = 0
 
         // Execute tool calls: read-only tools in parallel, write tools sequentially
         val toolResults = mutableListOf<Pair<String, Boolean>>() // (toolCallId, isError) for LoopGuard
@@ -958,8 +985,9 @@ class SingleAgentSession(
 
         val toolStartMs = System.currentTimeMillis()
         return try {
-            eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${toolCall.function.arguments.take(100)})")
-            val params = json.decodeFromString<JsonObject>(toolCall.function.arguments)
+            val rawArgs = toolCall.function.arguments.let { if (it.isBlank()) "{}" else it }
+            eventLog?.log(AgentEventType.TOOL_CALLED, "$toolName(${rawArgs.take(100)})")
+            val params = json.decodeFromString<JsonObject>(rawArgs)
 
             // 5A: Before executing edit_file, validate the content being written
             if (toolName == "edit_file") {
