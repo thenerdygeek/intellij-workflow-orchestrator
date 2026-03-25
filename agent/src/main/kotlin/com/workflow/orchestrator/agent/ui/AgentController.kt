@@ -816,6 +816,9 @@ class AgentController(
             progress.step.contains("complex") || progress.step.contains("plan") -> {
                 dashboard.appendStatus(progress.step, RichStreamingPanel.StatusType.WARNING)
             }
+            progress.step.contains("failed") || progress.step.contains("retry") || progress.step.contains("switching") -> {
+                dashboard.appendStatus(progress.step, RichStreamingPanel.StatusType.WARNING)
+            }
         }
     }
 

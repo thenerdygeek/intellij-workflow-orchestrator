@@ -579,6 +579,7 @@ class SingleAgentSession(
                 if (consecutiveMalformedRetries >= MAX_MALFORMED_RETRIES) {
                     LOG.warn("SingleAgentSession: $MAX_MALFORMED_RETRIES consecutive malformed tool calls — forcing text-only response")
                     onDebugLog?.invoke("error", "force_text", "Forcing text-only after $MAX_MALFORMED_RETRIES failed tool call attempts", null)
+                    onProgress(AgentProgress(step = "Tool calls failed $MAX_MALFORMED_RETRIES times — switching to text response", tokensUsed = contextManager.currentTokens))
                     contextManager.addMessage(ChatMessage(
                         role = "user",
                         content = "IMPORTANT: Your last $MAX_MALFORMED_RETRIES attempts to call tools all failed because the tool call " +
@@ -588,6 +589,7 @@ class SingleAgentSession(
                     ))
                     forceTextOnly = true
                 } else {
+                    onProgress(AgentProgress(step = "Tool call failed (malformed args, retry $consecutiveMalformedRetries/$MAX_MALFORMED_RETRIES)...", tokensUsed = contextManager.currentTokens))
                     contextManager.addMessage(ChatMessage(
                         role = "user",
                         content = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
