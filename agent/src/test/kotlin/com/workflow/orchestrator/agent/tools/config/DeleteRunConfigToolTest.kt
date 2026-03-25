@@ -20,16 +20,18 @@ class DeleteRunConfigToolTest {
     }
 
     @Test
-    fun `required parameters is name only`() {
-        assertEquals(listOf("name"), tool.parameters.required)
+    fun `required parameters are name and description`() {
+        assertEquals(listOf("name", "description"), tool.parameters.required)
     }
 
     @Test
-    fun `has single name parameter`() {
+    fun `has name and description parameters`() {
         val props = tool.parameters.properties
-        assertEquals(1, props.size)
+        assertEquals(2, props.size)
         assertTrue(props.containsKey("name"))
+        assertTrue(props.containsKey("description"))
         assertEquals("string", props["name"]?.type)
+        assertEquals("string", props["description"]?.type)
     }
 
     @Test
@@ -44,8 +46,8 @@ class DeleteRunConfigToolTest {
         assertEquals("delete_run_config", def.function.name)
         assertTrue(def.function.description.isNotBlank())
         assertEquals("object", def.function.parameters.type)
-        assertEquals(1, def.function.parameters.properties.size)
-        assertEquals(listOf("name"), def.function.parameters.required)
+        assertEquals(2, def.function.parameters.properties.size)
+        assertEquals(listOf("name", "description"), def.function.parameters.required)
     }
 
     @Test

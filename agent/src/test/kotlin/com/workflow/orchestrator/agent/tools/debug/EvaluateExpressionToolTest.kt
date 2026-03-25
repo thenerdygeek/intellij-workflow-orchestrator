@@ -25,17 +25,17 @@ class EvaluateExpressionToolTest {
     }
 
     @Test
-    fun `expression is required`() {
-        assertEquals(listOf("expression"), tool.parameters.required)
+    fun `expression and description are required`() {
+        assertEquals(listOf("expression", "description"), tool.parameters.required)
     }
 
     @Test
-    fun `has expression, session_id, and frame_index parameters`() {
+    fun `has expression, session_id, and description parameters`() {
         val props = tool.parameters.properties
         assertEquals(3, props.size)
         assertTrue(props.containsKey("expression"))
         assertTrue(props.containsKey("session_id"))
-        assertTrue(props.containsKey("frame_index"))
+        assertTrue(props.containsKey("description"))
     }
 
     @Test
@@ -97,15 +97,6 @@ class EvaluateExpressionToolTest {
         assertTrue(result.content.contains("not suspended"))
     }
 
-    @Test
-    fun `returns error when frame_index is negative`() = runTest {
-        val result = tool.execute(buildJsonObject {
-            put("expression", "x + 1")
-            put("frame_index", -1)
-        }, project)
-        assertTrue(result.isError)
-        assertTrue(result.content.contains("frame_index must be >= 0"))
-    }
 
     @Nested
     inner class WithSuspendedSession {
@@ -152,16 +143,6 @@ class EvaluateExpressionToolTest {
         }
 
         @Test
-        fun `rejects non-zero frame_index`() = runTest {
-            val result = tool.execute(buildJsonObject {
-                put("expression", "x")
-                put("frame_index", 2)
-            }, project)
-            assertTrue(result.isError)
-            assertTrue(result.content.contains("Only the top frame (#0) is currently supported"))
-        }
-
-        @Test
         fun `uses specified session_id`() = runTest {
             coEvery { controller.evaluate(session, "1+1", 0) } returns EvaluationResult(
                 expression = "1+1",
@@ -183,6 +164,6 @@ class EvaluateExpressionToolTest {
         assertEquals("function", def.type)
         assertEquals("evaluate_expression", def.function.name)
         assertEquals("object", def.function.parameters.type)
-        assertEquals(listOf("expression"), def.function.parameters.required)
+        assertEquals(listOf("expression", "description"), def.function.parameters.required)
     }
 }

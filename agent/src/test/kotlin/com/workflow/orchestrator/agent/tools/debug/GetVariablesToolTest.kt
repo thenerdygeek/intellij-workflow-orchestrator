@@ -33,11 +33,10 @@ class GetVariablesToolTest {
     }
 
     @Test
-    fun `has session_id, frame_index, max_depth, and variable_name parameters`() {
+    fun `has session_id, max_depth, and variable_name parameters`() {
         val props = tool.parameters.properties
-        assertEquals(4, props.size)
+        assertEquals(3, props.size)
         assertTrue(props.containsKey("session_id"))
-        assertTrue(props.containsKey("frame_index"))
         assertTrue(props.containsKey("max_depth"))
         assertTrue(props.containsKey("variable_name"))
     }
@@ -80,14 +79,6 @@ class GetVariablesToolTest {
         assertTrue(result.content.contains("not suspended"))
     }
 
-    @Test
-    fun `returns error when frame_index is negative`() = runTest {
-        val result = tool.execute(buildJsonObject {
-            put("frame_index", -1)
-        }, project)
-        assertTrue(result.isError)
-        assertTrue(result.content.contains("frame_index must be >= 0"))
-    }
 
     @Nested
     inner class WithSuspendedSession {

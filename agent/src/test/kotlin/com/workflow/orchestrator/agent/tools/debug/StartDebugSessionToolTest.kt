@@ -27,18 +27,20 @@ class StartDebugSessionToolTest {
     }
 
     @Test
-    fun `start tool requires config_name`() {
-        assertEquals(listOf("config_name"), startTool.parameters.required)
+    fun `start tool requires config_name and description`() {
+        assertEquals(listOf("config_name", "description"), startTool.parameters.required)
     }
 
     @Test
-    fun `start tool has config_name and wait_for_pause parameters`() {
+    fun `start tool has config_name, wait_for_pause, and description parameters`() {
         val props = startTool.parameters.properties
-        assertEquals(2, props.size)
+        assertEquals(3, props.size)
         assertTrue(props.containsKey("config_name"))
         assertTrue(props.containsKey("wait_for_pause"))
+        assertTrue(props.containsKey("description"))
         assertEquals("string", props["config_name"]?.type)
         assertEquals("integer", props["wait_for_pause"]?.type)
+        assertEquals("string", props["description"]?.type)
     }
 
     @Test
@@ -70,7 +72,7 @@ class StartDebugSessionToolTest {
         assertEquals("function", def.type)
         assertEquals("start_debug_session", def.function.name)
         assertEquals("object", def.function.parameters.type)
-        assertEquals(listOf("config_name"), def.function.parameters.required)
+        assertEquals(listOf("config_name", "description"), def.function.parameters.required)
     }
 
     // --- DebugStepOverTool ---
@@ -317,8 +319,9 @@ class StartDebugSessionToolTest {
         }
 
         @Test
-        fun `session_id is optional`() {
-            assertTrue(tool.parameters.required.isEmpty())
+        fun `description is required and session_id is optional`() {
+            assertEquals(listOf("description"), tool.parameters.required)
+            assertTrue(tool.parameters.properties.containsKey("session_id"))
         }
 
         @Test

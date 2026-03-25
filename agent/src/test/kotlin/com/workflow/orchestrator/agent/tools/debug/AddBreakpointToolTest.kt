@@ -140,7 +140,7 @@ class AddBreakpointToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("project basePath is null"))
+        assertTrue(result.content.contains("project base path not available"))
     }
 
     @Test
