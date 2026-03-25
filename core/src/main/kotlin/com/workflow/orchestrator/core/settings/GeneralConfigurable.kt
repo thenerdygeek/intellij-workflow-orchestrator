@@ -17,6 +17,8 @@ import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import kotlinx.coroutines.runBlocking
 import javax.swing.*
 import javax.swing.table.DefaultTableModel
@@ -524,6 +526,11 @@ class GeneralConfigurable(
                 button("Edit") { onEditRepo() }
                 button("Remove") { onRemoveRepo() }
                 button("Auto-Detect") { onAutoDetectRepos() }
+                button("Clear Branch Overrides") {
+                    DefaultBranchResolver.getInstance(project).clearAllOverrides()
+                    repoStatusLabel.text = "Branch target overrides cleared"
+                    repoStatusLabel.foreground = StatusColors.SUCCESS
+                }
                 cell(repoStatusLabel)
             }
         }
