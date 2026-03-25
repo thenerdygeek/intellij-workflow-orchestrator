@@ -81,6 +81,7 @@ interface ChatState {
   focusInputTrigger: number;
   debugLogVisible: boolean;
   debugLogEntries: DebugLogEntry[];
+  toolOutputStreams: Record<string, string>;
 
   // Actions
   startSession(task: string): void;
@@ -130,6 +131,8 @@ interface ChatState {
   setDebugLogVisible(visible: boolean): void;
   addDebugLogEntry(entry: DebugLogEntry): void;
   clearDebugLog(): void;
+  appendToolOutput(toolCallId: string, chunk: string): void;
+  killToolCall(toolCallId: string): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -168,6 +171,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   focusInputTrigger: 0,
   debugLogVisible: false,
   debugLogEntries: [],
+  toolOutputStreams: {},
 
   // Actions
   startSession(task: string) {
@@ -601,5 +605,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearDebugLog() {
     set({ debugLogEntries: [] });
+  },
+
+  appendToolOutput(toolCallId: string, chunk: string) {
+    set(state => ({
+      toolOutputStreams: {
+        ...state.toolOutputStreams,
+        [toolCallId]: (state.toolOutputStreams[toolCallId] || '') + chunk,
+      }
+    }));
+  },
+
+  killToolCall(toolCallId: string) {
+    import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
+      (kotlinBridge as any).killToolCall(toolCallId);
+    });
   },
 }));

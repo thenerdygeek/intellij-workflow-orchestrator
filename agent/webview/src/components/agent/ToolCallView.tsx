@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ToolCall, ToolCallStatus } from '@/bridge/types';
 import { Tool, type ToolPart } from '@/components/ui/prompt-kit/tool';
+import { Terminal } from '@/components/ui/tool-ui/terminal';
+import { useChatStore } from '@/stores/chatStore';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { Square } from 'lucide-react';
 
 // ── Tool Categories ──
 
@@ -158,6 +161,31 @@ function toToolPart(tc: ToolCall): ToolPart {
   };
 }
 
+// ── CMD Tool Helpers ──
+
+function extractCommand(argsJson: string): string {
+  try {
+    const args = JSON.parse(argsJson);
+    return args.command || args.cmd || '';
+  } catch { return ''; }
+}
+
+function parseStdout(result?: string): string | undefined {
+  if (!result) return undefined;
+  try {
+    const parsed = JSON.parse(result);
+    return parsed.output || parsed.stdout || parsed.result || result;
+  } catch { return result; }
+}
+
+function parseExitCode(result?: string): number | undefined {
+  if (!result) return undefined;
+  try {
+    const parsed = JSON.parse(result);
+    return parsed.exitCode ?? parsed.exit_code;
+  } catch { return undefined; }
+}
+
 // ── ToolCallView Component ──
 
 interface ToolCallViewProps {
@@ -172,6 +200,19 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
   const target = extractTarget(toolCall.args);
   const liveTimer = useLiveTimer(status);
   const toolPart = toToolPart(toolCall);
+  const streamOutput = useChatStore(s => s.toolOutputStreams[toolCall.id] || '');
+
+  const timeoutSeconds = (() => {
+    try {
+      const t = JSON.parse(toolCall.args)?.timeout;
+      return t ? Number(t) : (category === 'CMD' ? 120 : undefined);
+    } catch { return category === 'CMD' ? 120 : undefined; }
+  })();
+
+  // For CMD tools, suppress Tool's built-in output rendering — we'll render Terminal instead
+  const effectiveToolPart = category === 'CMD'
+    ? { ...toolPart, output: undefined, errorText: undefined }
+    : toolPart;
 
   // Auto-expand: latest running card is expanded, collapse when superseded
   const [isOpen, setIsOpen] = useState(false);
@@ -214,8 +255,20 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
       <span className="flex-1" />
       {isRunning && liveTimer && (
         <span className="text-[11px] font-mono tabular-nums text-[var(--accent)]">
-          {liveTimer}
+          {liveTimer}{timeoutSeconds ? ` / ${timeoutSeconds}s` : ''}
         </span>
+      )}
+      {isRunning && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            useChatStore.getState().killToolCall(toolCall.id);
+          }}
+          className="rounded p-0.5 hover:bg-[var(--hover-overlay)]"
+          title="Kill process"
+        >
+          <Square className="h-3 w-3" style={{ color: 'var(--error)' }} />
+        </button>
       )}
       {(isCompleted || isError) && durationMs != null && (
         <span className="rounded px-1.5 py-0.5 text-[10px] font-mono bg-[var(--chip-bg)] text-[var(--fg-muted)]">
@@ -244,13 +297,23 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
       )}
     >
       <Tool
-        toolPart={toolPart}
+        toolPart={effectiveToolPart}
         open={isOpen}
         onOpenChange={setIsOpen}
         headerExtra={headerExtra}
         footerExtra={footerExtra}
         className="mt-2"
       />
+      {category === 'CMD' && isOpen && (
+        <div className="px-3 pb-3 -mt-1" style={{ backgroundColor: 'var(--tool-bg)' }}>
+          <Terminal
+            command={extractCommand(toolCall.args)}
+            stdout={isRunning ? streamOutput : (parseStdout(toolCall.result) || streamOutput)}
+            exitCode={isCompleted || isError ? parseExitCode(toolCall.result) : undefined}
+            durationMs={durationMs}
+          />
+        </div>
+      )}
     </div>
   );
 }

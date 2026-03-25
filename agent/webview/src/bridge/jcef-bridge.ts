@@ -200,6 +200,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       stores?.getChatStore().addDebugLogEntry(entry);
     } catch { /* ignore malformed JSON */ }
   },
+  appendToolOutput(toolCallId: string, chunk: string) {
+    stores?.getChatStore().appendToolOutput(toolCallId, chunk);
+  },
 };
 
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
@@ -244,6 +247,7 @@ export const kotlinBridge = {
   requestFocusIde(): void { callKotlin('_requestFocusIde'); },
   openSettings(): void { callKotlin('_openSettings'); },
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
+  killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },
   searchMentions(type: string, query: string): void { callKotlin('_searchMentions', `${type}:${query}`); },
   sendMessageWithMentions(text: string, mentionsJson: string): void {
     const payload = JSON.stringify({ text, mentions: JSON.parse(mentionsJson) });
