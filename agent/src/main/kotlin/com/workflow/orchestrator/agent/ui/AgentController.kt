@@ -340,6 +340,32 @@ class AgentController(
         }
     }
 
+    fun executeTaskWithMentions(prompt: String, filePaths: List<String>) {
+        if (filePaths.isNotEmpty()) {
+            val mentions = filePaths.map { path ->
+                MentionContextBuilder.Mention(
+                    type = "file",
+                    name = java.io.File(path).name,
+                    value = path
+                )
+            }
+            scope.launch(Dispatchers.IO) {
+                val context = mentionContextBuilder.buildContext(mentions)
+                if (context != null) {
+                    session?.contextManager?.setMentionAnchor(
+                        com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                            role = "system",
+                            content = "<mentioned_context>\n$context</mentioned_context>"
+                        )
+                    )
+                }
+                SwingUtilities.invokeLater { executeTask(prompt) }
+            }
+        } else {
+            executeTask(prompt)
+        }
+    }
+
     fun executeTask(task: String) {
         // Check for skill /command invocation
         if (task.startsWith("/") && session != null) {

@@ -37,6 +37,9 @@ class AgentTabProvider : WorkflowTabProvider {
         val dashboard = AgentDashboardPanel(parentDisposable = project as? Disposable)
         val controller = AgentController(project, dashboard)
 
+        // Register controller in registry for cross-module access (e.g., AgentChatRedirect)
+        AgentControllerRegistry.getInstance(project).controller = controller
+
         // Register controller on AgentService for session resume from History tab
         try { com.workflow.orchestrator.agent.AgentService.getInstance(project).activeController = controller } catch (_: Exception) {}
 

@@ -38,6 +38,10 @@
             qualifiedName="com.workflow.orchestrator.textGenerationService"
             interface="com.workflow.orchestrator.core.ai.TextGenerationService"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.agentChatRedirect"
+            interface="com.workflow.orchestrator.core.ai.AgentChatRedirect"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -305,6 +309,8 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.settings.AgentSettings"/>
         <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.ui.AgentControllerRegistry"/>
+        <projectService
             serviceImplementation="com.workflow.orchestrator.agent.AgentService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.settings.ToolPreferences"/>
@@ -371,6 +377,8 @@
             implementation="com.workflow.orchestrator.jira.service.JiraTicketProviderImpl"/>
         <textGenerationService
             implementation="com.workflow.orchestrator.cody.service.CodyTextGenerationService"/>
+        <agentChatRedirect
+            implementation="com.workflow.orchestrator.agent.ui.AgentChatRedirectImpl"/>
         <tabProvider implementation="com.workflow.orchestrator.jira.ui.SprintTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.bamboo.ui.BuildTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.sonar.ui.QualityTabProvider"/>
