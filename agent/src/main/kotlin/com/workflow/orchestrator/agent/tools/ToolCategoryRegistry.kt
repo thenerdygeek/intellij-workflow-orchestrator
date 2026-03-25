@@ -113,7 +113,7 @@ object ToolCategoryRegistry {
             description = "Run output, test results, breakpoints, interactive debugging, expression evaluation, run configuration management",
             tools = listOf(
                 "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
-                "add_breakpoint", "remove_breakpoint", "list_breakpoints",
+                "add_breakpoint", "method_breakpoint", "remove_breakpoint", "list_breakpoints",
                 "start_debug_session", "get_debug_state",
                 "debug_step_over", "debug_step_into", "debug_step_out",
                 "debug_resume", "debug_pause", "debug_run_to_cursor", "debug_stop",
