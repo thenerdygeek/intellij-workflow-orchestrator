@@ -281,6 +281,7 @@ class AgentService(
 
             // Maven Intelligence (Phase 3)
             register(MavenDependenciesTool())
+            register(MavenDependencyTreeTool())
             register(MavenPropertiesTool())
             register(MavenPluginsTool())
             register(MavenProfilesTool())
@@ -298,6 +299,8 @@ class AgentService(
             register(SpringScheduledTool())
             register(SpringEventListenersTool())
             register(SpringBootAutoConfigTool())
+            register(SpringBootConfigPropertiesTool())
+            register(SpringBootActuatorTool())
         }
     }
 
