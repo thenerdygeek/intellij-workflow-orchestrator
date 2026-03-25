@@ -6,7 +6,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class StreamChunk(
     val id: String = "",
-    val choices: List<StreamChoice> = emptyList()
+    val choices: List<StreamChoice> = emptyList(),
+    val usage: UsageInfo? = null
 )
 
 @Serializable

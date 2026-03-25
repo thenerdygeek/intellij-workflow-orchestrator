@@ -295,6 +295,8 @@ class SourcegraphChatClient(
                 val contentBuilder = StringBuilder()
                 val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
                 var role = "assistant"
+                var finishReason = "stop"
+                var streamUsage: UsageInfo? = null
 
                 reader.forEachLine { line ->
                     if (line.startsWith("data: ") && line != "data: [DONE]") {
@@ -305,16 +307,24 @@ class SourcegraphChatClient(
                             // This is safe because we are already on Dispatchers.IO.
                             kotlinx.coroutines.runBlocking { onChunk(chunk) }
 
-                            chunk.choices.firstOrNull()?.delta?.let { delta ->
-                                delta.role?.let { role = it }
-                                delta.content?.let { contentBuilder.append(it) }
-                                delta.toolCalls?.forEach { tc ->
-                                    val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
-                                    tc.id?.let { builder.id = it }
-                                    tc.function?.name?.let { builder.name = it }
-                                    tc.function?.arguments?.let { builder.arguments.append(it) }
+                            chunk.choices.firstOrNull()?.let { choice ->
+                                // Capture finish_reason from the final chunk
+                                if (!choice.finishReason.isNullOrBlank() && choice.finishReason != "") {
+                                    finishReason = choice.finishReason
+                                }
+                                choice.delta.let { delta ->
+                                    delta.role?.let { role = it }
+                                    delta.content?.let { contentBuilder.append(it) }
+                                    delta.toolCalls?.forEach { tc ->
+                                        val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
+                                        tc.id?.let { builder.id = it }
+                                        tc.function?.name?.let { builder.name = it }
+                                        tc.function?.arguments?.let { builder.arguments.append(it) }
+                                    }
                                 }
                             }
+                            // Capture usage from the final chunk (Sourcegraph sends it with finish_reason)
+                            chunk.usage?.let { streamUsage = it }
                         } catch (e: Exception) {
                             log.debug("[Agent:API] Skipping malformed SSE chunk: ${e.message}")
                         }
@@ -337,8 +347,8 @@ class SourcegraphChatClient(
 
                 ApiResult.Success(ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
-                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = "stop")),
-                    usage = null
+                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReason)),
+                    usage = streamUsage
                 ))
             }
         } catch (e: IOException) {

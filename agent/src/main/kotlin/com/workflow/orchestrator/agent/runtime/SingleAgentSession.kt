@@ -472,9 +472,10 @@ class SingleAgentSession(
             LOG.info("SingleAgentSession: skipping empty assistant message (no content, no valid tool calls)")
         }
 
-        // Show assistant's text content in UI (for non-streaming responses,
-        // the onStreamChunk callback doesn't fire, so push content here)
-        if (!cleanMessage.content.isNullOrBlank()) {
+        // Show assistant's text content in UI. If the response was streamed,
+        // tokens were already pushed via onStreamChunk during the LLM call.
+        // Only push here for non-streamed responses (fallback path).
+        if (!cleanMessage.content.isNullOrBlank() && !result.wasStreamed) {
             onStreamChunk(cleanMessage.content!!)
         }
 
@@ -935,29 +936,27 @@ class SingleAgentSession(
         var lastError: String? = null
 
         for (attempt in 1..MAX_RETRIES) {
-            // Use non-streaming when tools are present — Sourcegraph's SSE may not
-            // properly relay tool_calls in streaming mode (produces empty tool names).
-            // Use streaming only for text responses (no tools or after tool reduction).
-            val hasTools = !toolDefs.isNullOrEmpty()
-            val result = if (hasTools) {
-                // Non-streaming: reliable tool call parsing
-                brain.chat(messages, toolDefs, maxOutputTokens)
-            } else {
-                // Streaming: better UX for text-only responses
-                try {
-                    brain.chatStream(messages, toolDefs, maxOutputTokens) { chunk ->
-                        chunk.choices.firstOrNull()?.delta?.content?.let { delta ->
-                            onStreamChunk(delta)
-                        }
+            // Always prefer streaming for real-time UI token display.
+            // Tool call deltas are accumulated by sendMessageStream() and empty
+            // tool names are filtered at both the client (SourcegraphChatClient:328)
+            // and session level (SingleAgentSession:462).
+            // Fall back to non-streaming only if brain doesn't support streaming.
+            var streamed = false
+            val result = try {
+                streamed = true
+                brain.chatStream(messages, toolDefs, maxOutputTokens) { chunk ->
+                    chunk.choices.firstOrNull()?.delta?.content?.let { delta ->
+                        onStreamChunk(delta)
                     }
-                } catch (_: NotImplementedError) {
-                    brain.chat(messages, toolDefs, maxOutputTokens)
                 }
+            } catch (_: NotImplementedError) {
+                streamed = false
+                brain.chat(messages, toolDefs, maxOutputTokens)
             }
 
             when (result) {
                 is ApiResult.Success -> {
-                    return LlmCallResult.Success(result.data)
+                    return LlmCallResult.Success(result.data, wasStreamed = streamed)
                 }
                 is ApiResult.Error -> {
                     when (result.type) {
@@ -1002,7 +1001,8 @@ class SingleAgentSession(
     private sealed class LlmCallResult {
         class Success(
             val response: com.workflow.orchestrator.agent.api.dto.ChatCompletionResponse,
-            var totalTokensSoFar: Int = 0
+            var totalTokensSoFar: Int = 0,
+            val wasStreamed: Boolean = false
         ) : LlmCallResult()
         data class Failed(val error: String) : LlmCallResult()
         data class ContextExceededRetry(
