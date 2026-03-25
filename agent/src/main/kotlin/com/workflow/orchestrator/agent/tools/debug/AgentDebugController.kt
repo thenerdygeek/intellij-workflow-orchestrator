@@ -6,6 +6,7 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XDebuggerManager
+import com.intellij.xdebugger.breakpoints.XBreakpoint
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.*
@@ -30,6 +31,7 @@ class AgentDebugController(private val project: Project) : Disposable {
     private val sessions = ConcurrentHashMap<String, XDebugSession>()
     private val pauseFlows = ConcurrentHashMap<String, MutableSharedFlow<DebugPauseEvent>>()
     private val agentBreakpoints = ConcurrentHashMap.newKeySet<XLineBreakpoint<*>>()
+    private val agentGeneralBreakpoints = ConcurrentHashMap.newKeySet<XBreakpoint<*>>()
     @Volatile
     private var activeSessionId: String? = null
 
@@ -99,6 +101,14 @@ class AgentDebugController(private val project: Project) : Disposable {
      */
     fun trackBreakpoint(bp: XLineBreakpoint<*>) {
         agentBreakpoints.add(bp)
+    }
+
+    /**
+     * Tracks a general (non-line) breakpoint created by the agent for later cleanup.
+     * Used for exception breakpoints and other non-line-based breakpoint types.
+     */
+    fun trackGeneralBreakpoint(bp: XBreakpoint<*>) {
+        agentGeneralBreakpoints.add(bp)
     }
 
     /**
@@ -337,6 +347,7 @@ class AgentDebugController(private val project: Project) : Disposable {
      */
     fun removeAgentBreakpoints() {
         agentBreakpoints.clear()
+        agentGeneralBreakpoints.clear()
     }
 
     /**
@@ -353,6 +364,15 @@ class AgentDebugController(private val project: Project) : Disposable {
             }
         }
         agentBreakpoints.clear()
+        agentGeneralBreakpoints.forEach { bp ->
+            try {
+                @Suppress("UNCHECKED_CAST")
+                bpManager.removeBreakpoint(bp as XBreakpoint<Nothing>)
+            } catch (_: Exception) {
+                // Breakpoint may already be removed
+            }
+        }
+        agentGeneralBreakpoints.clear()
     }
 
     override fun dispose() {
@@ -368,10 +388,19 @@ class AgentDebugController(private val project: Project) : Disposable {
                     // Breakpoint may already be removed
                 }
             }
+            agentGeneralBreakpoints.forEach { bp ->
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    bpManager.removeBreakpoint(bp as XBreakpoint<Nothing>)
+                } catch (_: Exception) {
+                    // Breakpoint may already be removed
+                }
+            }
         } catch (_: Exception) {
             // Project may already be disposed
         }
         agentBreakpoints.clear()
+        agentGeneralBreakpoints.clear()
     }
 
     companion object {
