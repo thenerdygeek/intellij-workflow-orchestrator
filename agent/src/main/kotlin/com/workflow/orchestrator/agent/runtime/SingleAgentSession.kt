@@ -18,6 +18,7 @@ import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.security.SecurityViolationException
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.async
@@ -1036,7 +1037,15 @@ class SingleAgentSession(
                 }
             }
 
-            val toolResult = tool.execute(params, project)
+            // Set tool call ID for streaming output + process kill support
+            if (toolName == "run_command") {
+                RunCommandTool.currentToolCallId.set(toolCall.id)
+            }
+            val toolResult = try {
+                tool.execute(params, project)
+            } finally {
+                RunCommandTool.currentToolCallId.remove()
+            }
             val toolDurationMs = System.currentTimeMillis() - toolStartMs
 
             if (toolResult.isError) {

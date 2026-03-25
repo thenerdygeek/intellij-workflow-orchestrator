@@ -167,6 +167,11 @@ class AgentController(
             }
         )
 
+        // Wire kill tool call callback — kills running process by tool call ID
+        dashboard.setCefKillCallback { toolCallId ->
+            ProcessRegistry.kill(toolCallId)
+        }
+
         // Wire JCEF JS→Kotlin action callbacks (undo, view-trace, example prompts)
         dashboard.setCefCallbacks(
             onUndo = { handleUndoRequest() },
@@ -486,6 +491,13 @@ class AgentController(
                 )
                 currentApprovalGate = approvalGate
 
+                // Wire streaming output from RunCommandTool → JCEF
+                com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback = { toolCallId, chunk ->
+                    com.intellij.openapi.application.invokeLater {
+                        dashboard.appendToolOutput(toolCallId, chunk)
+                    }
+                }
+
                 // Create orchestrator (lightweight — just brain + registry + project)
                 debugLog("info", "orchestrator", "Creating AgentOrchestrator...")
                 val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
@@ -545,6 +557,7 @@ class AgentController(
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
+        ProcessRegistry.killAll()
         dashboard.appendStatus("Cancellation requested...", RichStreamingPanel.StatusType.WARNING)
     }
 
@@ -552,6 +565,7 @@ class AgentController(
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
+        ProcessRegistry.killAll()
         currentOrchestrator = null
         sessionAutoApprove = false
         session?.let { s ->

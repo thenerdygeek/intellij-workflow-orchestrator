@@ -80,6 +80,7 @@ class AgentCefPanel(
     private var interactiveHtmlMessageQuery: JBCefJSQuery? = null
     private var acceptDiffHunkQuery: JBCefJSQuery? = null
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
+    private var killToolCallQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
     @Volatile private var pageLoaded = false
@@ -147,6 +148,8 @@ class AgentCefPanel(
     var onAcceptDiffHunk: ((String, Int, String?) -> Unit)? = null
     /** Callback when user rejects a diff hunk. Params: filePath, hunkIndex. */
     var onRejectDiffHunk: ((String, Int) -> Unit)? = null
+    /** Callback when user clicks "Kill" on a running tool call. Param: toolCallId. */
+    var onKillToolCall: ((String) -> Unit)? = null
 
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
@@ -406,6 +409,9 @@ class AgentCefPanel(
                 JBCefJSQuery.Response("ok")
             }
         }
+        killToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -555,6 +561,10 @@ class AgentCefPanel(
                         val rejectJs = q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")
                         js("window._rejectDiffHunk = function(fp,hi) { $rejectJs }")
                     }
+                    killToolCallQuery?.let { q ->
+                        val killJs = q.inject("toolCallId")
+                        js("window._killToolCall = function(toolCallId) { $killJs }")
+                    }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
                     // Then flush pending calls (they can now execute)
@@ -616,6 +626,10 @@ class AgentCefPanel(
     ) {
         val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
         callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)},${jsonStr(statusStr)})")
+    }
+
+    fun appendToolOutput(toolCallId: String, chunk: String) {
+        callJs("appendToolOutput(${jsonStr(toolCallId)},${jsonStr(chunk)})")
     }
 
     fun appendEditDiff(
@@ -969,6 +983,7 @@ class AgentCefPanel(
         interactiveHtmlMessageQuery?.dispose()
         acceptDiffHunkQuery?.dispose()
         rejectDiffHunkQuery?.dispose()
+        killToolCallQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -1004,6 +1019,7 @@ class AgentCefPanel(
         interactiveHtmlMessageQuery = null
         acceptDiffHunkQuery = null
         rejectDiffHunkQuery = null
+        killToolCallQuery = null
         browser = null
     }
 }

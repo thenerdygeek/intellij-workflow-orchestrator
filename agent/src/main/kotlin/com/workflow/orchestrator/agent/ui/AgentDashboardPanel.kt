@@ -239,6 +239,10 @@ class AgentDashboardPanel(
         cefPanel?.onRejectDiffHunk = onReject
     }
 
+    fun setCefKillCallback(onKill: (String) -> Unit) {
+        cefPanel?.onKillToolCall = onKill
+    }
+
     fun setCefEditorTabCallback(onOpen: (String) -> Unit) {
         cefPanel?.onOpenInEditorTab = onOpen
     }
@@ -288,6 +292,10 @@ class AgentDashboardPanel(
     ) {
         cefPanel?.updateLastToolCall(status, result, durationMs, toolName)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
+    }
+
+    fun appendToolOutput(toolCallId: String, chunk: String) {
+        cefPanel?.appendToolOutput(toolCallId, chunk)
     }
 
     fun appendEditDiff(filePath: String, oldText: String, newText: String, accepted: Boolean? = null) {
