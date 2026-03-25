@@ -555,6 +555,15 @@ class PromptAssembler(
             - Remote refs (origin/, upstream/) are allowed in read-only git commands (log, diff, show, rev-list, merge-base, rev-parse) but blocked in write operations.
             - If you call the same tool 3 times with the same arguments, try a different approach.
             - When debugging, start with get_test_results and get_run_output for structured error data. Only escalate to interactive debugging (breakpoints, stepping) when static analysis is insufficient. The interactive-debugging skill teaches efficient debugging patterns.
+            - Use type_inference to understand complex generic types and nullability — don't guess types from variable names.
+            - Use structural_search for finding code patterns (antipatterns, idioms) — more powerful than search_code for semantic matching. Pattern syntax uses dollar-sign-wrapped variable names as template variables.
+            - dataflow_analysis is Java-only. Use it to check nullability and value ranges before making assumptions about null safety.
+            - Use read_write_access to find who mutates a field — faster than manually searching for assignments.
+            - Use test_finder before writing tests — it finds existing tests so you don't duplicate them.
+            - Use module_dependency_graph to understand project structure and detect circular dependencies.
+            - For debugging: prefer exception_breakpoint ("break on NullPointerException") over line breakpoints when you don't know WHERE the bug is. Use field_watchpoint to trace unexpected mutations. Avoid method_breakpoint unless necessary — it's 5-10x slower than line breakpoints.
+            - thread_dump is essential for deadlock diagnosis. Use memory_view to detect connection/object leaks.
+            - Use hotswap to apply code fixes without restarting the debug session — but only method body changes work.
             - If a tool call returns an error, address the error before continuing with other actions.
             - CRITICAL: When calling tools that have a `description` parameter, ALWAYS fill it with a clear, concise description of what the action does and why (e.g., "Run unit tests to verify the authentication fix", "Add null check to prevent NPE in UserService.findById"). This description is shown to the user in the approval dialog — without it they cannot make an informed decision. Keep it under 15 words, action-oriented, no jargon.
             - CRITICAL: Always call tools FIRST, then explain what you found. Never say "Let me check X" or "I'll run Y" without immediately making the tool call in the same response. Act first, narrate second. If you intend to use a tool, include it as a tool_call — do not just describe your intention in text.
