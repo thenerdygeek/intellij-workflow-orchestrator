@@ -44,6 +44,7 @@ import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
@@ -433,22 +434,36 @@ class PrDetailPanel(
         createButton.isEnabled = true
         createButton.text = "Create Pull Request"
 
-        // Populate target branches
+        // Populate target branches — default shown immediately, resolved asynchronously
         createTargetBranchCombo.removeAllItems()
         val settings = PluginSettings.getInstance(project).state
-        val defaultTarget = settings.defaultTargetBranch?.ifBlank { "develop" } ?: "develop"
-        createTargetBranchCombo.addItem(defaultTarget)
+        createTargetBranchCombo.addItem("develop")
 
         (layout as CardLayout).show(this, CARD_CREATE)
 
-        // Load branches from Bitbucket in background
+        // Load branches from Bitbucket in background and resolve real default target
         scope.launch {
+            val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull()
+            val defaultTarget = repo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+
             val connSettings = ConnectionSettings.getInstance().state
             val url = connSettings.bitbucketUrl.trimEnd('/')
-            if (url.isBlank()) return@launch
+            if (url.isBlank()) {
+                SwingUtilities.invokeLater {
+                    createTargetBranchCombo.removeAllItems()
+                    createTargetBranchCombo.addItem(defaultTarget)
+                }
+                return@launch
+            }
             val projectKey = settings.bitbucketProjectKey.orEmpty()
             val repoSlug = settings.bitbucketRepoSlug.orEmpty()
-            if (projectKey.isBlank() || repoSlug.isBlank()) return@launch
+            if (projectKey.isBlank() || repoSlug.isBlank()) {
+                SwingUtilities.invokeLater {
+                    createTargetBranchCombo.removeAllItems()
+                    createTargetBranchCombo.addItem(defaultTarget)
+                }
+                return@launch
+            }
 
             val credentialStore = CredentialStore()
             val client = BitbucketBranchClient(
@@ -471,7 +486,12 @@ class PrDetailPanel(
                         }
                     }
                 }
-                is ApiResult.Error -> { /* keep default */ }
+                is ApiResult.Error -> {
+                    SwingUtilities.invokeLater {
+                        createTargetBranchCombo.removeAllItems()
+                        createTargetBranchCombo.addItem(defaultTarget)
+                    }
+                }
             }
         }
     }

@@ -28,6 +28,7 @@ import com.intellij.openapi.application.EDT
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
@@ -57,7 +58,7 @@ class CreatePrDialog(
 
     // Target branch
     private val targetField = JBTextField().apply {
-        text = settings.state.defaultTargetBranch?.ifBlank { "develop" } ?: "develop"
+        text = "develop" // async-resolved below in init
     }
     private val branchPopup = JPopupMenu()
 
@@ -144,6 +145,14 @@ class CreatePrDialog(
 
         transitionCheckbox.addActionListener {
             transitionCombo.isEnabled = transitionCheckbox.isSelected
+        }
+
+        // Resolve default target branch asynchronously
+        scope.launch {
+            val repos = GitRepositoryManager.getInstance(project).repositories
+            val repo = repos.firstOrNull()
+            val resolvedTarget = repo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+            invokeLater { if (targetField.text == "develop") targetField.text = resolvedTarget }
         }
 
         // Start description generation

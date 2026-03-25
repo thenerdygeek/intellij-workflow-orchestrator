@@ -39,6 +39,7 @@ import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.CoroutineScope
@@ -464,17 +465,19 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 val newPlanKey = selectedRepo.bambooPlanKey.orEmpty()
                 if (newPlanKey.isNotBlank()) {
                     activePlanKey = newPlanKey
-                    val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
                     val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-                    headerLabel.text = "Plan: $newPlanKey / $branch"
                     loadingIcon.isVisible = true
                     // Clear history and reset state for the new plan
                     viewingHistoricalBuild = false
                     historicalBuildBanner.isVisible = false
                     historyListModel.clear()
                     historyPanel.isVisible = false
-                    monitorService.switchBranch(newPlanKey, branch, interval)
                     prBar.refreshPrs()
+                    scope.launch {
+                        val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+                        invokeLater { headerLabel.text = "Plan: $newPlanKey / $branch" }
+                        monitorService.switchBranch(newPlanKey, branch, interval)
+                    }
                 }
             }
         }
@@ -522,20 +525,30 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             return
         }
 
-        val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
+        val knownBranch = getCurrentBranch()
         val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-        headerLabel.text = "Plan: $planKey / $branch"
-        loadingIcon.isVisible = true
-        monitorService.startPolling(planKey, branch, interval)
+        if (knownBranch != null) {
+            headerLabel.text = "Plan: $planKey / $knownBranch"
+            loadingIcon.isVisible = true
+            monitorService.startPolling(planKey, knownBranch, interval)
+        } else {
+            loadingIcon.isVisible = true
+            scope.launch {
+                val branch = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+                invokeLater { headerLabel.text = "Plan: $planKey / $branch" }
+                monitorService.startPolling(planKey, branch, interval)
+            }
+        }
     }
 
-    private fun getCurrentBranch(): String? {
+    private fun getGitRepo(): git4idea.repo.GitRepository? {
         val resolver = RepoContextResolver.getInstance(project)
         val repoConfig = resolver.getPrimary()
         val repos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-        return targetRepo?.currentBranchName
+        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
     }
+
+    private fun getCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
     /** Load build history for the current plan key */
     private fun loadBuildHistory() {
@@ -637,7 +650,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     returnToLatestBuild()
                 }
                 scope.launch {
-                    val branch = getCurrentBranch() ?: (settings.state.defaultTargetBranch ?: "develop")
+                    val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
                     monitorService.pollOnce(planKey, branch)
                 }
                 // Also refresh PR bar and build history

@@ -22,6 +22,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -160,7 +161,11 @@ class PrBar(
         gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0
         fields.add(JBLabel("Target:"), gbc)
         gbc.gridx = 1; gbc.weightx = 1.0
-        val targetLabel = JBLabel(settings.state.defaultTargetBranch?.ifBlank { "develop" } ?: "develop")
+        val targetLabel = JBLabel("develop")
+        scope.launch {
+            val target = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+            invokeLater { targetLabel.text = target }
+        }
         fields.add(targetLabel, gbc)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
@@ -407,13 +412,14 @@ class PrBar(
         else -> StatusColors.htmlColor(StatusColors.INFO)
     }
 
-    private fun resolveCurrentBranch(): String? {
+    private fun getGitRepo(): git4idea.repo.GitRepository? {
         val resolver = RepoContextResolver.getInstance(project)
         val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
         val repos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-        return targetRepo?.currentBranchName
+        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
     }
+
+    private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
     private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -429,7 +435,6 @@ class PrBar(
         val projectKey = settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
         val fromBranch = resolveCurrentBranch() ?: ""
-        val toBranch = settings.state.defaultTargetBranch?.ifBlank { "develop" } ?: "develop"
 
         submitButton.isEnabled = false
         regenerateButton.isEnabled = false
@@ -437,14 +442,15 @@ class PrBar(
         formResultLabel.foreground = JBColor.foreground()
 
         val credentialStore = CredentialStore()
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
         val prService = PrService.getInstance(project)
         val reviewers = prService.buildDefaultReviewers()
 
         scope.launch {
+            val toBranch = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+            val client = BitbucketBranchClient(
+                baseUrl = bitbucketUrl,
+                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+            )
             val result = client.createPullRequest(
                 projectKey, repoSlug, title, descriptionArea.text.orEmpty(),
                 fromBranch, toBranch, reviewers

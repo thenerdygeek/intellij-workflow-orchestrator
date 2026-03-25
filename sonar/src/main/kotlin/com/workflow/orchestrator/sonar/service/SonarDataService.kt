@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.sonar.api.SonarApiClient
 import com.workflow.orchestrator.sonar.model.*
 import git4idea.repo.GitRepositoryManager
@@ -63,12 +64,12 @@ class SonarDataService(private val project: Project) : Disposable {
         return cachedApiClient
     }
 
-    private val currentBranch: String get() {
+    private suspend fun getCurrentBranch(): String {
         val resolver = RepoContextResolver.getInstance(project)
         val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
         val repos = GitRepositoryManager.getInstance(project).repositories
         val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-        return targetRepo?.currentBranchName ?: (settings.state.defaultTargetBranch ?: "develop")
+        return targetRepo?.let { it.currentBranchName ?: DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
     }
 
     init {
@@ -98,7 +99,7 @@ class SonarDataService(private val project: Project) : Disposable {
                     is WorkflowEvent.BuildFinished -> {
                         log.info("[Sonar:Events] Build finished (${event.planKey}#${event.buildNumber}), refreshing quality data for current branch")
                         clearLineCoverageCache()
-                        refreshForBranch(currentBranch)
+                        refreshForBranch(getCurrentBranch())
                     }
                     else -> { /* not relevant to sonar */ }
                 }
@@ -125,7 +126,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val client = apiClient ?: return
         val projectKey = settings.state.sonarProjectKey.orEmpty()
         if (projectKey.isBlank()) return
-        scope.launch { refreshWith(client, projectKey, currentBranch) }
+        scope.launch { refreshWith(client, projectKey, getCurrentBranch()) }
     }
 
     /**
@@ -135,7 +136,7 @@ class SonarDataService(private val project: Project) : Disposable {
     fun refreshForProject(projectKey: String) {
         if (projectKey.isBlank()) return
         val client = apiClient ?: return
-        scope.launch { refreshWith(client, projectKey, currentBranch) }
+        scope.launch { refreshWith(client, projectKey, getCurrentBranch()) }
     }
 
     /**
@@ -163,7 +164,7 @@ class SonarDataService(private val project: Project) : Disposable {
 
         // SonarQube component key = projectKey:relativePath
         val componentKey = "$projectKey:$relativePath"
-        val branch = currentBranch
+        val branch = getCurrentBranch()
 
         log.info("[Sonar:LineCoverage] Fetching line coverage for '$componentKey' branch='$branch'")
 
