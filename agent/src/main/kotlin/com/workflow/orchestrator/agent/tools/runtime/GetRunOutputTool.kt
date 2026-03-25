@@ -1,8 +1,5 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
-import com.intellij.execution.ExecutionManager
-import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.ui.ConsoleView
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.project.Project
@@ -14,7 +11,6 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import javax.swing.JComponent
 
 class GetRunOutputTool : AgentTool {
     override val name = "get_run_output"
@@ -137,35 +133,24 @@ class GetRunOutputTool : AgentTool {
     }
 
     private fun extractConsoleText(descriptor: RunContentDescriptor): String? {
-        return try {
-            // Try to get text from the ExecutionConsole
-            val console = descriptor.executionConsole
-            if (console is ConsoleView) {
-                // ConsoleView doesn't have a direct getText — try component-based extraction
-                val component = console.component
-                return extractTextFromComponent(component)
-            }
-            // Fallback: try to get from the console's component tree
-            val component = console?.component
-            if (component != null) {
-                return extractTextFromComponent(component)
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
+        val console = descriptor.executionConsole ?: return null
 
-    private fun extractTextFromComponent(component: JComponent): String? {
-        return try {
-            // Try to find a JTextArea or EditorComponent in the hierarchy
-            val method = component.javaClass.methods.find {
-                it.name == "getText" && it.parameterCount == 0
-            }
-            method?.invoke(component) as? String
-        } catch (_: Exception) {
-            null
+        // Direct approach: ConsoleViewImpl has getText()
+        if (console is com.intellij.execution.impl.ConsoleViewImpl) {
+            return try {
+                com.intellij.openapi.application.invokeAndWaitIfNeeded {
+                    console.flushDeferredText()
+                    console.text
+                }
+            } catch (_: Exception) { null }
         }
+
+        // Fallback: try via Editor document
+        return try {
+            val editorMethod = console.javaClass.methods.find { it.name == "getEditor" && it.parameterCount == 0 }
+            val editor = editorMethod?.invoke(console) as? com.intellij.openapi.editor.Editor
+            editor?.document?.text
+        } catch (_: Exception) { null }
     }
 
     companion object {

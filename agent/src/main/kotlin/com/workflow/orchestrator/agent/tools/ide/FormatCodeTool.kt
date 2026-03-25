@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.ide
 
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -12,6 +12,8 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -38,7 +40,7 @@ class FormatCodeTool : AgentTool {
 
         return try {
             var result: ToolResult? = null
-            ApplicationManager.getApplication().invokeAndWait {
+            withContext(Dispatchers.EDT) {
                 WriteCommandAction.runWriteCommandAction(project, "Agent: Format Code", null, {
                     val psiFile = PsiManager.getInstance(project).findFile(vf)
                     if (psiFile != null) {
