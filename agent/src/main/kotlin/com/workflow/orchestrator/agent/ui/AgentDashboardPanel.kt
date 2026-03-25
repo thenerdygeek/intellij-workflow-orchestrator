@@ -11,7 +11,7 @@ import javax.swing.SwingUtilities
  * Chat-first agent dashboard — thin JCEF wrapper.
  *
  * All toolbar, input bar, and token budget UI lives inside the JCEF panel
- * (agent-chat.html). This Kotlin panel just hosts the browser component
+ * (React webview). This Kotlin panel just hosts the browser component
  * and delegates API calls through to [AgentCefPanel].
  */
 class AgentDashboardPanel(

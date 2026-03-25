@@ -28,7 +28,7 @@ import javax.swing.JPanel
  * smooth streaming, color-coded tool badges, and proper diff rendering.
  *
  * Communication:
- * - Kotlin → JS: `executeJavaScript()` calls functions defined in agent-chat.html
+ * - Kotlin → JS: `executeJavaScript()` calls functions defined in the React webview (jcef-bridge.ts)
  * - JS → Kotlin: `JBCefJSQuery` bridges for user actions (send message, button clicks)
  *
  * Falls back to [RichStreamingPanel] (JEditorPane) if JCEF is not available.

@@ -14,7 +14,7 @@ type StoreAccessors = {
 let stores: StoreAccessors | null = null;
 
 export function isJcefEnvironment(): boolean {
-  return typeof (window as any)._sendMessage === 'function';
+  return window.location.origin === 'http://workflow-agent';
 }
 
 // ═══ Kotlin → JS bridge functions (39 chat + 3 theme = 42 unique JS functions) ═══

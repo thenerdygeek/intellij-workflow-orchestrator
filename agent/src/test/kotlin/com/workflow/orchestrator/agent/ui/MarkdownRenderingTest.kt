@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test
 class MarkdownRenderingTest {
 
     @Test
-    fun `agent-chat html exists in resources`() {
-        val html = javaClass.classLoader.getResource("webview/agent-chat.html")
-        assertNotNull(html, "agent-chat.html should be in resources")
+    fun `React index html exists in resources`() {
+        val html = javaClass.classLoader.getResource("webview/dist/index.html")
+        assertNotNull(html, "index.html should be in webview/dist resources")
     }
 
     @Test
@@ -44,16 +44,6 @@ class MarkdownRenderingTest {
         for (lib in libs) {
             assertNotNull(javaClass.classLoader.getResource(lib), "$lib should be bundled")
         }
-    }
-
-    @Test
-    fun `HTML does not reference CDN URLs`() {
-        val html = javaClass.classLoader.getResource("webview/agent-chat.html")?.readText()
-        assertNotNull(html)
-        assertFalse(
-            html!!.contains("cdn.jsdelivr.net") || html.contains("cdnjs.cloudflare.com"),
-            "HTML should not contain CDN references"
-        )
     }
 
     @Test

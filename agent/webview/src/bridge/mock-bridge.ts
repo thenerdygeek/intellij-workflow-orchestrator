@@ -185,19 +185,6 @@ export function installMockBridge(): void {
     w.setModelName?.(displayName);
   };
 
-  // Populate mock model list after bridge init (realistic Sourcegraph model IDs)
-  setTimeout(() => {
-    w.updateModelList?.(JSON.stringify([
-      { id: 'anthropic::2024-10-22::claude-opus-4-20250514', name: 'Claude Opus 4', description: 'Anthropic' },
-      { id: 'anthropic::2024-10-22::claude-opus-4-5-thinking-latest', name: 'Claude Opus 4.5 Thinking', description: 'Anthropic' },
-      { id: 'anthropic::2024-10-22::claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Anthropic' },
-      { id: 'anthropic::2024-10-22::claude-haiku-3-5-20241022', name: 'Claude Haiku 3.5', description: 'Anthropic' },
-      { id: 'openai::2024-02-01::gpt-4o-latest', name: 'GPT 4o', description: 'OpenAI' },
-      { id: 'google::2024-01-01::gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Google' },
-    ]));
-    w.setModelName?.('Claude Sonnet 4');
-  }, 100);
-
   // Mock _searchMentions — returns files, folders, symbols only (no tools/skills)
   w._searchMentions = (query: string) => {
     const mockItems = [
