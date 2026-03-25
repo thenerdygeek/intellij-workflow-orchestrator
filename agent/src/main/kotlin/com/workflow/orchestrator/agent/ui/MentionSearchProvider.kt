@@ -244,34 +244,52 @@ class MentionSearchProvider(private val project: Project) {
      *
      * @param query Ticket key (e.g. "PROJ-123"), key prefix (e.g. "PROJ"), or summary text
      */
+    /** Cached sprint tickets — loaded once, reused for fast # autocomplete. */
+    private var cachedSprintTickets: List<com.workflow.orchestrator.core.model.jira.JiraTicketData>? = null
+
     suspend fun searchTickets(query: String): String {
         return try {
             val jiraService = try {
                 project.getService(JiraService::class.java)
             } catch (_: Exception) { return "[]" }
 
-            // Build JQL based on query pattern — always scoped to active sprint
-            val jql = when {
-                query.isBlank() -> {
-                    // Show active sprint tickets only
-                    "sprint in openSprints() ORDER BY updated DESC"
-                }
-                query.matches(Regex("[A-Za-z]+-\\d+")) -> "key = \"${query.uppercase()}\""
-                query.matches(Regex("[A-Za-z]+-?")) -> "sprint in openSprints() AND key >= \"${query.uppercase()}\" AND key <= \"${query.uppercase()}z\" ORDER BY key ASC"
-                else -> "sprint in openSprints() AND summary ~ \"${query.replace("\"", "\\\"")}\" ORDER BY updated DESC"
-            }
+            // Load sprint tickets from the same source as the Sprint tab
+            val sprintTickets = cachedSprintTickets ?: run {
+                val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                val boardId = settings.state.jiraBoardId
+                if (boardId > 0) {
+                    // Get active sprint for the configured board
+                    val sprints = jiraService.getAvailableSprints(boardId)
+                    val activeSprint = if (!sprints.isError) {
+                        sprints.data.firstOrNull { it.state == "active" }
+                    } else null
 
-            val result = jiraService.searchTickets(jql, maxResults = 8)
-            if (result.isError) return "[]"
-            val tickets = result.data
+                    if (activeSprint != null) {
+                        val issues = jiraService.getSprintIssues(activeSprint.id)
+                        if (!issues.isError) issues.data else emptyList()
+                    } else emptyList()
+                } else emptyList()
+            }.also { cachedSprintTickets = it }
+
+            // Filter by query
+            val filtered = if (query.isBlank()) {
+                sprintTickets
+            } else {
+                val q = query.uppercase()
+                sprintTickets.filter { ticket ->
+                    ticket.key.uppercase().contains(q) ||
+                    ticket.summary.uppercase().contains(q)
+                }
+            }.take(8)
+
             buildJsonArray {
-                for (ticket in tickets) {
+                for (ticket in filtered) {
                     add(buildJsonObject {
                         put("type", JsonPrimitive("ticket"))
                         put("label", JsonPrimitive(ticket.key))
                         put("path", JsonPrimitive(ticket.key))
                         put("description", JsonPrimitive(ticket.summary.take(60)))
-                        put("icon", JsonPrimitive(ticket.status))  // Used for status badge
+                        put("icon", JsonPrimitive(ticket.status))
                     })
                 }
             }.toString()
@@ -279,6 +297,11 @@ class MentionSearchProvider(private val project: Project) {
             LOG.debug("MentionSearchProvider: ticket search failed for query=$query: ${e.message}")
             "[]"
         }
+    }
+
+    /** Clear cached sprint tickets so the next # search fetches fresh data. */
+    fun invalidateTicketCache() {
+        cachedSprintTickets = null
     }
 
     /**
