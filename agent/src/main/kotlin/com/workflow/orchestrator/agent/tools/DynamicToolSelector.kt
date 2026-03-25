@@ -81,7 +81,8 @@ object DynamicToolSelector {
         "start_debug_session", "get_debug_state", "debug_step_over",
         "debug_step_into", "debug_step_out", "debug_resume", "debug_pause",
         "debug_run_to_cursor", "debug_stop", "evaluate_expression",
-        "get_stack_frames", "get_variables"
+        "get_stack_frames", "get_variables",
+        "drop_frame", "hotswap", "memory_view", "attach_to_process"
     )
 
     private val VCS_TOOL_NAMES = setOf(
@@ -165,7 +166,8 @@ object DynamicToolSelector {
             "debug",
             setOf("debug", "breakpoint", "step over", "step into", "step through",
                 "step out", "evaluate", "stack trace", "stack frame", "watch",
-                "console", "log output"),
+                "console", "log output", "drop frame", "hot swap", "hotswap",
+                "memory leak", "heap", "attach", "remote debug"),
             DEBUG_TOOL_NAMES + setOf("get_run_output", "get_running_processes")
         ),
         ToolGroup(

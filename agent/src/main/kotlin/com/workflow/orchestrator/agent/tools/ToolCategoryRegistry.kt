@@ -118,7 +118,8 @@ object ToolCategoryRegistry {
                 "debug_step_over", "debug_step_into", "debug_step_out",
                 "debug_resume", "debug_pause", "debug_run_to_cursor", "debug_stop",
                 "evaluate_expression", "get_stack_frames", "get_variables",
-                "create_run_config", "modify_run_config", "delete_run_config"
+                "create_run_config", "modify_run_config", "delete_run_config",
+                "drop_frame", "hotswap", "memory_view", "attach_to_process"
             )
         ),
         ToolCategory(
