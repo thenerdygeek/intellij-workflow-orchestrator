@@ -181,46 +181,51 @@ class AgentDebugController(private val project: Project) : Disposable {
     ): List<VariableInfo> {
         if (charCounter[0] >= MAX_VARIABLE_CHARS) return emptyList()
 
-        val children = suspendCancellableCoroutine { cont ->
-            val result = mutableListOf<XValue>()
-            val names = mutableListOf<String>()
+        val children = withTimeoutOrNull(5000L) {
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { /* timeout cleanup */ }
+                val result = mutableListOf<XValue>()
+                val names = mutableListOf<String>()
 
-            node.computeChildren(object : XCompositeNode {
-                override fun addChildren(children: XValueChildrenList, last: Boolean) {
-                    for (i in 0 until children.size()) {
-                        if (result.size >= MAX_CHILDREN_PER_LEVEL) break
-                        names.add(children.getName(i))
-                        result.add(children.getValue(i))
+                node.computeChildren(object : XCompositeNode {
+                    override fun addChildren(children: XValueChildrenList, last: Boolean) {
+                        for (i in 0 until children.size()) {
+                            if (result.size >= MAX_CHILDREN_PER_LEVEL) break
+                            names.add(children.getName(i))
+                            result.add(children.getValue(i))
+                        }
+                        if (last || result.size >= MAX_CHILDREN_PER_LEVEL) {
+                            cont.resume(names.zip(result))
+                        }
                     }
-                    if (last || result.size >= MAX_CHILDREN_PER_LEVEL) {
+
+                    override fun tooManyChildren(remaining: Int) {
                         cont.resume(names.zip(result))
                     }
-                }
 
-                override fun tooManyChildren(remaining: Int) {
-                    cont.resume(names.zip(result))
-                }
+                    override fun setAlreadySorted(alreadySorted: Boolean) {}
 
-                override fun setAlreadySorted(alreadySorted: Boolean) {}
+                    override fun setErrorMessage(errorMessage: String) {
+                        cont.resume(names.zip(result))
+                    }
 
-                override fun setErrorMessage(errorMessage: String) {
-                    cont.resume(names.zip(result))
-                }
+                    override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
+                        cont.resume(names.zip(result))
+                    }
 
-                override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
-                    cont.resume(names.zip(result))
-                }
+                    override fun setMessage(
+                        message: String,
+                        icon: Icon?,
+                        attributes: SimpleTextAttributes,
+                        link: XDebuggerTreeNodeHyperlink?
+                    ) {}
 
-                override fun setMessage(
-                    message: String,
-                    icon: Icon?,
-                    attributes: SimpleTextAttributes,
-                    link: XDebuggerTreeNodeHyperlink?
-                ) {}
-
-                override fun isObsolete(): Boolean = false
-            })
+                    override fun isObsolete(): Boolean = false
+                })
+            }
         }
+
+        if (children == null) return emptyList()
 
         return children.map { (name, value) ->
             val presentation = resolvePresentation(value)
@@ -242,30 +247,33 @@ class AgentDebugController(private val project: Project) : Disposable {
     }
 
     private suspend fun resolvePresentation(value: XValue): Pair<String, String> {
-        return suspendCancellableCoroutine { cont ->
-            value.computePresentation(object : XValueNode {
-                override fun setPresentation(
-                    icon: Icon?,
-                    type: String?,
-                    value: String,
-                    hasChildren: Boolean
-                ) {
-                    cont.resume(Pair(type ?: "unknown", value))
-                }
+        return withTimeoutOrNull(5000L) {
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { /* timeout cleanup */ }
+                value.computePresentation(object : XValueNode {
+                    override fun setPresentation(
+                        icon: Icon?,
+                        type: String?,
+                        value: String,
+                        hasChildren: Boolean
+                    ) {
+                        cont.resume(Pair(type ?: "unknown", value))
+                    }
 
-                override fun setPresentation(
-                    icon: Icon?,
-                    presentation: XValuePresentation,
-                    hasChildren: Boolean
-                ) {
-                    cont.resume(Pair(presentation.type ?: "unknown", presentation.toString()))
-                }
+                    override fun setPresentation(
+                        icon: Icon?,
+                        presentation: XValuePresentation,
+                        hasChildren: Boolean
+                    ) {
+                        cont.resume(Pair(presentation.type ?: "unknown", presentation.toString()))
+                    }
 
-                override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
+                    override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
 
-                override fun isObsolete(): Boolean = false
-            }, XValuePlace.TREE)
-        }
+                    override fun isObsolete(): Boolean = false
+                }, XValuePlace.TREE)
+            }
+        } ?: Pair("unknown", "<timed out>")
     }
 
     /**
