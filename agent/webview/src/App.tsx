@@ -5,6 +5,7 @@ import { useChatStore } from './stores/chatStore'
 import { useThemeStore } from './stores/themeStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { ChatView } from '@/components/chat/ChatView'
+import { TopBar } from '@/components/chat/TopBar'
 import { InputBar } from '@/components/input/InputBar'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
@@ -65,6 +66,7 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
       <ScreenReaderAnnouncer />
+      <TopBar />
       <ChatView />
       <InputBar />
     </div>
