@@ -27,6 +27,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var approvalRequiredForEdits by property(true)
         var tokenBudgetWarningPercent by property(80)
         var maxSessionTokens by property(500_000)
+        var showDebugLog by property(false)
     }
 
     companion object {

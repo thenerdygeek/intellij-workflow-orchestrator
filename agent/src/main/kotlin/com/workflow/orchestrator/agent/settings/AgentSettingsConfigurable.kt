@@ -44,6 +44,7 @@ class AgentSettingsConfigurable(
     private var enableFastPath = settings.state.enableFastPath
     private var approvalRequiredForEdits = settings.state.approvalRequiredForEdits
     private var tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
+    private var showDebugLog = settings.state.showDebugLog
 
     // Model dropdown state
     private var modelComboBox: JComboBox<ModelItem>? = null
@@ -130,6 +131,13 @@ class AgentSettingsConfigurable(
                     spinner(0..100, 5)
                         .bindIntValue(::tokenBudgetWarningPercent)
                         .comment("Show warning when token usage exceeds this percentage")
+                }
+            }
+            group("Advanced") {
+                row {
+                    checkBox("Show debug log panel (displays real-time agent activity in chat)")
+                        .bindSelected(::showDebugLog)
+                        .comment("Enables an expandable debug panel in the chat view showing tool events, context usage, and loop diagnostics")
                 }
             }
         }
@@ -325,6 +333,7 @@ class AgentSettingsConfigurable(
         settings.state.enableFastPath = enableFastPath
         settings.state.approvalRequiredForEdits = approvalRequiredForEdits
         settings.state.tokenBudgetWarningPercent = tokenBudgetWarningPercent
+        settings.state.showDebugLog = showDebugLog
     }
 
     override fun reset() {
@@ -335,6 +344,7 @@ class AgentSettingsConfigurable(
         enableFastPath = settings.state.enableFastPath
         approvalRequiredForEdits = settings.state.approvalRequiredForEdits
         tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
+        showDebugLog = settings.state.showDebugLog
         dialogPanel?.reset()
 
         // Reset combo to current value

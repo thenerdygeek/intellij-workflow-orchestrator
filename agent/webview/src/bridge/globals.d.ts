@@ -36,5 +36,9 @@ declare global {
     _acceptDiffHunk?: (filePath: string, hunkIndex: number, editedContent?: string) => void;
     _rejectDiffHunk?: (filePath: string, hunkIndex: number) => void;
     __mock?: Record<string, (...args: any[]) => any>;
+    // Debug log panel — pushed from Kotlin via AgentCefPanel.updateDebugLogVisibility()
+    setDebugLogVisible?: (visible: boolean) => void;
+    // Debug log entry — pushed from Kotlin to append a structured log entry
+    addDebugLogEntry?: (entryJson: string) => void;
   }
 }

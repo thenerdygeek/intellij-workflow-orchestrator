@@ -270,6 +270,18 @@ export function installMockBridge(): void {
     ]));
   }, 100);
 
+  // Mock setDebugLogVisible — toggles debug log panel visibility in dev mode
+  w.setDebugLogVisible = (visible: boolean) => {
+    console.log(`[bridge:dev] setDebugLogVisible(${visible})`);
+    w.__bridge?.setDebugLogVisible?.(visible);
+  };
+
+  // Mock addDebugLogEntry — appends a debug log entry in dev mode
+  w.addDebugLogEntry = (entryJson: string) => {
+    console.log(`[bridge:dev] addDebugLogEntry(${entryJson})`);
+    w.__bridge?.addDebugLogEntry?.(entryJson);
+  };
+
   w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming, clearChat };
   console.log(
     '%c[Mock Bridge] Dev mode active. Available simulations:\n' +

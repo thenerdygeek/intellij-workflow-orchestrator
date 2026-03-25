@@ -763,6 +763,16 @@ class AgentCefPanel(
         callJs("showApproval(${jsonStr(title)},${jsonStr(description)},${jsonStr(commandPreview)})")
     }
 
+    // ── Debug log panel ──
+
+    /**
+     * Push the current showDebugLog setting to the webview.
+     * Called on panel initialization and whenever the setting changes.
+     */
+    fun updateDebugLogVisibility(show: Boolean) {
+        callJs("setDebugLogVisible($show)")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {

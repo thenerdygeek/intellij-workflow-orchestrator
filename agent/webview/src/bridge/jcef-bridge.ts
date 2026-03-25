@@ -190,6 +190,15 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       console.error('Failed to apply visualization settings:', e);
     }
   },
+  setDebugLogVisible(visible: boolean) {
+    stores?.getChatStore().setDebugLogVisible(visible);
+  },
+  addDebugLogEntry(entryJson: string) {
+    try {
+      const entry = JSON.parse(entryJson);
+      stores?.getChatStore().addDebugLogEntry(entry);
+    } catch { /* ignore malformed JSON */ }
+  },
 };
 
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══

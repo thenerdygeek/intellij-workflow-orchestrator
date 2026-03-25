@@ -22,6 +22,17 @@ function nextId(prefix: string = 'msg'): string {
   return `${prefix}-${Date.now()}-${++_idCounter}`;
 }
 
+// ── Debug log ──
+export interface DebugLogEntry {
+  ts: number;
+  level: 'info' | 'warn' | 'error';
+  event: string;
+  detail: string;
+  meta?: Record<string, any>;
+}
+
+const DEBUG_LOG_MAX_ENTRIES = 200;
+
 // ── Approval state ──
 interface PendingApproval {
   title: string;
@@ -66,6 +77,8 @@ interface ChatState {
   mentionResults: MentionSearchResult[];
   pendingApproval: PendingApproval | null;
   focusInputTrigger: number;
+  debugLogVisible: boolean;
+  debugLogEntries: DebugLogEntry[];
 
   // Actions
   startSession(task: string): void;
@@ -112,6 +125,9 @@ interface ChatState {
   showApproval(title: string, description?: string, commandPreview?: string): void;
   resolveApproval(approved: boolean): void;
   sendMessage(text: string, mentions: Mention[]): void;
+  setDebugLogVisible(visible: boolean): void;
+  addDebugLogEntry(entry: DebugLogEntry): void;
+  clearDebugLog(): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -148,6 +164,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   mentionResults: [],
   pendingApproval: null,
   focusInputTrigger: 0,
+  debugLogVisible: false,
+  debugLogEntries: [],
 
   // Actions
   startSession(task: string) {
@@ -551,5 +569,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         kotlinBridge.sendMessage(text);
       }
     });
+  },
+
+  setDebugLogVisible(visible: boolean) {
+    set({ debugLogVisible: visible });
+  },
+
+  addDebugLogEntry(entry: DebugLogEntry) {
+    set(state => {
+      const entries = [...state.debugLogEntries, entry];
+      // Cap at max entries, FIFO — drop oldest when over limit
+      const capped = entries.length > DEBUG_LOG_MAX_ENTRIES
+        ? entries.slice(entries.length - DEBUG_LOG_MAX_ENTRIES)
+        : entries;
+      return { debugLogEntries: capped };
+    });
+  },
+
+  clearDebugLog() {
+    set({ debugLogEntries: [] });
   },
 }));
