@@ -2,7 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 /**
  * Selects which tools to send to the LLM based on conversation context.
- * Saves tokens by not sending all 86 tools when only a subset is needed.
+ * Saves tokens by not sending all 97 tools when only a subset is needed.
  *
  * Strategy:
  * - Core tools (read, edit, search, command, diagnostics) always included
@@ -32,6 +32,7 @@ object DynamicToolSelector {
     private val ALWAYS_INCLUDE = setOf(
         "read_file", "edit_file", "search_code", "run_command", "glob_files",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
+        "get_annotations", "get_method_body",
         "diagnostics", "format_code", "optimize_imports",
         "agent",
         "delegate_task",
@@ -95,9 +96,22 @@ object DynamicToolSelector {
         "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"
     )
 
+    private val SPRING_BOOT_TOOL_NAMES = setOf(
+        "spring_boot_endpoints", "spring_boot_autoconfig",
+        "spring_boot_config_properties", "spring_boot_actuator"
+    )
+
     private val MAVEN_TOOL_NAMES = setOf(
         "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
         "project_modules"
+    )
+
+    private val MAVEN_ENHANCED_TOOL_NAMES = setOf(
+        "maven_dependency_tree", "maven_effective_pom"
+    )
+
+    private val GRADLE_TOOL_NAMES = setOf(
+        "gradle_dependencies", "gradle_tasks", "gradle_properties"
     )
 
     private val RUNTIME_TOOL_NAMES = setOf(
@@ -166,14 +180,24 @@ object DynamicToolSelector {
             setOf("spring", "bean", "endpoint", "controller", "service", "repository",
                 "autowired", "injection", "config", "application.properties",
                 "application.yml", "security", "auth", "authentication", "authorization",
-                "scheduled", "cron", "event", "listener"),
-            SPRING_TOOL_NAMES
+                "scheduled", "cron", "event", "listener",
+                "spring boot", "auto-config", "autoconfig", "conditional", "actuator",
+                "configuration properties", "configprops", "health check", "metrics",
+                "starter", "conditional on"),
+            SPRING_TOOL_NAMES + SPRING_BOOT_TOOL_NAMES
         ),
         ToolGroup(
             "maven",
             setOf("maven", "pom", "dependency", "dependencies", "plugin", "profile",
-                "module", "version", "gradle"),
-            MAVEN_TOOL_NAMES + setOf("spring_version_info")
+                "module", "version", "version conflict", "transitive", "effective pom",
+                "dependency tree", "plugin config"),
+            MAVEN_TOOL_NAMES + MAVEN_ENHANCED_TOOL_NAMES + setOf("spring_version_info")
+        ),
+        ToolGroup(
+            "gradle",
+            setOf("gradle", "gradlew", "build.gradle", "gradle.properties",
+                "version catalog", "libs.versions.toml", "gradle task"),
+            GRADLE_TOOL_NAMES
         ),
         ToolGroup(
             "runtime",
@@ -212,6 +236,7 @@ object DynamicToolSelector {
     /** Maven tools to auto-include when project is detected as Maven. */
     private val MAVEN_PROJECT_TOOLS = setOf(
         "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
+        "maven_dependency_tree", "maven_effective_pom",
         "spring_version_info", "project_modules"
     )
 
@@ -219,11 +244,18 @@ object DynamicToolSelector {
     private val SPRING_PROJECT_TOOLS = setOf(
         "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
         "spring_profiles", "spring_repositories", "spring_security_config",
-        "spring_scheduled_tasks", "spring_event_listeners"
+        "spring_scheduled_tasks", "spring_event_listeners",
+        "spring_boot_endpoints", "spring_boot_autoconfig",
+        "spring_boot_config_properties", "spring_boot_actuator"
     )
 
     /** JPA tools to auto-include when JPA/Hibernate is detected. */
     private val JPA_PROJECT_TOOLS = setOf("jpa_entities", "spring_repositories")
+
+    /** Gradle tools to auto-include when project is detected as Gradle. */
+    private val GRADLE_PROJECT_TOOLS = setOf(
+        "gradle_dependencies", "gradle_tasks", "gradle_properties", "project_modules"
+    )
 
     /**
      * Detect project type using IntelliJ APIs.
@@ -262,6 +294,16 @@ object DynamicToolSelector {
                 }
             }
         } catch (_: Exception) { /* PSI not available in dumb mode — will be picked up by keywords */ }
+
+        // Detect Gradle project
+        try {
+            val basePath = project.basePath
+            if (basePath != null) {
+                val hasGradle = java.io.File(basePath, "build.gradle.kts").isFile ||
+                    java.io.File(basePath, "build.gradle").isFile
+                if (hasGradle) tools.addAll(GRADLE_PROJECT_TOOLS)
+            }
+        } catch (_: Exception) { /* Gradle detection failed */ }
 
         return tools
     }

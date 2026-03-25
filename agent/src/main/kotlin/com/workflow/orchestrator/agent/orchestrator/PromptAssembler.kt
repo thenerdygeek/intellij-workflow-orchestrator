@@ -202,16 +202,20 @@ class PromptAssembler(
         val hasSonar = includeAll || activeToolNames!!.any { it.startsWith("sonar_") }
         val hasBitbucket = includeAll || activeToolNames!!.any { it.startsWith("bitbucket_") }
 
+        val hasSpringBoot = includeAll || activeToolNames!!.any { it.startsWith("spring_boot_") }
+
         if (hasJira) parts.add(JIRA_CONTEXT_RULES)
         if (hasBamboo) parts.add(BAMBOO_CONTEXT_RULES)
         if (hasSonar) parts.add(SONAR_CONTEXT_RULES)
         if (hasBitbucket) parts.add(BITBUCKET_CONTEXT_RULES)
+        if (hasSpringBoot) parts.add(SPRING_BOOT_CONTEXT_RULES)
 
         // Multi-repo rule applies when any integration tool is active
         if (hasJira || hasBamboo || hasSonar || hasBitbucket) {
             parts.add(MULTI_REPO_RULES)
         }
 
+        // Multi-repo rule applies when any integration tool is active (Spring Boot is project-local, not multi-repo)
         if (parts.isEmpty()) return ""
 
         return "<integration_rules>\n${parts.joinToString("\n")}\n</integration_rules>"
@@ -225,12 +229,14 @@ class PromptAssembler(
             tasks to specialized subagents.
 
             <capabilities>
-            - Analyze: Read files, search code, find references, explore type hierarchies, view file structure
+            - Analyze: Read files, search code, find references, explore type hierarchies, view file structure, get annotations, get method bodies
             - Code: Edit files precisely, run shell commands, check for compilation errors, format and optimize imports
             - Review: Read diffs, check diagnostics, run inspections, find issues
+            - Spring Boot: Discover endpoints with full URLs and params, analyze auto-configuration conditions, inspect @ConfigurationProperties, check actuator setup
+            - Build Systems: Maven dependency trees, effective POM plugin configs, Gradle dependencies/tasks/properties
             - Enterprise: Read Jira tickets, transition statuses, add comments, check builds, query quality issues, create PRs
-            - Skills: Activate workflow skills for specialized tasks (debugging, code review, deployment). Skills provide domain-specific instructions and may restrict your available tools.
-            - Delegation: Spawn subagents for complex sub-tasks. Subagents run in isolation with their own context and return results.
+            - Skills: Activate workflow skills for specialized tasks (debugging, code review, deployment)
+            - Delegation: Spawn subagents for complex sub-tasks with isolated context
             - Reasoning: Use the think tool for complex reasoning — pause and think through your approach before acting.
             </capabilities>
         """.trimIndent()
@@ -593,6 +599,18 @@ class PromptAssembler(
 
         val MULTI_REPO_RULES = """
             - When the project has multiple repositories, always specify repo_name on Bitbucket, Bamboo, and Sonar tools to target the correct repo. Use bitbucket_list_repos to discover available repositories and their names. Omitting repo_name defaults to the primary repository.
+        """.trimIndent()
+
+        val SPRING_BOOT_CONTEXT_RULES = """
+            <spring_boot_rules>
+            Spring Boot tools available — use them proactively:
+            - When user mentions endpoints/APIs/routes: use spring_boot_endpoints for full URL resolution with context-path and parameter details
+            - When debugging "bean not created" / "auto-configuration not applied": use spring_boot_autoconfig to check @Conditional* conditions
+            - When user asks about configurable properties: use spring_boot_config_properties to show @ConfigurationProperties classes
+            - When user asks about monitoring/health/metrics: use spring_boot_actuator to check actuator setup
+            - For dependency conflicts (NoSuchMethodError, ClassNotFoundException): use maven_dependency_tree to trace transitive dependencies
+            - For build configuration questions: use maven_effective_pom to show plugin configurations
+            </spring_boot_rules>
         """.trimIndent()
     }
 }
