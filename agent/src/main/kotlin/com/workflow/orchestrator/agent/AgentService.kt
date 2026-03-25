@@ -134,6 +134,7 @@ class AgentService(
             // Spring PSI tools
             register(SpringContextTool())
             register(SpringEndpointsTool())
+            register(SpringBootEndpointsTool())
             register(SpringBeanGraphTool())
 
             // Jira integration tools
