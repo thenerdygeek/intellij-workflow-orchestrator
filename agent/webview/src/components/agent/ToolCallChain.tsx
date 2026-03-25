@@ -10,6 +10,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Loader2, Check, X, Clock } from 'lucide-react';
+import { useChatStore } from '@/stores/chatStore';
 
 // ── Category helpers ──
 
@@ -126,6 +127,10 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
 // ── Terminal content for CMD tools ──
 
 function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
+  const streamOutput = useChatStore(s => s.toolOutputStreams[toolCall.id] || '');
+  const isRunning = toolCall.status === 'RUNNING';
+  const isError = toolCall.status === 'ERROR';
+
   let command = toolCall.name;
   try {
     const parsed = JSON.parse(toolCall.args) as Record<string, unknown>;
@@ -135,9 +140,9 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
   return (
     <Terminal
       command={command}
-      stdout={toolCall.status !== 'ERROR' ? toolCall.result : undefined}
-      stderr={toolCall.status === 'ERROR' ? toolCall.result : undefined}
-      exitCode={toolCall.status === 'ERROR' ? 1 : toolCall.status === 'COMPLETED' ? 0 : undefined}
+      stdout={isRunning ? streamOutput : (toolCall.result && !isError ? toolCall.result : streamOutput)}
+      stderr={isError ? toolCall.result : undefined}
+      exitCode={isError ? 1 : toolCall.status === 'COMPLETED' ? 0 : undefined}
       durationMs={toolCall.durationMs}
     />
   );

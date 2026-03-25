@@ -189,6 +189,16 @@ class PlanManager {
         return null
     }
 
+    /**
+     * Restore a plan from disk persistence (e.g., after session recovery).
+     * Sets currentPlan and triggers the anchor update so the LLM sees it in context.
+     */
+    fun restorePlan(plan: AgentPlan) {
+        currentPlan = plan
+        LOG.info("PlanManager: restored plan with ${plan.steps.size} steps (approved=${plan.approved})")
+        onPlanAnchorUpdate?.invoke(plan)
+    }
+
     fun hasPlan(): Boolean = currentPlan != null
     fun isPlanApproved(): Boolean = currentPlan?.approved == true
 

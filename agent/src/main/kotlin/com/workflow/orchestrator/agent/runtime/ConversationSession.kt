@@ -384,6 +384,13 @@ class ConversationSession private constructor(
             // Wire disk spillover for full tool outputs (OpenCode pattern)
             loaded.contextManager.toolOutputStore = ToolOutputStore(loaded.store.sessionDirectory)
 
+            // Restore persisted plan into PlanManager so update_plan_step and checkDeviation work
+            val restoredPlan = PlanPersistence.load(loaded.store.sessionDirectory)
+            if (restoredPlan != null) {
+                loaded.planManager.sessionDir = loaded.store.sessionDirectory
+                loaded.planManager.restorePlan(restoredPlan)
+            }
+
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = loaded.store.sessionDirectory

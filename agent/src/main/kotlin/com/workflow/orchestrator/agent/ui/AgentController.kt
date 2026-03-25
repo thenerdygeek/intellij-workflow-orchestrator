@@ -781,6 +781,15 @@ class AgentController(
         session = loaded
         sessionAutoApprove = false
 
+        // Wire callbacks so plan/question/skill UI works on resumed session
+        wireSessionCallbacks(loaded)
+
+        // Wire PlanManager and QuestionManager on AgentService so tools can find them
+        try {
+            agentService.currentPlanManager = loaded.planManager
+            agentService.currentQuestionManager = loaded.questionManager
+        } catch (_: Exception) {}
+
         // Render loaded conversation to UI
         dashboard.reset()
         dashboard.startSession(loaded.title)
