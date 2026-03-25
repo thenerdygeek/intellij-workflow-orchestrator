@@ -93,11 +93,15 @@ class SpringRepositoriesTool : AgentTool {
                         val params = method.parameterList.parameters.joinToString(", ") { p ->
                             "${p.name}: ${p.type.presentableText}"
                         }
+                        val isModifying = method.getAnnotation("org.springframework.data.jpa.repository.Modifying") != null
+                        val isTransactional = method.getAnnotation("org.springframework.transaction.annotation.Transactional") != null
                         MethodInfo(
                             name = method.name,
                             params = params,
                             returnType = returnType,
-                            query = queryValue
+                            query = queryValue,
+                            isModifying = isModifying,
+                            isTransactional = isTransactional
                         )
                     }
 
@@ -122,7 +126,9 @@ class SpringRepositoriesTool : AgentTool {
             sb.appendLine("  ${repo.name} extends ${repo.extendsType}<${repo.entityType}, ${repo.idType}>")
             for (method in repo.customMethods) {
                 val queryTag = if (method.query != null) "@Query(\"${method.query}\") " else ""
-                sb.appendLine("    $queryTag${method.name}(${method.params}): ${method.returnType}")
+                val modifyingTag = if (method.isModifying) "@Modifying " else ""
+                val transactionalTag = if (method.isTransactional) "@Transactional " else ""
+                sb.appendLine("    $modifyingTag$transactionalTag$queryTag${method.name}(${method.params}): ${method.returnType}")
             }
         }
         return sb.toString().trimEnd()
@@ -167,6 +173,8 @@ class SpringRepositoriesTool : AgentTool {
         val name: String,
         val params: String,
         val returnType: String,
-        val query: String?
+        val query: String?,
+        val isModifying: Boolean = false,
+        val isTransactional: Boolean = false
     )
 }

@@ -158,6 +158,25 @@ class SpringSecurityTool : AgentTool {
             }
         }
 
+        // 5. Find @RolesAllowed annotations
+        val rolesAllowedClass = facade.findClass("jakarta.annotation.security.RolesAllowed", allScope)
+            ?: facade.findClass("javax.annotation.security.RolesAllowed", allScope)
+        if (rolesAllowedClass != null) {
+            val methods = AnnotatedElementsSearch.searchPsiMethods(rolesAllowedClass, scope).findAll()
+            for (method in methods) {
+                val annotation = method.getAnnotation("jakarta.annotation.security.RolesAllowed")
+                    ?: method.getAnnotation("javax.annotation.security.RolesAllowed") ?: continue
+                val value = annotation.findAttributeValue("value")?.text
+                    ?.removeSurrounding("\"")?.removeSurrounding("{", "}") ?: ""
+                preAuthorizeMethods.add(MethodSecurityInfo(
+                    className = method.containingClass?.name ?: "(anonymous)",
+                    methodName = method.name,
+                    annotationType = "@RolesAllowed",
+                    expression = value
+                ))
+            }
+        }
+
         if (preAuthorizeMethods.isNotEmpty()) {
             foundAnything = true
             sb.appendLine("  Method security:")

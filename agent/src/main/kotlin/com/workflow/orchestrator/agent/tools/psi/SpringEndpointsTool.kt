@@ -27,6 +27,10 @@ class SpringEndpointsTool : AgentTool {
             "filter" to ParameterProperty(
                 type = "string",
                 description = "Optional: filter by path pattern or HTTP method. E.g., '/api/users' or 'POST'."
+            ),
+            "include_params" to ParameterProperty(
+                type = "boolean",
+                description = "If true, show handler method parameters with @PathVariable/@RequestParam/@RequestBody annotations (default: false)"
             )
         ),
         required = emptyList()
@@ -51,9 +55,10 @@ class SpringEndpointsTool : AgentTool {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
         val filter = params["filter"]?.jsonPrimitive?.contentOrNull
+        val includeParams = params["include_params"]?.jsonPrimitive?.content?.toBoolean() ?: false
 
         val content = ReadAction.nonBlocking<String> {
-            collectEndpoints(project, filter)
+            collectEndpoints(project, filter, includeParams)
         }.inSmartMode(project).executeSynchronously()
 
         return ToolResult(
@@ -63,7 +68,7 @@ class SpringEndpointsTool : AgentTool {
         )
     }
 
-    private fun collectEndpoints(project: Project, filter: String?): String {
+    private fun collectEndpoints(project: Project, filter: String?, includeParams: Boolean = false): String {
         val scope = GlobalSearchScope.projectScope(project)
         val facade = JavaPsiFacade.getInstance(project)
 
@@ -100,7 +105,7 @@ class SpringEndpointsTool : AgentTool {
                             path = path.ifBlank { "/" },
                             className = cls.name ?: "(anonymous)",
                             methodName = method.name,
-                            methodSignature = formatMethodParams(method)
+                            methodSignature = formatMethodParams(method, includeParams)
                         )
                     )
                 }
@@ -150,9 +155,18 @@ class SpringEndpointsTool : AgentTool {
         return text.replace("RequestMethod.", "").removeSurrounding("{", "}")
     }
 
-    private fun formatMethodParams(method: PsiMethod): String {
+    private fun formatMethodParams(method: PsiMethod, includeParams: Boolean = false): String {
         return method.parameterList.parameters.joinToString(", ") { p ->
-            p.type.presentableText
+            if (includeParams) {
+                val annotations = listOf("PathVariable", "RequestParam", "RequestBody", "RequestHeader")
+                    .mapNotNull { ann ->
+                        p.getAnnotation("org.springframework.web.bind.annotation.$ann")?.let { "@$ann" }
+                    }
+                val prefix = if (annotations.isNotEmpty()) "${annotations.joinToString(" ")} " else ""
+                "$prefix${p.type.presentableText} ${p.name}"
+            } else {
+                p.type.presentableText
+            }
         }
     }
 
