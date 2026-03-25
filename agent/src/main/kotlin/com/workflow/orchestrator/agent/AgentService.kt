@@ -271,6 +271,8 @@ class AgentService(
             register(GetStackFramesTool(debugController))
             register(GetVariablesTool(debugController))
             register(FieldWatchpointTool(debugController))
+            register(ThreadDumpTool(debugController))
+            register(ForceReturnTool(debugController))
             register(CreateRunConfigTool())
             register(ModifyRunConfigTool())
             register(DeleteRunConfigTool())
