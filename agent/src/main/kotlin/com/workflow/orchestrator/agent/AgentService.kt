@@ -135,6 +135,8 @@ class AgentService(
             register(CallHierarchyTool())
             register(GetMethodBodyTool())
             register(GetAnnotationsTool())
+            register(DataFlowAnalysisTool())
+            register(ReadWriteAccessTool())
 
             // Spring PSI tools
             register(SpringContextTool())
@@ -234,6 +236,7 @@ class AgentService(
 
             // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
             register(SemanticDiagnosticsTool()) // name = "diagnostics"
+            register(ProblemViewTool()) // name = "problem_view"
             register(FormatCodeTool())
             register(OptimizeImportsTool())
             register(RunInspectionsTool())
@@ -277,12 +280,14 @@ class AgentService(
             register(GitStashListTool())
             register(GitMergeBaseTool())
             register(GitFileHistoryTool())
+            register(ChangelistShelveTool())
             register(FindImplementationsTool())
 
             // Framework tools
             register(SpringConfigTool())
             register(JpaEntitiesTool())
             register(ProjectModulesTool())
+            register(ModuleDependencyGraphTool())
 
             // Maven Intelligence (Phase 3)
             register(MavenDependenciesTool())

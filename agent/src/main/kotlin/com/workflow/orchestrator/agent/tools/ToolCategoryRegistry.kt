@@ -29,7 +29,7 @@ object ToolCategoryRegistry {
                 "read_file", "edit_file", "search_code", "run_command", "glob_files",
                 "diagnostics", "format_code", "optimize_imports",
                 "file_structure", "find_definition", "find_references",
-                "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations",
+                "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations", "read_write_access", "dataflow_analysis",
                 "delegate_task",
                 "think"
             )
@@ -48,7 +48,7 @@ object ToolCategoryRegistry {
             color = "#06B6D4",
             badgePrefix = "GIT",
             description = "Git status, blame, diff, log, branches, show-file, show-commit, stash, merge-base, file-history",
-            tools = listOf("git_status", "git_blame", "git_diff", "git_log", "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history")
+            tools = listOf("git_status", "git_blame", "git_diff", "git_log", "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history", "changelist_shelve")
         ),
         ToolCategory(
             id = "framework",
@@ -58,7 +58,7 @@ object ToolCategoryRegistry {
             description = "Spring beans, endpoints, bean graph, config, JPA, Maven dependencies/properties/plugins/profiles, Gradle dependencies/tasks/properties, version info, Spring profiles, repositories, security, scheduled tasks, events",
             tools = listOf(
                 "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
-                "jpa_entities", "project_modules",
+                "jpa_entities", "project_modules", "module_dependency_graph",
                 "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
                 "gradle_dependencies", "gradle_tasks", "gradle_properties",
                 "spring_version_info", "spring_profiles", "spring_repositories",
