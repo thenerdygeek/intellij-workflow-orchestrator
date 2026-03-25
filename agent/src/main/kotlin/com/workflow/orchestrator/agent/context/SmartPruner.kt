@@ -63,8 +63,9 @@ object SmartPruner {
             }
 
             // Check if this is a tool result for a read_file call
-            if (msg.role == "tool" && msg.toolCallId != null) {
-                val toolCall = findToolCall(messages, i, msg.toolCallId) ?: continue
+            val tcId1 = msg.toolCallId
+            if (msg.role == "tool" && tcId1 != null) {
+                val toolCall = findToolCall(messages, i, tcId1) ?: continue
                 if (toolCall.name != "read_file") continue
 
                 val path = extractPath(toolCall.arguments) ?: continue
@@ -163,8 +164,9 @@ object SmartPruner {
         for (i in messages.indices) {
             val msg = messages[i]
 
-            if (msg.role == "tool" && msg.toolCallId != null) {
-                val toolCall = findToolCall(messages, i, msg.toolCallId) ?: continue
+            val tcId2 = msg.toolCallId
+            if (msg.role == "tool" && tcId2 != null) {
+                val toolCall = findToolCall(messages, i, tcId2) ?: continue
 
                 when (toolCall.name) {
                     "edit_file" -> {

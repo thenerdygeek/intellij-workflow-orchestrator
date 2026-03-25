@@ -287,8 +287,9 @@ class ContextManager(
         val droppedToolCallIds = mutableSetOf<String>()
         for (idx in indicesToRemove) {
             val msg = messages[idx]
-            if (msg.role == "assistant" && msg.toolCalls != null) {
-                msg.toolCalls.forEach { tc -> droppedToolCallIds.add(tc.id) }
+            val tcs = msg.toolCalls
+            if (msg.role == "assistant" && tcs != null) {
+                tcs.forEach { tc -> droppedToolCallIds.add(tc.id) }
             }
         }
         if (droppedToolCallIds.isNotEmpty()) {
@@ -359,8 +360,9 @@ class ContextManager(
         val droppedToolCallIds = mutableSetOf<String>()
         for (idx in indicesToRemove) {
             val msg = messages[idx]
-            if (msg.role == "assistant" && msg.toolCalls != null) {
-                msg.toolCalls.forEach { tc -> droppedToolCallIds.add(tc.id) }
+            val tcs = msg.toolCalls
+            if (msg.role == "assistant" && tcs != null) {
+                tcs.forEach { tc -> droppedToolCallIds.add(tc.id) }
             }
         }
         if (droppedToolCallIds.isNotEmpty()) {

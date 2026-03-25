@@ -309,8 +309,9 @@ class SourcegraphChatClient(
 
                             chunk.choices.firstOrNull()?.let { choice ->
                                 // Capture finish_reason from the final chunk
-                                if (!choice.finishReason.isNullOrBlank() && choice.finishReason != "") {
-                                    finishReason = choice.finishReason
+                                val fr = choice.finishReason
+                                if (!fr.isNullOrBlank() && fr != "") {
+                                    finishReason = fr
                                 }
                                 choice.delta.let { delta ->
                                     delta.role?.let { role = it }
