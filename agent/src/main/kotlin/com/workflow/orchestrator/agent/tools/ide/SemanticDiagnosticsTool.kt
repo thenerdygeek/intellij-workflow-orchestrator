@@ -45,11 +45,12 @@ class SemanticDiagnosticsTool : AgentTool {
         }
 
         return try {
-            ReadAction.compute<ToolResult, Exception> {
+            val result = ReadAction.nonBlocking<ToolResult?> {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path))
-                    ?: return@compute ToolResult("File not found: $path", "Not found", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
                 val psiFile = PsiManager.getInstance(project).findFile(vf)
-                    ?: return@compute ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                if (!psiFile.isValid) return@nonBlocking null
 
                 val problems = mutableListOf<String>()
 
@@ -92,7 +93,8 @@ class SemanticDiagnosticsTool : AgentTool {
                     val content = "${problems.size} issue(s) in ${vf.name}:\n${shown.joinToString("\n") { "  $it" }}$more"
                     ToolResult(content, "${problems.size} issues", TokenEstimator.estimate(content), isError = true)
                 }
-            }
+            }.inSmartMode(project).executeSynchronously()
+            result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
         } catch (e: Exception) {
             ToolResult("Error: ${e.message}", "Error", 5, isError = true)
         }

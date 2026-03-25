@@ -53,18 +53,19 @@ class ListQuickFixesTool : AgentTool {
         }
 
         return try {
-            ReadAction.compute<ToolResult, Exception> {
+            val result = ReadAction.nonBlocking<ToolResult?> {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
-                    ?: return@compute ToolResult("File not found: $path", "Not found", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
                 val psiFile = PsiManager.getInstance(project).findFile(vf)
-                    ?: return@compute ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                if (!psiFile.isValid) return@nonBlocking null
 
                 val document = psiFile.viewProvider.document
-                    ?: return@compute ToolResult("No document for: $path", "No document", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("No document for: $path", "No document", 5, isError = true)
 
                 val targetLine = line - 1 // Convert to 0-based
                 if (targetLine >= document.lineCount) {
-                    return@compute ToolResult(
+                    return@nonBlocking ToolResult(
                         "Line $line exceeds file length (${document.lineCount} lines).",
                         "Invalid line",
                         ToolResult.ERROR_TOKEN_ESTIMATE,
@@ -130,7 +131,8 @@ class ListQuickFixesTool : AgentTool {
                     val content = "${unique.size} quick fix(es) at line $line in ${vf.name}:\n${lines.joinToString("\n")}$more"
                     ToolResult(content, "${unique.size} fixes at line $line", TokenEstimator.estimate(content))
                 }
-            }
+            }.inSmartMode(project).executeSynchronously()
+            result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
         } catch (e: Exception) {
             ToolResult("Error listing quick fixes: ${e.message}", "Error", 5, isError = true)
         }

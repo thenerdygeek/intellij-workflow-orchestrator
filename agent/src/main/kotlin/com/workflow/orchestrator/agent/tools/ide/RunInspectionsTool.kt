@@ -54,11 +54,12 @@ class RunInspectionsTool : AgentTool {
         }
 
         return try {
-            ReadAction.compute<ToolResult, Exception> {
+            val result = ReadAction.nonBlocking<ToolResult?> {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
-                    ?: return@compute ToolResult("File not found: $path", "Not found", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
                 val psiFile = PsiManager.getInstance(project).findFile(vf)
-                    ?: return@compute ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                    ?: return@nonBlocking ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                if (!psiFile.isValid) return@nonBlocking null
 
                 val profile = InspectionProjectProfileManager.getInstance(project).currentProfile
                 val inspectionManager = InspectionManager.getInstance(project)
@@ -111,7 +112,8 @@ class RunInspectionsTool : AgentTool {
                     val content = "${allProblems.size} problem(s) in ${vf.name}:\n${lines.joinToString("\n")}$more"
                     ToolResult(content, "${allProblems.size} problems", TokenEstimator.estimate(content))
                 }
-            }
+            }.inSmartMode(project).executeSynchronously()
+            result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
         } catch (e: Exception) {
             ToolResult("Error running inspections: ${e.message}", "Error", 5, isError = true)
         }
