@@ -26,9 +26,10 @@ class EditFileTool : AgentTool {
             "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path"),
             "old_string" to ParameterProperty(type = "string", description = "The exact text to find and replace. Must be unique in the file."),
             "new_string" to ParameterProperty(type = "string", description = "The replacement text."),
-            "replace_all" to ParameterProperty(type = "boolean", description = "Replace all occurrences of old_string instead of requiring a unique match. Default: false.")
+            "replace_all" to ParameterProperty(type = "boolean", description = "Replace all occurrences of old_string instead of requiring a unique match. Default: false."),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("path", "old_string", "new_string")
+        required = listOf("path", "old_string", "new_string", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 

@@ -16,9 +16,10 @@ class BambooTriggerBuildTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "plan_key" to ParameterProperty(type = "string", description = "Bamboo plan key (e.g., PROJ-PLAN)"),
-            "variables" to ParameterProperty(type = "string", description = "Optional JSON object of build variables (e.g., '{\"dockerTagsAsJson\":\"{...}\"}')")
+            "variables" to ParameterProperty(type = "string", description = "Optional JSON object of build variables (e.g., '{\"dockerTagsAsJson\":\"{...}\"}')"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("plan_key")
+        required = listOf("plan_key", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER)
 

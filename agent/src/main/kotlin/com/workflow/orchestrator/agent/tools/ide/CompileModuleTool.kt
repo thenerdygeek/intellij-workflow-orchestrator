@@ -35,9 +35,13 @@ class CompileModuleTool : AgentTool {
             "module" to ParameterProperty(
                 type = "string",
                 description = "Optional: specific module name to compile. If not provided, compiles the entire project."
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of what this action does and why (shown to user in approval dialog)"
             )
         ),
-        required = emptyList()
+        required = listOf("description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER)
 

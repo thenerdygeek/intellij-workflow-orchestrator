@@ -27,9 +27,10 @@ class RefactorRenameTool : AgentTool {
         properties = mapOf(
             "symbol" to ParameterProperty(type = "string", description = "Symbol to rename (class name, method name, or ClassName.methodName)"),
             "new_name" to ParameterProperty(type = "string", description = "New name for the symbol"),
-            "file" to ParameterProperty(type = "string", description = "Optional: file path for disambiguation if multiple symbols share the name")
+            "file" to ParameterProperty(type = "string", description = "Optional: file path for disambiguation if multiple symbols share the name"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("symbol", "new_name")
+        required = listOf("symbol", "new_name", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 

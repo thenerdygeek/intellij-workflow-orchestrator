@@ -67,9 +67,13 @@ class RunTestsTool : AgentTool {
             "use_native_runner" to ParameterProperty(
                 type = "boolean",
                 description = "Use IntelliJ native test runner (true) or Maven/Gradle shell (false). Default: true"
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of what this action does and why (shown to user in approval dialog)"
             )
         ),
-        required = listOf("class_name")
+        required = listOf("class_name", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER)
 

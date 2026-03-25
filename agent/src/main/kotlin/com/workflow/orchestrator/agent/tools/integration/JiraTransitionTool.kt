@@ -17,9 +17,10 @@ class JiraTransitionTool : AgentTool {
         properties = mapOf(
             "key" to ParameterProperty(type = "string", description = "Jira ticket key (e.g., PROJ-123)"),
             "transition_id" to ParameterProperty(type = "string", description = "Transition ID. Use jira_get_ticket first to see available transitions."),
-            "comment" to ParameterProperty(type = "string", description = "Optional comment to add with the transition")
+            "comment" to ParameterProperty(type = "string", description = "Optional comment to add with the transition"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("key", "transition_id")
+        required = listOf("key", "transition_id", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER)
 

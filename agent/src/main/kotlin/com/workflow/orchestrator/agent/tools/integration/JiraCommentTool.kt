@@ -15,9 +15,10 @@ class JiraCommentTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "key" to ParameterProperty(type = "string", description = "Jira ticket key (e.g., PROJ-123)"),
-            "body" to ParameterProperty(type = "string", description = "Comment body text (Jira wiki markup supported)")
+            "body" to ParameterProperty(type = "string", description = "Comment body text (Jira wiki markup supported)"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("key", "body")
+        required = listOf("key", "body", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER)
 

@@ -19,9 +19,10 @@ class BitbucketMergePrTool : AgentTool {
             "strategy" to ParameterProperty(type = "string", description = "Merge strategy: 'merge-commit', 'squash', or 'ff-only' (optional)"),
             "delete_source_branch" to ParameterProperty(type = "string", description = "Delete source branch after merge: 'true' or 'false' (default: false)"),
             "commit_message" to ParameterProperty(type = "string", description = "Custom merge commit message (optional)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names."),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("pr_id")
+        required = listOf("pr_id", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER)
 
