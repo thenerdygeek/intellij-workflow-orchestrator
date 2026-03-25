@@ -306,7 +306,11 @@ class AgentDashboardPanel(
      * Push a debug log entry to the JCEF debug log panel.
      * No-op if JCEF is unavailable (fallback panel has no debug log).
      */
-    fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
+    fun setDebugLogVisible(visible: Boolean) = runOnEdt {
+        cefPanel?.updateDebugLogVisibility(visible)
+    }
+
+    fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) = runOnEdt {
         cefPanel?.pushDebugLogEntry(level, event, detail, meta)
     }
 

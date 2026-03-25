@@ -199,11 +199,14 @@ class AgentController(
             }
         )
 
-        // Set current model name and fetch model list from Sourcegraph
+        // Set current model name, fetch model list, and sync debug log visibility
         try {
-            val model = AgentSettings.getInstance(project).state.sourcegraphChatModel ?: ""
+            val settings = AgentSettings.getInstance(project)
+            val model = settings.state.sourcegraphChatModel ?: ""
             dashboard.setModelName(model)
             loadModelList()
+            // Always sync debug log visibility to JCEF on startup
+            dashboard.setDebugLogVisible(settings.state.showDebugLog)
         } catch (_: Exception) {}
 
         // Wire click-to-navigate file paths in JCEF chat output
@@ -405,16 +408,26 @@ class AgentController(
             return
         }
 
+        // Helper: always push debug entries (not gated by showDebugLog setting)
+        fun debugLog(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
+            dashboard.pushDebugLogEntry(level, event, detail, meta)
+        }
+
+        debugLog("info", "execute", "executeTask called", mapOf("taskLength" to task.length))
+
         val agentService = try {
             AgentService.getInstance(project)
         } catch (e: Exception) {
+            debugLog("error", "init_fail", "Agent service not available: ${e.message}")
             dashboard.appendError("Agent service not available: ${e.message}")
             return
         }
         if (!agentService.isConfigured()) {
+            debugLog("error", "init_fail", "Agent not configured — missing Sourcegraph URL or token or agent not enabled")
             dashboard.appendError("Agent not configured. Set up Sourcegraph connection and enable Agent in Settings.")
             return
         }
+        debugLog("info", "config_ok", "Agent service configured and ready")
 
         // Create or reuse session — session creation moved off EDT into coroutine
         // (ConversationSession.create() calls RepoMapGenerator which does a blocking ReadAction
@@ -435,8 +448,10 @@ class AgentController(
             try {
                 // Create session off EDT (RepoMapGenerator + skill discovery + memory loading are heavy)
                 if (isNewSession) {
+                    debugLog("info", "session", "Creating new ConversationSession...")
                     session = ConversationSession.create(project, agentService, planMode = planModeEnabled)
                     wireSessionCallbacks(session!!)
+                    debugLog("info", "session", "Session created: ${session!!.sessionId}")
                 }
                 val currentSession = session!!
                 currentSession.recordUserMessage(task)
@@ -473,14 +488,18 @@ class AgentController(
                 currentApprovalGate = approvalGate
 
                 // Create orchestrator (lightweight — just brain + registry + project)
+                debugLog("info", "orchestrator", "Creating AgentOrchestrator...")
                 val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
                 currentOrchestrator = orchestrator
 
-                val onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? =
-                    if (try { AgentSettings.getInstance(project).state.showDebugLog } catch (_: Exception) { false }) {
-                        { level, event, detail, meta -> dashboard.pushDebugLogEntry(level, event, detail, meta) }
-                    } else null
+                // Debug log callback — always active for observability
+                val onDebugLog: (String, String, String, Map<String, Any?>?) -> Unit =
+                    { level, event, detail, meta -> debugLog(level, event, detail, meta) }
 
+                debugLog("info", "llm_call", "Calling orchestrator.executeTask...", mapOf(
+                    "model" to (settings?.state?.sourcegraphChatModel ?: "unknown"),
+                    "tools" to currentSession.activeToolNames.size
+                ))
                 val result = orchestrator.executeTask(
                     taskDescription = task,
                     session = currentSession,
@@ -489,13 +508,18 @@ class AgentController(
                     onStreamChunk = { dashboard.appendStreamToken(it) },
                     onDebugLog = onDebugLog
                 )
+                debugLog("info", "result", "Orchestrator returned: ${result::class.simpleName}")
                 handleResult(result, System.currentTimeMillis() - sessionStartMs)
             } catch (e: CancellationException) {
+                debugLog("warn", "cancelled", "Task cancelled by user")
                 dashboard.completeSession(0, 0, emptyList(),
                     System.currentTimeMillis() - sessionStartMs,
                     RichStreamingPanel.SessionStatus.CANCELLED)
             } catch (e: Exception) {
                 LOG.error("AgentController: task failed", e)
+                debugLog("error", "crash", "${e::class.simpleName}: ${e.message}", mapOf(
+                    "stackTrace" to (e.stackTrace.take(5).joinToString(" <- ") { "${it.className}.${it.methodName}:${it.lineNumber}" })
+                ))
                 dashboard.appendError("Unexpected error: ${e.message}")
                 dashboard.completeSession(0, 0, emptyList(),
                     System.currentTimeMillis() - sessionStartMs,

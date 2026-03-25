@@ -783,20 +783,25 @@ class AgentCefPanel(
      */
     fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
         val ts = System.currentTimeMillis()
-        val escapedDetail = detail.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").take(300)
+        val truncatedDetail = detail.take(300)
         val metaStr = if (meta != null) {
             val pairs = meta.entries.mapNotNull { (k, v) ->
                 when (v) {
                     null -> null
                     is Number -> "\"$k\":$v"
                     is Boolean -> "\"$k\":$v"
-                    else -> "\"$k\":\"${v.toString().replace("\"", "\\\"").take(100)}\""
+                    else -> {
+                        val escaped = v.toString().take(100)
+                            .replace("\\", "\\\\").replace("\"", "\\\"")
+                            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                        "\"$k\":\"$escaped\""
+                    }
                 }
             }.joinToString(",")
             "{$pairs}"
         } else "null"
-        val json = """{"ts":$ts,"level":"$level","event":"$event","detail":"$escapedDetail","meta":$metaStr}"""
-        callJs("addDebugLogEntry('${json.replace("'", "\\'")}')")
+        val json = """{"ts":$ts,"level":"$level","event":"$event","detail":"$truncatedDetail","meta":$metaStr}"""
+        callJs("addDebugLogEntry(${jsonStr(json)})")
     }
 
     // Backward compat
