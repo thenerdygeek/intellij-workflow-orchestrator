@@ -36,7 +36,7 @@ class CallHierarchyToolTest {
         assertEquals("function", def.type)
         assertEquals("call_hierarchy", def.function.name)
         assertTrue(def.function.parameters.required.contains("method"))
-        assertEquals(2, def.function.parameters.properties.size)
+        assertEquals(3, def.function.parameters.properties.size)
     }
 
     @Test

@@ -155,6 +155,10 @@ class PsiToolUtilsTest {
             every { superTypes } returns arrayOf(superType)
             every { fields } returns arrayOf(field)
             every { methods } returns arrayOf(method)
+            every { isInterface } returns false
+            every { isEnum } returns false
+            every { isAnnotationType } returns false
+            every { hasModifierProperty(any()) } returns false
         }
 
         val result = PsiToolUtils.formatClassSkeleton(psiClass)
@@ -179,6 +183,10 @@ class PsiToolUtilsTest {
             every { superTypes } returns emptyArray()
             every { fields } returns emptyArray()
             every { methods } returns emptyArray()
+            every { isInterface } returns false
+            every { isEnum } returns false
+            every { isAnnotationType } returns false
+            every { hasModifierProperty(any()) } returns false
         }
 
         val result = PsiToolUtils.formatClassSkeleton(psiClass)

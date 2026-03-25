@@ -13,7 +13,7 @@ class FileStructureToolTest {
         assertEquals("file_structure", tool.name)
         assertTrue(tool.parameters.required.contains("path"))
         assertTrue(tool.parameters.properties.containsKey("path"))
-        assertEquals(1, tool.parameters.properties.size)
+        assertEquals(2, tool.parameters.properties.size)
     }
 
     @Test
