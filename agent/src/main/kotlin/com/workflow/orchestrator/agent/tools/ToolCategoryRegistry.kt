@@ -55,11 +55,12 @@ object ToolCategoryRegistry {
             displayName = "Spring & Framework",
             color = "#10B981",
             badgePrefix = "SPR",
-            description = "Spring beans, endpoints, bean graph, config, JPA, Maven dependencies/properties/plugins/profiles, version info, Spring profiles, repositories, security, scheduled tasks, events",
+            description = "Spring beans, endpoints, bean graph, config, JPA, Maven dependencies/properties/plugins/profiles, Gradle dependencies/tasks/properties, version info, Spring profiles, repositories, security, scheduled tasks, events",
             tools = listOf(
                 "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
                 "jpa_entities", "project_modules",
                 "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
+                "gradle_dependencies", "gradle_tasks", "gradle_properties",
                 "spring_version_info", "spring_profiles", "spring_repositories",
                 "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"
             )

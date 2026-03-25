@@ -285,6 +285,11 @@ class AgentService(
             register(MavenProfilesTool())
             register(SpringVersionTool())
 
+            // Gradle Intelligence (Phase 3)
+            register(GradleDependenciesTool())
+            register(GradleTasksTool())
+            register(GradlePropertiesTool())
+
             // Spring PSI Intelligence (Phase 3)
             register(SpringProfilesTool())
             register(SpringRepositoriesTool())
