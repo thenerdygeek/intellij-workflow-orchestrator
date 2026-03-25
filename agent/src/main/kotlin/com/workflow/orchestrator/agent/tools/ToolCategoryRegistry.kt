@@ -29,7 +29,7 @@ object ToolCategoryRegistry {
                 "read_file", "edit_file", "search_code", "run_command", "glob_files",
                 "diagnostics", "format_code", "optimize_imports",
                 "file_structure", "find_definition", "find_references",
-                "type_hierarchy", "call_hierarchy",
+                "type_hierarchy", "call_hierarchy", "get_method_body",
                 "delegate_task",
                 "think"
             )
