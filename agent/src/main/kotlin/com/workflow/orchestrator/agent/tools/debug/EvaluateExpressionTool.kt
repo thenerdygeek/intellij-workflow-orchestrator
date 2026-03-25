@@ -8,7 +8,6 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -30,10 +29,6 @@ class EvaluateExpressionTool(
             "session_id" to ParameterProperty(
                 type = "string",
                 description = "Debug session ID (optional — uses active session if omitted)"
-            ),
-            "frame_index" to ParameterProperty(
-                type = "integer",
-                description = "Stack frame index for evaluation context (default: 0 = top frame)"
             ),
             "description" to ParameterProperty(
                 type = "string",
@@ -63,25 +58,6 @@ class EvaluateExpressionTool(
         }
 
         val sessionId = params["session_id"]?.jsonPrimitive?.content
-        val frameIndex = params["frame_index"]?.jsonPrimitive?.intOrNull ?: 0
-
-        if (frameIndex < 0) {
-            return ToolResult(
-                "frame_index must be >= 0, got: $frameIndex",
-                "Invalid frame_index",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-        }
-
-        if (frameIndex > 0) {
-            return ToolResult(
-                "Error: Only the top frame (#0) is currently supported for expression evaluation. Use frame_index=0 or omit it.",
-                "Error",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-        }
 
         val session = controller.getSession(sessionId)
             ?: return ToolResult(
@@ -101,7 +77,7 @@ class EvaluateExpressionTool(
         }
 
         return try {
-            val evalResult = controller.evaluate(session, expression, frameIndex)
+            val evalResult = controller.evaluate(session, expression, 0)
 
             if (evalResult.isError) {
                 return ToolResult(

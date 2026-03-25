@@ -100,7 +100,13 @@ class CompileModuleTool : AgentTool {
                                         .take(MAX_ERROR_MESSAGES)
                                         .joinToString("\n") { msg ->
                                             val file = msg.virtualFile?.name ?: "<unknown>"
-                                            "  $file: ${msg.message}"
+                                            val nav = msg.navigatable
+                                            val location = if (nav is com.intellij.openapi.fileEditor.OpenFileDescriptor) {
+                                                "$file:${nav.line + 1}:${nav.column + 1}"
+                                            } else {
+                                                file
+                                            }
+                                            "  $location: ${msg.message}"
                                         }
                                     val content = "Compilation of $target failed: $errors error(s), $warnings warning(s).\n\nErrors:\n$messages"
                                     ToolResult(

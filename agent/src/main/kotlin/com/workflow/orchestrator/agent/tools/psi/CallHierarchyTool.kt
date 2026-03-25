@@ -147,7 +147,7 @@ class CallHierarchyTool : AgentTool {
 
     private fun findMethod(project: Project, methodName: String, className: String?): PsiMethod? {
         if (className != null) {
-            val psiClass = PsiToolUtils.findClass(project, className)
+            val psiClass = PsiToolUtils.findClassAnywhere(project, className)
             return psiClass?.methods?.firstOrNull { it.name == methodName }
         }
 

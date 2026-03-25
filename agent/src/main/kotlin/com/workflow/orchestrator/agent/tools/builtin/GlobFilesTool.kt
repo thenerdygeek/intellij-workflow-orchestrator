@@ -77,6 +77,8 @@ class GlobFilesTool : AgentTool {
             }
 
             override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                // Early termination: collect enough candidates for sorting, then stop
+                if (matches.size >= maxResults * 2) return FileVisitResult.TERMINATE
                 val relativeToSearch = searchRoot.relativize(file)
                 val relativeToProject = projectRoot.relativize(file)
                 if (matcher.matches(relativeToSearch) || matcher.matches(relativeToProject) || matcher.matches(file.fileName)) {

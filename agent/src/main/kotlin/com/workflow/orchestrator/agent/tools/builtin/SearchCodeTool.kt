@@ -173,10 +173,14 @@ class SearchCodeTool : AgentTool {
         matches: MutableList<SearchMatch>,
         maxResults: Int
     ) {
+        if (Thread.currentThread().isInterrupted) return
+        if (matches.size >= maxResults) return
+
         val files = dir.listFiles() ?: return
 
         for (file in files.sortedBy { it.name }) {
             if (matches.size >= maxResults) return
+            if (Thread.currentThread().isInterrupted) return
 
             if (file.isDirectory) {
                 if (file.name !in SKIP_DIRS) {
@@ -190,27 +194,43 @@ class SearchCodeTool : AgentTool {
             if (fileType != null && file.extension.lowercase() != fileType) continue
 
             try {
-                val lines = file.readLines(Charsets.UTF_8)
                 val relativePath = file.absolutePath.removePrefix(basePath).removePrefix("/")
-                for ((lineIdx, line) in lines.withIndex()) {
-                    if (matches.size >= maxResults) return
-                    if (regex.containsMatchIn(line)) {
-                        val ctxBefore = if (collectContext) {
-                            val start = maxOf(0, lineIdx - contextLines)
-                            lines.subList(start, lineIdx)
-                        } else emptyList()
-                        val ctxAfter = if (collectContext) {
-                            val end = minOf(lines.size, lineIdx + 1 + contextLines)
-                            lines.subList(lineIdx + 1, end)
-                        } else emptyList()
-
-                        matches.add(SearchMatch(
-                            relativePath = relativePath,
-                            lineNumber = lineIdx + 1,
-                            lineContent = line.trim(),
-                            contextBefore = ctxBefore,
-                            contextAfter = ctxAfter
-                        ))
+                if (collectContext) {
+                    // Need full file lines for context window — read all lines
+                    val lines = file.readLines(Charsets.UTF_8)
+                    for ((lineIdx, line) in lines.withIndex()) {
+                        if (matches.size >= maxResults) return
+                        if (regex.containsMatchIn(line)) {
+                            val ctxBefore = run {
+                                val start = maxOf(0, lineIdx - contextLines)
+                                lines.subList(start, lineIdx)
+                            }
+                            val ctxAfter = run {
+                                val end = minOf(lines.size, lineIdx + 1 + contextLines)
+                                lines.subList(lineIdx + 1, end)
+                            }
+                            matches.add(SearchMatch(
+                                relativePath = relativePath,
+                                lineNumber = lineIdx + 1,
+                                lineContent = line.trim(),
+                                contextBefore = ctxBefore,
+                                contextAfter = ctxAfter
+                            ))
+                        }
+                    }
+                } else {
+                    // Stream lines — avoid loading entire file into memory
+                    file.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                        lines.forEachIndexed { lineIdx, line ->
+                            if (matches.size >= maxResults) return@useLines
+                            if (regex.containsMatchIn(line)) {
+                                matches.add(SearchMatch(
+                                    relativePath = relativePath,
+                                    lineNumber = lineIdx + 1,
+                                    lineContent = line.trim()
+                                ))
+                            }
+                        }
                     }
                 }
             } catch (_: Exception) {

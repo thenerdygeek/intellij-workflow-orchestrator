@@ -27,10 +27,6 @@ class GetVariablesTool(
                 type = "string",
                 description = "Debug session ID (optional — uses active session if omitted)"
             ),
-            "frame_index" to ParameterProperty(
-                type = "integer",
-                description = "Stack frame index to inspect (default: 0 = top frame)"
-            ),
             "max_depth" to ParameterProperty(
                 type = "integer",
                 description = "Maximum depth for variable expansion (default: 2, max: 4)"
@@ -46,28 +42,9 @@ class GetVariablesTool(
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
-        val frameIndex = params["frame_index"]?.jsonPrimitive?.intOrNull ?: 0
         val variableName = params["variable_name"]?.jsonPrimitive?.content
         val maxDepth = (params["max_depth"]?.jsonPrimitive?.intOrNull ?: DEFAULT_MAX_DEPTH)
             .coerceIn(1, MAX_DEPTH_CAP)
-
-        if (frameIndex < 0) {
-            return ToolResult(
-                "frame_index must be >= 0, got: $frameIndex",
-                "Invalid frame_index",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-        }
-
-        if (frameIndex > 0) {
-            return ToolResult(
-                "Error: Only the top frame (#0) is currently supported for variable inspection. Use frame_index=0 or omit it.",
-                "Error",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-        }
 
         val session = controller.getSession(sessionId)
             ?: return ToolResult(
@@ -132,9 +109,9 @@ class GetVariablesTool(
             val frameHeader = if (pos != null) {
                 val file = pos.file.name
                 val line = pos.line + 1
-                "Frame #$frameIndex: $file:$line"
+                "Frame #0: $file:$line"
             } else {
-                "Frame #$frameIndex"
+                "Frame #0"
             }
 
             val sb = StringBuilder()
@@ -153,7 +130,7 @@ class GetVariablesTool(
             val summary = if (variableName != null) {
                 "Variable '$variableName' inspected"
             } else {
-                "$varCount variables in frame #$frameIndex"
+                "$varCount variables in frame #0"
             }
             ToolResult(content, summary, TokenEstimator.estimate(content))
         } catch (e: Exception) {

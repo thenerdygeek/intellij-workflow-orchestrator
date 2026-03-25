@@ -117,11 +117,6 @@ class RunCommandTool : AgentTool {
             val parts = trimmed.removePrefix("git").trim().split("\\s+".toRegex(), limit = 2)
             val subCommand = parts.firstOrNull() ?: return "Error: empty git command"
 
-            // Block remote ref references in any git command
-            if (trimmed.contains("origin/") || trimmed.contains("upstream/")) {
-                return "Error: Remote refs (origin/, upstream/) are blocked for safety. Use git_diff, git_log, or git_show_file tools with local refs instead."
-            }
-
             // Check if sub-command is in the safe list
             val isSafe = SAFE_GIT_SUBCOMMANDS.any { safe ->
                 subCommand == safe || (safe.contains(" ") && trimmed.removePrefix("git").trim().startsWith(safe))
@@ -129,6 +124,17 @@ class RunCommandTool : AgentTool {
 
             if (!isSafe) {
                 return "Error: 'git $subCommand' is blocked for safety. Allowed read-only git commands: ${SAFE_GIT_SUBCOMMANDS.joinToString(", ")}. For write operations, use the appropriate IDE tools."
+            }
+
+            // Block remote refs only in write git commands; allow in read-only commands
+            val readOnlyWithRemoteRefs = setOf("log", "diff", "show", "rev-list", "merge-base", "rev-parse")
+            if (trimmed.contains("origin/") || trimmed.contains("upstream/")) {
+                val allowsRemoteRefs = readOnlyWithRemoteRefs.any { cmd ->
+                    subCommand == cmd || (cmd.contains(" ") && trimmed.removePrefix("git").trim().startsWith(cmd))
+                }
+                if (!allowsRemoteRefs) {
+                    return "Error: Remote refs (origin/, upstream/) are only allowed in read-only git commands (${readOnlyWithRemoteRefs.joinToString(", ")}). Use the appropriate IDE tools for write operations."
+                }
             }
 
             // Check for dangerous flags even in safe sub-commands
