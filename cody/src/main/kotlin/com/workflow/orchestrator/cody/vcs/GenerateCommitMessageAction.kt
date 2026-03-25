@@ -14,11 +14,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.VcsDataKeys
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.ui.CommitMessage
-import com.workflow.orchestrator.cody.protocol.ContextFile
-import com.workflow.orchestrator.cody.protocol.Range
-import com.workflow.orchestrator.cody.protocol.Position
-import com.workflow.orchestrator.cody.service.CodyChatService
 import com.workflow.orchestrator.cody.service.PsiContextEnricher
+import com.workflow.orchestrator.core.ai.LlmBrainFactory
+import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.prompts.CommitMessagePromptBuilder
+import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.commands.Git
@@ -129,26 +129,6 @@ class GenerateCommitMessageAction : AnAction(
                 diff.take(8000) + "\n... (diff truncated, ${diff.length - 8000} chars omitted)"
             } else diff
 
-            // Build context items with changed line ranges for file-level understanding
-            val contextItems = try {
-                val changeListManager = ChangeListManager.getInstance(project)
-                changeListManager.allChanges.mapNotNull { change ->
-                    val afterRevision = change.afterRevision ?: return@mapNotNull null
-                    val filePath = afterRevision.file.path
-                    val afterContent = try { afterRevision.content } catch (_: Exception) { null }
-                        ?: return@mapNotNull ContextFile.fromPath(filePath)
-                    val beforeContent = try { change.beforeRevision?.content } catch (_: Exception) { null }
-
-                    val range = if (beforeContent != null) {
-                        computeChangedRange(beforeContent, afterContent)
-                    } else {
-                        val lineCount = minOf(afterContent.count { it == '\n' } + 1, 100)
-                        Range(Position(0, 0), Position(lineCount - 1, 0))
-                    }
-                    ContextFile.fromPath(filePath, range)
-                }.take(15)
-            } catch (_: Exception) { emptyList() }
-
             // Build a short summary of changed files for the analysis step
             val filesSummary = try {
                 val changeListManager = ChangeListManager.getInstance(project)
@@ -170,16 +150,26 @@ class GenerateCommitMessageAction : AnAction(
             // Gather PSI code intelligence for changed files
             val codeContext = buildCodeContext(project)
 
-            log.info("[Cody:CommitMsg] Generating: ${truncatedDiff.length} char diff, ${contextItems.size} context items, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
+            log.info("[Cody:CommitMsg] Generating: ${truncatedDiff.length} char diff, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
 
-            CodyChatService(project).generateCommitMessageChained(
+            val brain = LlmBrainFactory.create(project)
+            val prompt = CommitMessagePromptBuilder.build(
                 diff = truncatedDiff,
-                contextItems = contextItems,
                 ticketId = ticketId,
                 filesSummary = filesSummary,
                 recentCommits = recentCommits,
                 codeContext = codeContext
             )
+            val messages = listOf(ChatMessage(role = "user", content = prompt))
+            val result = brain.chat(messages, tools = null)
+            when (result) {
+                is ApiResult.Success ->
+                    result.data.choices.firstOrNull()?.message?.content
+                        ?.replace(Regex("^```[a-z]*\\n?"), "")
+                        ?.replace(Regex("\\n?```$"), "")
+                        ?.trim()
+                is ApiResult.Error -> null
+            }
         } catch (ex: Exception) {
             log.warn("[Cody:CommitMsg] Generation failed: ${ex.message}")
             null
@@ -324,38 +314,6 @@ class GenerateCommitMessageAction : AnAction(
 
             commits
         } catch (_: Exception) { emptyList() }
-    }
-
-    /**
-     * Compute the line range covering all changes between before and after content.
-     * Adds 5-line padding for surrounding context.
-     */
-    private fun computeChangedRange(before: String, after: String): Range {
-        val beforeLines = before.lines()
-        val afterLines = after.lines()
-
-        var firstChanged = 0
-        val minLen = minOf(beforeLines.size, afterLines.size)
-        while (firstChanged < minLen && beforeLines[firstChanged] == afterLines[firstChanged]) {
-            firstChanged++
-        }
-
-        var lastChangedBefore = beforeLines.size - 1
-        var lastChangedAfter = afterLines.size - 1
-        while (lastChangedBefore > firstChanged && lastChangedAfter > firstChanged &&
-            beforeLines[lastChangedBefore] == afterLines[lastChangedAfter]) {
-            lastChangedBefore--
-            lastChangedAfter--
-        }
-
-        val contextPadding = 5
-        val startLine = maxOf(0, firstChanged - contextPadding)
-        val endLine = minOf(afterLines.size - 1, lastChangedAfter + contextPadding)
-
-        return Range(
-            start = Position(line = startLine, character = 0),
-            end = Position(line = endLine, character = 0)
-        )
     }
 
 }
