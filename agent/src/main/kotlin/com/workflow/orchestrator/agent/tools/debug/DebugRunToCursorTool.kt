@@ -11,13 +11,12 @@ import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.io.File
-
 /**
  * Runs the debug session until execution reaches a specific file and line.
  * Equivalent to "Run to Cursor" in the IDE. Waits up to 30 seconds for
@@ -92,23 +91,13 @@ class DebugRunToCursorTool(
                 )
             }
 
-            // Resolve file path
-            val absolutePath = if (File(filePath).isAbsolute) {
-                filePath
-            } else {
-                val basePath = project.basePath
-                    ?: return ToolResult(
-                        "Cannot resolve relative path: project basePath is null",
-                        "Path error",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
-                File(basePath, filePath).canonicalPath
-            }
+            // Resolve and validate file path (prevents path traversal)
+            val (absolutePath, pathError) = PathValidator.resolveAndValidate(filePath, project.basePath)
+            if (pathError != null) return pathError
 
             // Create XSourcePosition on EDT
             val position = withContext(Dispatchers.EDT) {
-                val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath)
+                val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath!!)
                     ?: return@withContext null
                 XDebuggerUtil.getInstance().createPosition(vFile, line - 1) // 0-based
             } ?: return ToolResult(

@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -35,8 +36,17 @@ class FindReferencesTool : AgentTool {
 
         val symbol = params["symbol"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'symbol' parameter required", "Error: missing symbol", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
-        val filePath = params["file"]?.jsonPrimitive?.content
+        val rawFilePath = params["file"]?.jsonPrimitive?.content
         val contextLines = (params["context_lines"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0).coerceIn(0, 3)
+
+        // Validate file path upfront if provided (prevents path traversal)
+        val resolvedFilePath = if (rawFilePath != null) {
+            val (validated, pathError) = PathValidator.resolveAndValidate(rawFilePath, project.basePath)
+            if (pathError != null) return pathError
+            validated
+        } else {
+            null
+        }
 
         val content = ReadAction.nonBlocking<String> {
             val scope = GlobalSearchScope.projectScope(project)
@@ -45,10 +55,9 @@ class FindReferencesTool : AgentTool {
             val psiClass = PsiToolUtils.findClassAnywhere(project, symbol)
             val targetElement = if (psiClass != null) {
                 // If file path specified, check class is in that file
-                if (filePath != null) {
-                    val resolvedPath = if (filePath.startsWith("/")) filePath else "${project.basePath}/$filePath"
+                if (resolvedFilePath != null) {
                     val classFile = psiClass.containingFile?.virtualFile?.path
-                    if (classFile != resolvedPath) null else psiClass
+                    if (classFile != resolvedFilePath) null else psiClass
                 } else {
                     psiClass
                 }
@@ -58,9 +67,8 @@ class FindReferencesTool : AgentTool {
 
             // If class not found, try to find as a method within a class context
             val searchTarget = targetElement ?: run {
-                if (filePath != null) {
-                    val resolvedPath = if (filePath.startsWith("/")) filePath else "${project.basePath}/$filePath"
-                    val vFile = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
+                if (resolvedFilePath != null) {
+                    val vFile = LocalFileSystem.getInstance().findFileByPath(resolvedFilePath)
                     val psiFile = vFile?.let { PsiManager.getInstance(project).findFile(it) }
                     // Search all classes in the file for a method with this name
                     val classes = (psiFile as? com.intellij.psi.PsiJavaFile)?.classes ?: emptyArray()

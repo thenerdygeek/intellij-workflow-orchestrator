@@ -11,6 +11,7 @@ import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -37,8 +38,10 @@ class FileStructureTool : AgentTool {
 
         val detail = params["detail"]?.jsonPrimitive?.content ?: "signatures"
 
-        val path = if (rawPath.startsWith("/")) rawPath else "${project.basePath}/$rawPath"
-        val vFile = LocalFileSystem.getInstance().findFileByPath(path)
+        val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
+        if (pathError != null) return pathError
+
+        val vFile = LocalFileSystem.getInstance().findFileByPath(path!!)
             ?: return ToolResult("Error: File not found: $path", "Error: file not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         // Use nonBlocking read action — avoids blocking EDT and write actions

@@ -11,13 +11,12 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.io.File
-
 /**
  * Removes a line breakpoint from a file at the specified line.
  *
@@ -52,19 +51,14 @@ class RemoveBreakpointTool : AgentTool {
             return ToolResult("Line number must be >= 1, got: $line", "Invalid line", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        // Resolve file path
-        val absolutePath = if (File(filePath).isAbsolute) {
-            filePath
-        } else {
-            val basePath = project.basePath
-                ?: return ToolResult("Cannot resolve relative path: project basePath is null", "Path error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
-            File(basePath, filePath).canonicalPath
-        }
+        // Resolve and validate file path (prevents path traversal)
+        val (absolutePath, pathError) = PathValidator.resolveAndValidate(filePath, project.basePath)
+        if (pathError != null) return pathError
 
         return try {
             withContext(Dispatchers.EDT) {
                 WriteAction.compute<ToolResult, Exception> {
-                    val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath)
+                    val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath!!)
                         ?: return@compute ToolResult(
                             "File not found: $absolutePath",
                             "File not found",
