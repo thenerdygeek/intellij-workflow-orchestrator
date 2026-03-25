@@ -297,6 +297,7 @@ class AgentService(
             register(SpringSecurityTool())
             register(SpringScheduledTool())
             register(SpringEventListenersTool())
+            register(SpringBootAutoConfigTool())
         }
     }
 
