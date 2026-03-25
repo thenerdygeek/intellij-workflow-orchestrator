@@ -149,12 +149,15 @@ class RunTestsTool : AgentTool {
                     ?.build()
                     ?: return@withContext null
 
-                ProgramRunnerUtil.executeConfiguration(env, true, true)
+                ProgramRunnerUtil.executeConfiguration(env, false, true)
             }
 
             // Poll for the run descriptor to appear and attach a process listener
             suspendCancellableCoroutine { continuation ->
                 val timer = java.util.Timer()
+                continuation.invokeOnCancellation {
+                    timer.cancel()
+                }
                 timer.schedule(object : java.util.TimerTask() {
                     private var attempts = 0
                     override fun run() {
@@ -175,7 +178,9 @@ class RunTestsTool : AgentTool {
                                     java.util.Timer().schedule(object : java.util.TimerTask() {
                                         override fun run() {
                                             val testResult = extractNativeResults(project, simpleClassName, testTarget)
-                                            continuation.resume(testResult)
+                                            if (continuation.isActive) {
+                                                continuation.resume(testResult)
+                                            }
                                         }
                                     }, 500)
                                 } else {
@@ -185,7 +190,9 @@ class RunTestsTool : AgentTool {
                                             java.util.Timer().schedule(object : java.util.TimerTask() {
                                                 override fun run() {
                                                     val testResult = extractNativeResults(project, simpleClassName, testTarget)
-                                                    continuation.resume(testResult)
+                                                    if (continuation.isActive) {
+                                                        continuation.resume(testResult)
+                                                    }
                                                 }
                                             }, 500)
                                         }
@@ -194,11 +201,15 @@ class RunTestsTool : AgentTool {
                             } else if (attempts > 50) {
                                 // 5 seconds without finding the descriptor
                                 timer.cancel()
-                                continuation.resume(null)
+                                if (continuation.isActive) {
+                                    continuation.resume(null)
+                                }
                             }
                         } catch (e: Exception) {
                             timer.cancel()
-                            continuation.resume(null)
+                            if (continuation.isActive) {
+                                continuation.resume(null)
+                            }
                         }
                     }
                 }, 100, 100) // Check every 100ms
@@ -500,12 +511,17 @@ class RunTestsTool : AgentTool {
             val process = processBuilder.start()
             val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
 
-            val output = process.inputStream.bufferedReader().readText()
-            val truncatedOutput = if (output.length > MAX_OUTPUT_CHARS) {
-                output.takeLast(MAX_OUTPUT_CHARS) + "\n... (output truncated, showing last $MAX_OUTPUT_CHARS chars)"
-            } else {
-                output
+            val output = buildString {
+                process.inputStream.bufferedReader().use { reader ->
+                    var line = reader.readLine()
+                    while (line != null && length < MAX_OUTPUT_CHARS) {
+                        appendLine(line)
+                        line = reader.readLine()
+                    }
+                    if (line != null) appendLine("... (output truncated at $MAX_OUTPUT_CHARS chars)")
+                }
             }
+            val truncatedOutput = output
 
             if (!completed) {
                 process.destroyForcibly()
