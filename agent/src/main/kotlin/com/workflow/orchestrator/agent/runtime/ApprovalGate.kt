@@ -235,7 +235,7 @@ class ApprovalGate(
 
             // PSI/Spring read-only
             "spring_context", "spring_endpoints", "spring_bean_graph",
-            "spring_config", "jpa_entities", "project_modules",
+            "spring_config", "jpa_entities", "project_modules", "module_dependency_graph",
             "maven_dependencies", "maven_properties", "maven_plugins",
             "maven_profiles", "spring_version_info", "spring_profiles",
             "spring_repositories", "spring_security_config",

@@ -33,7 +33,7 @@ object DynamicToolSelector {
         "read_file", "edit_file", "search_code", "run_command", "glob_files",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "get_annotations", "get_method_body", "read_write_access", "dataflow_analysis",
-        "diagnostics", "format_code", "optimize_imports",
+        "diagnostics", "problem_view", "format_code", "optimize_imports",
         "agent",
         "delegate_task",
         "think"
@@ -87,7 +87,7 @@ object DynamicToolSelector {
     private val VCS_TOOL_NAMES = setOf(
         "git_status", "git_blame", "git_diff", "git_log", "git_branches",
         "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base",
-        "git_file_history"
+        "git_file_history", "changelist_shelve"
     )
 
     private val SPRING_TOOL_NAMES = setOf(
@@ -103,7 +103,7 @@ object DynamicToolSelector {
 
     private val MAVEN_TOOL_NAMES = setOf(
         "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
-        "project_modules"
+        "project_modules", "module_dependency_graph"
     )
 
     private val MAVEN_ENHANCED_TOOL_NAMES = setOf(
@@ -172,7 +172,8 @@ object DynamicToolSelector {
             "vcs",
             setOf("git", "commit", "diff", "blame", "who changed", "log", "stash",
                 "rebase", "branch", "cherry", "changed files", "history",
-                "implement", "implementation", "override"),
+                "implement", "implementation", "override",
+                "shelve", "unshelve", "changelist"),
             VCS_TOOL_NAMES + setOf("find_implementations")
         ),
         ToolGroup(
@@ -237,7 +238,7 @@ object DynamicToolSelector {
     private val MAVEN_PROJECT_TOOLS = setOf(
         "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
         "maven_dependency_tree", "maven_effective_pom",
-        "spring_version_info", "project_modules"
+        "spring_version_info", "project_modules", "module_dependency_graph"
     )
 
     /** Spring tools to auto-include when project is detected as Spring. */
@@ -254,7 +255,7 @@ object DynamicToolSelector {
 
     /** Gradle tools to auto-include when project is detected as Gradle. */
     private val GRADLE_PROJECT_TOOLS = setOf(
-        "gradle_dependencies", "gradle_tasks", "gradle_properties", "project_modules"
+        "gradle_dependencies", "gradle_tasks", "gradle_properties", "project_modules", "module_dependency_graph"
     )
 
     /**

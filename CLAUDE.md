@@ -33,7 +33,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, Cody pre-review, QA clipboard, time logging |
 | `:git-integration` | Git branch operations and VCS integration |
-| `:agent` | AI coding agent — ReAct loop, 97 tools, delegate_task, plan persistence, JCEF chat UI |
+| `:agent` | AI coding agent — ReAct loop, 98 tools, delegate_task, plan persistence, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
