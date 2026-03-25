@@ -562,6 +562,8 @@ class SingleAgentSession(
             if (choice.finishReason == "tool_calls") {
                 LOG.warn("SingleAgentSession: finishReason=tool_calls but no valid tool calls — asking LLM to retry")
                 agentFileLogger?.logRetry(sessionId, "finishReason=tool_calls but no valid tool calls", iteration)
+                agentFileLogger?.logMalformedToolCall(sessionId, null, message.toolCalls?.firstOrNull()?.function?.arguments?.take(200), "finishReason=tool_calls but all tool calls filtered as malformed")
+                onDebugLog?.invoke("error", "malformed_tc", "finishReason=tool_calls but 0 valid — raw args: ${message.toolCalls?.firstOrNull()?.function?.arguments?.take(150) ?: "null"}", mapOf("iteration" to iteration))
                 contextManager.addMessage(ChatMessage(
                     role = "user",
                     content = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +

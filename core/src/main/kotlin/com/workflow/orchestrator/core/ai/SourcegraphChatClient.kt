@@ -341,11 +341,22 @@ class SourcegraphChatClient(
                             // This happens when the Sourcegraph API merges parallel tool calls.
                             val args = tc.function.arguments.trim()
                             if (args.contains("}{")) {
-                                log.warn("[Agent:API] Detected concatenated JSON in tool call '${tc.function.name}', splitting")
-                                // Don't attempt to split — the individual JSONs may share the same tool name
-                                // but with different arguments. Mark as invalid by clearing the name.
-                                // The session will detect finishReason=tool_calls with empty toolCalls and retry.
-                                emptyList()
+                                log.warn("[Agent:API] Detected concatenated JSON in tool call '${tc.function.name}', attempting to split")
+                                // Try to split on }{ boundary and keep only the first valid JSON object.
+                                // The rest are lost, but at least one tool call succeeds instead of zero.
+                                val firstJson = args.substringBefore("}{") + "}"
+                                try {
+                                    // Validate the extracted JSON is parseable
+                                    json.decodeFromString<kotlinx.serialization.json.JsonObject>(firstJson)
+                                    log.info("[Agent:API] Successfully extracted first tool call from concatenated JSON")
+                                    listOf(ToolCall(
+                                        id = tc.id,
+                                        function = FunctionCall(name = tc.function.name, arguments = firstJson)
+                                    ))
+                                } catch (_: Exception) {
+                                    log.warn("[Agent:API] Failed to extract valid JSON from concatenated tool call")
+                                    emptyList()
+                                }
                             } else {
                                 listOf(tc)
                             }
