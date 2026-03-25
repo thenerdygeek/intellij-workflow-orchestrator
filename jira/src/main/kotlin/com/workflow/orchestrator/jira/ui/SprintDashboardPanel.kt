@@ -25,6 +25,8 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
@@ -814,12 +816,13 @@ class SprintDashboardPanel(
                 )
             } else ""
 
-            val defaultSource = settings.state.defaultTargetBranch.orEmpty().ifBlank { "develop" }
             val repoDisplay = "$projectKey / $repoSlug"
 
             setLoading(true, "Fetching branches\u2026")
 
             scope.launch {
+                val gitRepo = GitRepositoryManager.getInstance(project).repositories.firstOrNull()
+                val defaultSource = gitRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
                 val branchesResult = branchingService.fetchRemoteBranches(branchClient, projectKey, repoSlug)
 
                 val branches = when (branchesResult) {

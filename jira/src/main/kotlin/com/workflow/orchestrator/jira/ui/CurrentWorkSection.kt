@@ -1,21 +1,23 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
+import kotlinx.coroutines.*
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.FlowLayout
 import javax.swing.BoxLayout
 import javax.swing.JPanel
+import javax.swing.ListSelectionModel
 
 /**
  * "Currently Working On" section at the top of the Sprint tab left panel.
@@ -39,6 +41,15 @@ class CurrentWorkSection(
         foreground = StatusColors.SECONDARY_TEXT
         font = font.deriveFont(JBUI.scale(10).toFloat())
     }
+    private val targetArrowLabel = JBLabel("").apply {
+        foreground = StatusColors.SECONDARY_TEXT
+        font = font.deriveFont(JBUI.scale(10).toFloat())
+    }
+    private val editTargetLabel = JBLabel(AllIcons.Actions.Edit).apply {
+        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        toolTipText = "Change target branch"
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val statusBadge = JBLabel("")
     private val emptyPanel = JPanel(BorderLayout())
 
@@ -94,22 +105,38 @@ class CurrentWorkSection(
             isOpaque = false
         }
 
-        // Resolve branch off-EDT to avoid synchronous repository update on UI thread
         metaRow.add(branchLabel)
+        metaRow.add(targetArrowLabel)
+        metaRow.add(editTargetLabel)
         inner.add(metaRow)
-        ApplicationManager.getApplication().executeOnPooledThread {
+
+        editTargetLabel.mouseListeners.forEach { editTargetLabel.removeMouseListener(it) }
+        editTargetLabel.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                showBranchPicker()
+            }
+        })
+
+        scope.launch {
             val resolver = RepoContextResolver.getInstance(project)
             val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
             val repos = GitRepositoryManager.getInstance(project).repositories
             val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
             val currentBranch = targetRepo?.currentBranchName ?: ""
-            if (currentBranch.isNotBlank()) {
-                invokeLater {
+            val targetBranch = targetRepo?.let {
+                DefaultBranchResolver.getInstance(project).resolve(it)
+            } ?: ""
+
+            invokeLater {
+                if (currentBranch.isNotBlank()) {
                     branchLabel.text = currentBranch
                     branchLabel.icon = AllIcons.Vcs.Branch
-                    revalidate()
-                    repaint()
                 }
+                if (targetBranch.isNotBlank()) {
+                    targetArrowLabel.text = "→ $targetBranch"
+                }
+                revalidate()
+                repaint()
             }
         }
         add(inner, BorderLayout.CENTER)
@@ -122,6 +149,35 @@ class CurrentWorkSection(
                 onTicketClicked?.invoke(ticketId)
             }
         })
+    }
+
+    private fun showBranchPicker() {
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        val repo = repos.firstOrNull() ?: return
+        val branches = repo.branches.remoteBranches
+            .map { it.nameForRemoteOperations }
+            .filter { it != "HEAD" }
+            .sorted()
+
+        val list = com.intellij.ui.components.JBList(branches)
+        list.selectionMode = ListSelectionModel.SINGLE_SELECTION
+
+        val popup = JBPopupFactory.getInstance()
+            .createListPopupBuilder(list)
+            .setTitle("Select Target Branch")
+            .setFilterAlwaysVisible(true)
+            .setItemChoosenCallback {
+                val selected = list.selectedValue as? String ?: return@setItemChoosenCallback
+                val resolver = DefaultBranchResolver.getInstance(project)
+                val repoPath = repo.root.path
+                resolver.setOverride(repoPath, repo.currentBranchName ?: "", selected)
+                targetArrowLabel.text = "→ $selected"
+                revalidate()
+                repaint()
+            }
+            .createPopup()
+
+        popup.showUnderneathOf(editTargetLabel)
     }
 
     private fun buildEmptyState() {
