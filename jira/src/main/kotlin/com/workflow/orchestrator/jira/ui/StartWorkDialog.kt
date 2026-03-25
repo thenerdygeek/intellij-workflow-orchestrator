@@ -10,7 +10,9 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.intellij.openapi.ui.ComboBox
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -20,7 +22,8 @@ import javax.swing.*
 data class StartWorkResult(
     val sourceBranch: String,
     val branchName: String,
-    val useExisting: Boolean = false
+    val useExisting: Boolean = false,
+    val selectedRepoIndex: Int = 0
 )
 
 /**
@@ -41,11 +44,15 @@ class StartWorkDialog(
     private val repoDisplay: String,
     private val needsCodyGeneration: Boolean,
     private val fallbackBranchName: String,
-    private val existingBranches: List<String> = emptyList()
+    private val existingBranches: List<String> = emptyList(),
+    private val repos: List<RepoConfig> = emptyList(),
+    private val initialRepoIndex: Int = 0
 ) : DialogWrapper(project, true) {
 
     private val log = Logger.getInstance(StartWorkDialog::class.java)
     private val isDualMode = existingBranches.isNotEmpty()
+    private val showRepoSelector = repos.size > 1
+    private var selectedRepoIdx = initialRepoIndex
 
     // Dual-mode components
     private var useExistingRadio: JRadioButton? = null
@@ -113,13 +120,30 @@ class StartWorkDialog(
             mainPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
         }
 
-        // Repository row
+        // Repository row — combo selector for multi-repo, static label for single
         val repoRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         repoRow.add(JBLabel("Repository:"))
-        repoRow.add(JBLabel(repoDisplay).apply {
-            foreground = StatusColors.LINK
-        })
-        mainPanel.add(repoRow)
+        if (showRepoSelector) {
+            val repoCombo = ComboBox(repos.map { it.displayLabel }.toTypedArray()).apply {
+                selectedIndex = initialRepoIndex.coerceIn(0, repos.size - 1)
+                addActionListener {
+                    selectedRepoIdx = selectedIndex
+                }
+            }
+            repoRow.add(repoCombo)
+            val hint = JBLabel("Branches listed are from the initially-detected repo").apply {
+                foreground = StatusColors.SECONDARY_TEXT
+                font = font.deriveFont(font.size2D - 1f)
+            }
+            mainPanel.add(repoRow)
+            mainPanel.add(Box.createVerticalStrut(JBUI.scale(2)))
+            mainPanel.add(hint)
+        } else {
+            repoRow.add(JBLabel(repoDisplay).apply {
+                foreground = StatusColors.LINK
+            })
+            mainPanel.add(repoRow)
+        }
         mainPanel.add(Box.createVerticalStrut(JBUI.scale(12)))
 
         if (isDualMode) {
@@ -292,16 +316,18 @@ class StartWorkDialog(
             result = StartWorkResult(
                 sourceBranch = "",
                 branchName = selectedBranch,
-                useExisting = true
+                useExisting = true,
+                selectedRepoIndex = selectedRepoIdx
             )
-            log.info("[Jira:StartWork] User chose existing branch: '$selectedBranch'")
+            log.info("[Jira:StartWork] User chose existing branch: '$selectedBranch' on repo index $selectedRepoIdx")
         } else {
             result = StartWorkResult(
                 sourceBranch = selectedSourceBranch,
                 branchName = branchNameField.text.orEmpty().trim(),
-                useExisting = false
+                useExisting = false,
+                selectedRepoIndex = selectedRepoIdx
             )
-            log.info("[Jira:StartWork] User confirmed new branch: '${result?.branchName}' from '${result?.sourceBranch}'")
+            log.info("[Jira:StartWork] User confirmed new branch: '${result?.branchName}' from '${result?.sourceBranch}' on repo index $selectedRepoIdx")
         }
         super.doOKAction()
     }

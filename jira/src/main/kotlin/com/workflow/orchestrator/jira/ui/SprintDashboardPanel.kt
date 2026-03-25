@@ -786,8 +786,23 @@ class SprintDashboardPanel(
             val settings = PluginSettings.getInstance(project)
             val pattern = settings.state.branchPattern ?: "feature/{ticketId}-{summary}"
             val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
-            val projectKey = settings.state.bitbucketProjectKey.orEmpty()
-            val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+
+            val allRepos = settings.getRepos().filter { it.isConfigured }
+            val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+            val detectedRepo = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val detectedIndex = allRepos.indexOfFirst {
+                it.bitbucketProjectKey == detectedRepo?.bitbucketProjectKey &&
+                    it.bitbucketRepoSlug == detectedRepo?.bitbucketRepoSlug
+            }.takeIf { it >= 0 } ?: 0
+
+            if (allRepos.isEmpty()) {
+                setLoading(false, "Configure at least one repository in Settings first")
+                return
+            }
+
+            val initialRepo = allRepos[detectedIndex]
+            val projectKey = initialRepo.bitbucketProjectKey.orEmpty()
+            val repoSlug = initialRepo.bitbucketRepoSlug.orEmpty()
 
             if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
                 setLoading(false, "Configure Bitbucket URL, project key, and repo slug in Settings first")
@@ -816,7 +831,7 @@ class SprintDashboardPanel(
                 )
             } else ""
 
-            val repoDisplay = "$projectKey / $repoSlug"
+            val repoDisplay = initialRepo.displayLabel
 
             setLoading(true, "Fetching branches\u2026")
 
@@ -851,7 +866,9 @@ class SprintDashboardPanel(
                         repoDisplay = repoDisplay,
                         needsCodyGeneration = needsCody,
                         fallbackBranchName = fallbackBranchName,
-                        existingBranches = linkedBranches
+                        existingBranches = linkedBranches,
+                        repos = allRepos,
+                        initialRepoIndex = detectedIndex
                     )
 
                     // If Cody is needed, launch generation in background AFTER dialog is shown
@@ -902,6 +919,16 @@ class SprintDashboardPanel(
                     if (!dialog.showAndGet()) return@withContext
                     val dialogResult = dialog.result ?: return@withContext
 
+                    // Resolve the selected repo — may differ from initial if user changed it
+                    val selectedRepo = allRepos.getOrElse(dialogResult.selectedRepoIndex) { initialRepo }
+                    val finalProjectKey = selectedRepo.bitbucketProjectKey.orEmpty()
+                    val finalRepoSlug = selectedRepo.bitbucketRepoSlug.orEmpty()
+                    val finalBranchClient = if (dialogResult.selectedRepoIndex != detectedIndex) {
+                        // User switched repo — create a new branch client isn't needed,
+                        // but we need to use the correct project/repo for the API call
+                        branchClient // same HTTP client, different projectKey/repoSlug passed below
+                    } else branchClient
+
                     if (dialogResult.useExisting) {
                         setLoading(true, "Checking out branch\u2026")
 
@@ -933,9 +960,9 @@ class SprintDashboardPanel(
                                 issue = selectedIssue,
                                 branchName = dialogResult.branchName,
                                 sourceBranch = dialogResult.sourceBranch,
-                                branchClient = branchClient,
-                                projectKey = projectKey,
-                                repoSlug = repoSlug
+                                branchClient = finalBranchClient,
+                                projectKey = finalProjectKey,
+                                repoSlug = finalRepoSlug
                             )
                             withContext(Dispatchers.EDT) {
                                 when (result) {
