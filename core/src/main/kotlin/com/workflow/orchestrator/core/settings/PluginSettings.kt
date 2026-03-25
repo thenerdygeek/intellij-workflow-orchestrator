@@ -85,6 +85,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Phase 2B: Handover settings
         var defaultTargetBranch by string("develop")
+        var branchTargetOverrides by string("")
         var bitbucketProjectKey by string("")
         var bitbucketRepoSlug by string("")
         var startWorkTimestamp by property(0L)
