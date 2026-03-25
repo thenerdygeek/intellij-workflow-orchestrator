@@ -942,6 +942,13 @@ class SprintDashboardPanel(
                                     is ApiResult.Success -> {
                                         setLoading(false, "Branch created: ${result.data}")
                                         log.info("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")
+                                        if (!dialogResult.useExisting && dialogResult.sourceBranch.isNotBlank()) {
+                                            val resolver = DefaultBranchResolver.getInstance(project)
+                                            val repoPath = gitRepo?.root?.path ?: ""
+                                            if (repoPath.isNotBlank()) {
+                                                resolver.setOverride(repoPath, dialogResult.branchName, dialogResult.sourceBranch)
+                                            }
+                                        }
                                         currentWorkSection.refresh()
                                         loadData()
                                     }
