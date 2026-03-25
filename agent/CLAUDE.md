@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 86 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 97 tools.
 
 ## LLM API
 
@@ -33,15 +33,15 @@ AgentController (UI entry point)
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (86 total, 10 categories)
+## Tools (97 total, 10 categories)
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, agent, delegate_task (deprecated), think |
+| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations |
 | Runtime & Debug | get_run_configurations, get_running_processes, get_run_output, get_test_results, add_breakpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_pause, debug_run_to_cursor, debug_stop, evaluate_expression, get_stack_frames, get_variables, create_run_config, modify_run_config, delete_run_config |
 | VCS | git_status, git_blame, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_stash_list, git_merge_base, git_file_history |
-| Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners |
+| Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners, spring_boot_endpoints, spring_boot_autoconfig, spring_boot_config_properties, spring_boot_actuator, gradle_dependencies, gradle_tasks, gradle_properties, maven_dependency_tree, maven_effective_pom |
 | Jira | jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work, jira_get_worklogs, jira_get_sprints, jira_get_linked_prs, jira_get_boards, jira_get_sprint_issues, jira_get_board_issues, jira_search_issues, jira_get_dev_branches, jira_start_work |
 | CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results, bamboo_stop_build, bamboo_cancel_build, bamboo_get_artifacts, bamboo_recent_builds, bamboo_get_plans, bamboo_get_project_plans, bamboo_search_plans, bamboo_get_plan_branches, bamboo_get_running_builds, bamboo_get_build_variables, bamboo_get_plan_variables, bamboo_rerun_failed_jobs, bamboo_trigger_stage |
 | Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_branches, sonar_project_measures, sonar_source_lines, sonar_issues_paged |
