@@ -25,17 +25,19 @@ class PreReviewService {
     // These avoid re-resolving Class/Method objects per file during enriched review.
     // Classes and methods are resolved lazily on first use and reused across all files.
 
-    private val psiEnricherClass: Class<*> by lazy {
-        Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
+    private val psiEnricherClass: Class<*>? by lazy {
+        try { Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher") }
+        catch (_: ClassNotFoundException) { log.info("[Handover:Review] PsiContextEnricher not available — Cody module deprecated"); null }
     }
-    private val enrichPsiMethod: Method by lazy {
-        psiEnricherClass.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
+    private val enrichPsiMethod: Method? by lazy {
+        psiEnricherClass?.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
     }
-    private val springEnricherClass: Class<*> by lazy {
-        Class.forName("com.workflow.orchestrator.cody.service.SpringContextEnricher")
+    private val springEnricherClass: Class<*>? by lazy {
+        try { Class.forName("com.workflow.orchestrator.cody.service.SpringContextEnricher") }
+        catch (_: ClassNotFoundException) { log.info("[Handover:Review] SpringContextEnricher not available — Cody module deprecated"); null }
     }
-    private val enrichSpringMethod: Method by lazy {
-        springEnricherClass.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
+    private val enrichSpringMethod: Method? by lazy {
+        springEnricherClass?.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
     }
 
     /**
@@ -121,19 +123,27 @@ class PreReviewService {
         changedFiles: List<VirtualFile>
     ): List<String> {
         // Create enricher instances (classes + methods are cached as lazy fields)
-        val psiEnricher = psiEnricherClass.getConstructor(Project::class.java).newInstance(proj)
+        // Return empty if Cody module enrichers are not available (deprecated)
+        val psiClass = psiEnricherClass ?: return emptyList()
+        val psiMethod = enrichPsiMethod ?: return emptyList()
+        val psiEnricher = psiClass.getConstructor(Project::class.java).newInstance(proj)
 
-        val springEnricher: Any = try {
-            proj.getService(springEnricherClass)
-                ?: getSpringEnricherEmpty(springEnricherClass)
-        } catch (_: Exception) {
-            getSpringEnricherEmpty(springEnricherClass)
-        }
+        val sprClass = springEnricherClass
+        val sprMethod = enrichSpringMethod
+        val springEnricher: Any? = if (sprClass != null) {
+            try {
+                proj.getService(sprClass) ?: getSpringEnricherEmpty(sprClass)
+            } catch (_: Exception) {
+                getSpringEnricherEmpty(sprClass)
+            }
+        } else null
 
         return changedFiles.mapNotNull { file ->
             try {
-                val psi = invokeSuspend(psiEnricher, enrichPsiMethod, file.path) ?: return@mapNotNull null
-                val spring = invokeSuspend(springEnricher, enrichSpringMethod, file.path)
+                val psi = invokeSuspend(psiEnricher, psiMethod, file.path) ?: return@mapNotNull null
+                val spring = if (springEnricher != null && sprMethod != null) {
+                    invokeSuspend(springEnricher, sprMethod, file.path)
+                } else null
 
                 val className = psi.javaClass.getMethod("getClassName").invoke(psi) as? String
                     ?: return@mapNotNull null
