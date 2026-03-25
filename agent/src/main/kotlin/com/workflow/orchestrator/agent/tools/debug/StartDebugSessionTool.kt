@@ -77,28 +77,40 @@ class StartDebugSessionTool(
                     isError = true
                 )
 
-            // Listen for session start before launching
+            // Listen for session start before launching (30s timeout to prevent indefinite hang)
             val sessionId = withContext(Dispatchers.EDT) {
                 // Build execution environment for debug
                 val executor = DefaultDebugExecutor.getDebugExecutorInstance()
                 val env = ExecutionEnvironmentBuilder.create(project, executor, settings.configuration).build()
 
                 // Use a coroutine to wait for the debug session to register
-                val sessionDeferred = suspendCancellableCoroutine<String> { cont ->
-                    val connection = project.messageBus.connect()
-                    connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
-                        override fun processStarted(debugProcess: XDebugProcess) {
-                            val session = debugProcess.session
-                            val id = controller.registerSession(session)
-                            connection.disconnect()
-                            cont.resume(id)
-                        }
-                    })
+                val sessionDeferred = withTimeoutOrNull(30_000L) {
+                    suspendCancellableCoroutine<String> { cont ->
+                        val connection = project.messageBus.connect()
+                        cont.invokeOnCancellation { connection.disconnect() }
+                        connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
+                            override fun processStarted(debugProcess: XDebugProcess) {
+                                val session = debugProcess.session
+                                val id = controller.registerSession(session)
+                                connection.disconnect()
+                                cont.resume(id)
+                            }
+                        })
 
-                    // Launch the debug session
-                    ProgramRunnerUtil.executeConfiguration(env, true, true)
+                        // Launch the debug session
+                        ProgramRunnerUtil.executeConfiguration(env, true, true)
+                    }
                 }
                 sessionDeferred
+            }
+
+            if (sessionId == null) {
+                return ToolResult(
+                    "Debug session failed to start within 30 seconds. Check run configuration, build errors, or port conflicts.",
+                    "Debug session timeout",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
             }
 
             // Optionally wait for first breakpoint hit
