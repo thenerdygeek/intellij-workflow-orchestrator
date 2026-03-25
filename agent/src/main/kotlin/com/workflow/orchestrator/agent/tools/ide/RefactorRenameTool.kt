@@ -69,7 +69,8 @@ class RefactorRenameTool : AgentTool {
                             false  // searchTextOccurrences
                         )
                         processor.setPreviewUsages(false)
-                        processor.run()
+                        val usages = processor.findUsages()
+                        processor.performRefactoring(usages)
                         result = ToolResult(
                             "Renamed '$oldName' → '$newName'. All references, imports, and usages updated.",
                             "Renamed $oldName → $newName",
