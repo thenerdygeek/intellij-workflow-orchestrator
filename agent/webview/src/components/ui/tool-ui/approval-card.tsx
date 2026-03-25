@@ -7,8 +7,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
-import { ActionButtons } from "./shared/action-buttons";
-import { type Action } from "./shared/schema";
 
 import { icons, Check, X } from "lucide-react";
 
@@ -77,9 +75,8 @@ function ApprovalCardReceipt({
   return (
     <div
       className={cn(
-        "flex w-full min-w-64 max-w-md flex-col",
+        "flex w-full flex-col",
         "text-foreground",
-        "motion-safe:animate-in motion-safe:fade-in motion-safe:blur-in-sm motion-safe:zoom-in-95 motion-safe:duration-300 motion-safe:ease-[cubic-bezier(0.16,1,0.3,1)] motion-safe:fill-mode-both",
         className,
       )}
       data-slot="approval-card"
@@ -88,26 +85,24 @@ function ApprovalCardReceipt({
       role="status"
       aria-label={displayLabel}
     >
-      <div
-        className={cn(
-          "bg-card/60 flex w-full items-center gap-3 rounded-2xl border px-4 py-3 shadow-xs",
-        )}
-      >
+      <div className="flex w-full items-center gap-2 rounded-lg border px-3 py-1.5"
+        style={{ backgroundColor: 'var(--tool-bg, rgba(0,0,0,0.1))', borderColor: 'var(--border)' }}>
         <span
           className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-full bg-muted",
-            isApproved ? "text-primary" : "text-muted-foreground",
+            "flex size-5 shrink-0 items-center justify-center rounded-full",
+            isApproved ? "text-[var(--success)]" : "text-[var(--fg-muted)]",
           )}
+          style={{ backgroundColor: 'var(--hover-overlay-strong)' }}
         >
           {isApproved ? (
-            <Check className="size-4" />
+            <Check className="size-3" />
           ) : (
-            <X className="size-4" />
+            <X className="size-3" />
           )}
         </span>
-        <div className="flex flex-col">
-          <span className="text-sm font-medium">{displayLabel}</span>
-          <span className="text-muted-foreground text-sm">{title}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-medium">{displayLabel}</span>
+          <span className="text-[11px]" style={{ color: 'var(--fg-muted)' }}>{title}</span>
         </div>
       </div>
     </div>
@@ -158,17 +153,10 @@ export function ApprovalCard({
 
   const isDestructive = resolvedVariant === "destructive";
 
-  const actions: Action[] = [
-    {
-      id: "cancel",
-      label: resolvedCancelLabel,
-      variant: "ghost",
-    },
-    {
-      id: "confirm",
-      label: resolvedConfirmLabel,
-      variant: isDestructive ? "destructive" : "default",
-    },
+  const confirmVariant = isDestructive ? "destructive" : "default";
+  const actions = [
+    { id: "cancel", label: resolvedCancelLabel, variant: "ghost" },
+    { id: "confirm", label: resolvedConfirmLabel, variant: confirmVariant },
   ];
 
   const viewKey = choice ? `receipt-${choice}` : "interactive";
@@ -185,7 +173,7 @@ export function ApprovalCard({
       ) : (
         <article
           className={cn(
-            "flex w-full min-w-64 max-w-md flex-col gap-3",
+            "flex w-full flex-col gap-1.5",
             "text-foreground",
             className,
           )}
@@ -196,31 +184,33 @@ export function ApprovalCard({
           aria-describedby={description ? `${id}-description` : undefined}
           onKeyDown={handleKeyDown}
         >
-          <div className="bg-card flex w-full flex-col gap-4 rounded-2xl border p-5 shadow-xs">
-            <div className="flex items-start gap-3">
+          <div className="flex w-full flex-col gap-2 rounded-lg border px-3 py-2.5"
+            style={{ backgroundColor: 'var(--tool-bg, rgba(0,0,0,0.1))', borderColor: 'var(--border)' }}>
+            <div className="flex items-start gap-2">
               {Icon && (
                 <span
                   className={cn(
-                    "flex size-10 shrink-0 items-center justify-center rounded-xl",
+                    "flex size-6 shrink-0 items-center justify-center rounded-md",
                     isDestructive
                       ? "bg-destructive/10 text-destructive"
                       : "bg-primary/10 text-primary",
                   )}
                 >
-                  <Icon className="size-5" />
+                  <Icon className="size-3.5" />
                 </span>
               )}
-              <div className="flex flex-1 flex-col gap-1">
+              <div className="flex flex-1 flex-col gap-0.5">
                 <h2
                   id={`${id}-title`}
-                  className="text-base font-semibold leading-tight"
+                  className="text-[12px] font-semibold leading-tight"
                 >
                   {title}
                 </h2>
                 {description && (
                   <p
                     id={`${id}-description`}
-                    className="text-muted-foreground text-sm"
+                    className="text-[11px]"
+                    style={{ color: 'var(--fg-muted)' }}
                   >
                     {description}
                   </p>
@@ -231,21 +221,39 @@ export function ApprovalCard({
             {metadata && metadata.length > 0 && (
               <>
                 <Separator />
-                <dl className="flex flex-col gap-2 text-sm">
+                <dl className="flex flex-col gap-1 text-[11px]">
                   {metadata.map((item, index) => (
-                    <div key={index} className="flex justify-between gap-4">
-                      <dt className="text-muted-foreground shrink-0">
+                    <div key={index} className="flex justify-between gap-2">
+                      <dt className="shrink-0" style={{ color: 'var(--fg-muted)' }}>
                         {item.key}
                       </dt>
-                      <dd className="min-w-0 truncate">{item.value}</dd>
+                      <dd className="min-w-0 truncate font-mono text-[10px]">{item.value}</dd>
                     </div>
                   ))}
                 </dl>
               </>
             )}
-          </div>
-          <div className="@container/actions">
-            <ActionButtons actions={actions} onAction={handleAction} />
+
+            <div className="flex items-center justify-end gap-1.5 pt-0.5">
+              {actions.map((action) => (
+                <button
+                  key={action.id}
+                  onClick={() => handleAction(action.id)}
+                  className={cn(
+                    "rounded-md px-3 py-1 text-[11px] font-medium transition-colors",
+                    action.variant === "destructive" || action.variant === "default"
+                      ? "text-[var(--bg)] bg-[var(--fg)]"
+                      : "bg-transparent border",
+                  )}
+                  style={action.variant === "ghost" ? {
+                    color: 'var(--fg-secondary)',
+                    borderColor: 'var(--border)',
+                  } : undefined}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
           </div>
         </article>
       )}

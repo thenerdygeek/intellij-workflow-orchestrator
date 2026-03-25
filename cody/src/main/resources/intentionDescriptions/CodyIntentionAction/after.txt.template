@@ -1,0 +1,7 @@
+// Fixed by AI Agent
+public void process() {
+    String s = null;
+    if (s != null) {
+        System.out.println(s.length());
+    }
+}

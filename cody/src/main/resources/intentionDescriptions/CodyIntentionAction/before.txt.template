@@ -1,0 +1,5 @@
+// SonarQube issue: Code smell detected
+public void process() {
+    String s = null;
+    System.out.println(s.length()); // potential NPE
+}
