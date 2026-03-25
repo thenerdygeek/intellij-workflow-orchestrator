@@ -114,17 +114,22 @@ class AgentVisualizationEditor(
         val escapedType = vizFile.visualizationType
             .replace("'", "\\'")
 
+        // Poll for React bridge readiness — initBridge() registers functions on window
+        // after React mounts (useEffect), which is AFTER onLoadEnd fires.
+        // Poll every 50ms up to 3s for the bridge to be ready.
         val js = """
-            if (typeof applyTheme === 'function') applyTheme({$jsObj});
-            if (typeof setPrismTheme === 'function') setPrismTheme($isDarkJs);
-            if (typeof setMermaidTheme === 'function') setMermaidTheme($isDarkJs);
-
-            // Render visualization as a standalone message
-            if (typeof clearChat === 'function') clearChat();
-            if (typeof appendToken === 'function') {
-                appendToken('```$escapedType\n$escapedContent\n```');
-                endStream();
-            }
+            (function waitForBridge(attempt) {
+                if (typeof appendToken === 'function') {
+                    applyTheme({$jsObj});
+                    if (typeof setPrismTheme === 'function') setPrismTheme($isDarkJs);
+                    if (typeof setMermaidTheme === 'function') setMermaidTheme($isDarkJs);
+                    clearChat();
+                    appendToken('```$escapedType\n$escapedContent\n' + '```');
+                    endStream();
+                } else if (attempt < 60) {
+                    setTimeout(function() { waitForBridge(attempt + 1); }, 50);
+                }
+            })(0);
         """.trimIndent()
         cefBrowser?.executeJavaScript(js, CefResourceSchemeHandler.BASE_URL, 0)
     }
