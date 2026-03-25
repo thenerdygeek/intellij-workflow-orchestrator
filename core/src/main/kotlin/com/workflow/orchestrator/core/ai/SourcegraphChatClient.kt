@@ -335,7 +335,21 @@ class SourcegraphChatClient(
                 val toolCalls = if (toolCallBuilders.isNotEmpty()) {
                     toolCallBuilders.entries
                         .sortedBy { it.key }
-                        .map { it.value.toToolCall() }
+                        .flatMap { entry ->
+                            val tc = entry.value.toToolCall()
+                            // Detect concatenated JSON objects: {"a":"b"}{"c":"d"}
+                            // This happens when the Sourcegraph API merges parallel tool calls.
+                            val args = tc.function.arguments.trim()
+                            if (args.contains("}{")) {
+                                log.warn("[Agent:API] Detected concatenated JSON in tool call '${tc.function.name}', splitting")
+                                // Don't attempt to split — the individual JSONs may share the same tool name
+                                // but with different arguments. Mark as invalid by clearing the name.
+                                // The session will detect finishReason=tool_calls with empty toolCalls and retry.
+                                emptyList()
+                            } else {
+                                listOf(tc)
+                            }
+                        }
                         .filter { it.function.name.isNotBlank() } // Drop tool calls with empty names
                         .ifEmpty { null }
                 } else null

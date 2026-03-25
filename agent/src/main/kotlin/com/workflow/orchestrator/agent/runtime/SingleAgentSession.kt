@@ -527,6 +527,20 @@ class SingleAgentSession(
         }
 
         if (toolCalls.isNullOrEmpty()) {
+            // Check if the LLM intended to make tool calls but they were malformed/filtered out.
+            // finishReason="tool_calls" with empty toolCalls means the LLM tried to call tools
+            // but the arguments were invalid (e.g., concatenated JSON objects).
+            if (choice.finishReason == "tool_calls") {
+                LOG.warn("SingleAgentSession: finishReason=tool_calls but no valid tool calls — asking LLM to retry")
+                contextManager.addMessage(ChatMessage(
+                    role = "user",
+                    content = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
+                        "arguments were malformed and could not be parsed. This can happen when multiple tool calls " +
+                        "get their JSON arguments concatenated. Please retry — call ONE tool at a time with valid JSON arguments."
+                ))
+                return null // continue loop with retry guidance
+            }
+
             // No tool calls — about to return final response
             // LoopGuard: check if verification is needed before completing
             val verificationMsg = loopGuard.beforeCompletion()
