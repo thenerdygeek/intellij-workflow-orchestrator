@@ -487,6 +487,80 @@ class BitbucketBranchClient(
         }
 
     /**
+     * Returns the default branch of a Bitbucket Server repository.
+     * GET /rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/default-branch
+     */
+    suspend fun getDefaultBranch(
+        projectKey: String,
+        repoSlug: String
+    ): ApiResult<BitbucketBranch> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching default branch for $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/default-branch")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val branch = json.decodeFromString<BitbucketBranch>(body)
+                            log.info("[Core:Bitbucket] Default branch for $projectKey/$repoSlug is '${branch.displayId}'")
+                            ApiResult.Success(branch)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching default branch", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Returns all pull requests for a Bitbucket Server repository.
+     * GET /rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests?state={state}&limit={limit}
+     */
+    suspend fun getAllPullRequests(
+        projectKey: String,
+        repoSlug: String,
+        state: String = "OPEN",
+        limit: Int = 100
+    ): ApiResult<List<BitbucketPrResponse>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching all $state pull requests for $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&limit=$limit")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} $state PRs in $projectKey/$repoSlug")
+                            ApiResult.Success(parsed.values)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching pull requests", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
      * Creates a branch in a Bitbucket Server repository.
      * POST /rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/branches
      */
