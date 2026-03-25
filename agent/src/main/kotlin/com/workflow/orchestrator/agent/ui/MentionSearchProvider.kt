@@ -250,21 +250,15 @@ class MentionSearchProvider(private val project: Project) {
                 project.getService(JiraService::class.java)
             } catch (_: Exception) { return "[]" }
 
-            // Build JQL based on query pattern
+            // Build JQL based on query pattern — always scoped to active sprint
             val jql = when {
                 query.isBlank() -> {
-                    // Show active ticket + recent assigned tickets
-                    val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
-                    val activeKey = settings.state.activeTicketId
-                    if (!activeKey.isNullOrBlank()) {
-                        "key = $activeKey OR assignee = currentUser() ORDER BY updated DESC"
-                    } else {
-                        "assignee = currentUser() ORDER BY updated DESC"
-                    }
+                    // Show active sprint tickets only
+                    "sprint in openSprints() ORDER BY updated DESC"
                 }
                 query.matches(Regex("[A-Za-z]+-\\d+")) -> "key = \"${query.uppercase()}\""
-                query.matches(Regex("[A-Za-z]+-?")) -> "key >= \"${query.uppercase()}\" AND key <= \"${query.uppercase()}z\" ORDER BY key ASC"
-                else -> "summary ~ \"${query.replace("\"", "\\\"")}\" ORDER BY updated DESC"
+                query.matches(Regex("[A-Za-z]+-?")) -> "sprint in openSprints() AND key >= \"${query.uppercase()}\" AND key <= \"${query.uppercase()}z\" ORDER BY key ASC"
+                else -> "sprint in openSprints() AND summary ~ \"${query.replace("\"", "\\\"")}\" ORDER BY updated DESC"
             }
 
             val result = jiraService.searchTickets(jql, maxResults = 8)
