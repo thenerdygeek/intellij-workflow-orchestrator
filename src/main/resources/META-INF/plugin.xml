@@ -105,6 +105,8 @@
             serviceImplementation="com.workflow.orchestrator.core.onboarding.OnboardingService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.events.EventBus"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.ai.AiSettings"/>
 
         <!-- Unified Service Layer (shared by UI panels and AI agent) -->
         <projectService
