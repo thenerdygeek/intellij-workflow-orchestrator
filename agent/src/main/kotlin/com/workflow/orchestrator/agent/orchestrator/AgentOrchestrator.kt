@@ -98,7 +98,8 @@ class AgentOrchestrator(
         session: ConversationSession? = null,
         onProgress: (AgentProgress) -> Unit = {},
         onStreamChunk: (String) -> Unit = {},
-        approvalGate: ApprovalGate? = null
+        approvalGate: ApprovalGate? = null,
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null
     ): AgentResult {
         cancelled.set(false)
 
@@ -242,7 +243,8 @@ class AgentOrchestrator(
             sessionTrace = sessionTrace,
             sessionId = traceId,
             onProgress = onProgress,
-            onStreamChunk = onStreamChunk
+            onStreamChunk = onStreamChunk,
+            onDebugLog = onDebugLog
         )
 
         return when (result) {

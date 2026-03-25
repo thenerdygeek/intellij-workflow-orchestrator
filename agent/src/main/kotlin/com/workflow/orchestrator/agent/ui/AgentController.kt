@@ -476,12 +476,18 @@ class AgentController(
                 val orchestrator = AgentOrchestrator(currentSession.brain, agentService.toolRegistry, project)
                 currentOrchestrator = orchestrator
 
+                val onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? =
+                    if (try { AgentSettings.getInstance(project).state.showDebugLog } catch (_: Exception) { false }) {
+                        { level, event, detail, meta -> dashboard.pushDebugLogEntry(level, event, detail, meta) }
+                    } else null
+
                 val result = orchestrator.executeTask(
                     taskDescription = task,
                     session = currentSession,
                     approvalGate = approvalGate,
                     onProgress = { handleProgress(it) },
-                    onStreamChunk = { dashboard.appendStreamToken(it) }
+                    onStreamChunk = { dashboard.appendStreamToken(it) },
+                    onDebugLog = onDebugLog
                 )
                 handleResult(result, System.currentTimeMillis() - sessionStartMs)
             } catch (e: CancellationException) {

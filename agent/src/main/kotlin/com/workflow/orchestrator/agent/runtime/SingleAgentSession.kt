@@ -151,7 +151,8 @@ class SingleAgentSession(
         sessionTrace: SessionTrace? = null,
         sessionId: String = "",
         onProgress: (AgentProgress) -> Unit = {},
-        onStreamChunk: (String) -> Unit = {}
+        onStreamChunk: (String) -> Unit = {},
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null
     ): SingleAgentResult {
         LOG.info("SingleAgentSession: starting with ${tools.size} tools for task: ${task.take(100)}")
         eventLog?.log(AgentEventType.SESSION_STARTED, "Task: ${task.take(200)}, tools: ${tools.size}")
@@ -259,9 +260,11 @@ class SingleAgentSession(
                             content = "WARNING: You have used ${budgetEnforcer.utilizationPercent()}% of your context budget. You MUST use delegate_task for any remaining task touching 2+ files. Single-file edits are still allowed directly."
                         ))
                         // Compress to free space at high utilization
+                        val tokensBefore = contextManager.currentTokens
                         contextManager.compressWithLlm(brain)
                         metrics.compressionCount++
                         loopGuard.clearAllFileReads()
+                        onDebugLog?.invoke("warn", "compression", "$tokensBefore → ${contextManager.currentTokens} tokens (strong nudge)", null)
                     }
                 }
                 BudgetEnforcer.BudgetStatus.NUDGE -> {
@@ -283,8 +286,10 @@ class SingleAgentSession(
                     contextManager.compressWithLlm(brain)
                     metrics.compressionCount++
                     loopGuard.clearAllFileReads()
-                    sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, contextManager.currentTokens, messagesBefore - contextManager.messageCount)
-                    agentFileLogger?.logCompression(sessionId, "budget_enforcer", tokensBefore, contextManager.currentTokens)
+                    val tokensAfter = contextManager.currentTokens
+                    sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, tokensAfter, messagesBefore - contextManager.messageCount)
+                    agentFileLogger?.logCompression(sessionId, "budget_enforcer", tokensBefore, tokensAfter)
+                    onDebugLog?.invoke("warn", "compression", "$tokensBefore → $tokensAfter tokens", null)
                 }
                 BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
             }
@@ -344,7 +349,7 @@ class SingleAgentSession(
             // LLM call with retry logic for rate limits and context length exceeded
             val result = callLlmWithRetry(
                 brain, messages, toolDefsForCall, maxOutputTokens,
-                onStreamChunk, activeToolDefs, activeTools, eventLog
+                onStreamChunk, activeToolDefs, activeTools, eventLog, onDebugLog, iteration
             )
 
             // Handle tool reduction if context exceeded
@@ -356,15 +361,17 @@ class SingleAgentSession(
                 // Phase 1: Prune old tool results (fast, no LLM)
                 contextManager.pruneOldToolResults()
                 // Phase 2: Full compression (LLM if brain available, otherwise truncation)
+                val tokensBefore = contextManager.currentTokens
                 try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
                 metrics.compressionCount++
                 loopGuard.clearAllFileReads()
+                onDebugLog?.invoke("warn", "compression", "$tokensBefore → ${contextManager.currentTokens} tokens (context overflow)", null)
                 // Re-fetch messages after compression
                 val compressedMessages = contextManager.getMessages()
                 // Retry with reduced tools and compressed context
                 val retryResult = callLlmWithRetry(
                     brain, compressedMessages, activeToolDefs, maxOutputTokens,
-                    onStreamChunk, activeToolDefs, activeTools, eventLog
+                    onStreamChunk, activeToolDefs, activeTools, eventLog, onDebugLog, iteration
                 )
                 if (retryResult !is LlmCallResult.Success) {
                     val errorMsg = when (retryResult) {
@@ -381,7 +388,7 @@ class SingleAgentSession(
                     editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
                     budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                     onStreamChunk, eventLog, sessionTrace, maxIterations,
-                    sessionId, sessionStartMs, iterationStartMs
+                    sessionId, sessionStartMs, iterationStartMs, onDebugLog
                 ) ?: continue
             }
 
@@ -392,7 +399,7 @@ class SingleAgentSession(
                         editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
                         budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                         onStreamChunk, eventLog, sessionTrace, maxIterations,
-                        sessionId, sessionStartMs, iterationStartMs
+                        sessionId, sessionStartMs, iterationStartMs, onDebugLog
                     )
                     if (sessionResult != null) return sessionResult
                     totalTokensUsed = result.totalTokensSoFar
@@ -403,6 +410,7 @@ class SingleAgentSession(
                     sessionTrace?.sessionFailed(result.error, totalTokensUsed, iteration)
                     val llmFailedError = "LLM call failed: ${result.error}"
                     agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = llmFailedError)
+                    onDebugLog?.invoke("error", "error", llmFailedError, null)
                     return SingleAgentResult.Failed(
                         error = llmFailedError,
                         tokensUsed = totalTokensUsed
@@ -452,7 +460,8 @@ class SingleAgentSession(
         maxIterations: Int,
         sessionId: String = "",
         sessionStartMs: Long = 0L,
-        iterationStartMs: Long = 0L
+        iterationStartMs: Long = 0L,
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null
     ): SingleAgentResult? {
         val response = result.response
         val usage = response.usage
@@ -696,6 +705,11 @@ class SingleAgentSession(
                         isError = tr.isError
                     )
                 ))
+                onDebugLog?.invoke(
+                    if (tr.isError) "warn" else "info", "tool_call",
+                    "$toolName ${if (tr.isError) "ERROR" else "OK"} (${durMs}ms)",
+                    mapOf("tool" to toolName, "duration" to durMs, "tokens" to tr.tokenEstimate)
+                )
             }
         }
 
@@ -793,12 +807,19 @@ class SingleAgentSession(
                 tokensUsed = contextManager.currentTokens,
                 toolCallInfo = editInfo
             ))
+            onDebugLog?.invoke(
+                if (toolResult.isError) "warn" else "info", "tool_call",
+                "$toolName ${if (toolResult.isError) "ERROR" else "OK"} (${toolDurationMs}ms)",
+                mapOf("tool" to toolName, "duration" to toolDurationMs, "tokens" to toolResult.tokenEstimate)
+            )
         }
 
         // Trace: record iteration completion with tool list
         val toolNames = toolCalls.map { it.function.name }
         sessionTrace?.iterationCompleted(iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, toolNames, choice.finishReason)
         agentFileLogger?.logIteration(sessionId, iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, choice.finishReason, toolNames, System.currentTimeMillis() - iterationStartMs)
+        onDebugLog?.invoke("info", "iteration", "Iter $iteration: ${toolNames.size} tools, ${usage?.totalTokens ?: 0} tokens",
+            mapOf("iteration" to iteration, "tokens" to (usage?.totalTokens ?: 0)))
 
         // LoopGuard: check for loops, error nudges, instruction-fade reminders
         val loopGuardMessages = loopGuard.afterIteration(toolCalls, toolResults, editedFiles.toList())
@@ -991,7 +1012,9 @@ class SingleAgentSession(
         onStreamChunk: (String) -> Unit,
         allToolDefs: List<ToolDefinition>,
         allTools: Map<String, AgentTool>,
-        eventLog: AgentEventLog?
+        eventLog: AgentEventLog?,
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
+        iteration: Int = 0
     ): LlmCallResult {
         var lastError: String? = null
 
@@ -1030,6 +1053,7 @@ class SingleAgentSession(
                                 val reason = if (result.type == ErrorType.RATE_LIMITED) "rate limited" else "server error"
                                 LOG.info("SingleAgentSession: retry $attempt/$MAX_RETRIES after ${delayMs}ms ($reason)")
                                 eventLog?.log(AgentEventType.RATE_LIMITED_RETRY, "Attempt $attempt, backoff ${delayMs}ms ($reason)")
+                                onDebugLog?.invoke("warn", "retry", "$reason — attempt $attempt/$MAX_RETRIES, backoff ${delayMs}ms", mapOf("iteration" to iteration))
                                 delay(delayMs)
                             }
                             continue // retry with backoff

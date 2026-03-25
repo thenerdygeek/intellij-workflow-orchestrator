@@ -302,6 +302,14 @@ class AgentDashboardPanel(
         cefPanel?.appendError(message) ?: fallbackPanel?.appendError(message)
     }
 
+    /**
+     * Push a debug log entry to the JCEF debug log panel.
+     * No-op if JCEF is unavailable (fallback panel has no debug log).
+     */
+    fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
+        cefPanel?.pushDebugLogEntry(level, event, detail, meta)
+    }
+
     fun showResult(text: String) = runOnEdt {
         cefPanel?.setText(text) ?: fallbackPanel?.setText(text)
     }

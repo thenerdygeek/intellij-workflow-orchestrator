@@ -773,6 +773,32 @@ class AgentCefPanel(
         callJs("setDebugLogVisible($show)")
     }
 
+    /**
+     * Serialize and push a debug log entry to the JCEF debug log panel.
+     *
+     * @param level  Severity: "info", "warn", or "error"
+     * @param event  Short event tag, e.g. "tool_call", "iteration", "retry", "compression", "error"
+     * @param detail Human-readable description (truncated to 300 chars)
+     * @param meta   Optional key-value metadata (numbers and booleans emitted as JSON literals)
+     */
+    fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
+        val ts = System.currentTimeMillis()
+        val escapedDetail = detail.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").take(300)
+        val metaStr = if (meta != null) {
+            val pairs = meta.entries.mapNotNull { (k, v) ->
+                when (v) {
+                    null -> null
+                    is Number -> "\"$k\":$v"
+                    is Boolean -> "\"$k\":$v"
+                    else -> "\"$k\":\"${v.toString().replace("\"", "\\\"").take(100)}\""
+                }
+            }.joinToString(",")
+            "{$pairs}"
+        } else "null"
+        val json = """{"ts":$ts,"level":"$level","event":"$event","detail":"$escapedDetail","meta":$metaStr}"""
+        callJs("addDebugLogEntry('${json.replace("'", "\\'")}')")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {
