@@ -11,14 +11,19 @@ import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.*
 import com.intellij.xdebugger.frame.presentation.XValuePresentation
+import com.intellij.debugger.engine.DebugProcessImpl
+import com.intellij.debugger.engine.events.DebuggerCommandImpl
+import com.intellij.debugger.jdi.VirtualMachineProxyImpl
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.Icon
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Shared coroutine wrapper for IntelliJ's callback-based XDebugger API.
@@ -402,6 +407,46 @@ class AgentDebugController(private val project: Project) : Disposable {
         agentBreakpoints.clear()
         agentGeneralBreakpoints.clear()
     }
+
+    /**
+     * Executes a block on the debugger manager thread, wrapping the callback
+     * pattern into a suspend function. Required for JDI operations (thread dump,
+     * force return, drop frame, memory view).
+     *
+     * Passes both DebugProcessImpl and VirtualMachineProxyImpl so tools don't
+     * need to cast the VM proxy themselves.
+     */
+    suspend fun <T> executeOnManagerThread(
+        session: XDebugSession,
+        block: (DebugProcessImpl, VirtualMachineProxyImpl) -> T
+    ): T {
+        val debugProcess = (session.debugProcess as? DebugProcessImpl)
+            ?: throw IllegalStateException("Not a Java debug session")
+        val vmProxy = debugProcess.virtualMachineProxy as VirtualMachineProxyImpl
+        return suspendCancellableCoroutine { cont ->
+            debugProcess.managerThread.schedule(object : DebuggerCommandImpl() {
+                override fun action() {
+                    try {
+                        cont.resume(block(debugProcess, vmProxy))
+                    } catch (e: Exception) {
+                        cont.resumeWithException(e)
+                    }
+                }
+
+                override fun commandCancelled() {
+                    cont.cancel(CancellationException("Debug command cancelled"))
+                }
+            })
+        }
+    }
+
+    /**
+     * Convenience overload for tools that only need DebugProcessImpl (no VM proxy).
+     */
+    suspend fun <T> executeOnManagerThread(
+        session: XDebugSession,
+        block: (DebugProcessImpl) -> T
+    ): T = executeOnManagerThread(session) { dp, _ -> block(dp) }
 
     companion object {
         const val MAX_VARIABLE_CHARS = 3000
