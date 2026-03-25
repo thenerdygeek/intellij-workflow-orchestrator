@@ -23,10 +23,6 @@
             interface="com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider"
             dynamic="true"/>
         <extensionPoint
-            qualifiedName="com.workflow.orchestrator.codyAgentProvider"
-            interface="com.workflow.orchestrator.cody.agent.CodyAgentProvider"
-            dynamic="true"/>
-        <extensionPoint
             qualifiedName="com.workflow.orchestrator.branchNameAiGenerator"
             interface="com.workflow.orchestrator.core.ai.BranchNameAiGenerator"
             dynamic="true"/>
@@ -182,26 +178,6 @@
         <projectViewNodeDecorator
             implementation="com.workflow.orchestrator.sonar.ui.CoverageTreeDecorator"/>
 
-        <!-- Cody AI Notification Group -->
-        <notificationGroup id="workflow.cody" displayType="BALLOON"/>
-
-        <!-- Cody Agent Service -->
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentManager"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.cody.agent.CodyAgentProviderService"/>
-
-        <!-- Cody Context Service (PSI+Spring enrichment) -->
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.cody.service.CodyContextService"/>
-
-        <!-- Cody Gutter Actions -->
-        <codeInsight.lineMarkerProvider
-            language="JAVA"
-            implementationClass="com.workflow.orchestrator.cody.editor.CodyGutterAction"/>
-        <codeInsight.lineMarkerProvider
-            language="kotlin"
-            implementationClass="com.workflow.orchestrator.cody.editor.CodyGutterAction"/>
         <codeInsight.lineMarkerProvider
             language="JAVA"
             implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
@@ -209,21 +185,11 @@
             language="kotlin"
             implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
 
-        <!-- Cody Intention Action (Alt+Enter) -->
+        <!-- Cody Intention Action (Alt+Enter) — registered without language to work for all file types -->
         <intentionAction>
-            <language>JAVA</language>
             <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
             <category>Workflow Orchestrator</category>
         </intentionAction>
-        <intentionAction>
-            <language>kotlin</language>
-            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
-            <category>Workflow Orchestrator</category>
-        </intentionAction>
-
-        <!-- Cody Document Sync -->
-        <editorFactoryListener
-            implementation="com.workflow.orchestrator.cody.agent.CodyDocumentSyncListener"/>
 
         <!-- Cody Commit Message -->
         <vcsCheckinHandlerFactory
@@ -369,8 +335,6 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
-        <codyAgentProvider
-            implementation="com.workflow.orchestrator.cody.agent.StandaloneCodyAgentProvider"/>
         <branchNameAiGenerator
             implementation="com.workflow.orchestrator.core.ai.SourcegraphBranchNameGenerator"/>
         <jiraTicketProvider
@@ -388,12 +352,6 @@
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.HistoryTabProvider"/>
     </extensions>
-
-    <projectListeners>
-        <!-- Cody Focus Tracking -->
-        <listener class="com.workflow.orchestrator.cody.agent.CodyFocusListener"
-                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
-    </projectListeners>
 
     <actions>
         <action

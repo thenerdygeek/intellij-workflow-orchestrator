@@ -28,7 +28,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:jira` | Sprint dashboard, branching, commit prefix, time tracking, ticket detection |
 | `:bamboo` | Build dashboard, polling, log parsing, CVE remediation, PR creation |
 | `:sonar` | Coverage markers, quality tab, ExternalAnnotator, project key detection |
-| `:cody` | Standalone Cody CLI agent (JSON-RPC), AI fixes, commit messages, context enrichment |
+| `:cody` | DEPRECATED -- former Cody CLI agent. Now a thin shell for rewired UI actions (intention, gutter, VCS). LLM calls use direct Sourcegraph HTTP in :core. |
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, Cody pre-review, QA clipboard, time logging |
