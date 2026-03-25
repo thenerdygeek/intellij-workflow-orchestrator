@@ -24,6 +24,7 @@ import com.workflow.orchestrator.agent.tools.vcs.*
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.intellij.openapi.util.Disposer
+import com.workflow.orchestrator.agent.runtime.AgentFileLogger
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +86,9 @@ class AgentService(
             Disposer.register(this, it)
         }
     }
+
+    /** Structured JSONL file logger for all agent activity — one instance per project, lifecycle tied to the service. */
+    val agentFileLogger: AgentFileLogger by lazy { AgentFileLogger(project) }
 
     /**
      * Callback invoked when a background worker completes.

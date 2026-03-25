@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.tools.DynamicToolSelector
 import com.workflow.orchestrator.agent.tools.ToolRegistry
@@ -225,7 +226,8 @@ class AgentOrchestrator(
             it.log(AgentEventType.SNAPSHOT_CREATED, "checkpoint:$checkpointId")
         }
 
-        val singleAgentSession = SingleAgentSession()
+        val agentFileLogger = try { AgentService.getInstance(project).agentFileLogger } catch (_: Exception) { null }
+        val singleAgentSession = SingleAgentSession(agentFileLogger = agentFileLogger)
         val result = singleAgentSession.execute(
             task = taskDescription,
             tools = allTools,
@@ -238,6 +240,7 @@ class AgentOrchestrator(
             approvalGate = approvalGate,
             eventLog = eventLog,
             sessionTrace = sessionTrace,
+            sessionId = traceId,
             onProgress = onProgress,
             onStreamChunk = onStreamChunk
         )
