@@ -423,6 +423,9 @@ class SourcegraphChatClient(
             val jsonBody = json.encodeToString(request)
             log.debug("[Agent:API] POST $CHAT_COMPLETIONS_PATH (${jsonBody.length} chars)")
 
+            // Dump full request/response to file for debugging multi-turn issues
+            dumpApiRequest(sanitized, tools, jsonBody.length)
+
             val httpRequest = Request.Builder()
                 .url(chatCompletionsUrl())
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
@@ -435,9 +438,13 @@ class SourcegraphChatClient(
                     response.isSuccessful -> {
                         val parsed = json.decodeFromString<ChatCompletionResponse>(body)
                         log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
+                        dumpApiResponse(parsed)
                         ApiResult.Success(parsed)
                     }
-                    else -> mapErrorResponse(response.code, body)
+                    else -> {
+                        dumpApiError(response.code, body)
+                        mapErrorResponse(response.code, body)
+                    }
                 }
             }
         } catch (e: IOException) {
@@ -466,5 +473,88 @@ class SourcegraphChatClient(
         val arguments = StringBuilder()
 
         fun toToolCall() = ToolCall(id = id, function = FunctionCall(name = name, arguments = arguments.toString()))
+    }
+
+    // ═══ API Debug Logging ═══
+    // Dumps full request/response to ~/.workflow-orchestrator/agent/logs/api-debug/
+    // for diagnosing multi-turn context issues.
+
+    private val apiDebugDir by lazy {
+        java.io.File(System.getProperty("user.home"), ".workflow-orchestrator/agent/logs/api-debug").also {
+            it.mkdirs()
+        }
+    }
+
+    @Volatile private var apiCallCounter = 0
+
+    private fun dumpApiRequest(messages: List<ChatMessage>, tools: List<ToolDefinition>?, bodyLength: Int) {
+        try {
+            val idx = ++apiCallCounter
+            val file = java.io.File(apiDebugDir, "call-${String.format("%03d", idx)}-request.txt")
+            file.writeText(buildString {
+                appendLine("=== API Request #$idx === ${java.time.Instant.now()} ===")
+                appendLine("Model: $model")
+                appendLine("Body length: $bodyLength chars")
+                appendLine("Messages: ${messages.size}")
+                appendLine("Tools: ${tools?.size ?: 0}")
+                appendLine()
+
+                messages.forEachIndexed { i, msg ->
+                    appendLine("--- Message $i [role=${msg.role}] ---")
+                    val content = msg.content ?: "(null)"
+                    if (content.length > 2000) {
+                        appendLine(content.take(1000))
+                        appendLine("... [TRUNCATED ${content.length - 2000} chars] ...")
+                        appendLine(content.takeLast(1000))
+                    } else {
+                        appendLine(content)
+                    }
+                    msg.toolCalls?.forEach { tc ->
+                        appendLine("  [tool_call] ${tc.function.name}(${tc.function.arguments.take(200)})")
+                    }
+                    appendLine()
+                }
+            })
+            log.info("[Agent:API] Request dumped to ${file.name} (${messages.size} messages, $bodyLength chars)")
+        } catch (e: Exception) {
+            log.debug("[Agent:API] Failed to dump request: ${e.message}")
+        }
+    }
+
+    private fun dumpApiResponse(response: ChatCompletionResponse) {
+        try {
+            val idx = apiCallCounter
+            val file = java.io.File(apiDebugDir, "call-${String.format("%03d", idx)}-response.txt")
+            val choice = response.choices.firstOrNull()
+            file.writeText(buildString {
+                appendLine("=== API Response #$idx === ${java.time.Instant.now()} ===")
+                appendLine("Usage: prompt=${response.usage?.promptTokens} completion=${response.usage?.completionTokens} total=${response.usage?.totalTokens}")
+                appendLine("FinishReason: ${choice?.finishReason}")
+                appendLine("Tool calls: ${choice?.message?.toolCalls?.size ?: 0}")
+                appendLine()
+                appendLine("--- Content ---")
+                appendLine(choice?.message?.content ?: "(null)")
+                choice?.message?.toolCalls?.forEach { tc ->
+                    appendLine()
+                    appendLine("--- Tool Call: ${tc.function.name} ---")
+                    appendLine(tc.function.arguments.take(500))
+                }
+            })
+            log.info("[Agent:API] Response dumped to ${file.name} (finish=${choice?.finishReason}, tools=${choice?.message?.toolCalls?.size ?: 0})")
+        } catch (e: Exception) {
+            log.debug("[Agent:API] Failed to dump response: ${e.message}")
+        }
+    }
+
+    private fun dumpApiError(code: Int, body: String) {
+        try {
+            val idx = apiCallCounter
+            val file = java.io.File(apiDebugDir, "call-${String.format("%03d", idx)}-error.txt")
+            file.writeText(buildString {
+                appendLine("=== API Error #$idx === ${java.time.Instant.now()} ===")
+                appendLine("HTTP $code")
+                appendLine(body.take(2000))
+            })
+        } catch (_: Exception) {}
     }
 }
