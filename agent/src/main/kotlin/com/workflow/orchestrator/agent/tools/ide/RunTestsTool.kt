@@ -254,12 +254,18 @@ class RunTestsTool : AgentTool {
         return try {
             val runManager = RunManager.getInstance(project)
 
-            // Find JUnit configuration type via the extension point
-            val junitType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList.find { type ->
-                type.id == "JUnit" || type.displayName == "JUnit"
+            // Detect test framework from the class annotations, then find the matching config type.
+            // Supports JUnit 4/5 and TestNG.
+            val testFramework = detectTestFramework(project, className)
+            val configTypeId = when (testFramework) {
+                "TestNG" -> "TestNG"
+                else -> "JUnit" // default to JUnit (covers JUnit 4 + 5)
+            }
+            val testConfigType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList.find { type ->
+                type.id == configTypeId || type.displayName == configTypeId
             } ?: return null
 
-            val factory = junitType.configurationFactories.firstOrNull() ?: return null
+            val factory = testConfigType.configurationFactories.firstOrNull() ?: return null
             val configName = "${className.substringAfterLast('.')}${if (method != null) ".$method" else ""}"
             val settings = runManager.createConfiguration(configName, factory)
 
@@ -278,12 +284,79 @@ class RunTestsTool : AgentTool {
                 }
             }
 
+            // Resolve and set the module containing the test class.
+            // Without this, IntelliJ can't resolve the classpath and forces the Edit Configuration dialog.
+            val testModule = findModuleForClass(project, className)
+            if (testModule == null) {
+                // Can't resolve module — fall back to shell to avoid IntelliJ showing Edit Config dialog
+                return null
+            }
+            run {
+                // ModuleBasedConfiguration.setModule(Module)
+                try {
+                    val setModuleMethod = config.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
+                    setModuleMethod.invoke(config, testModule)
+                } catch (_: Exception) {
+                    // Try alternative: config.configurationModule.module = testModule
+                    try {
+                        val getConfigModule = config.javaClass.getMethod("getConfigurationModule")
+                        val configModule = getConfigModule.invoke(config)
+                        val setModule = configModule.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
+                        setModule.invoke(configModule, testModule)
+                    } catch (_: Exception) {
+                        // Can't set module — native runner may show dialog or fail
+                    }
+                }
+            }
+
             // Register as temporary configuration
             settings.isTemporary = true
             runManager.addConfiguration(settings)
             runManager.selectedConfiguration = settings
 
             settings
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Detect whether a test class uses JUnit or TestNG by checking its annotations/imports.
+     * Returns "JUnit", "TestNG", or "Unknown".
+     */
+    private fun detectTestFramework(project: Project, className: String): String {
+        return try {
+            com.intellij.openapi.application.ReadAction.compute<String, Exception> {
+                val psiClass = com.intellij.psi.JavaPsiFacade.getInstance(project)
+                    .findClass(className, com.intellij.psi.search.GlobalSearchScope.projectScope(project))
+                    ?: return@compute "Unknown"
+
+                val annotations = psiClass.annotations.map { it.qualifiedName.orEmpty() } +
+                    psiClass.methods.flatMap { m -> m.annotations.map { it.qualifiedName.orEmpty() } }
+
+                when {
+                    annotations.any { it.startsWith("org.testng.") } -> "TestNG"
+                    annotations.any { it.startsWith("org.junit.") } -> "JUnit"
+                    else -> "Unknown"
+                }
+            }
+        } catch (_: Exception) {
+            "Unknown"
+        }
+    }
+
+    /**
+     * Find the IntelliJ module containing the given fully-qualified class.
+     * Uses JavaPsiFacade to locate the class, then ModuleUtilCore to find its module.
+     */
+    private fun findModuleForClass(project: Project, className: String): com.intellij.openapi.module.Module? {
+        return try {
+            com.intellij.openapi.application.ReadAction.compute<com.intellij.openapi.module.Module?, Exception> {
+                val psiClass = com.intellij.psi.JavaPsiFacade.getInstance(project)
+                    .findClass(className, com.intellij.psi.search.GlobalSearchScope.projectScope(project))
+                    ?: return@compute null
+                com.intellij.openapi.module.ModuleUtilCore.findModuleForPsiElement(psiClass)
+            }
         } catch (_: Exception) {
             null
         }
