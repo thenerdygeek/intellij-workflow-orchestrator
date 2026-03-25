@@ -42,6 +42,7 @@ class AgentController(
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var currentTaskJob: kotlinx.coroutines.Job? = null
     private var currentOrchestrator: AgentOrchestrator? = null
     private var sessionStartMs = 0L
     private var session: ConversationSession? = null
@@ -454,7 +455,7 @@ class AgentController(
 
         sessionStartMs = System.currentTimeMillis()
 
-        scope.launch {
+        currentTaskJob = scope.launch {
             try {
                 // Create session off EDT (RepoMapGenerator + skill discovery + memory loading are heavy)
                 if (isNewSession) {
@@ -558,7 +559,9 @@ class AgentController(
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
         ProcessRegistry.killAll()
-        dashboard.appendStatus("Cancellation requested...", RichStreamingPanel.StatusType.WARNING)
+        currentTaskJob?.cancel()
+        currentTaskJob = null
+        dashboard.appendStatus("Stopped.", RichStreamingPanel.StatusType.WARNING)
     }
 
     fun newChat() {
@@ -566,6 +569,8 @@ class AgentController(
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
         ProcessRegistry.killAll()
+        currentTaskJob?.cancel()
+        currentTaskJob = null
         currentOrchestrator = null
         sessionAutoApprove = false
         session?.let { s ->
