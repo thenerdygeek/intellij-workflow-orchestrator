@@ -249,6 +249,22 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     onChange?.(text, trigger);
   }, [extractText, onChange]);
 
+  // ── Placeholder visibility ──
+
+  const updateEmptyState = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    const isEmpty = el.textContent?.trim() === '' && el.querySelectorAll('[data-mention-label]').length === 0;
+    const isFocused = document.activeElement === el;
+    if (isEmpty && !isFocused) {
+      el.dataset.empty = 'true';
+    } else {
+      delete el.dataset.empty;
+    }
+  }, []);
+
+  const handleFocusBlur = updateEmptyState;
+
   // ── Event handlers ──
 
   const handleInput = useCallback(() => {
@@ -265,22 +281,6 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       onEscape?.();
     }
   }, [onSubmit, onEscape]);
-
-  // Placeholder visibility: hide on focus, show on blur if empty
-  const updateEmptyState = useCallback(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    const isEmpty = el.textContent?.trim() === '' && el.querySelectorAll('[data-mention-label]').length === 0;
-    const isFocused = document.activeElement === el;
-    if (isEmpty && !isFocused) {
-      el.dataset.empty = 'true';
-    } else {
-      delete el.dataset.empty;
-    }
-  }, []);
-
-  // Keep the old name for event handlers
-  const handleFocusBlur = updateEmptyState;
 
   useEffect(() => {
     handleFocusBlur();

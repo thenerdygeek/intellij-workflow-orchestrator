@@ -130,6 +130,7 @@ class AgentService(
             register(TypeHierarchyTool())
             register(CallHierarchyTool())
             register(GetMethodBodyTool())
+            register(GetAnnotationsTool())
 
             // Spring PSI tools
             register(SpringContextTool())

@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 /**
- * Central registry mapping all 86 agent tools to logical categories.
+ * Central registry mapping all 97 agent tools to logical categories.
  * Used by: DynamicToolSelector (tool filtering), Tools panel UI (categorization),
  * RequestToolsTool (category activation), ToolPreferences (grouping).
  */
@@ -29,7 +29,7 @@ object ToolCategoryRegistry {
                 "read_file", "edit_file", "search_code", "run_command", "glob_files",
                 "diagnostics", "format_code", "optimize_imports",
                 "file_structure", "find_definition", "find_references",
-                "type_hierarchy", "call_hierarchy", "get_method_body",
+                "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations",
                 "delegate_task",
                 "think"
             )
@@ -62,7 +62,9 @@ object ToolCategoryRegistry {
                 "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
                 "gradle_dependencies", "gradle_tasks", "gradle_properties",
                 "spring_version_info", "spring_profiles", "spring_repositories",
-                "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"
+                "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners",
+                "spring_boot_endpoints", "spring_boot_autoconfig", "spring_boot_config_properties", "spring_boot_actuator",
+                "maven_dependency_tree", "maven_effective_pom"
             )
         ),
         ToolCategory(
