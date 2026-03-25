@@ -6,6 +6,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.PsiShortNamesCache
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -22,7 +23,8 @@ class FindReferencesTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "symbol" to ParameterProperty(type = "string", description = "Symbol name to search for (class name, method name, or field name)"),
-            "file" to ParameterProperty(type = "string", description = "Optional file path for disambiguation when multiple symbols share the same name")
+            "file" to ParameterProperty(type = "string", description = "Optional file path for disambiguation when multiple symbols share the same name"),
+            "context_lines" to ParameterProperty(type = "integer", description = "Number of context lines around each reference (default: 0, max: 3)")
         ),
         required = listOf("symbol")
     )
@@ -34,12 +36,13 @@ class FindReferencesTool : AgentTool {
         val symbol = params["symbol"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'symbol' parameter required", "Error: missing symbol", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val filePath = params["file"]?.jsonPrimitive?.content
+        val contextLines = (params["context_lines"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0).coerceIn(0, 3)
 
         val content = ReadAction.nonBlocking<String> {
             val scope = GlobalSearchScope.projectScope(project)
 
             // Try to find as a class first
-            val psiClass = PsiToolUtils.findClass(project, symbol)
+            val psiClass = PsiToolUtils.findClassAnywhere(project, symbol)
             val targetElement = if (psiClass != null) {
                 // If file path specified, check class is in that file
                 if (filePath != null) {
@@ -66,6 +69,11 @@ class FindReferencesTool : AgentTool {
                 } else {
                     null
                 }
+            } ?: run {
+                // Global fallback via PsiShortNamesCache for methods and fields
+                val shortNameCache = PsiShortNamesCache.getInstance(project)
+                shortNameCache.getMethodsByName(symbol, scope).firstOrNull()
+                    ?: shortNameCache.getFieldsByName(symbol, scope).firstOrNull()
             }
 
             if (searchTarget == null) {
@@ -79,17 +87,37 @@ class FindReferencesTool : AgentTool {
 
             val results = references.take(50).mapNotNull { ref ->
                 val element = ref.element
-                val file = element.containingFile?.virtualFile?.path ?: return@mapNotNull null
+                val absoluteFilePath = element.containingFile?.virtualFile?.path ?: return@mapNotNull null
+                val relativeFilePath = PsiToolUtils.relativePath(project, absoluteFilePath)
                 val document = com.intellij.psi.PsiDocumentManager.getInstance(project)
                     .getDocument(element.containingFile) ?: return@mapNotNull null
                 val line = document.getLineNumber(element.textOffset) + 1
-                val lineText = document.getText(
-                    com.intellij.openapi.util.TextRange(
-                        document.getLineStartOffset(line - 1),
-                        document.getLineEndOffset(line - 1)
-                    )
-                ).trim()
-                "$file:$line  $lineText"
+                val zeroIndexedLine = line - 1
+
+                if (contextLines > 0) {
+                    val startLine = maxOf(0, zeroIndexedLine - contextLines)
+                    val endLine = minOf(document.lineCount - 1, zeroIndexedLine + contextLines)
+                    val contextBlock = (startLine..endLine).joinToString("\n") { lineIdx ->
+                        val lineText = document.getText(
+                            com.intellij.openapi.util.TextRange(
+                                document.getLineStartOffset(lineIdx),
+                                document.getLineEndOffset(lineIdx)
+                            )
+                        )
+                        val lineNum = lineIdx + 1
+                        val marker = if (lineIdx == zeroIndexedLine) ">>>" else "   "
+                        "$marker $lineNum: $lineText"
+                    }
+                    "$relativeFilePath:$line\n$contextBlock"
+                } else {
+                    val lineText = document.getText(
+                        com.intellij.openapi.util.TextRange(
+                            document.getLineStartOffset(zeroIndexedLine),
+                            document.getLineEndOffset(zeroIndexedLine)
+                        )
+                    ).trim()
+                    "$relativeFilePath:$line  $lineText"
+                }
             }
 
             val header = "References to '$symbol' (${references.size} total):\n"
