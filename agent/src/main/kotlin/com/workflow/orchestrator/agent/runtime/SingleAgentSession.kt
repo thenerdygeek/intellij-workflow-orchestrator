@@ -1049,23 +1049,13 @@ class SingleAgentSession(
         var lastError: String? = null
 
         for (attempt in 1..MAX_RETRIES) {
-            // Always prefer streaming for real-time UI token display.
-            // Tool call deltas are accumulated by sendMessageStream() and empty
-            // tool names are filtered at both the client (SourcegraphChatClient:328)
-            // and session level (SingleAgentSession:462).
-            // Fall back to non-streaming only if brain doesn't support streaming.
-            var streamed = false
-            val result = try {
-                streamed = true
-                brain.chatStream(messages, toolDefs, maxOutputTokens) { chunk ->
-                    chunk.choices.firstOrNull()?.delta?.content?.let { delta ->
-                        onStreamChunk(delta)
-                    }
-                }
-            } catch (_: NotImplementedError) {
-                streamed = false
-                brain.chat(messages, toolDefs, maxOutputTokens)
-            }
+            // Use non-streaming to get complete, well-structured tool call arguments.
+            // Sourcegraph's streaming SSE can produce empty/malformed tool call args
+            // (tool name arrives but arguments are empty strings). Non-streaming
+            // returns the full response in one shot with properly formed JSON.
+            // Text content is pushed to UI after the response via onStreamChunk.
+            val streamed = false
+            val result = brain.chat(messages, toolDefs, maxOutputTokens)
 
             when (result) {
                 is ApiResult.Success -> {
