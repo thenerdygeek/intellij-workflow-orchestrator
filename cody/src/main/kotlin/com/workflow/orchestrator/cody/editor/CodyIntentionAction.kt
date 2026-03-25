@@ -1,24 +1,18 @@
 package com.workflow.orchestrator.cody.editor
 
 import com.intellij.codeInsight.intention.IntentionAction
-import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
-import com.workflow.orchestrator.cody.protocol.Position
-import com.workflow.orchestrator.cody.protocol.Range
-import com.workflow.orchestrator.cody.service.CodyContextService
-import com.workflow.orchestrator.cody.service.CodyEditService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.MappedIssue
 import com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator
-import kotlinx.coroutines.runBlocking
 
 class CodyIntentionAction : IntentionAction {
 
-    override fun getText(): String = "Fix with Cody (Workflow)"
+    override fun getText(): String = "Fix with AI Agent (Workflow)"
 
     override fun getFamilyName(): String = "Workflow Orchestrator"
 
@@ -38,43 +32,21 @@ class CodyIntentionAction : IntentionAction {
 
     override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
         if (editor == null || file == null) return
-
-        val caretOffset = editor.caretModel.offset
-        val sonarIssue = findSonarIssueAtCaret(editor, caretOffset)
-
-        val range = if (sonarIssue != null) {
-            Range(
-                start = Position(line = sonarIssue.startLine - 1, character = 0),
-                end = Position(line = sonarIssue.endLine, character = 0)
-            )
-        } else {
-            val caretLine = editor.caretModel.logicalPosition.line
-            Range(
-                start = Position(line = caretLine, character = 0),
-                end = Position(line = caretLine + 1, character = 0)
-            )
-        }
-
+        val sonarIssue = findSonarIssueAtCaret(editor, editor.caretModel.offset) ?: return
         val filePath = file.virtualFile.path
-        val contextService = project.service<CodyContextService>()
 
-        com.intellij.openapi.progress.runBackgroundableTask("Fixing with Cody", project) {
-            runBlocking {
-                val fixContext = contextService.gatherFixContext(
-                    filePath = filePath,
-                    issueRange = range,
-                    issueType = sonarIssue?.type?.name ?: "CODE_SMELL",
-                    issueMessage = sonarIssue?.message ?: "Fix issue at cursor",
-                    ruleKey = sonarIssue?.rule ?: "manual"
-                )
-                CodyEditService(project).requestFix(
-                    filePath = filePath,
-                    range = range,
-                    instruction = fixContext.instruction,
-                    contextFiles = fixContext.contextFiles
-                )
-            }
+        val prompt = buildString {
+            appendLine("Fix the following SonarQube issue in this file.")
+            appendLine()
+            appendLine("**Issue:** [${sonarIssue.rule}] ${sonarIssue.message}")
+            appendLine("**Type:** ${sonarIssue.type}")
+            appendLine("**File:** ${file.virtualFile.name}")
+            appendLine("**Lines:** ${sonarIssue.startLine}-${sonarIssue.endLine}")
+            appendLine()
+            appendLine("Read the file, understand the surrounding code, apply a minimal fix that resolves the issue without changing behavior, and verify with diagnostics that the fix compiles.")
         }
+
+        com.workflow.orchestrator.core.ai.AgentChatRedirect.getInstance()?.sendToAgent(project, prompt, listOf(filePath))
     }
 
     private fun findSonarIssueAtCaret(editor: Editor, offset: Int): MappedIssue? {
