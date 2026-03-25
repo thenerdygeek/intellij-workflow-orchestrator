@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.context.ToolOutputStore
+import com.workflow.orchestrator.agent.runtime.ProcessRegistry
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
@@ -16,6 +17,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 class RunCommandTool : AgentTool {
     override val name = "run_command"
@@ -36,6 +38,20 @@ class RunCommandTool : AgentTool {
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
         private const val MAX_TIMEOUT_SECONDS = 600L
         private const val MAX_OUTPUT_CHARS = 30_000
+        private val processIdCounter = AtomicLong(0)
+
+        /**
+         * Stream callback for real-time output delivery to the UI.
+         * Set by the session/controller before tool execution.
+         * Receives (toolCallId, chunk) pairs as output lines arrive.
+         */
+        var streamCallback: ((toolCallId: String, chunk: String) -> Unit)? = null
+
+        /**
+         * Current tool call ID, set by the execution layer before calling execute().
+         * Used to register processes in ProcessRegistry and route stream callbacks.
+         */
+        var currentToolCallId: ThreadLocal<String?> = ThreadLocal.withInitial { null }
 
         /** Commands that are always safe to run (read-only or build tools). */
         private val ALLOWED_PREFIXES = listOf(
@@ -225,24 +241,67 @@ class RunCommandTool : AgentTool {
             processBuilder.redirectErrorStream(true)
 
             val process = processBuilder.start()
-            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
 
-            val rawOutput = process.inputStream.bufferedReader().readText()
-            val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-                ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
-                    "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
-            } else {
-                rawOutput
+            // Determine tool call ID for ProcessRegistry and streaming
+            val toolCallId = currentToolCallId.get()
+                ?: "run-cmd-${processIdCounter.incrementAndGet()}"
+
+            // Register in ProcessRegistry for kill/killAll support
+            ProcessRegistry.register(toolCallId, process)
+
+            // Stream output line-by-line in a daemon thread
+            val outputBuilder = StringBuilder()
+            val activeStreamCallback = streamCallback
+            val readerThread = Thread {
+                try {
+                    process.inputStream.bufferedReader().use { reader ->
+                        var line = reader.readLine()
+                        while (line != null) {
+                            outputBuilder.appendLine(line)
+                            activeStreamCallback?.invoke(toolCallId, line + "\n")
+                            line = reader.readLine()
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Process killed or stream closed — expected during timeout/cancel
+                }
+            }.apply {
+                isDaemon = true
+                name = "RunCommand-Output-$toolCallId"
+                start()
             }
 
+            // Wait for process completion
+            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+
             if (!completed) {
-                process.destroyForcibly()
+                ProcessRegistry.kill(toolCallId)
+                readerThread.join(1000)
+                val rawOutput = outputBuilder.toString()
+                val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
+                    ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
+                        "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
+                } else {
+                    rawOutput
+                }
                 return ToolResult(
                     "Error: Command timed out after ${timeoutSeconds}s.\nPartial output:\n$truncatedOutput",
                     "Error: command timed out",
                     TokenEstimator.estimate(truncatedOutput),
                     isError = true
                 )
+            }
+
+            // Wait for reader thread to drain remaining output
+            readerThread.join(2000)
+            ProcessRegistry.unregister(toolCallId)
+
+            val rawOutput = outputBuilder.toString()
+            val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
+                ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
+                    "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
+            } else {
+                rawOutput
             }
 
             val exitCode = process.exitValue()
