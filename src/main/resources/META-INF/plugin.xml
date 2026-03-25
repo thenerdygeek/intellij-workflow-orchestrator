@@ -94,6 +94,8 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.settings.PluginSettings"/>
         <projectService
+            serviceImplementation="com.workflow.orchestrator.core.util.DefaultBranchResolver"/>
+        <projectService
             serviceImplementation="com.workflow.orchestrator.core.settings.RepoContextResolver"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.offline.ConnectivityMonitor"/>
