@@ -32,7 +32,7 @@ class TypeHierarchyTool : AgentTool {
             ?: return ToolResult("Error: 'class_name' parameter required", "Error: missing class_name", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val content = ReadAction.nonBlocking<String> {
-            val psiClass = PsiToolUtils.findClass(project, className)
+            val psiClass = PsiToolUtils.findClassAnywhere(project, className)
                 ?: return@nonBlocking "No class '$className' found in project"
 
             val sb = StringBuilder()
@@ -41,7 +41,7 @@ class TypeHierarchyTool : AgentTool {
             // Supertypes (direct and transitive)
             sb.appendLine("\nSupertypes:")
             val visited = mutableSetOf<String>()
-            collectSupertypes(psiClass, sb, indent = "  ", visited = visited)
+            collectSupertypes(project, psiClass, sb, indent = "  ", visited = visited)
             if (visited.isEmpty()) {
                 sb.appendLine("  (none)")
             }
@@ -54,7 +54,7 @@ class TypeHierarchyTool : AgentTool {
                 sb.appendLine("  (none)")
             } else {
                 inheritors.take(30).forEach { inheritor ->
-                    val file = inheritor.containingFile?.virtualFile?.path ?: ""
+                    val file = PsiToolUtils.relativePath(project, inheritor.containingFile?.virtualFile?.path ?: "")
                     sb.appendLine("  ${inheritor.qualifiedName ?: inheritor.name}  ($file)")
                 }
                 if (inheritors.size > 30) {
@@ -72,16 +72,16 @@ class TypeHierarchyTool : AgentTool {
         )
     }
 
-    private fun collectSupertypes(psiClass: PsiClass, sb: StringBuilder, indent: String, visited: MutableSet<String>) {
+    private fun collectSupertypes(project: Project, psiClass: PsiClass, sb: StringBuilder, indent: String, visited: MutableSet<String>) {
         for (superType in psiClass.supers) {
             val qName = superType.qualifiedName ?: superType.name ?: continue
             // Skip java.lang.Object
             if (qName == "java.lang.Object") continue
             if (qName in visited) continue
             visited.add(qName)
-            val file = superType.containingFile?.virtualFile?.path ?: ""
+            val file = PsiToolUtils.relativePath(project, superType.containingFile?.virtualFile?.path ?: "")
             sb.appendLine("$indent$qName  ($file)")
-            collectSupertypes(superType, sb, "$indent  ", visited)
+            collectSupertypes(project, superType, sb, "$indent  ", visited)
         }
     }
 }
