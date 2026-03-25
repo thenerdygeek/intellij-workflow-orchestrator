@@ -36,6 +36,7 @@ export interface ApprovalCardProps extends SerializableApprovalCard {
   className?: string;
   onConfirm?: () => void | Promise<void>;
   onCancel?: () => void | Promise<void>;
+  onAllowForSession?: () => void | Promise<void>;
 }
 
 // ---------- Helpers ----------
@@ -124,6 +125,7 @@ export function ApprovalCard({
   choice,
   onConfirm,
   onCancel,
+  onAllowForSession,
 }: ApprovalCardProps) {
   const resolvedVariant = variant ?? "default";
   const resolvedConfirmLabel = confirmLabel ?? "Approve";
@@ -136,9 +138,11 @@ export function ApprovalCard({
         await onConfirm?.();
       } else if (actionId === "cancel") {
         await onCancel?.();
+      } else if (actionId === "allowForSession") {
+        await onAllowForSession?.();
       }
     },
-    [onConfirm, onCancel],
+    [onConfirm, onCancel, onAllowForSession],
   );
 
   const handleKeyDown = React.useCallback(
@@ -156,6 +160,7 @@ export function ApprovalCard({
   const confirmVariant = isDestructive ? "destructive" : "default";
   const actions = [
     { id: "cancel", label: resolvedCancelLabel, variant: "ghost" },
+    ...(onAllowForSession ? [{ id: "allowForSession", label: "Allow for session", variant: "outline" }] : []),
     { id: "confirm", label: resolvedConfirmLabel, variant: confirmVariant },
   ];
 
@@ -243,10 +248,14 @@ export function ApprovalCard({
                     "rounded-md px-3 py-1 text-[11px] font-medium transition-colors",
                     action.variant === "destructive" || action.variant === "default"
                       ? "text-[var(--bg)] bg-[var(--fg)]"
+                      : action.variant === "outline"
+                      ? "border text-[var(--fg-secondary)] hover:bg-[var(--hover-overlay)]"
                       : "bg-transparent border",
                   )}
                   style={action.variant === "ghost" ? {
                     color: 'var(--fg-secondary)',
+                    borderColor: 'var(--border)',
+                  } : action.variant === "outline" ? {
                     borderColor: 'var(--border)',
                   } : undefined}
                 >

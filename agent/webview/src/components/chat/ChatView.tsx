@@ -129,8 +129,9 @@ export const ChatView = memo(function ChatView() {
   const resolveApproval = useChatStore(s => s.resolveApproval);
   const retryMessage = useChatStore(s => s.retryMessage);
 
-  const handleApprove = useCallback(() => resolveApproval(true), [resolveApproval]);
-  const handleDeny = useCallback(() => resolveApproval(false), [resolveApproval]);
+  const handleApprove = useCallback(() => resolveApproval('approve'), [resolveApproval]);
+  const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
+  const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
 
   // Convert tool calls map to sorted array (preserves insertion order)
   const toolCallsArray = Array.from(activeToolCalls.values());
@@ -182,11 +183,14 @@ export const ChatView = memo(function ChatView() {
         {/* Tool call approval */}
         {pendingApproval && (
           <ApprovalView
+            toolName={pendingApproval.toolName}
+            riskLevel={pendingApproval.riskLevel}
             title={pendingApproval.title}
             description={pendingApproval.description}
-            commandPreview={pendingApproval.commandPreview}
+            metadata={pendingApproval.metadata}
             onApprove={handleApprove}
             onDeny={handleDeny}
+            onAllowForSession={handleAllowForSession}
           />
         )}
 

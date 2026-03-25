@@ -35,9 +35,11 @@ const DEBUG_LOG_MAX_ENTRIES = 200;
 
 // ── Approval state ──
 interface PendingApproval {
+  toolName: string;
+  riskLevel: string;
   title: string;
   description?: string;
-  commandPreview?: string;
+  metadata?: Array<{ key: string; value: string }>;
 }
 
 // ── Toast state ──
@@ -122,8 +124,8 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(results: MentionSearchResult[]): void;
-  showApproval(title: string, description?: string, commandPreview?: string): void;
-  resolveApproval(approved: boolean): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>): void;
+  resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   sendMessage(text: string, mentions: Mention[]): void;
   setDebugLogVisible(visible: boolean): void;
   addDebugLogEntry(entry: DebugLogEntry): void;
@@ -543,15 +545,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ mentionResults: results });
   },
 
-  showApproval(title: string, description?: string, commandPreview?: string) {
-    set({ pendingApproval: { title, description, commandPreview } });
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>) {
+    set({
+      pendingApproval: {
+        toolName,
+        riskLevel,
+        title: `Approve ${toolName}? (${riskLevel} risk)`,
+        description,
+        metadata,
+      }
+    });
   },
 
-  resolveApproval(approved: boolean) {
+  resolveApproval(decision: 'approve' | 'deny' | 'allowForSession') {
+    const pending = get().pendingApproval;
     set({ pendingApproval: null });
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
-      if (approved) {
+      if (decision === 'approve') {
         (kotlinBridge as any).approveToolCall();
+      } else if (decision === 'allowForSession' && pending?.toolName) {
+        (kotlinBridge as any).allowToolForSession(pending.toolName);
       } else {
         (kotlinBridge as any).denyToolCall();
       }

@@ -157,11 +157,14 @@ function Showcase() {
       {/* ── Approval Gate ── */}
       <Section title="Approval Gate">
         <ApprovalView
-          title="Delete Production Database"
+          toolName="run_command"
+          riskLevel="DESTRUCTIVE"
+          title="Approve run_command? (DESTRUCTIVE risk)"
           description="This will permanently remove all data from the production environment."
-          commandPreview="DROP DATABASE production_db;"
+          metadata={[{ key: 'Command', value: 'DROP DATABASE production_db;' }]}
           onApprove={() => alert('Approved')}
           onDeny={() => alert('Denied')}
+          onAllowForSession={() => alert('Allowed for session')}
         />
       </Section>
 
