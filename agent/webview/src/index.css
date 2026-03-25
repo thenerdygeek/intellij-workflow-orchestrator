@@ -113,6 +113,11 @@ code, pre, .font-mono {
    where Y is wrong (negative). Fix: anchor from bottom, keep
    only the X translation via a CSS var set by a MutationObserver.
    ============================================================ */
+/* Chip remove button hover feedback */
+[data-remove]:hover {
+  opacity: 1 !important;
+}
+
 [data-radix-popper-content-wrapper] {
   top: auto !important;
   bottom: 60px !important;

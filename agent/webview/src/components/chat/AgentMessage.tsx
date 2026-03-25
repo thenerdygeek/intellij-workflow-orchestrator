@@ -68,7 +68,7 @@ export const AgentMessage = memo(function AgentMessage({
         )}
       >
         {!isUser && (
-          <span className="mb-1 block text-[11px] font-medium text-[var(--fg-muted)]">
+          <span className="mb-1 block text-[11px] font-medium text-[var(--fg-secondary)]">
             Agent
           </span>
         )}

@@ -178,7 +178,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     chip.dataset.chipStatus = status;
     chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline transition-colors duration-300';
     chip.style.cssText = `color:${colors.color};background:${colors.bg};border:1px solid ${colors.border};user-select:none;cursor:default;line-height:1.6;`;
-    chip.innerHTML = `<span>${mention.label}</span><button data-remove style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;">&times;</button>`;
+    chip.innerHTML = `<span>${mention.label}</span><button data-remove aria-label="Remove ${mention.label}" style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;">&times;</button>`;
 
     // Replace the text node content
     textNode.textContent = before;
@@ -335,7 +335,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       className={cn(
         'rich-input text-[13px] leading-relaxed outline-none min-h-[28px] w-full',
         'empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--fg-muted,#6b7280)] empty:before:pointer-events-none',
-        disabled && 'opacity-50 cursor-not-allowed',
+        disabled && 'opacity-60 cursor-not-allowed bg-[rgba(0,0,0,0.1)]',
         className
       )}
       style={{

@@ -83,7 +83,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
           className="transition-all duration-300 ease-in-out"
           contentClassName="ml-7 pb-2 pt-1 text-[11px] leading-relaxed border-l-2 pl-3"
           style={{
-            color: 'var(--fg-muted)',
+            color: 'var(--fg-secondary, #94a3b8)',
             borderColor: 'var(--border)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
