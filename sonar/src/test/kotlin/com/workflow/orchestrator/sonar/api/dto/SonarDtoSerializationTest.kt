@@ -77,7 +77,8 @@ class SonarDtoSerializationTest {
 
     @Test
     fun `deserialize source lines`() {
-        val lines = json.decodeFromString<List<SonarSourceLineDto>>(fixture("source-lines.json"))
+        val response = json.decodeFromString<SonarSourceLinesResponse>(fixture("source-lines.json"))
+        val lines = response.sources
         assertEquals(8, lines.size)
 
         val coveredLine = lines[0]
