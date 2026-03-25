@@ -261,10 +261,16 @@ class ApprovalGate(
 
             // IDE read-only (inspections, annotations, quickfixes, method bodies)
             "get_annotations", "get_method_body", "list_quickfixes", "run_inspections",
+            "problem_view",
+
+            // PSI analysis read-only
+            "type_inference", "structural_search", "dataflow_analysis",
+            "read_write_access", "test_finder",
 
             // Runtime & Debug read-only
             "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
             "list_breakpoints", "get_debug_state", "get_stack_frames", "get_variables",
+            "thread_dump", "memory_view",
 
             // Enterprise read-only (Bitbucket)
             "bitbucket_get_pr_commits", "bitbucket_get_file_content",

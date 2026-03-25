@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 /**
- * Central registry mapping all 98 agent tools to logical categories.
+ * Central registry mapping all agent tools to logical categories.
  * Used by: DynamicToolSelector (tool filtering), Tools panel UI (categorization),
  * RequestToolsTool (category activation), ToolPreferences (grouping).
  */
@@ -29,7 +29,8 @@ object ToolCategoryRegistry {
                 "read_file", "edit_file", "search_code", "run_command", "glob_files",
                 "diagnostics", "problem_view", "format_code", "optimize_imports",
                 "file_structure", "find_definition", "find_references",
-                "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations", "read_write_access", "dataflow_analysis",
+                "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations",
+                "type_inference", "structural_search", "dataflow_analysis", "read_write_access", "test_finder",
                 "delegate_task",
                 "think"
             )
@@ -113,13 +114,14 @@ object ToolCategoryRegistry {
             description = "Run output, test results, breakpoints, interactive debugging, expression evaluation, run configuration management",
             tools = listOf(
                 "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
-                "add_breakpoint", "method_breakpoint", "remove_breakpoint", "list_breakpoints",
+                "add_breakpoint", "method_breakpoint", "exception_breakpoint", "field_watchpoint",
+                "remove_breakpoint", "list_breakpoints",
                 "start_debug_session", "get_debug_state",
                 "debug_step_over", "debug_step_into", "debug_step_out",
                 "debug_resume", "debug_pause", "debug_run_to_cursor", "debug_stop",
                 "evaluate_expression", "get_stack_frames", "get_variables",
                 "create_run_config", "modify_run_config", "delete_run_config",
-                "drop_frame", "hotswap", "memory_view", "attach_to_process"
+                "thread_dump", "force_return", "drop_frame", "hotswap", "memory_view", "attach_to_process"
             )
         ),
         ToolCategory(

@@ -53,8 +53,6 @@ class ThreadDumpTool(
         val maxFrames = params["max_frames"]?.jsonPrimitive?.intOrNull ?: 20
         val includeDaemon = params["include_daemon"]?.jsonPrimitive?.booleanOrNull ?: false
 
-        val resolvedId = sessionId ?: controller.getActiveSessionId()
-
         val session = controller.getSession(sessionId)
             ?: return ToolResult(
                 "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
