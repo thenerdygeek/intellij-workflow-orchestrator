@@ -253,7 +253,8 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const handleInput = useCallback(() => {
     fireChange();
-  }, [fireChange]);
+    updateEmptyState();
+  }, [fireChange, updateEmptyState]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -265,16 +266,21 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     }
   }, [onSubmit, onEscape]);
 
-  // Placeholder visibility
-  const handleFocusBlur = useCallback(() => {
+  // Placeholder visibility: hide on focus, show on blur if empty
+  const updateEmptyState = useCallback(() => {
     const el = editorRef.current;
     if (!el) return;
-    if (el.textContent?.trim() === '' && el.querySelectorAll('[data-mention-label]').length === 0) {
+    const isEmpty = el.textContent?.trim() === '' && el.querySelectorAll('[data-mention-label]').length === 0;
+    const isFocused = document.activeElement === el;
+    if (isEmpty && !isFocused) {
       el.dataset.empty = 'true';
     } else {
       delete el.dataset.empty;
     }
   }, []);
+
+  // Keep the old name for event handlers
+  const handleFocusBlur = updateEmptyState;
 
   useEffect(() => {
     handleFocusBlur();
