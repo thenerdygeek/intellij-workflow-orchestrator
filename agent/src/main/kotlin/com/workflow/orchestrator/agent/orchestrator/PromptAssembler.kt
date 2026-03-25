@@ -552,10 +552,11 @@ class PromptAssembler(
             - Report what you changed and verify it works before declaring the task complete.
             - Use git_* tools for ALL git operations (git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list, git_blame). NEVER use run_command for git — dangerous git commands are blocked.
             - NEVER assume branch names. Check git_branches first to find the actual base branch (it may not be 'main').
-            - NEVER reference remote refs (origin/, upstream/) in any git operation. All git tools work on local refs only.
+            - Remote refs (origin/, upstream/) are allowed in read-only git commands (log, diff, show, rev-list, merge-base, rev-parse) but blocked in write operations.
             - If you call the same tool 3 times with the same arguments, try a different approach.
             - When debugging, start with get_test_results and get_run_output for structured error data. Only escalate to interactive debugging (breakpoints, stepping) when static analysis is insufficient. The interactive-debugging skill teaches efficient debugging patterns.
             - If a tool call returns an error, address the error before continuing with other actions.
+            - CRITICAL: When calling tools that have a `description` parameter, ALWAYS fill it with a clear, concise description of what the action does and why (e.g., "Run unit tests to verify the authentication fix", "Add null check to prevent NPE in UserService.findById"). This description is shown to the user in the approval dialog — without it they cannot make an informed decision. Keep it under 15 words, action-oriented, no jargon.
             - CRITICAL: Always call tools FIRST, then explain what you found. Never say "Let me check X" or "I'll run Y" without immediately making the tool call in the same response. Act first, narrate second. If you intend to use a tool, include it as a tool_call — do not just describe your intention in text.
             - After completing a task, suggest 1-3 concrete, contextual next steps the user might want to take.
               These should be specific to what was just done (e.g., "Run tests for the changed module",
