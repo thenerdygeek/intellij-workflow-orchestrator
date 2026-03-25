@@ -120,7 +120,7 @@ class AgentController(
                 val json = kotlinx.serialization.json.Json.parseToJsonElement(payload)
                 val type = json.jsonObject["type"]?.jsonPrimitive?.content ?: "unknown"
                 val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: payload
-                AgentVisualizationTab.openVisualization(project, type, content)
+                AgentVisualizationEditor.openVisualization(project, type, content)
             } catch (e: Exception) {
                 LOG.warn("Failed to open visualization in editor tab: ${e.message}")
             }
