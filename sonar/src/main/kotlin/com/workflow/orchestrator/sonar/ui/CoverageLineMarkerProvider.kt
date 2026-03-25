@@ -46,7 +46,11 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
                         triggerEndpointCachePopulation(project, relativePath)
 
                         // Re-trigger gutter marker rendering on the EDT
-                        if (psiFile.isValid && !project.isDisposed) {
+                        // PSI validity checks require a read action when called from background threads
+                        val isValid = com.intellij.openapi.application.ReadAction.compute<Boolean, RuntimeException> {
+                            !project.isDisposed && psiFile.isValid
+                        }
+                        if (isValid) {
                             com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
                                 if (!project.isDisposed && psiFile.isValid) {
                                     DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
