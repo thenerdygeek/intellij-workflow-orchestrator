@@ -10,6 +10,9 @@ import { kotlinBridge } from '@/bridge/jcef-bridge';
 export const TopBar = memo(function TopBar() {
   const tokenBudget = useChatStore(s => s.tokenBudget);
   const busy = useChatStore(s => s.busy);
+  const debugVisible = useChatStore(s => s.debugLogVisible);
+  const debugEntries = useChatStore(s => s.debugLogEntries);
+  const hasErrors = debugEntries.some(e => e.level === 'error');
 
   const { used, max } = tokenBudget;
   const hasTokenData = max > 0;
@@ -93,7 +96,21 @@ export const TopBar = memo(function TopBar() {
         )}
       </div>
 
-      {/* Right: New chat button */}
+      {/* Right: Debug toggle + New chat button */}
+      <div className="flex items-center gap-1">
+      <button
+        onClick={() => useChatStore.getState().setDebugLogVisible(!debugVisible)}
+        className="flex items-center rounded px-1 py-0.5 transition-colors hover:bg-[var(--hover-overlay)]"
+        style={{ color: hasErrors ? 'var(--error, #ef4444)' : debugVisible ? 'var(--accent, #3b82f6)' : 'var(--fg-muted, #6b7280)' }}
+        title={debugVisible ? 'Hide debug log' : 'Show debug log'}
+        aria-label="Toggle debug log"
+      >
+        {/* Terminal SVG icon - small */}
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M2 3l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M8 13h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </button>
       <button
         onClick={() => kotlinBridge.newChat()}
         disabled={busy}
@@ -127,6 +144,7 @@ export const TopBar = memo(function TopBar() {
         </svg>
         New
       </button>
+      </div>
     </div>
   );
 });

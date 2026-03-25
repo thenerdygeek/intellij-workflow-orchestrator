@@ -6,6 +6,7 @@ import { useThemeStore } from './stores/themeStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/chat/TopBar'
+import { DebugPanel } from '@/components/chat/DebugPanel'
 import { InputBar } from '@/components/input/InputBar'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
@@ -68,6 +69,7 @@ function App() {
       <ScreenReaderAnnouncer />
       <TopBar />
       <ChatView />
+      <DebugPanel />
       <InputBar />
     </div>
   );
