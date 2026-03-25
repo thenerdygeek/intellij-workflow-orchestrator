@@ -26,9 +26,13 @@ class DeleteRunConfigTool : AgentTool {
             "name" to ParameterProperty(
                 type = "string",
                 description = "Exact name of the configuration to delete"
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of what this action does and why (shown to user in approval dialog)"
             )
         ),
-        required = listOf("name")
+        required = listOf("name", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 

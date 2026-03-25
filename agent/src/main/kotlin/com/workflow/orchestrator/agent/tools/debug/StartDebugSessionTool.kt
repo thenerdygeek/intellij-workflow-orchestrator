@@ -46,9 +46,13 @@ class StartDebugSessionTool(
             "wait_for_pause" to ParameterProperty(
                 type = "integer",
                 description = "Seconds to wait for first breakpoint hit (default 0 = don't wait)"
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of what this action does and why (shown to user in approval dialog)"
             )
         ),
-        required = listOf("config_name")
+        required = listOf("config_name", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 

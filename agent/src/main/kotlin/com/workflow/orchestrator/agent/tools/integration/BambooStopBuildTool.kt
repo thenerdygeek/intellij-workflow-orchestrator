@@ -14,9 +14,10 @@ class BambooStopBuildTool : AgentTool {
     override val description = "Stop a currently running Bamboo build. Use this to abort a build that is in progress."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "result_key" to ParameterProperty(type = "string", description = "Bamboo build result key (e.g., PROJ-PLAN-123)")
+            "result_key" to ParameterProperty(type = "string", description = "Bamboo build result key (e.g., PROJ-PLAN-123)"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("result_key")
+        required = listOf("result_key", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER)
 

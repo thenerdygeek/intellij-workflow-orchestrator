@@ -15,9 +15,10 @@ class BambooRerunFailedJobsTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "plan_key" to ParameterProperty(type = "string", description = "Bamboo plan key (e.g., PROJ-PLAN)"),
-            "build_number" to ParameterProperty(type = "string", description = "Build number to rerun failed jobs for")
+            "build_number" to ParameterProperty(type = "string", description = "Build number to rerun failed jobs for"),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("plan_key", "build_number")
+        required = listOf("plan_key", "build_number", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER)
 

@@ -17,9 +17,10 @@ class BitbucketAddPrCommentTool : AgentTool {
         properties = mapOf(
             "pr_id" to ParameterProperty(type = "string", description = "Pull request ID (numeric)"),
             "text" to ParameterProperty(type = "string", description = "Comment text (supports Markdown)"),
-            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names.")
+            "repo_name" to ParameterProperty(type = "string", description = "Repository name (e.g., 'backend', 'frontend'). Required for multi-repo projects to target a specific repo. Omit to use the primary repository. Call bitbucket_list_repos to discover available names."),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
         ),
-        required = listOf("pr_id", "text")
+        required = listOf("pr_id", "text", "description")
     )
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.REVIEWER)
 

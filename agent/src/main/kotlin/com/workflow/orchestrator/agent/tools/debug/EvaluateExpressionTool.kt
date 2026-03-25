@@ -34,9 +34,13 @@ class EvaluateExpressionTool(
             "frame_index" to ParameterProperty(
                 type = "integer",
                 description = "Stack frame index for evaluation context (default: 0 = top frame)"
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of what this action does and why (shown to user in approval dialog)"
             )
         ),
-        required = listOf("expression")
+        required = listOf("expression", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER)
 

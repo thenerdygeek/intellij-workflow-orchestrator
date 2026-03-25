@@ -23,9 +23,13 @@ class DebugStopTool(
             "session_id" to ParameterProperty(
                 type = "string",
                 description = "Debug session ID (optional — uses active session if omitted)"
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of what this action does and why (shown to user in approval dialog)"
             )
         ),
-        required = emptyList()
+        required = listOf("description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 

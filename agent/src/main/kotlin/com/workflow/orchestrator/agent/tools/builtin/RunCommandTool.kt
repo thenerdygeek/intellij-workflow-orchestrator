@@ -29,7 +29,7 @@ class RunCommandTool : AgentTool {
             "description" to ParameterProperty(type = "string", description = "Brief description of what this command does (5-10 words, for logging/UI)"),
             "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600.")
         ),
-        required = listOf("command")
+        required = listOf("command", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 

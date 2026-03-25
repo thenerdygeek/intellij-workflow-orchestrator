@@ -259,6 +259,9 @@ class ApprovalGate(
             "sonar_search_projects", "sonar_analysis_tasks",
             "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
 
+            // IDE read-only (inspections, annotations, quickfixes, method bodies)
+            "get_annotations", "get_method_body", "list_quickfixes", "run_inspections",
+
             // Runtime & Debug read-only
             "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
             "list_breakpoints", "get_debug_state", "get_stack_frames", "get_variables",
@@ -270,6 +273,14 @@ class ApprovalGate(
             "bitbucket_get_pr_activities", "bitbucket_get_pr_changes",
             "bitbucket_get_pr_diff", "bitbucket_get_build_statuses",
             "bitbucket_check_merge_status", "bitbucket_search_users", "bitbucket_list_repos",
+
+            // Build system read-only
+            "gradle_dependencies", "gradle_properties", "gradle_tasks",
+            "maven_dependency_tree", "maven_effective_pom",
+
+            // Spring Boot read-only
+            "spring_boot_actuator", "spring_boot_autoconfig",
+            "spring_boot_config_properties", "spring_boot_endpoints",
 
             // Subagent spawning (runs in isolated context)
             "agent", "delegate_task"
