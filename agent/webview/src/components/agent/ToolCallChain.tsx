@@ -194,6 +194,15 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
           <ToolCallDetails toolCall={tc} />
         )}
       </ChainOfThoughtContent>
+      {tc.status === 'ERROR' && tc.result && (
+        <div className="mt-1 text-[11px] px-2 py-1 rounded"
+          style={{
+            color: 'var(--error, #ef4444)',
+            background: 'var(--diff-rem-bg, rgba(239,68,68,0.1))',
+          }}>
+          {tc.result}
+        </div>
+      )}
     </ChainOfThoughtStep>
   );
 });
