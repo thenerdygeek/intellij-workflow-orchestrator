@@ -200,8 +200,8 @@ class AgentDashboardPanel(
         cefPanel?.appendSonarBadge(badgeJson)
     }
 
-    fun showApproval(title: String, description: String, commandPreview: String) {
-        cefPanel?.showApproval(title, description, commandPreview)
+    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String) {
+        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson)
     }
 
     fun setCefSkillCallbacks(onDismiss: () -> Unit) {
@@ -224,9 +224,10 @@ class AgentDashboardPanel(
         cefPanel?.onEditQuestion = onEdit
     }
 
-    fun setCefApprovalCallbacks(onApprove: () -> Unit, onDeny: () -> Unit) {
+    fun setCefApprovalCallbacks(onApprove: () -> Unit, onDeny: () -> Unit, onAllowForSession: ((String) -> Unit)? = null) {
         cefPanel?.onApproveToolCall = onApprove
         cefPanel?.onDenyToolCall = onDeny
+        cefPanel?.onAllowToolForSession = onAllowForSession
     }
 
     fun setCefInteractiveHtmlCallback(onMessage: (String) -> Unit) {

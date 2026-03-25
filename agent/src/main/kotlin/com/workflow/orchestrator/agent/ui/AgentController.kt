@@ -106,6 +106,11 @@ class AgentController(
                 currentApprovalGate?.respondToApproval(ApprovalResult.Rejected("Rejected by user"))
                 pendingApprovalDeferred?.complete(false)
                 pendingApprovalDeferred = null
+            },
+            onAllowForSession = { toolName ->
+                currentApprovalGate?.allowToolForSession(toolName)
+                pendingApprovalDeferred?.complete(true)
+                pendingApprovalDeferred = null
             }
         )
 
@@ -469,19 +474,13 @@ class AgentController(
                     approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
                     onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) },
                     approvalCallback = { toolName, risk, params ->
-                        // Show the JCEF approval UI in the chat panel
-                        val description = buildString {
-                            append("$toolName")
-                            val path = params["path"] as? String ?: params["file_path"] as? String
-                            if (path != null) append(" — $path")
-                        }
-                        val commandPreview = if (toolName == "run_command") {
-                            params["command"] as? String
-                        } else null
+                        val metadata = buildApprovalMetadata(toolName, params)
+                        val description = buildApprovalDescription(toolName, params)
                         dashboard.showApproval(
-                            title = "Approve $toolName? (${risk.name} risk)",
+                            toolName = toolName,
+                            riskLevel = risk.name,
                             description = description,
-                            commandPreview = commandPreview ?: ""
+                            metadataJson = metadata
                         )
                     }
                 )
@@ -867,6 +866,97 @@ class AgentController(
             }
         }
     }
+
+    private fun buildApprovalDescription(toolName: String, params: Map<String, Any?>): String {
+        return buildString {
+            append(toolName)
+            val path = params["path"] as? String ?: params["file_path"] as? String
+            if (path != null) append(" — $path")
+        }
+    }
+
+    @Suppress("CyclomaticComplexMethod")
+    private fun buildApprovalMetadata(toolName: String, params: Map<String, Any?>): String {
+        val items = mutableListOf<Map<String, String>>()
+
+        when (toolName) {
+            "edit_file" -> {
+                params["path"]?.let { items.add(mapOf("key" to "File", "value" to it.toString())) }
+                (params["old_string"] as? String)?.let {
+                    val preview = it.lines().take(3).joinToString("\\n")
+                    items.add(mapOf("key" to "Old", "value" to truncate(preview, 150)))
+                }
+                (params["new_string"] as? String)?.let {
+                    val preview = it.lines().take(3).joinToString("\\n")
+                    items.add(mapOf("key" to "New", "value" to truncate(preview, 150)))
+                }
+            }
+            "run_command" -> {
+                params["command"]?.let { items.add(mapOf("key" to "Command", "value" to it.toString())) }
+                params["working_directory"]?.let { items.add(mapOf("key" to "Directory", "value" to it.toString())) }
+            }
+            "read_file" -> {
+                params["path"]?.let { items.add(mapOf("key" to "File", "value" to it.toString())) }
+                val from = params["from_line"] ?: params["offset"]
+                val to = params["to_line"] ?: params["limit"]
+                if (from != null || to != null) items.add(mapOf("key" to "Lines", "value" to "${from ?: "start"}-${to ?: "end"}"))
+            }
+            "search_code" -> {
+                params["pattern"]?.let { items.add(mapOf("key" to "Pattern", "value" to it.toString())) }
+                params["path"]?.let { items.add(mapOf("key" to "Scope", "value" to it.toString())) }
+            }
+            "glob_files" -> {
+                params["pattern"]?.let { items.add(mapOf("key" to "Pattern", "value" to it.toString())) }
+                params["path"]?.let { items.add(mapOf("key" to "Path", "value" to it.toString())) }
+            }
+            "refactor_rename" -> {
+                params["old_name"]?.let { items.add(mapOf("key" to "Old", "value" to it.toString())) }
+                params["new_name"]?.let { items.add(mapOf("key" to "New", "value" to it.toString())) }
+                params["path"]?.let { items.add(mapOf("key" to "Scope", "value" to it.toString())) }
+            }
+            "jira_transition" -> {
+                params["issue_key"]?.let { items.add(mapOf("key" to "Ticket", "value" to it.toString())) }
+                params["transition_name"]?.let { items.add(mapOf("key" to "Transition", "value" to it.toString())) }
+            }
+            "jira_comment" -> {
+                params["issue_key"]?.let { items.add(mapOf("key" to "Ticket", "value" to it.toString())) }
+                (params["body"] as? String)?.let { items.add(mapOf("key" to "Comment", "value" to truncate(it, 80))) }
+            }
+            "bamboo_trigger_build" -> {
+                params["plan_key"]?.let { items.add(mapOf("key" to "Plan", "value" to it.toString())) }
+            }
+            "bitbucket_create_pr" -> {
+                params["title"]?.let { items.add(mapOf("key" to "Title", "value" to it.toString())) }
+                params["from_branch"]?.let { items.add(mapOf("key" to "From", "value" to it.toString())) }
+                params["to_branch"]?.let { items.add(mapOf("key" to "To", "value" to it.toString())) }
+            }
+            "bitbucket_merge_pr" -> {
+                params["pr_id"]?.let { items.add(mapOf("key" to "PR", "value" to "#${it}")) }
+                params["strategy"]?.let { items.add(mapOf("key" to "Strategy", "value" to it.toString())) }
+            }
+            else -> {
+                // Generic: show all params as metadata
+                params.forEach { (key, value) ->
+                    if (value != null) {
+                        items.add(mapOf("key" to key, "value" to truncate(value.toString(), 100)))
+                    }
+                }
+            }
+        }
+
+        // Serialize to JSON using buildJsonArray
+        val jsonArray = buildJsonArray {
+            items.forEach { map ->
+                add(buildJsonObject {
+                    map.forEach { (k, v) -> put(k, v) }
+                })
+            }
+        }
+        return jsonArray.toString()
+    }
+
+    private fun truncate(s: String, maxLen: Int): String =
+        if (s.length <= maxLen) s else s.take(maxLen - 3) + "..."
 
     private fun showApprovalDialog(description: String, riskLevel: RiskLevel): ApprovalResult {
         // Session-level auto-approve: skip dialog for MEDIUM or lower risk after user opted in

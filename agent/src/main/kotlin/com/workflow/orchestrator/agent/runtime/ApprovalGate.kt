@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import kotlinx.coroutines.CompletableDeferred
@@ -55,11 +56,15 @@ class ApprovalGate(
     private val onApprovalNeeded: ((String, RiskLevel) -> ApprovalResult)? = null,
     private val approvalCallback: ((String, RiskLevel, Map<String, Any?>) -> Unit)? = null
 ) {
+    private val log = Logger.getInstance(ApprovalGate::class.java)
     /**
      * Audit log recording every approval decision.
      * Thread-safe — backed by [java.util.Collections.synchronizedList].
      */
     val auditLog: MutableList<AuditEntry> = java.util.Collections.synchronizedList(mutableListOf())
+
+    /** Tools that the user has approved for the rest of this session. */
+    private val sessionAllowedTools = mutableSetOf<String>()
 
     /**
      * The pending deferred for the current approval request.
@@ -128,6 +133,13 @@ class ApprovalGate(
             return ApprovalResult.Approved
         }
 
+        // Session-level per-tool auto-approve
+        if (toolName in sessionAllowedTools) {
+            log.info("[ApprovalGate] Session-allowed tool: $toolName")
+            recordAudit(toolName, risk, params, ApprovalResult.Approved)
+            return ApprovalResult.Approved
+        }
+
         // Record pending audit entry
         val auditEntry = AuditEntry(
             toolName = toolName,
@@ -165,6 +177,25 @@ class ApprovalGate(
      */
     fun respondToApproval(result: ApprovalResult) {
         pendingApproval?.complete(result)
+    }
+
+    /**
+     * Mark a tool as auto-approved for the remainder of this session.
+     * Also resolves any pending approval for this tool immediately.
+     */
+    fun allowToolForSession(toolName: String) {
+        sessionAllowedTools.add(toolName)
+        log.info("[ApprovalGate] Tool allowed for session: $toolName")
+        // Also resolve any pending approval for this tool
+        pendingApproval?.complete(ApprovalResult.Approved)
+    }
+
+    /**
+     * Reset session-level state (allowed tools, pending approval).
+     */
+    fun reset() {
+        sessionAllowedTools.clear()
+        pendingApproval = null
     }
 
     private fun recordAudit(toolName: String, risk: RiskLevel, params: Map<String, Any?>, result: ApprovalResult) {

@@ -76,6 +76,7 @@ class AgentCefPanel(
     private var openInEditorTabQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
     private var denyToolCallQuery: JBCefJSQuery? = null
+    private var allowToolForSessionQuery: JBCefJSQuery? = null
     private var interactiveHtmlMessageQuery: JBCefJSQuery? = null
     private var acceptDiffHunkQuery: JBCefJSQuery? = null
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
@@ -138,6 +139,8 @@ class AgentCefPanel(
     var onApproveToolCall: (() -> Unit)? = null
     /** Callback when user denies a tool call in the approval card. */
     var onDenyToolCall: (() -> Unit)? = null
+    /** Callback when user clicks "Allow for session" on a tool in the approval card. Param: toolName. */
+    var onAllowToolForSession: ((String) -> Unit)? = null
     /** Callback when user interacts with an interactive HTML message. Param: JSON payload. */
     var onInteractiveHtmlMessage: ((String) -> Unit)? = null
     /** Callback when user accepts a diff hunk. Params: filePath, hunkIndex, editedContent (nullable). */
@@ -370,6 +373,9 @@ class AgentCefPanel(
         denyToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { _ -> onDenyToolCall?.invoke(); JBCefJSQuery.Response("ok") }
         }
+        allowToolForSessionQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { toolName -> onAllowToolForSession?.invoke(toolName); JBCefJSQuery.Response("ok") }
+        }
         interactiveHtmlMessageQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { json -> onInteractiveHtmlMessage?.invoke(json); JBCefJSQuery.Response("ok") }
         }
@@ -532,6 +538,10 @@ class AgentCefPanel(
                     denyToolCallQuery?.let { q ->
                         val denyJs = q.inject("'deny'")
                         js("window._denyToolCall = function() { $denyJs }")
+                    }
+                    allowToolForSessionQuery?.let { q ->
+                        val allowJs = q.inject("toolName")
+                        js("window._allowToolForSession = function(toolName) { $allowJs }")
                     }
                     interactiveHtmlMessageQuery?.let { q ->
                         val htmlJs = q.inject("json")
@@ -759,8 +769,8 @@ class AgentCefPanel(
 
     // ── Tool call approval rendering ──
 
-    fun showApproval(title: String, description: String, commandPreview: String) {
-        callJs("showApproval(${jsonStr(title)},${jsonStr(description)},${jsonStr(commandPreview)})")
+    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String) {
+        callJs("showApproval(${jsonStr(toolName)},${jsonStr(riskLevel)},${jsonStr(description)},${jsonStr(metadataJson)})")
     }
 
     // ── Debug log panel ──
@@ -955,6 +965,7 @@ class AgentCefPanel(
         openInEditorTabQuery?.dispose()
         approveToolCallQuery?.dispose()
         denyToolCallQuery?.dispose()
+        allowToolForSessionQuery?.dispose()
         interactiveHtmlMessageQuery?.dispose()
         acceptDiffHunkQuery?.dispose()
         rejectDiffHunkQuery?.dispose()
@@ -989,6 +1000,7 @@ class AgentCefPanel(
         openInEditorTabQuery = null
         approveToolCallQuery = null
         denyToolCallQuery = null
+        allowToolForSessionQuery = null
         interactiveHtmlMessageQuery = null
         acceptDiffHunkQuery = null
         rejectDiffHunkQuery = null
