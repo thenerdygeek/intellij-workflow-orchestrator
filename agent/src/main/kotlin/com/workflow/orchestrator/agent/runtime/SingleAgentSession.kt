@@ -968,9 +968,17 @@ class SingleAgentSession(
 
         // Check approval gate before executing risky tools
         if (approvalGate != null) {
-            // Convert tool call arguments to map for context-aware risk classification
-            val paramsMap = try {
-                json.decodeFromString<Map<String, String>>(toolCall.function.arguments)
+            // Convert tool call arguments to map for context-aware risk classification + approval display
+            val paramsMap: Map<String, Any?> = try {
+                val jsonElement = json.parseToJsonElement(toolCall.function.arguments)
+                if (jsonElement is kotlinx.serialization.json.JsonObject) {
+                    jsonElement.entries.associate { (k, v) ->
+                        k to when (v) {
+                            is kotlinx.serialization.json.JsonPrimitive -> v.content
+                            else -> v.toString()
+                        }
+                    }
+                } else emptyMap()
             } catch (_: Exception) {
                 emptyMap()
             }

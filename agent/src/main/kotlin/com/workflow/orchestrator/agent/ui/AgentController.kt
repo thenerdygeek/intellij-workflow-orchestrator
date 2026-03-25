@@ -882,6 +882,12 @@ class AgentController(
     }
 
     private fun buildApprovalDescription(toolName: String, params: Map<String, Any?>): String {
+        // Use LLM-provided description if available (like Claude Code's Bash description param)
+        // Some tools use "action_description" to avoid collision with domain "description" (e.g., PR body)
+        val llmDescription = (params["description"] as? String)?.takeIf { it.isNotBlank() }
+            ?: (params["action_description"] as? String)?.takeIf { it.isNotBlank() }
+        if (llmDescription != null) return llmDescription
+
         return buildString {
             append(toolName)
             val path = params["path"] as? String ?: params["file_path"] as? String
