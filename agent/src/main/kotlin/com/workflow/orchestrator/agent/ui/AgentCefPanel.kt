@@ -604,7 +604,8 @@ class AgentCefPanel(
         result: String = "", durationMs: Long = 0,
         toolName: String = ""
     ) {
-        callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)})")
+        val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
+        callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)},${jsonStr(statusStr)})")
     }
 
     fun appendEditDiff(
