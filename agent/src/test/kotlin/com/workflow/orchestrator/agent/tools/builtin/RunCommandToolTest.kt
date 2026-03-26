@@ -1,11 +1,13 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.runtime.ProcessRegistry
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -17,6 +19,14 @@ class RunCommandToolTest {
     lateinit var tempDir: Path
 
     private val project = mockk<Project> { every { basePath } returns "/tmp" }
+
+    @AfterEach
+    fun cleanup() {
+        // Kill any lingering processes left by idle detection tests
+        ProcessRegistry.killAll()
+        // Give threads a moment to terminate after process kill
+        Thread.sleep(100)
+    }
 
     @Test
     fun `execute runs simple command and captures output`() = runTest {
@@ -183,5 +193,56 @@ class RunCommandToolTest {
         assertEquals("run_command", tool.name)
         assertEquals(setOf(com.workflow.orchestrator.agent.runtime.WorkerType.CODER), tool.allowedWorkers)
         assertTrue(tool.parameters.required.contains("command"))
+    }
+
+    @Test
+    fun `execute returns IDLE for process waiting on stdin`() = runTest {
+        val tool = RunCommandTool()
+        val params = buildJsonObject {
+            put("command", "sh -c \"echo 'Enter name:' && read line\"")
+            put("description", "Test idle detection")
+            put("idle_timeout", 2)
+        }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.content.contains("[IDLE]"), "Expected [IDLE] in output, got: ${result.content}")
+        assertTrue(result.content.contains("Enter name:"), "Expected prompt text in output, got: ${result.content}")
+        assertTrue(result.content.contains("send_stdin"), "Expected send_stdin instructions, got: ${result.content}")
+        assertFalse(result.isError)
+    }
+
+    @Test
+    fun `execute detects build command and uses longer idle threshold`() {
+        assertTrue(RunCommandTool.isLikelyBuildCommand("./gradlew build"))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("mvn clean install"))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("npm run build"))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("yarn install"))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("docker build ."))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("cargo build"))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("go build ./..."))
+        assertTrue(RunCommandTool.isLikelyBuildCommand("make all"))
+        assertFalse(RunCommandTool.isLikelyBuildCommand("ls -la"))
+        assertFalse(RunCommandTool.isLikelyBuildCommand("echo hello"))
+        assertFalse(RunCommandTool.isLikelyBuildCommand("cat file.txt"))
+    }
+
+    @Test
+    fun `stripAnsi removes escape codes`() {
+        assertEquals("hello world", RunCommandTool.stripAnsi("\u001B[32mhello\u001B[0m world"))
+        assertEquals("plain text", RunCommandTool.stripAnsi("plain text"))
+        assertEquals("bold text", RunCommandTool.stripAnsi("\u001B[1mbold text\u001B[0m"))
+    }
+
+    @Test
+    fun `isLikelyPasswordPrompt detects password prompts`() {
+        assertTrue(RunCommandTool.isLikelyPasswordPrompt("Password: "))
+        assertTrue(RunCommandTool.isLikelyPasswordPrompt("Enter your token: "))
+        assertTrue(RunCommandTool.isLikelyPasswordPrompt("Passphrase: "))
+        assertTrue(RunCommandTool.isLikelyPasswordPrompt("Enter secret: "))
+        assertTrue(RunCommandTool.isLikelyPasswordPrompt("API key: "))
+        assertTrue(RunCommandTool.isLikelyPasswordPrompt("Credentials: "))
+        assertFalse(RunCommandTool.isLikelyPasswordPrompt("Enter your name: "))
+        assertFalse(RunCommandTool.isLikelyPasswordPrompt("Hello world"))
     }
 }

@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.context.ToolOutputStore
+import com.workflow.orchestrator.agent.runtime.ManagedProcess
 import com.workflow.orchestrator.agent.runtime.ProcessRegistry
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.security.CommandRisk
@@ -16,18 +17,18 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 class RunCommandTool : AgentTool {
     override val name = "run_command"
-    override val description = "Execute a shell command in the project directory. Has a 120-second default timeout (max 600s) and 30000-character output limit. Dangerous commands are blocked."
+    override val description = "Execute a shell command in the project directory. If the process goes idle (no output), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact. Default timeout: 120s, output limit: 30000 chars. Dangerous commands are blocked."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "command" to ParameterProperty(type = "string", description = "The shell command to execute. Examples: 'ls -la src/', 'grep -r TODO .', 'mvn test -pl core'"),
             "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"),
             "description" to ParameterProperty(type = "string", description = "Brief description of what this command does (5-10 words, for logging/UI)"),
-            "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600.")
+            "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600."),
+            "idle_timeout" to ParameterProperty(type = "integer", description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds.")
         ),
         required = listOf("command", "description")
     )
@@ -38,7 +39,15 @@ class RunCommandTool : AgentTool {
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
         private const val MAX_TIMEOUT_SECONDS = 600L
         private const val MAX_OUTPUT_CHARS = 30_000
+        private const val DEFAULT_IDLE_THRESHOLD_MS = 15_000L
+        private const val BUILD_IDLE_THRESHOLD_MS = 60_000L
         private val processIdCounter = AtomicLong(0)
+
+        private val BUILD_COMMAND_PREFIXES = listOf(
+            "gradle", "./gradlew", "gradlew", "mvn", "./mvnw", "mvnw",
+            "npm", "yarn", "pnpm", "docker build", "cargo build", "go build",
+            "dotnet build", "make", "cmake"
+        )
 
         /**
          * Stream callback for real-time output delivery to the UI.
@@ -104,6 +113,36 @@ class RunCommandTool : AgentTool {
             "--force", "-f", "--hard", "--no-verify",
             "--delete", "-D", "--set-upstream"
         )
+
+        /**
+         * Check if a command is likely a build command that should use a longer idle threshold.
+         */
+        fun isLikelyBuildCommand(command: String): Boolean {
+            val trimmed = command.trim()
+            return BUILD_COMMAND_PREFIXES.any { trimmed.startsWith(it) }
+        }
+
+        private val ANSI_REGEX = Regex("\u001B\\[[;\\d]*[A-Za-z]")
+
+        /**
+         * Strip ANSI escape codes from text.
+         */
+        fun stripAnsi(text: String): String = text.replace(ANSI_REGEX, "")
+
+        private val PASSWORD_PATTERNS = listOf(
+            Regex("""(?i)password\s*:"""),
+            Regex("""(?i)passphrase\s*:"""),
+            Regex("""(?i)enter\s+.*token"""),
+            Regex("""(?i)secret\s*:"""),
+            Regex("""(?i)credentials?\s*:"""),
+            Regex("""(?i)api.?key\s*:"""),
+        )
+
+        /**
+         * Check if the last output looks like a password/credential prompt.
+         */
+        fun isLikelyPasswordPrompt(lastOutput: String): Boolean =
+            PASSWORD_PATTERNS.any { it.containsMatchIn(lastOutput.takeLast(300)) }
 
         /**
          * Check if a git command is safe to execute.
@@ -242,6 +281,7 @@ class RunCommandTool : AgentTool {
 
             val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
                 .coerceIn(1, MAX_TIMEOUT_SECONDS)
+            val timeoutMs = timeoutSeconds * 1000
 
             processBuilder.directory(workDir)
             processBuilder.redirectErrorStream(true)
@@ -252,20 +292,26 @@ class RunCommandTool : AgentTool {
             val toolCallId = currentToolCallId.get()
                 ?: "run-cmd-${processIdCounter.incrementAndGet()}"
 
-            // Register in ProcessRegistry for kill/killAll support
-            ProcessRegistry.register(toolCallId, process, command)
+            // Register in ProcessRegistry for kill/killAll/stdin support
+            val managed = ProcessRegistry.register(toolCallId, process, command)
 
-            // Stream output line-by-line in a daemon thread
-            val outputBuilder = StringBuilder()
+            // Determine idle threshold
+            val idleThresholdMs = params["idle_timeout"]?.jsonPrimitive?.int?.let { it * 1000L }
+                ?: if (isLikelyBuildCommand(command)) BUILD_IDLE_THRESHOLD_MS else DEFAULT_IDLE_THRESHOLD_MS
+
+            // Buffer-based reader thread (handles binary output)
             val activeStreamCallback = streamCallback
             val readerThread = Thread {
                 try {
                     process.inputStream.bufferedReader().use { reader ->
-                        var line = reader.readLine()
-                        while (line != null) {
-                            outputBuilder.appendLine(line)
-                            activeStreamCallback?.invoke(toolCallId, line + "\n")
-                            line = reader.readLine()
+                        val buffer = CharArray(4096)
+                        var bytesRead = reader.read(buffer)
+                        while (bytesRead != -1) {
+                            val chunk = String(buffer, 0, bytesRead)
+                            managed.outputLines.add(chunk)
+                            managed.lastOutputAt.set(System.currentTimeMillis())
+                            activeStreamCallback?.invoke(toolCallId, chunk)
+                            bytesRead = reader.read(buffer)
                         }
                     }
                 } catch (_: Exception) {
@@ -277,52 +323,36 @@ class RunCommandTool : AgentTool {
                 start()
             }
 
-            // Wait for process completion
-            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            // Event-driven coroutine monitor loop
+            while (true) {
+                kotlinx.coroutines.delay(500)
+                val now = System.currentTimeMillis()
 
-            if (!completed) {
-                ProcessRegistry.kill(toolCallId)
-                readerThread.join(1000)
-                val rawOutput = outputBuilder.toString()
-                val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-                    ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
-                        "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
-                } else {
-                    rawOutput
+                // Priority 1: process exited — always check first (race condition fix)
+                if (!process.isAlive) {
+                    readerThread.join(2000)
+                    ProcessRegistry.unregister(toolCallId)
+                    return buildExitResult(managed, command, params)
                 }
-                return ToolResult(
-                    "Error: Command timed out after ${timeoutSeconds}s.\nPartial output:\n$truncatedOutput",
-                    "Error: command timed out",
-                    TokenEstimator.estimate(truncatedOutput),
-                    isError = true
-                )
+
+                // Priority 2: total timeout
+                if (now - managed.startedAt > timeoutMs) {
+                    ProcessRegistry.kill(toolCallId)
+                    readerThread.join(1000)
+                    return buildTimeoutResult(managed, timeoutSeconds)
+                }
+
+                // Priority 3: idle detection (only after first output — grace period)
+                val lastOutput = managed.lastOutputAt.get()
+                if (lastOutput > 0 && now - lastOutput >= idleThresholdMs) {
+                    managed.idleSignaledAt.set(now)
+                    return buildIdleResult(managed, idleThresholdMs / 1000)
+                }
             }
 
-            // Wait for reader thread to drain remaining output
-            readerThread.join(2000)
-            ProcessRegistry.unregister(toolCallId)
-
-            val rawOutput = outputBuilder.toString()
-            val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-                ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
-                    "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
-            } else {
-                rawOutput
-            }
-
-            val exitCode = process.exitValue()
-            val description = params["description"]?.jsonPrimitive?.content
-            val summary = if (description != null) {
-                "$description — exit code $exitCode"
-            } else {
-                "Command exited with code $exitCode: ${command.take(80)}"
-            }
-            ToolResult(
-                content = "Exit code: $exitCode\n$truncatedOutput",
-                summary = summary,
-                tokenEstimate = TokenEstimator.estimate(truncatedOutput),
-                isError = exitCode != 0
-            )
+            // Unreachable — loop always returns
+            @Suppress("UNREACHABLE_CODE")
+            ToolResult("Error: unexpected exit from monitor loop", "Error: internal", 5, isError = true)
         } catch (e: Exception) {
             ToolResult(
                 "Error executing command: ${e.message}",
@@ -331,5 +361,89 @@ class RunCommandTool : AgentTool {
                 isError = true
             )
         }
+    }
+
+    private fun collectOutput(managed: ManagedProcess): String {
+        return managed.outputLines.joinToString("")
+    }
+
+    private fun lastOutputLines(managed: ManagedProcess, lineCount: Int = 10): String {
+        val allOutput = collectOutput(managed)
+        val lines = allOutput.lines()
+        return lines.takeLast(lineCount).joinToString("\n")
+    }
+
+    private fun buildExitResult(managed: ManagedProcess, command: String, params: JsonObject): ToolResult {
+        val rawOutput = collectOutput(managed)
+        val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
+            ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
+                "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
+        } else {
+            rawOutput
+        }
+
+        val exitCode = managed.process.exitValue()
+        val description = params["description"]?.jsonPrimitive?.content
+        val summary = if (description != null) {
+            "$description — exit code $exitCode"
+        } else {
+            "Command exited with code $exitCode: ${command.take(80)}"
+        }
+        return ToolResult(
+            content = "Exit code: $exitCode\n$truncatedOutput",
+            summary = summary,
+            tokenEstimate = TokenEstimator.estimate(truncatedOutput),
+            isError = exitCode != 0
+        )
+    }
+
+    private fun buildTimeoutResult(managed: ManagedProcess, timeoutSeconds: Long): ToolResult {
+        val rawOutput = collectOutput(managed)
+        val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
+            ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
+                "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
+        } else {
+            rawOutput
+        }
+        return ToolResult(
+            content = "[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n$truncatedOutput",
+            summary = "Error: command timed out",
+            tokenEstimate = TokenEstimator.estimate(truncatedOutput),
+            isError = true
+        )
+    }
+
+    private fun buildIdleResult(managed: ManagedProcess, idleSeconds: Long): ToolResult {
+        val processId = managed.toolCallId
+        val command = managed.command
+        val lastLines = stripAnsi(lastOutputLines(managed, 10))
+        val indentedLines = lastLines.lines().joinToString("\n") { "  $it" }
+
+        val passwordWarning = if (isLikelyPasswordPrompt(lastLines)) {
+            "\nWARNING: Last output appears to be a password/credential prompt. Use ask_user_input, not send_stdin.\n"
+        } else {
+            ""
+        }
+
+        val content = buildString {
+            appendLine("[IDLE] Process idle for ${idleSeconds}s — no output since last line.")
+            appendLine("Process still running (ID: $processId, command: $command).")
+            appendLine()
+            appendLine("Last output:")
+            appendLine(indentedLines)
+            append(passwordWarning)
+            appendLine()
+            appendLine("Options:")
+            appendLine("- send_stdin(process_id=\"$processId\", input=\"<your input>\\n\") to provide input")
+            appendLine("- ask_user_input(process_id=\"$processId\", description=\"...\", prompt=\"...\") for user input")
+            appendLine("- kill_process(process_id=\"$processId\") to abort")
+        }
+
+        return ToolResult(
+            content = content,
+            summary = "Process idle — waiting for input (ID: $processId)",
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = false
+        )
     }
 }
