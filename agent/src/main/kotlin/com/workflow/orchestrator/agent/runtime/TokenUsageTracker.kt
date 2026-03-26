@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -7,7 +8,7 @@ import java.time.LocalDate
 
 /**
  * Tracks token usage across agent tasks for cost visibility and budget enforcement.
- * Persists daily usage to .workflow/agent/usage.json.
+ * Persists daily usage to {agentDir}/usage.json.
  */
 class TokenUsageTracker(
     private val storageDir: File
@@ -84,7 +85,7 @@ class TokenUsageTracker(
 
     companion object {
         fun forProject(projectBasePath: String): TokenUsageTracker {
-            return TokenUsageTracker(File(projectBasePath, ".workflow/agent"))
+            return TokenUsageTracker(ProjectIdentifier.agentDir(projectBasePath))
         }
     }
 }

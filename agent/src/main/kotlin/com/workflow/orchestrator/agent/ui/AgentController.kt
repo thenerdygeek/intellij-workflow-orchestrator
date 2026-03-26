@@ -17,6 +17,7 @@ import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.runtime.AgentPlan
 import com.workflow.orchestrator.agent.runtime.ConversationSession
 import com.workflow.orchestrator.agent.runtime.PlanManager
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -873,8 +874,11 @@ class AgentController(
                 dashboard.appendError(result.error)
                 dashboard.completeSession(0, 0, emptyList(), durationMs, RichStreamingPanel.SessionStatus.FAILED)
                 showFailureNotification(result.error)
-                // Log trace path for discoverability
-                val tracesPath = project.basePath?.let { "$it/.workflow/agent/traces/" }
+                // Log trace path for discoverability (traces are per-session under sessionsDir)
+                val tracesPath = project.basePath?.let {
+                    session?.store?.sessionDirectory?.resolve("traces")
+                        ?: ProjectIdentifier.sessionsDir(it)
+                }
                 if (tracesPath != null) {
                     LOG.info("AgentController: session trace at $tracesPath")
                     dashboard.appendStatus("Debug trace saved. View via notification or at: $tracesPath", RichStreamingPanel.StatusType.INFO)
@@ -1092,7 +1096,10 @@ class AgentController(
      */
     fun openTracesDirectory() {
         val basePath = project.basePath ?: return
-        val tracesDir = File(basePath, ".workflow/agent/traces")
+        // Traces are per-session: {sessionsDir}/{sessionId}/traces/
+        // Open the current session's traces dir if a session is active, otherwise the sessions root
+        val tracesDir = session?.store?.sessionDirectory?.resolve("traces")
+            ?: ProjectIdentifier.sessionsDir(basePath)
         if (!tracesDir.exists()) {
             dashboard.appendStatus("No traces yet — run a task first. Traces will be at: ${tracesDir.absolutePath}", RichStreamingPanel.StatusType.INFO)
             return
@@ -1110,10 +1117,14 @@ class AgentController(
      */
     fun openLatestTrace() {
         val basePath = project.basePath ?: return
-        val tracesDir = File(basePath, ".workflow/agent/traces")
-        val latest = tracesDir.listFiles()
-            ?.filter { it.extension == "jsonl" }
-            ?.maxByOrNull { it.lastModified() }
+        // Traces are per-session: {sessionsDir}/{sessionId}/traces/trace.jsonl
+        // Prefer current session's trace; fall back to scanning all session directories
+        val latest = session?.store?.sessionDirectory?.resolve("traces")
+            ?.listFiles()?.filter { it.extension == "jsonl" }?.maxByOrNull { it.lastModified() }
+            ?: ProjectIdentifier.sessionsDir(basePath)
+                .walkTopDown()
+                .filter { it.name == "trace.jsonl" }
+                .maxByOrNull { it.lastModified() }
 
         if (latest != null) {
             val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(latest)
@@ -1123,7 +1134,8 @@ class AgentController(
                 }
             }
         } else {
-            dashboard.appendStatus("No trace files found at: ${tracesDir.absolutePath}", RichStreamingPanel.StatusType.INFO)
+            val sessionsDir = ProjectIdentifier.sessionsDir(basePath)
+            dashboard.appendStatus("No trace files found. Run a task first. Expected location: $sessionsDir/{sessionId}/traces/trace.jsonl", RichStreamingPanel.StatusType.INFO)
         }
     }
 

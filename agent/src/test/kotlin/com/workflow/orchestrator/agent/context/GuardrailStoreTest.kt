@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.context
 
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -29,7 +30,7 @@ class GuardrailStoreTest {
         store.record("Avoid calling run_command with gradlew test — use module-specific test instead")
         store.save()
 
-        val file = File(tempDir, ".workflow/agent/guardrails.md")
+        val file = File(ProjectIdentifier.agentDir(tempDir.absolutePath), "guardrails.md")
         assertTrue(file.exists())
         val content = file.readText()
         assertTrue(content.contains("Avoid calling run_command"))
@@ -37,7 +38,7 @@ class GuardrailStoreTest {
 
     @Test
     fun `load reads from guardrails md`() {
-        val dir = File(tempDir, ".workflow/agent")
+        val dir = ProjectIdentifier.agentDir(tempDir.absolutePath)
         dir.mkdirs()
         File(dir, "guardrails.md").writeText(
             "# Agent Guardrails\n\n- Constraint one\n- Constraint two\n"
@@ -97,9 +98,10 @@ class GuardrailStoreTest {
 
     @Test
     fun `save creates directory if needed`() {
-        val nested = GuardrailStore(File(tempDir, "deep/nested"))
+        val nestedBase = File(tempDir, "deep/nested")
+        val nested = GuardrailStore(nestedBase)
         nested.record("A rule")
         nested.save()
-        assertTrue(File(tempDir, "deep/nested/.workflow/agent/guardrails.md").exists())
+        assertTrue(File(ProjectIdentifier.agentDir(nestedBase.absolutePath), "guardrails.md").exists())
     }
 }
