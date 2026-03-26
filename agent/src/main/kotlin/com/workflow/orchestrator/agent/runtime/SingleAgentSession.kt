@@ -92,6 +92,16 @@ class SingleAgentSession(
     /** Set to true after MAX_MALFORMED_RETRIES to force text-only response from LLM. */
     private var forceTextOnly = false
 
+    // --- Completion gatekeeper state ---
+    /** Tracks consecutive iterations with no tool calls (for nudge / implicit completion). */
+    var consecutiveNoToolResponses = 0
+    /** Iterations since last context compression (for post-compression gate). */
+    var iterationsSinceCompression = Int.MAX_VALUE
+    /** Whether a completion attempt has been made after the most recent compression. */
+    var postCompressionCompletionAttempted = false
+    /** Completion gatekeeper — initialized inside execute() where selfCorrectionGate/loopGuard are available. */
+    var completionGatekeeper: CompletionGatekeeper? = null
+
     // --- Session-level quality signal counters (for scorecard) ---
     /** Cumulative input tokens across all LLM calls in this session. */
     var sessionInputTokens: Long = 0L; private set
@@ -120,7 +130,7 @@ class SingleAgentSession(
         private const val MAX_MALFORMED_RETRIES = 3
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
-        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think")
+        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think", "attempt_completion")
 
         /** Patterns that indicate the model intended to use a tool but stopped without calling it. */
         private val TOOL_INTENT_PATTERNS = listOf(
@@ -236,6 +246,27 @@ class SingleAgentSession(
         val backpressureGate = BackpressureGate(editThreshold = 3)
         val selfCorrectionGate = SelfCorrectionGate(maxRetriesPerFile = 3)
 
+        // Initialize CompletionGatekeeper (option b: created here where gates are available)
+        val planManager = try {
+            com.workflow.orchestrator.agent.AgentService.getInstance(project).currentPlanManager
+        } catch (_: Exception) { null }
+        consecutiveNoToolResponses = 0
+        iterationsSinceCompression = Int.MAX_VALUE
+        postCompressionCompletionAttempted = false
+        completionGatekeeper = CompletionGatekeeper(
+            planManager = planManager,
+            selfCorrectionGate = selfCorrectionGate,
+            loopGuard = loopGuard,
+            iterationsSinceCompression = { iterationsSinceCompression },
+            postCompressionCompletionAttempted = { postCompressionCompletionAttempted },
+            onPostCompressionAttempted = { postCompressionCompletionAttempted = true }
+        )
+
+        // Add attempt_completion tool to the active tool set
+        val attemptCompletionTool = com.workflow.orchestrator.agent.tools.builtin.AttemptCompletionTool(completionGatekeeper!!)
+        var activeToolDefs = toolDefinitions.toMutableList().apply { add(attemptCompletionTool.toToolDefinition()) }.toList()
+        var activeTools = tools.toMutableMap().apply { put(attemptCompletionTool.name, attemptCompletionTool) }.toMap()
+
         // Initialize FactsStore for compression-proof knowledge retention
         if (contextManager.factsStore == null) {
             contextManager.factsStore = FactsStore(maxFacts = 50)
@@ -248,14 +279,13 @@ class SingleAgentSession(
         var strongNudgeEmitted = false
         var lastWarningPercent = 0
 
-        // Track current tool definitions (may be reduced on context_length_exceeded)
-        var activeToolDefs = toolDefinitions
-        var activeTools = tools
         var verificationPending = false
         forceTextOnly = false
         consecutiveMalformedRetries = 0
 
         for (iteration in 1..maxIterations) {
+            iterationsSinceCompression++
+
             // Mid-loop cancellation check
             if (cancelled.get()) {
                 LOG.info("SingleAgentSession: cancelled at iteration $iteration")
@@ -305,6 +335,22 @@ class SingleAgentSession(
             when (budgetStatus) {
                 BudgetEnforcer.BudgetStatus.TERMINATE -> {
                     LOG.warn("SingleAgentSession: budget exhausted at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+
+                    // If the LLM was trying to complete, accept it despite gates
+                    if (consecutiveNoToolResponses > 0) {
+                        val lastContent = contextManager.getMessages().lastOrNull { it.role == "assistant" }?.content ?: "Task completed (budget exhausted)"
+                        LOG.warn("SingleAgentSession: budget TERMINATE — accepting last response as completion")
+                        agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs)
+                        loopGuard.guardrailStore?.save()
+                        return SingleAgentResult.Completed(
+                            content = lastContent,
+                            summary = "Completed (budget exhausted, gates bypassed)",
+                            tokensUsed = totalTokensUsed,
+                            artifacts = allArtifacts,
+                            scorecard = buildScorecard(sessionId, "completed_forced", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
+                        )
+                    }
+
                     eventLog?.log(AgentEventType.SESSION_FAILED, "Budget terminated at ${budgetEnforcer.utilizationPercent()}%")
                     sessionTrace?.sessionFailed("Budget terminated at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
 
@@ -380,6 +426,8 @@ class SingleAgentSession(
                         contextManager.compressWithLlm(brain)
                         metrics.compressionCount++
                         loopGuard.clearAllFileReads()
+                        iterationsSinceCompression = 0
+                        postCompressionCompletionAttempted = false
                         onDebugLog?.invoke("warn", "compression", "$tokensBefore → ${contextManager.currentTokens} tokens (strong nudge)", null)
                     }
                 }
@@ -402,6 +450,8 @@ class SingleAgentSession(
                     contextManager.compressWithLlm(brain)
                     metrics.compressionCount++
                     loopGuard.clearAllFileReads()
+                    iterationsSinceCompression = 0
+                    postCompressionCompletionAttempted = false
                     val tokensAfter = contextManager.currentTokens
                     sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, tokensAfter, messagesBefore - contextManager.messageCount)
                     agentFileLogger?.logCompression(sessionId, "budget_enforcer", tokensBefore, tokensAfter)
@@ -481,6 +531,8 @@ class SingleAgentSession(
                 try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
                 metrics.compressionCount++
                 loopGuard.clearAllFileReads()
+                iterationsSinceCompression = 0
+                postCompressionCompletionAttempted = false
                 onDebugLog?.invoke("warn", "compression", "$tokensBefore → ${contextManager.currentTokens} tokens (context overflow)", null)
                 // Re-fetch messages after compression
                 val compressedMessages = contextManager.getMessages()
@@ -737,20 +789,38 @@ class SingleAgentSession(
                 return null // continue loop
             }
 
-            // Self-correction quality gate: block completion if unverified edits exist
-            val completionBlock = selfCorrectionGate.checkCompletionReadiness()
-            if (completionBlock != null) {
-                contextManager.addMessage(completionBlock)
-                return null // continue loop for verification
+            // Confused response detection: very short or multiple questions
+            if (isConfusedResponse(content) && iteration < maxIterations - 1) {
+                contextManager.addMessage(ChatMessage(
+                    role = "user",
+                    content = "What specifically are you unsure about? Describe the problem and I'll help."
+                ))
+                consecutiveNoToolResponses = 0
+                return null // continue loop
             }
 
-            // LoopGuard: fallback check if verification is needed before completing
-            val verificationMsg = loopGuard.beforeCompletion()
-            if (verificationMsg != null) {
-                contextManager.addMessage(verificationMsg)
-                return null // continue loop for verification
+            // No-tool-call nudge / implicit completion tracking
+            consecutiveNoToolResponses++
+
+            if (consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
+                contextManager.addMessage(ChatMessage(
+                    role = "user",
+                    content = "You responded without calling any tools. If you've completed the task, " +
+                        "call attempt_completion with a summary. If you have more work to do, " +
+                        "make your next tool call now."
+                ))
+                onDebugLog?.invoke("warn", "nudge", "No tool calls — nudging to use attempt_completion or continue", null)
+                return null // continue loop
             }
 
+            // Second consecutive no-tool response or near max iterations: run gatekeeper
+            val gateBlock = completionGatekeeper?.checkCompletion()
+            if (gateBlock != null && iteration < maxIterations - 1) {
+                contextManager.addMessage(ChatMessage(role = "user", content = gateBlock))
+                return null // continue loop
+            }
+
+            // All gates passed (or no gatekeeper) — accept completion
             // Validate output for sensitive data and redact if needed
             val securityIssues = OutputValidator.validate(content)
             val sanitizedContent = if (securityIssues.isNotEmpty()) {
@@ -789,20 +859,37 @@ class SingleAgentSession(
             )
         }
 
-        // Reset malformed retry counter — we have valid tool calls
+        // Reset malformed retry counter and no-tool counter — we have valid tool calls
         consecutiveMalformedRetries = 0
+        consecutiveNoToolResponses = 0
+
+        // Handle mixed tool calls: attempt_completion + other tools
+        val hasAttemptCompletion = toolCalls.any { it.function.name == "attempt_completion" }
+        val hasOtherTools = toolCalls.any { it.function.name != "attempt_completion" }
+        val effectiveToolCalls = if (hasAttemptCompletion && hasOtherTools) {
+            // Discard attempt_completion, execute only other tools
+            contextManager.addMessage(ChatMessage(
+                role = "user",
+                content = "You called attempt_completion alongside other tools. Complete your tool calls first, " +
+                    "then call attempt_completion separately when you are truly done."
+            ))
+            onDebugLog?.invoke("warn", "mixed_completion", "attempt_completion discarded — mixed with ${toolCalls.size - 1} other tools", null)
+            toolCalls.filter { it.function.name != "attempt_completion" }
+        } else {
+            toolCalls
+        }
 
         // Execute tool calls: read-only tools in parallel, write tools sequentially
         val toolResults = mutableListOf<Pair<String, Boolean>>() // (toolCallId, isError) for LoopGuard
 
         // Split into read-only (parallel-safe) and write (sequential) tool calls
-        val (readOnlyCalls, writeCalls) = toolCalls.partition { tc ->
+        val (readOnlyCalls, writeCalls) = effectiveToolCalls.partition { tc ->
             tc.function.name in READ_ONLY_TOOLS
         }
 
         // Doom loop detection: check each tool call before execution, skip if detected
         val doomSkipped = mutableSetOf<String>() // toolCallIds skipped due to doom loop
-        for (tc in toolCalls) {
+        for (tc in effectiveToolCalls) {
             val doomMessage = loopGuard.checkDoomLoop(tc.function.name, tc.function.arguments)
             if (doomMessage != null) {
                 doomLoopTriggers++
@@ -943,6 +1030,31 @@ class SingleAgentSession(
 
             val (_, toolResult, toolDurationMs) = executeSingleToolRaw(toolCall, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
 
+            // Handle attempt_completion success — exit loop immediately
+            if (toolResult.isCompletion) {
+                val sanitizedContent = if (OutputValidator.validate(toolResult.content).isNotEmpty()) {
+                    hallucinationFlags++
+                    CredentialRedactor.redact(toolResult.content)
+                } else toolResult.content
+
+                LOG.info("SingleAgentSession: attempt_completion accepted after $iteration iterations")
+                eventLog?.log(AgentEventType.SESSION_COMPLETED, "attempt_completion accepted after $iteration iterations, $totalTokensUsed tokens")
+                sessionTrace?.iterationCompleted(iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, listOf("attempt_completion"), choice.finishReason)
+                sessionTrace?.sessionMetrics(metrics.toJson())
+                sessionTrace?.sessionCompleted(totalTokensUsed, iteration, allArtifacts)
+                agentFileLogger?.logIteration(sessionId, iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, choice.finishReason, listOf("attempt_completion"), System.currentTimeMillis() - iterationStartMs)
+                agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs)
+                loopGuard.guardrailStore?.save()
+
+                return SingleAgentResult.Completed(
+                    content = sanitizedContent,
+                    summary = toolResult.summary,
+                    tokensUsed = totalTokensUsed,
+                    artifacts = allArtifacts,
+                    scorecard = buildScorecard(sessionId, "completed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
+                )
+            }
+
             // 5C: Redact credentials before injecting tool results into LLM context
             val redactedWriteContent = CredentialRedactor.redact(toolResult.content)
             contextManager.addToolResult(
@@ -1066,14 +1178,14 @@ class SingleAgentSession(
         }
 
         // Trace: record iteration completion with tool list
-        val toolNames = toolCalls.map { it.function.name }
+        val toolNames = effectiveToolCalls.map { it.function.name }
         sessionTrace?.iterationCompleted(iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, toolNames, choice.finishReason)
         agentFileLogger?.logIteration(sessionId, iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, choice.finishReason, toolNames, System.currentTimeMillis() - iterationStartMs)
         onDebugLog?.invoke("info", "iteration", "Iter $iteration: ${toolNames.size} tools, ${usage?.totalTokens ?: 0} tokens",
             mapOf("iteration" to iteration, "tokens" to (usage?.totalTokens ?: 0)))
 
         // LoopGuard: check for loops, error nudges, instruction-fade reminders
-        val loopGuardMessages = loopGuard.afterIteration(toolCalls, toolResults, editedFiles.toList())
+        val loopGuardMessages = loopGuard.afterIteration(effectiveToolCalls, toolResults, editedFiles.toList())
         for (msg in loopGuardMessages) {
             contextManager.addMessage(msg)
             if (msg.content?.contains("same arguments") == true) {
@@ -1095,7 +1207,7 @@ class SingleAgentSession(
 
         // Emit checkpoint after each iteration for durable execution
         try {
-            val lastTool = toolCalls.lastOrNull()?.function?.name
+            val lastTool = effectiveToolCalls.lastOrNull()?.function?.name
             onCheckpoint?.invoke(IterationCheckpointData(
                 iteration = iteration,
                 tokensUsed = totalTokensUsed,
@@ -1376,6 +1488,14 @@ class SingleAgentSession(
             val reducedToolDefs: List<ToolDefinition>,
             val reducedTools: Map<String, AgentTool>
         ) : LlmCallResult()
+    }
+
+    /**
+     * Heuristic: detect confused/uncertain LLM responses (very short or multiple questions).
+     */
+    private fun isConfusedResponse(content: String): Boolean {
+        val trimmed = content.trim()
+        return trimmed.length < 100 || trimmed.count { it == '?' } >= 2
     }
 
     /**
