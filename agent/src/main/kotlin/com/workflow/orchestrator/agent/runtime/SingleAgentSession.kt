@@ -192,6 +192,7 @@ class SingleAgentSession(
 
         // Initialize LoopGuard for loop detection and auto-verification
         val loopGuard = LoopGuard()
+        val backpressureGate = BackpressureGate(editThreshold = 3)
 
         // Initialize FactsStore for compression-proof knowledge retention
         if (contextManager.factsStore == null) {
@@ -406,7 +407,7 @@ class SingleAgentSession(
                 return processLlmSuccess(
                     retryResult as LlmCallResult.Success, iteration, totalTokensUsed, allArtifacts,
                     editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
-                    budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
+                    backpressureGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                     onStreamChunk, eventLog, sessionTrace, maxIterations,
                     sessionId, sessionStartMs, iterationStartMs, onDebugLog
                 ) ?: continue
@@ -417,7 +418,7 @@ class SingleAgentSession(
                     val sessionResult = processLlmSuccess(
                         result, iteration, totalTokensUsed, allArtifacts,
                         editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
-                        budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
+                        backpressureGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                         onStreamChunk, eventLog, sessionTrace, maxIterations,
                         sessionId, sessionStartMs, iterationStartMs, onDebugLog
                     )
@@ -469,6 +470,7 @@ class SingleAgentSession(
         project: Project,
         approvalGate: ApprovalGate?,
         loopGuard: LoopGuard,
+        backpressureGate: BackpressureGate,
         budgetEnforcer: BudgetEnforcer,
         brain: LlmBrain,
         toolDefinitions: List<ToolDefinition>,
@@ -739,6 +741,10 @@ class SingleAgentSession(
 
                 // Record metrics and check circuit breaker
                 metrics.recordToolCall(toolName, durMs, !tr.isError, tr.tokenEstimate.toLong())
+                // Acknowledge verification tools in backpressure gate
+                if (toolName in BackpressureGate.VERIFICATION_TOOLS && !tr.isError) {
+                    backpressureGate.acknowledgeVerification()
+                }
                 if (metrics.isCircuitBroken(toolName)) {
                     contextManager.addSystemMessage(
                         "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
@@ -830,6 +836,8 @@ class SingleAgentSession(
                 } else {
                     eventLog?.log(AgentEventType.EDIT_APPLIED, toolResult.artifacts.firstOrNull() ?: "unknown")
                 }
+                // Record in backpressure gate
+                toolResult.artifacts.firstOrNull()?.let { backpressureGate.recordEdit(it) }
             }
 
             if (toolResult.isError) {
@@ -840,6 +848,15 @@ class SingleAgentSession(
 
             // Record metrics and check circuit breaker
             metrics.recordToolCall(toolName, toolDurationMs, !toolResult.isError, toolResult.tokenEstimate.toLong())
+            // Acknowledge verification tools in backpressure gate
+            if (toolName in BackpressureGate.VERIFICATION_TOOLS && !toolResult.isError) {
+                backpressureGate.acknowledgeVerification()
+            }
+            // Backpressure error on test/build failures
+            if (toolResult.isError && toolName in setOf("run_command", "run_tests", "compile_module")) {
+                val bpError = backpressureGate.createBackpressureError(toolName, toolResult.content)
+                contextManager.addMessage(bpError)
+            }
             if ((toolName == "agent" || toolName == "delegate_task") && !toolResult.isError) {
                 metrics.subagentCount++
             }
@@ -917,6 +934,12 @@ class SingleAgentSession(
             if (msg.content?.contains("same arguments") == true) {
                 eventLog?.log(AgentEventType.LOOP_DETECTED, msg.content ?: "")
             }
+        }
+
+        // Backpressure gate: nudge after N edits without verification
+        val backpressureNudge = backpressureGate.checkAndGetNudge()
+        if (backpressureNudge != null) {
+            contextManager.addMessage(backpressureNudge)
         }
 
         return null // continue loop
