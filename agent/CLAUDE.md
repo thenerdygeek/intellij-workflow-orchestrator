@@ -9,6 +9,7 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 - Auth: `token` scheme via `Authorization: token <sourcegraph-access-token>`
 - Constraints: 190K input tokens (configurable), no `system` role (converted to user with `<system_instructions>` tags), no `tool_choice`, strict user/assistant alternation
 - Output limit varies per model — no hardcoded clamp. User configures maxOutputTokens in settings.
+- Model: Auto-resolved from `GET /.api/llm/models` on first use via `ModelCache`. Priority: Anthropic Opus thinking > Opus > Sonnet. No hardcoded defaults.
 - Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with `<tool_result>` tags, consecutive same-role merging
 
 ## Architecture
@@ -29,7 +30,7 @@ AgentController (UI entry point)
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
 - **ContextManager** — Two-threshold compression (T_max=85%, T_retained=70%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses structured compaction template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
 - **BudgetEnforcer** — Four-status budget monitoring: OK (<80%), COMPRESS (80-88%), NUDGE (88-93%), STRONG_NUDGE (93-97%), TERMINATE (>97%).
-- **GuardrailStore** — Persistent learned constraints (`.workflow/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
+- **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
 - **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
 - **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
@@ -99,7 +100,7 @@ Three layers:
 
 Four structural patterns integrated from the Ralph Loop technique for improved reliability:
 
-1. **Learned Guardrails** — `GuardrailStore` persists failure patterns to `.workflow/agent/guardrails.md`. Auto-recorded from doom loops and circuit breakers. Manually recorded via `save_memory(type="guardrail")`. Loaded into system prompt and compression-proof `guardrailsAnchor`.
+1. **Learned Guardrails** — `GuardrailStore` persists failure patterns to `~/.workflow-orchestrator/{proj}/agent/guardrails.md`. Auto-recorded from doom loops and circuit breakers. Manually recorded via `save_memory(type="guardrail")`. Loaded into system prompt and compression-proof `guardrailsAnchor`.
 
 2. **Pre-Edit Search Enforcement** — `LoopGuard.checkPreEditRead()` hard-gates `edit_file` calls. If the file hasn't been read in the current session, the edit returns an error forcing the LLM to read first. Always on, not configurable.
 
@@ -130,10 +131,12 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 
 ## Conversation Persistence & Durable Execution
 
-- Messages: `{systemPath}/workflow-agent/sessions/{sessionId}/messages.jsonl` (append-only)
+- Messages: `~/.workflow-orchestrator/{proj}/agent/sessions/{sessionId}/messages.jsonl` (append-only)
 - Metadata: `{sessionId}/metadata.json`
 - Plan: `{sessionId}/plan.json`
 - Checkpoints: `{sessionId}/checkpoint.json` — saved after every iteration with: iteration, tokensUsed, editedFiles, hasPlan, lastActivity, persistedMessageCount
+- Traces: `{sessionId}/traces/trace.jsonl`
+- API Debug: `{sessionId}/api-debug/call-NNN-{request|response|error}.txt`
 - Global index: `GlobalSessionIndex` (app-level `PersistentStateComponent`)
 
 **Durable execution flow:**
@@ -145,14 +148,14 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 ## Three-Tier Memory System
 
 ### Tier 1: Core Memory (always in prompt, 4KB)
-- Location: `{projectBasePath}/.workflow/agent/core-memory.json`
+- Location: `~/.workflow-orchestrator/{proj}/agent/core-memory.json`
 - Fixed-size key-value store, injected as `<core_memory>` in system prompt
 - Self-editable by agent via `core_memory_read`, `core_memory_append`, `core_memory_replace` tools
 - Use for: build system quirks, key file paths, user preferences, active constraints
 - Loaded at session start by `CoreMemory.forProject()`
 
 ### Tier 2: Archival Memory (searchable, unlimited)
-- Location: `{projectBasePath}/.workflow/agent/archival/store.json`
+- Location: `~/.workflow-orchestrator/{proj}/agent/archival/store.json`
 - JSON-backed store with LLM-generated tags for keyword search
 - Insert via `archival_memory_insert` (requires tags for searchability)
 - Search via `archival_memory_search` (keyword matching with 3x tag boost)
@@ -167,7 +170,7 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 - Read-only — sessions persisted by ConversationStore
 
 ### Legacy: Markdown Memory
-- Location: `{projectBasePath}/.workflow/agent/memory/`
+- Location: `~/.workflow-orchestrator/{proj}/agent/memory/`
 - Index: `MEMORY.md` (first 200 lines loaded at session start)
 - LLM saves via `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
 - Injected as `<agent_memory>` section (kept for backward compatibility)
@@ -234,7 +237,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 **Resume:** `agent(resume="agentId", prompt="continue with authorization module")` — continues with full previous context
 **Kill:** `agent(kill="agentId")` — cancels a running background agent
 
-**Transcript persistence:** All worker conversations are saved to `{sessionDir}/subagents/agent-{id}.jsonl`. Resume reconstructs the full conversation context from the transcript.
+**Transcript persistence:** All worker conversations are saved to `~/.workflow-orchestrator/{proj}/agent/sessions/{sessionId}/subagents/agent-{id}.jsonl`. Resume reconstructs the full conversation context from the transcript.
 
 **Background notifications:** When a background agent completes, the parent is notified via a system message injected into the conversation context (`<background_agent_completed>` tag) and a UI status message in the chat panel.
 
@@ -280,7 +283,7 @@ Computed via `SessionScorecard.compute()` which pulls from `AgentMetrics.snapsho
 ### MetricsStore
 
 Persists scorecards as JSON files for trend analysis:
-- Location: `{projectBasePath}/.workflow/agent/metrics/scorecard-{sessionId}.json`
+- Location: `~/.workflow-orchestrator/{proj}/agent/metrics/scorecard-{sessionId}.json`
 - `save(scorecard)` / `load(sessionId)` / `loadAll()` / `loadRecent(limit)`
 - `getSummaryStats()` — aggregate: completion rate, avg cost, avg iterations, total quality signal counts
 - `cleanup(maxAge, maxCount)` — evicts old scorecards (default: 30 days, 100 max)

@@ -139,6 +139,22 @@ If any answer is NO, the AI agent cannot use this feature.
 
 All credentials stored in PasswordSafe. Never in XML.
 
+## Agent Storage
+
+All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (computed by `ProjectIdentifier`):
+
+| Data | Path | Retention |
+|---|---|---|
+| Sessions | `agent/sessions/{sessionId}/` | Per-session |
+| API Debug | `agent/sessions/{sessionId}/api-debug/` | Per-session |
+| Traces | `agent/sessions/{sessionId}/traces/` | Per-session |
+| Metrics | `agent/metrics/` | 30 days / 100 max |
+| Memory | `agent/memory/`, `agent/core-memory.json`, `agent/archival/` | Persistent |
+| Guardrails | `agent/guardrails.md` | Persistent |
+| Logs | `logs/agent-YYYY-MM-DD.jsonl` | 7 days |
+
+Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`. One-time migration from old scattered locations runs on first startup via `StorageMigration`.
+
 ## UX Constraints
 
 - ONE tool window "Workflow" (bottom-docked), 6 tabs: Sprint, PR, Build, Quality, Automation, Handover
