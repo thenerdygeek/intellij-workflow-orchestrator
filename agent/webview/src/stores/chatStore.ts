@@ -40,6 +40,7 @@ interface PendingApproval {
   title: string;
   description?: string;
   metadata?: Array<{ key: string; value: string }>;
+  diffContent?: string;
 }
 
 // ── Toast state ──
@@ -90,7 +91,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(name: string, args: string, status: ToolCallStatus): void;
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addStatus(message: string, type: StatusType): void;
@@ -125,7 +126,7 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(results: MentionSearchResult[]): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   sendMessage(text: string, mentions: Mention[]): void;
   setDebugLogVisible(visible: boolean): void;
@@ -283,7 +284,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number) {
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
       // Find the first RUNNING tool call with this name (for parallel calls,
@@ -303,10 +304,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
-        newMap.set(targetKey, { ...existing, status, result, durationMs });
+        newMap.set(targetKey, { ...existing, status, result, output, durationMs });
       } else {
         const id = nextId('tc');
-        newMap.set(id, { id, name, args: '', status, result, durationMs });
+        newMap.set(id, { id, name, args: '', status, result, output, durationMs });
       }
       return { activeToolCalls: newMap };
     });
@@ -351,6 +352,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       messages: [...state.messages, chainMsg],
       activeToolCalls: new Map(),
+      toolOutputStreams: {},
     });
   },
 
@@ -549,7 +551,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ mentionResults: results });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string) {
     set({
       pendingApproval: {
         toolName,
@@ -557,6 +559,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         title: `Approve ${toolName}? (${riskLevel} risk)`,
         description,
         metadata,
+        diffContent,
       }
     });
   },

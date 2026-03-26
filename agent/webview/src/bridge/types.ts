@@ -21,6 +21,7 @@ export interface ToolCall {
   args: string;
   status: ToolCallStatus;
   result?: string;
+  output?: string;
   durationMs?: number;
 }
 

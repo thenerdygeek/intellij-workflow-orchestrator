@@ -622,10 +622,11 @@ class AgentCefPanel(
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus,
         result: String = "", durationMs: Long = 0,
-        toolName: String = ""
+        toolName: String = "", output: String? = null
     ) {
         val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
-        callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)},${jsonStr(statusStr)})")
+        val outputArg = if (output != null) jsonStr(output) else "null"
+        callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)},${jsonStr(statusStr)},$outputArg)")
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
@@ -783,8 +784,9 @@ class AgentCefPanel(
 
     // ── Tool call approval rendering ──
 
-    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String) {
-        callJs("showApproval(${jsonStr(toolName)},${jsonStr(riskLevel)},${jsonStr(description)},${jsonStr(metadataJson)})")
+    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
+        val diffArg = if (diffContent != null) jsonStr(diffContent) else "null"
+        callJs("showApproval(${jsonStr(toolName)},${jsonStr(riskLevel)},${jsonStr(description)},${jsonStr(metadataJson)},$diffArg)")
     }
 
     // ── Debug log panel ──

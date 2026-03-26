@@ -4,8 +4,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import java.time.Instant
 
 /**
@@ -47,12 +45,11 @@ data class AuditEntry(
  *
  * Supports two modes:
  * - **Synchronous** (legacy): Uses [onApprovalNeeded] callback for immediate decisions.
- * - **Asynchronous** (blocking): Uses [CompletableDeferred] + [respondToApproval] for UI-driven approval
- *   with configurable timeout.
+ * - **Asynchronous** (blocking): Uses [CompletableDeferred] + [respondToApproval] for UI-driven approval.
+ *   Waits indefinitely until user responds.
  */
 class ApprovalGate(
     private val approvalRequired: Boolean = true,
-    private val timeoutMs: Long = 60_000L,
     private val onApprovalNeeded: ((String, RiskLevel) -> ApprovalResult)? = null,
     private val approvalCallback: ((String, RiskLevel, Map<String, Any?>) -> Unit)? = null
 ) {
@@ -108,17 +105,16 @@ class ApprovalGate(
     }
 
     /**
-     * Blocking approval check with timeout — the primary method for agentic execution.
+     * Blocking approval check — the primary method for agentic execution.
      *
-     * Uses [CompletableDeferred] to block until the UI calls [respondToApproval].
-     * If no response arrives within [timeoutMs], returns [ApprovalResult.Rejected] with timeout reason.
+     * Uses [CompletableDeferred] to block indefinitely until the UI calls [respondToApproval].
+     * The agent will wait as long as needed for the user to approve or reject.
      *
      * @param toolName The tool being called
      * @param params Tool parameters — used for context-aware risk classification
-     * @param overrideTimeoutMs Optional per-call timeout override
      * @return ApprovalResult indicating whether to proceed
      */
-    suspend fun check(toolName: String, params: Map<String, Any?> = emptyMap(), overrideTimeoutMs: Long? = null): ApprovalResult {
+    suspend fun check(toolName: String, params: Map<String, Any?> = emptyMap()): ApprovalResult {
         val risk = classifyRisk(toolName, params)
 
         // Read-only actions always proceed
@@ -156,14 +152,9 @@ class ApprovalGate(
         // Notify UI via callback
         approvalCallback?.invoke(toolName, risk, params)
 
-        // Wait with timeout
-        val effectiveTimeout = overrideTimeoutMs ?: timeoutMs
+        // Wait indefinitely until user responds
         return try {
-            val result = withTimeout(effectiveTimeout) { deferred.await() }
-            auditEntry.result = result
-            result
-        } catch (e: TimeoutCancellationException) {
-            val result = ApprovalResult.Rejected("Approval timed out after ${effectiveTimeout / 1000}s")
+            val result = deferred.await()
             auditEntry.result = result
             result
         } finally {

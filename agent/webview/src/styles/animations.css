@@ -181,6 +181,11 @@
   40% { opacity: 1; }
 }
 
+@keyframes approval-breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 
 /* ============================================================
    ANIMATION UTILITY CLASSES

@@ -71,6 +71,8 @@ data class ToolCallInfo(
     val result: String = "",
     val durationMs: Long = 0,
     val isError: Boolean = false,
+    /** Full tool output for UI display (capped at 5000 chars). */
+    val output: String? = null,
     /** Edit diff data for file modifications. */
     val editFilePath: String? = null,
     val editOldText: String? = null,

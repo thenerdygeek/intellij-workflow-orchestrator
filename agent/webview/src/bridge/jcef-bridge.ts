@@ -44,9 +44,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToolCall(toolName: string, args: string, status: string) {
     stores?.getChatStore().addToolCall(toolName, args, status as ToolCallStatus);
   },
-  updateToolResult(result: string, durationMs: number, toolName: string, status?: string) {
+  updateToolResult(result: string, durationMs: number, toolName: string, status?: string, output?: string | null) {
     const resolvedStatus = (status === 'ERROR' ? 'ERROR' : 'COMPLETED') as ToolCallStatus;
-    stores?.getChatStore().updateToolCall(toolName, resolvedStatus, result, durationMs);
+    stores?.getChatStore().updateToolCall(toolName, resolvedStatus, result, durationMs, output ?? undefined);
   },
   finalizeToolChain() {
     stores?.getChatStore().finalizeToolChain();
@@ -164,9 +164,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendSonarBadge(badgeJson: string) {
     stores?.getChatStore().addSonarBadge(badgeJson);
   },
-  showApproval(toolName: string, riskLevel: string, description: string, metadataJson: string) {
+  showApproval(toolName: string, riskLevel: string, description: string, metadataJson: string, diffContent?: string | null) {
     const metadata = metadataJson ? JSON.parse(metadataJson) : [];
-    stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata);
+    stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata, diffContent ?? undefined);
   },
   receiveMentionResults(resultsJson: string) {
     const results = JSON.parse(resultsJson);

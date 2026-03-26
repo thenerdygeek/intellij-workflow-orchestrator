@@ -13,6 +13,7 @@ export const TopBar = memo(function TopBar() {
   const debugVisible = useChatStore(s => s.debugLogVisible);
   const debugEntries = useChatStore(s => s.debugLogEntries);
   const hasErrors = debugEntries.some(e => e.level === 'error');
+  const pendingApproval = useChatStore(s => s.pendingApproval);
 
   const { used, max } = tokenBudget;
   const hasTokenData = max > 0;
@@ -53,7 +54,7 @@ export const TopBar = memo(function TopBar() {
         background: 'var(--toolbar-bg, var(--bg, #1e1e1e))',
       }}
     >
-      {/* Left: Token budget */}
+      {/* Left: Token budget + approval indicator */}
       <div className="flex items-center gap-2 min-w-0">
         {hasTokenData ? (
           <div className="flex items-center gap-1.5" title={`Context: ${used.toLocaleString()} / ${max.toLocaleString()} tokens (${fillPercent.toFixed(1)}%)`}>
@@ -93,6 +94,32 @@ export const TopBar = memo(function TopBar() {
           <span className="text-[10px]" style={{ color: 'var(--fg-muted, #6b7280)' }}>
             Agent
           </span>
+        )}
+
+        {/* Waiting for approval indicator */}
+        {pendingApproval && (
+          <button
+            onClick={() => document.dispatchEvent(new CustomEvent('scroll-to-approval'))}
+            className="flex items-center gap-1.5 rounded-md px-2 py-0.5 transition-colors hover:bg-[var(--hover-overlay)]"
+            title="Click to scroll to pending approval"
+          >
+            <span
+              className="inline-block size-1.5 rounded-full"
+              style={{
+                background: 'var(--accent-edit, #f59e0b)',
+                animation: 'approval-breathe 2s ease-in-out infinite',
+              }}
+            />
+            <span
+              className="text-[10px] font-medium"
+              style={{
+                color: 'var(--accent-edit, #f59e0b)',
+                animation: 'approval-breathe 2s ease-in-out infinite',
+              }}
+            >
+              Waiting for approval
+            </span>
+          </button>
         )}
       </div>
 

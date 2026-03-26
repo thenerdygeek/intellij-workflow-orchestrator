@@ -983,7 +983,8 @@ class SingleAgentSession(
                         args = tc.function.arguments.take(1000),
                         result = tr.summary,
                         durationMs = durMs,
-                        isError = tr.isError
+                        isError = tr.isError,
+                        output = tr.content.take(5000)
                     )
                 ))
                 onDebugLog?.invoke(
@@ -1144,6 +1145,7 @@ class SingleAgentSession(
             )
 
             // Build rich tool call info for the UI
+            val outputPreview = toolResult.content.take(5000)
             val editInfo = if (toolName == "edit_file" && !toolResult.isError) {
                 try {
                     val argsObj = json.decodeFromString<JsonObject>(toolCall.function.arguments)
@@ -1153,12 +1155,13 @@ class SingleAgentSession(
                         result = toolResult.summary,
                         durationMs = toolDurationMs,
                         isError = toolResult.isError,
+                        output = outputPreview,
                         editFilePath = argsObj["path"]?.toString()?.removeSurrounding("\""),
                         editOldText = argsObj["old_string"]?.toString()?.removeSurrounding("\"")?.take(500),
                         editNewText = argsObj["new_string"]?.toString()?.removeSurrounding("\"")?.take(500)
                     )
                 } catch (_: Exception) {
-                    ToolCallInfo(toolName = toolName, args = toolCall.function.arguments.take(1000), result = toolResult.summary, durationMs = toolDurationMs, isError = toolResult.isError)
+                    ToolCallInfo(toolName = toolName, args = toolCall.function.arguments.take(1000), result = toolResult.summary, durationMs = toolDurationMs, isError = toolResult.isError, output = outputPreview)
                 }
             } else {
                 ToolCallInfo(
@@ -1166,7 +1169,8 @@ class SingleAgentSession(
                     args = toolCall.function.arguments.take(1000),
                     result = toolResult.summary,
                     durationMs = toolDurationMs,
-                    isError = toolResult.isError
+                    isError = toolResult.isError,
+                    output = outputPreview
                 )
             }
 

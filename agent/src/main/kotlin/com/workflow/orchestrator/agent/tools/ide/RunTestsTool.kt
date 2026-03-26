@@ -78,8 +78,8 @@ class RunTestsTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER)
 
     companion object {
-        private const val DEFAULT_TIMEOUT_SECONDS = 120L
-        private const val MAX_TIMEOUT_SECONDS = 600L
+        private const val DEFAULT_TIMEOUT_SECONDS = 300L
+        private const val MAX_TIMEOUT_SECONDS = 900L
         private const val MAX_OUTPUT_CHARS = 4000
         private const val MAX_STACK_FRAMES = 5
         private const val MAX_PASSED_SHOWN = 20
@@ -152,20 +152,26 @@ class RunTestsTool : AgentTool {
                 ProgramRunnerUtil.executeConfiguration(env, false, true)
             }
 
-            // Poll for the run descriptor to appear and attach a process listener
+            // Poll for the run descriptor to appear and attach a process listener.
+            // No internal poll limit — the outer withTimeoutOrNull handles the deadline.
+            // Build + compilation can take minutes for large Gradle/Maven projects.
             suspendCancellableCoroutine { continuation ->
                 val timer = java.util.Timer()
                 continuation.invokeOnCancellation {
                     timer.cancel()
                 }
                 timer.schedule(object : java.util.TimerTask() {
-                    private var attempts = 0
                     override fun run() {
-                        attempts++
                         try {
                             val contentManager = RunContentManager.getInstance(project)
+                            // Match by class name OR by any descriptor with a running/recently-started process
                             val descriptor = contentManager.allDescriptors.firstOrNull { desc ->
-                                desc.displayName?.contains(simpleClassName, ignoreCase = true) == true
+                                val name = desc.displayName ?: ""
+                                name.contains(simpleClassName, ignoreCase = true) ||
+                                    name.contains(className, ignoreCase = true)
+                            } ?: contentManager.allDescriptors.firstOrNull { desc ->
+                                // Fallback: find the most recent descriptor with an active process
+                                desc.processHandler?.let { !it.isProcessTerminated || it.isProcessTerminating } == true
                             }
 
                             val handler = descriptor?.processHandler
@@ -174,15 +180,8 @@ class RunTestsTool : AgentTool {
                                 processHandlerRef.set(handler)
 
                                 if (handler.isProcessTerminated) {
-                                    // Small delay to let test framework populate results
-                                    java.util.Timer().schedule(object : java.util.TimerTask() {
-                                        override fun run() {
-                                            val testResult = extractNativeResults(project, simpleClassName, testTarget)
-                                            if (continuation.isActive) {
-                                                continuation.resume(testResult)
-                                            }
-                                        }
-                                    }, 500)
+                                    // Wait for test framework to populate SMTestProxy tree
+                                    waitForResultsThenResume(continuation, project, simpleClassName, testTarget)
                                 } else {
                                     // Stream console output to chat UI in real-time
                                     val toolCallId = RunCommandTool.currentToolCallId.get()
@@ -197,25 +196,12 @@ class RunTestsTool : AgentTool {
                                         }
 
                                         override fun processTerminated(event: ProcessEvent) {
-                                            // Small delay to let test framework populate results
-                                            java.util.Timer().schedule(object : java.util.TimerTask() {
-                                                override fun run() {
-                                                    val testResult = extractNativeResults(project, simpleClassName, testTarget)
-                                                    if (continuation.isActive) {
-                                                        continuation.resume(testResult)
-                                                    }
-                                                }
-                                            }, 500)
+                                            waitForResultsThenResume(continuation, project, simpleClassName, testTarget)
                                         }
                                     })
                                 }
-                            } else if (attempts > 50) {
-                                // 5 seconds without finding the descriptor
-                                timer.cancel()
-                                if (continuation.isActive) {
-                                    continuation.resume(null)
-                                }
                             }
+                            // else: keep polling — outer withTimeoutOrNull handles the deadline
                         } catch (e: Exception) {
                             timer.cancel()
                             if (continuation.isActive) {
@@ -223,7 +209,7 @@ class RunTestsTool : AgentTool {
                             }
                         }
                     }
-                }, 100, 100) // Check every 100ms
+                }, 100, 500) // Initial 100ms delay, poll every 500ms
             }
         }
 
@@ -250,6 +236,39 @@ class RunTestsTool : AgentTool {
         }
 
         return result
+    }
+
+    /**
+     * Poll for SMTestProxy results to be populated after process termination.
+     * The test framework populates the tree asynchronously — a fixed delay is unreliable.
+     * Polls every 200ms for up to 5 seconds for leaf test results to appear.
+     */
+    private fun waitForResultsThenResume(
+        continuation: kotlin.coroutines.Continuation<ToolResult?>,
+        project: Project,
+        simpleClassName: String,
+        testTarget: String
+    ) {
+        val cancellable = continuation as? kotlinx.coroutines.CancellableContinuation<ToolResult?> ?: return
+        val timer = java.util.Timer()
+        timer.schedule(object : java.util.TimerTask() {
+            private var polls = 0
+            override fun run() {
+                polls++
+                if (!cancellable.isActive) {
+                    timer.cancel()
+                    return
+                }
+                val result = extractNativeResults(project, simpleClassName, testTarget)
+                val hasLeafResults = result != null && !result.content.contains("no test methods found") && !result.content.contains("no structured results")
+                if (hasLeafResults || polls >= 25) {
+                    timer.cancel()
+                    if (cancellable.isActive) {
+                        cancellable.resume(result)
+                    }
+                }
+            }
+        }, 500, 200) // Initial 500ms delay, then poll every 200ms
     }
 
     /**

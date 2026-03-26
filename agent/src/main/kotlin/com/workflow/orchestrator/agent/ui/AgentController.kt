@@ -483,11 +483,13 @@ class AgentController(
                     approvalCallback = { toolName, risk, params ->
                         val metadata = buildApprovalMetadata(toolName, params)
                         val description = buildApprovalDescription(toolName, params)
+                        val diffContent = buildUnifiedDiff(toolName, params)
                         dashboard.showApproval(
                             toolName = toolName,
                             riskLevel = risk.name,
                             description = description,
-                            metadataJson = metadata
+                            metadataJson = metadata,
+                            diffContent = diffContent
                         )
                     }
                 )
@@ -809,6 +811,11 @@ class AgentController(
 
         val toolInfo = progress.toolCallInfo
         when {
+            progress.step == "__flush_stream__" -> {
+                // Text-only response: flush so the next iteration starts a fresh message
+                dashboard.flushStreamBuffer()
+                return
+            }
             progress.step.startsWith("Calling tool:") && toolInfo != null -> {
                 // Pre-execution: show tool call as RUNNING before it executes
                 dashboard.flushStreamBuffer()
@@ -820,7 +827,7 @@ class AgentController(
                     dashboard.appendEditDiff(toolInfo.editFilePath, toolInfo.editOldText, toolInfo.editNewText, !toolInfo.isError)
                 } else {
                     val status = if (toolInfo.isError) RichStreamingPanel.ToolCallStatus.FAILED else RichStreamingPanel.ToolCallStatus.SUCCESS
-                    dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs, toolInfo.toolName)
+                    dashboard.updateLastToolCall(status, toolInfo.result, toolInfo.durationMs, toolInfo.toolName, toolInfo.output)
                 }
 
                 // Track files in working set
@@ -927,14 +934,6 @@ class AgentController(
         when (toolName) {
             "edit_file" -> {
                 params["path"]?.let { items.add(mapOf("key" to "File", "value" to it.toString())) }
-                (params["old_string"] as? String)?.let {
-                    val preview = it.lines().take(3).joinToString("\\n")
-                    items.add(mapOf("key" to "Old", "value" to truncate(preview, 150)))
-                }
-                (params["new_string"] as? String)?.let {
-                    val preview = it.lines().take(3).joinToString("\\n")
-                    items.add(mapOf("key" to "New", "value" to truncate(preview, 150)))
-                }
             }
             "run_command" -> {
                 params["command"]?.let { items.add(mapOf("key" to "Command", "value" to it.toString())) }
@@ -1002,6 +1001,24 @@ class AgentController(
 
     private fun truncate(s: String, maxLen: Int): String =
         if (s.length <= maxLen) s else s.take(maxLen - 3) + "..."
+
+    private fun buildUnifiedDiff(toolName: String, params: Map<String, Any?>): String? {
+        if (toolName != "edit_file") return null
+        val path = params["path"] as? String ?: return null
+        val oldString = params["old_string"] as? String ?: return null
+        val newString = params["new_string"] as? String ?: return null
+
+        val oldLines = oldString.lines()
+        val newLines = newString.lines()
+
+        return buildString {
+            appendLine("--- a/$path")
+            appendLine("+++ b/$path")
+            appendLine("@@ -1,${oldLines.size} +1,${newLines.size} @@")
+            oldLines.forEach { appendLine("-$it") }
+            newLines.forEach { appendLine("+$it") }
+        }.trimEnd()
+    }
 
     private fun showApprovalDialog(description: String, riskLevel: RiskLevel): ApprovalResult {
         // Session-level auto-approve: skip dialog for MEDIUM or lower risk after user opted in

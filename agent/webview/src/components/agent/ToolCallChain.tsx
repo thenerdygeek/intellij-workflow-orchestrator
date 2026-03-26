@@ -83,6 +83,8 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
   let input: Record<string, unknown> | null = null;
   try { input = JSON.parse(toolCall.args) as Record<string, unknown>; } catch { /* ignore */ }
 
+  const displayOutput = toolCall.output || toolCall.result;
+
   return (
     <div className="space-y-2 py-1">
       {input && Object.keys(input).length > 0 && (
@@ -96,7 +98,7 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
           </pre>
         </div>
       )}
-      {toolCall.result && (
+      {displayOutput && (
         <div>
           <div
             className="text-[10px] font-semibold uppercase tracking-wider mb-1"
@@ -105,19 +107,19 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
             {toolCall.status === 'ERROR' ? 'Error' : 'Output'}
           </div>
           <pre
-            className="rounded p-2 text-[11px] font-mono leading-relaxed overflow-x-auto"
+            className="rounded p-2 text-[11px] font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere]"
             style={{
               backgroundColor: toolCall.status === 'ERROR' ? 'var(--diff-rem-bg)' : 'var(--code-bg)',
               color: toolCall.status === 'ERROR' ? 'var(--error)' : 'var(--fg)',
-              maxHeight: '200px',
+              maxHeight: '300px',
               overflowY: 'auto',
             }}
           >
-            {toolCall.result}
+            {displayOutput}
           </pre>
         </div>
       )}
-      {toolCall.status === 'RUNNING' && !toolCall.result && (
+      {toolCall.status === 'RUNNING' && !displayOutput && (
         <div className="text-[11px] italic" style={{ color: 'var(--fg-muted)' }}>Executing...</div>
       )}
     </div>
@@ -127,7 +129,12 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
 // ── Terminal content for CMD tools ──
 
 function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
-  const streamOutput = useChatStore(s => s.toolOutputStreams[toolCall.id] || '');
+  // Stream output is keyed by the Kotlin-side tool call ID, not the JS-generated ID.
+  // Find any matching stream — for CMD tools there's typically one active at a time.
+  const allStreams = useChatStore(s => s.toolOutputStreams);
+  const streamOutput = allStreams[toolCall.id]
+    || Object.values(allStreams).find(v => v.length > 0)
+    || '';
   const isRunning = toolCall.status === 'RUNNING';
   const isError = toolCall.status === 'ERROR';
 
@@ -143,11 +150,14 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
     }
   } catch { /* ignore */ }
 
+  // For completed: prefer full output, fall back to stream, then summary
+  const completedOutput = toolCall.output || streamOutput || toolCall.result || '';
+
   return (
     <Terminal
       command={command}
-      stdout={isRunning ? streamOutput : (toolCall.result && !isError ? toolCall.result : streamOutput)}
-      stderr={isError ? toolCall.result : undefined}
+      stdout={isRunning ? streamOutput : (!isError ? completedOutput : streamOutput)}
+      stderr={isError ? (toolCall.output || toolCall.result) : undefined}
       exitCode={isError ? 1 : toolCall.status === 'COMPLETED' ? 0 : undefined}
       durationMs={toolCall.durationMs}
     />

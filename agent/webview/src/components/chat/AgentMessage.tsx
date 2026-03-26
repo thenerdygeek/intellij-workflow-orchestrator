@@ -61,7 +61,7 @@ export const AgentMessage = memo(function AgentMessage({
       {/* Content bubble */}
       <div
         className={cn(
-          'max-w-[85%] rounded-lg px-4 py-3 break-words whitespace-normal',
+          'max-w-[85%] rounded-lg px-4 py-3 whitespace-normal [overflow-wrap:anywhere]',
           isUser
             ? 'bg-[var(--user-bg)] text-[var(--fg)]'
             : 'bg-transparent text-[var(--fg)]',

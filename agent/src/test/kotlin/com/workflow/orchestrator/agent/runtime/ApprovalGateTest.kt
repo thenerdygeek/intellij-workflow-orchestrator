@@ -381,36 +381,6 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `check times out after deadline`() = runTest {
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            timeoutMs = 500,
-            approvalCallback = { _, _, _ -> /* nobody responds */ }
-        )
-
-        val result = gate.check("edit_file", mapOf("path" to "src/main/kotlin/Service.kt"))
-        assertTrue(result is ApprovalResult.Rejected)
-        assertTrue((result as ApprovalResult.Rejected).reason.contains("timed out"))
-    }
-
-    @Test
-    fun `check with override timeout uses override`() = runTest {
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            timeoutMs = 60_000, // default is long
-            approvalCallback = { _, _, _ -> }
-        )
-
-        val result = gate.check(
-            "edit_file",
-            mapOf("path" to "src/main/kotlin/Service.kt"),
-            overrideTimeoutMs = 200
-        )
-        assertTrue(result is ApprovalResult.Rejected)
-        assertTrue((result as ApprovalResult.Rejected).reason.contains("timed out"))
-    }
-
-    @Test
     fun `check auto-approves NONE risk without blocking`() = runTest {
         val gate = ApprovalGate(
             approvalRequired = true,
@@ -440,7 +410,6 @@ class ApprovalGateTest {
 
         val gate = ApprovalGate(
             approvalRequired = true,
-            timeoutMs = 200,
             approvalCallback = { tool, risk, params ->
                 receivedTool = tool
                 receivedRisk = risk
@@ -448,7 +417,12 @@ class ApprovalGateTest {
             }
         )
 
-        // Will time out, but callback should fire
+        // Respond from a concurrent coroutine so check() completes
+        launch {
+            delay(50)
+            gate.respondToApproval(ApprovalResult.Approved)
+        }
+
         gate.check("run_command", mapOf("command" to "docker build ."))
 
         assertEquals("run_command", receivedTool)
@@ -514,12 +488,16 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `audit log records timeout rejection`() = runTest {
+    fun `audit log records rejection`() = runTest {
         val gate = ApprovalGate(
             approvalRequired = true,
-            timeoutMs = 200,
             approvalCallback = { _, _, _ -> }
         )
+
+        launch {
+            delay(50)
+            gate.respondToApproval(ApprovalResult.Rejected("User denied"))
+        }
 
         gate.check("run_command", mapOf("command" to "git push origin main"))
 
@@ -528,7 +506,7 @@ class ApprovalGateTest {
         assertEquals("run_command", entry.toolName)
         assertEquals(RiskLevel.HIGH, entry.riskLevel)
         assertTrue(entry.result is ApprovalResult.Rejected)
-        assertTrue((entry.result as ApprovalResult.Rejected).reason.contains("timed out"))
+        assertEquals("User denied", (entry.result as ApprovalResult.Rejected).reason)
     }
 
     @Test

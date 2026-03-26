@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useRef, useEffect, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -129,9 +129,27 @@ export const ChatView = memo(function ChatView() {
   const resolveApproval = useChatStore(s => s.resolveApproval);
   const retryMessage = useChatStore(s => s.retryMessage);
 
+  const approvalRef = useRef<HTMLDivElement>(null);
+
   const handleApprove = useCallback(() => resolveApproval('approve'), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
+
+  // Auto-scroll to approval gate when it appears
+  useEffect(() => {
+    if (pendingApproval && approvalRef.current) {
+      approvalRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [pendingApproval]);
+
+  // Listen for scroll-to-approval events from TopBar
+  useEffect(() => {
+    const handler = () => {
+      approvalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    };
+    document.addEventListener('scroll-to-approval', handler);
+    return () => document.removeEventListener('scroll-to-approval', handler);
+  }, []);
 
   // Convert tool calls map to sorted array (preserves insertion order)
   const toolCallsArray = Array.from(activeToolCalls.values());
@@ -146,8 +164,8 @@ export const ChatView = memo(function ChatView() {
       }
     : null;
 
-  // Show working indicator whenever the agent is active, hide only when streaming final output
-  const showWorkingIndicator = busy && !activeStream;
+  // Show working indicator for the entire ReAct loop — from user message until final response
+  const showWorkingIndicator = busy;
 
   return (
     <ChatContainerRoot
@@ -178,20 +196,6 @@ export const ChatView = memo(function ChatView() {
         {/* Active (in-progress) tool calls */}
         {toolCallsArray.length > 0 && (
           <ToolCallChain toolCalls={toolCallsArray} />
-        )}
-
-        {/* Tool call approval */}
-        {pendingApproval && (
-          <ApprovalView
-            toolName={pendingApproval.toolName}
-            riskLevel={pendingApproval.riskLevel}
-            title={pendingApproval.title}
-            description={pendingApproval.description}
-            metadata={pendingApproval.metadata}
-            onApprove={handleApprove}
-            onDeny={handleDeny}
-            onAllowForSession={handleAllowForSession}
-          />
         )}
 
         {/* Plan */}
@@ -240,6 +244,23 @@ export const ChatView = memo(function ChatView() {
             <span className="text-[11px] truncate max-w-[300px]" style={{ color: 'var(--fg-muted)' }}>
               {retryMessage}
             </span>
+          </div>
+        )}
+
+        {/* Tool call approval — always last so it stays at the bottom */}
+        {pendingApproval && (
+          <div ref={approvalRef}>
+            <ApprovalView
+              toolName={pendingApproval.toolName}
+              riskLevel={pendingApproval.riskLevel}
+              title={pendingApproval.title}
+              description={pendingApproval.description}
+              metadata={pendingApproval.metadata}
+              diffContent={pendingApproval.diffContent}
+              onApprove={handleApprove}
+              onDeny={handleDeny}
+              onAllowForSession={handleAllowForSession}
+            />
           </div>
         )}
 

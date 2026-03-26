@@ -200,8 +200,8 @@ class AgentDashboardPanel(
         cefPanel?.appendSonarBadge(badgeJson)
     }
 
-    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String) {
-        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson)
+    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
+        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent)
     }
 
     fun setCefSkillCallbacks(onDismiss: () -> Unit) {
@@ -288,9 +288,9 @@ class AgentDashboardPanel(
 
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0,
-        toolName: String = ""
+        toolName: String = "", output: String? = null
     ) {
-        cefPanel?.updateLastToolCall(status, result, durationMs, toolName)
+        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
     }
 
