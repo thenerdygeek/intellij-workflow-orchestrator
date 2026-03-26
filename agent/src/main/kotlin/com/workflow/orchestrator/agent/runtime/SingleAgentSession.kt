@@ -39,21 +39,24 @@ sealed class SingleAgentResult {
         val summary: String,
         val tokensUsed: Int,
         val artifacts: List<String>,
-        val snapshotRef: String? = null
+        val snapshotRef: String? = null,
+        val scorecard: SessionScorecard? = null
     ) : SingleAgentResult()
 
     /** Task failed with an error. */
     data class Failed(
         val error: String,
         val tokensUsed: Int,
-        val snapshotRef: String? = null
+        val snapshotRef: String? = null,
+        val scorecard: SessionScorecard? = null
     ) : SingleAgentResult()
 
     /** Context exhausted but state externalized for rotation to a new session. */
     data class ContextRotated(
         val summary: String,
         val rotationStatePath: String,
-        val tokensUsed: Int
+        val tokensUsed: Int,
+        val scorecard: SessionScorecard? = null
     ) : SingleAgentResult()
 
 }
@@ -88,6 +91,22 @@ class SingleAgentSession(
     private var consecutiveMalformedRetries = 0
     /** Set to true after MAX_MALFORMED_RETRIES to force text-only response from LLM. */
     private var forceTextOnly = false
+
+    // --- Session-level quality signal counters (for scorecard) ---
+    /** Cumulative input tokens across all LLM calls in this session. */
+    var sessionInputTokens: Long = 0L; private set
+    /** Cumulative output tokens across all LLM calls in this session. */
+    var sessionOutputTokens: Long = 0L; private set
+    /** Count of hallucination flags from OutputValidator. */
+    var hallucinationFlags: Int = 0; private set
+    /** Count of credential leak detections from CredentialRedactor. */
+    var credentialLeakAttempts: Int = 0; private set
+    /** Count of doom loop detections from LoopGuard. */
+    var doomLoopTriggers: Int = 0; private set
+    /** Count of guardrail hits. */
+    var guardrailHits: Int = 0; private set
+    /** Task description for the current session (set by execute()). */
+    private var currentTask: String = ""
     companion object {
         private val LOG = Logger.getInstance(SingleAgentSession::class.java)
         private val json = Json { ignoreUnknownKeys = true }
@@ -162,6 +181,18 @@ class SingleAgentSession(
      * @param onStreamChunk Callback for streaming LLM output tokens (for real-time UI)
      * @return [SingleAgentResult] — completed or failed
      */
+    /**
+     * Checkpoint data emitted after each iteration for session-level persistence.
+     */
+    data class IterationCheckpointData(
+        val iteration: Int,
+        val tokensUsed: Int,
+        val lastToolCall: String?,
+        val editedFiles: List<String>,
+        val hasPlan: Boolean,
+        val lastActivity: String?
+    )
+
     suspend fun execute(
         task: String,
         tools: Map<String, AgentTool>,
@@ -177,8 +208,11 @@ class SingleAgentSession(
         sessionId: String = "",
         onProgress: (AgentProgress) -> Unit = {},
         onStreamChunk: (String) -> Unit = {},
-        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
+        /** Called after each iteration to persist checkpoint + messages. */
+        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null
     ): SingleAgentResult {
+        currentTask = task
         LOG.info("SingleAgentSession: starting with ${tools.size} tools for task: ${task.take(100)}")
         eventLog?.log(AgentEventType.SESSION_STARTED, "Task: ${task.take(200)}, tools: ${tools.size}")
 
@@ -200,6 +234,7 @@ class SingleAgentSession(
         // Initialize LoopGuard for loop detection and auto-verification
         val loopGuard = LoopGuard()
         val backpressureGate = BackpressureGate(editThreshold = 3)
+        val selfCorrectionGate = SelfCorrectionGate(maxRetriesPerFile = 3)
 
         // Initialize FactsStore for compression-proof knowledge retention
         if (contextManager.factsStore == null) {
@@ -228,7 +263,8 @@ class SingleAgentSession(
                     content = "Task cancelled by user after $iteration iterations.",
                     summary = "Cancelled",
                     tokensUsed = totalTokensUsed,
-                    artifacts = allArtifacts
+                    artifacts = allArtifacts,
+                    scorecard = buildScorecard(sessionId, "cancelled", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
                 )
             }
 
@@ -316,7 +352,8 @@ class SingleAgentSession(
                         return SingleAgentResult.ContextRotated(
                             summary = summary,
                             rotationStatePath = java.io.File(sessionDir, "rotation-state.json").absolutePath,
-                            tokensUsed = totalTokensUsed
+                            tokensUsed = totalTokensUsed,
+                            scorecard = buildScorecard(sessionId, "rotated", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
                         )
                     }
 
@@ -326,7 +363,8 @@ class SingleAgentSession(
                     loopGuard.guardrailStore?.save()
                     return SingleAgentResult.Failed(
                         error = budgetTerminateError,
-                        tokensUsed = totalTokensUsed
+                        tokensUsed = totalTokensUsed,
+                        scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
                     )
                 }
                 BudgetEnforcer.BudgetStatus.STRONG_NUDGE -> {
@@ -458,15 +496,16 @@ class SingleAgentSession(
                     }
                     eventLog?.log(AgentEventType.SESSION_FAILED, errorMsg)
                     agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = errorMsg)
-                    return SingleAgentResult.Failed(error = errorMsg, tokensUsed = totalTokensUsed)
+                    return SingleAgentResult.Failed(error = errorMsg, tokensUsed = totalTokensUsed,
+                        scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project))
                 }
                 // Process the successful retry below
                 return processLlmSuccess(
                     retryResult as LlmCallResult.Success, iteration, totalTokensUsed, allArtifacts,
                     editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
-                    backpressureGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
+                    backpressureGate, selfCorrectionGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                     onStreamChunk, eventLog, sessionTrace, maxIterations,
-                    sessionId, sessionStartMs, iterationStartMs, onDebugLog
+                    sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint
                 ) ?: continue
             }
 
@@ -475,9 +514,9 @@ class SingleAgentSession(
                     val sessionResult = processLlmSuccess(
                         result, iteration, totalTokensUsed, allArtifacts,
                         editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
-                        backpressureGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
+                        backpressureGate, selfCorrectionGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                         onStreamChunk, eventLog, sessionTrace, maxIterations,
-                        sessionId, sessionStartMs, iterationStartMs, onDebugLog
+                        sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint
                     )
                     if (sessionResult != null) return sessionResult
                     totalTokensUsed = result.totalTokensSoFar
@@ -491,7 +530,8 @@ class SingleAgentSession(
                     onDebugLog?.invoke("error", "error", llmFailedError, null)
                     return SingleAgentResult.Failed(
                         error = llmFailedError,
-                        tokensUsed = totalTokensUsed
+                        tokensUsed = totalTokensUsed,
+                        scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
                     )
                 }
                 is LlmCallResult.ContextExceededRetry -> {
@@ -508,7 +548,8 @@ class SingleAgentSession(
         agentFileLogger?.logSessionEnd(sessionId, maxIterations, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = maxIterError)
         return SingleAgentResult.Failed(
             error = maxIterError,
-            tokensUsed = totalTokensUsed
+            tokensUsed = totalTokensUsed,
+            scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
         )
     }
 
@@ -528,6 +569,7 @@ class SingleAgentSession(
         approvalGate: ApprovalGate?,
         loopGuard: LoopGuard,
         backpressureGate: BackpressureGate,
+        selfCorrectionGate: SelfCorrectionGate,
         budgetEnforcer: BudgetEnforcer,
         brain: LlmBrain,
         toolDefinitions: List<ToolDefinition>,
@@ -540,13 +582,16 @@ class SingleAgentSession(
         sessionId: String = "",
         sessionStartMs: Long = 0L,
         iterationStartMs: Long = 0L,
-        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
+        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null
     ): SingleAgentResult? {
         val response = result.response
         val usage = response.usage
         var totalTokensUsed = totalTokensUsedBefore
         if (usage != null && usage.promptTokens > 0) {
             totalTokensUsed += usage.totalTokens
+            sessionInputTokens += usage.promptTokens.toLong()
+            sessionOutputTokens += usage.completionTokens.toLong()
             // Reconcile heuristic token count with actual API-reported count.
             // Our character-based estimator (length/3.5) can be 20-40% off.
             // The API's prompt_tokens is authoritative — calibrate to it.
@@ -557,12 +602,15 @@ class SingleAgentSession(
             val estimatedPrompt = TokenEstimator.estimate(contextManager.getMessages())
             val estimatedCompletion = TokenEstimator.estimate(response.choices.firstOrNull()?.message?.content ?: "")
             totalTokensUsed += estimatedPrompt + estimatedCompletion
+            sessionInputTokens += estimatedPrompt.toLong()
+            sessionOutputTokens += estimatedCompletion.toLong()
         }
         // Store for caller
         (result as LlmCallResult.Success).totalTokensSoFar = totalTokensUsed
 
         val choice = response.choices.firstOrNull() ?: return SingleAgentResult.Failed(
-            error = "Empty response from LLM", tokensUsed = totalTokensUsed
+            error = "Empty response from LLM", tokensUsed = totalTokensUsed,
+            scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
         )
         val message = choice.message
 
@@ -689,7 +737,14 @@ class SingleAgentSession(
                 return null // continue loop
             }
 
-            // LoopGuard: check if verification is needed before completing
+            // Self-correction quality gate: block completion if unverified edits exist
+            val completionBlock = selfCorrectionGate.checkCompletionReadiness()
+            if (completionBlock != null) {
+                contextManager.addMessage(completionBlock)
+                return null // continue loop for verification
+            }
+
+            // LoopGuard: fallback check if verification is needed before completing
             val verificationMsg = loopGuard.beforeCompletion()
             if (verificationMsg != null) {
                 contextManager.addMessage(verificationMsg)
@@ -700,11 +755,15 @@ class SingleAgentSession(
             val securityIssues = OutputValidator.validate(content)
             val sanitizedContent = if (securityIssues.isNotEmpty()) {
                 LOG.warn("SingleAgentSession: output validation flagged: ${securityIssues.joinToString()}")
+                hallucinationFlags += securityIssues.size
                 CredentialRedactor.redact(content)
             } else content
 
             val summary = if (sanitizedContent.length > 200) sanitizedContent.take(200) + "..." else sanitizedContent
-            LOG.info("SingleAgentSession: completed after $iteration iterations, $totalTokensUsed tokens")
+            val scStates = selfCorrectionGate.getFileStates()
+            val verifiedCount = scStates.count { it.value.verified }
+            val exhaustedCount = selfCorrectionGate.getExhaustedFiles().size
+            LOG.info("SingleAgentSession: completed after $iteration iterations, $totalTokensUsed tokens, self-correction: $verifiedCount verified, $exhaustedCount exhausted")
 
             onProgress(AgentProgress(
                 step = "Task completed",
@@ -725,7 +784,8 @@ class SingleAgentSession(
                 content = sanitizedContent,
                 summary = summary,
                 tokensUsed = totalTokensUsed,
-                artifacts = allArtifacts
+                artifacts = allArtifacts,
+                scorecard = buildScorecard(sessionId, "completed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
             )
         }
 
@@ -745,6 +805,7 @@ class SingleAgentSession(
         for (tc in toolCalls) {
             val doomMessage = loopGuard.checkDoomLoop(tc.function.name, tc.function.arguments)
             if (doomMessage != null) {
+                doomLoopTriggers++
                 // SKIP execution — don't waste time on a doom loop call
                 contextManager.addToolResult(tc.id, doomMessage, "Doom loop detected — execution skipped")
                 doomSkipped.add(tc.id)
@@ -798,9 +859,21 @@ class SingleAgentSession(
 
                 // Record metrics and check circuit breaker
                 metrics.recordToolCall(toolName, durMs, !tr.isError, tr.tokenEstimate.toLong())
-                // Acknowledge verification tools in backpressure gate
-                if (toolName in BackpressureGate.VERIFICATION_TOOLS && !tr.isError) {
-                    backpressureGate.acknowledgeVerification()
+                // Acknowledge verification tools in backpressure gate and self-correction gate
+                if (toolName in BackpressureGate.VERIFICATION_TOOLS) {
+                    if (!tr.isError) {
+                        backpressureGate.acknowledgeVerification()
+                    }
+                    // Self-correction: record verification result per file
+                    val verifiedFile = selfCorrectionGate.extractFilePathFromArgs(toolName, tc.function.arguments)
+                    selfCorrectionGate.recordVerification(verifiedFile, passed = !tr.isError, errorDetails = if (tr.isError) tr.content.take(1500) else null)
+                    // If verification failed on a tracked file, inject reflection prompt
+                    if (tr.isError && verifiedFile != null && selfCorrectionGate.isTracked(verifiedFile)) {
+                        val reflection = selfCorrectionGate.buildReflectionPrompt(verifiedFile, toolName, tr.content)
+                        if (reflection != null) {
+                            contextManager.addMessage(reflection)
+                        }
+                    }
                 }
                 if (metrics.isCircuitBroken(toolName)) {
                     contextManager.addSystemMessage(
@@ -828,7 +901,7 @@ class SingleAgentSession(
                     tokensUsed = contextManager.currentTokens,
                     toolCallInfo = ToolCallInfo(
                         toolName = toolName,
-                        args = tc.function.arguments.take(200),
+                        args = tc.function.arguments.take(1000),
                         result = tr.summary,
                         durationMs = durMs,
                         isError = tr.isError
@@ -893,8 +966,11 @@ class SingleAgentSession(
                 } else {
                     eventLog?.log(AgentEventType.EDIT_APPLIED, toolResult.artifacts.firstOrNull() ?: "unknown")
                 }
-                // Record in backpressure gate
-                toolResult.artifacts.firstOrNull()?.let { backpressureGate.recordEdit(it) }
+                // Record in backpressure gate and self-correction gate
+                toolResult.artifacts.firstOrNull()?.let {
+                    backpressureGate.recordEdit(it)
+                    selfCorrectionGate.recordEdit(it)
+                }
             }
 
             if (toolResult.isError) {
@@ -905,9 +981,21 @@ class SingleAgentSession(
 
             // Record metrics and check circuit breaker
             metrics.recordToolCall(toolName, toolDurationMs, !toolResult.isError, toolResult.tokenEstimate.toLong())
-            // Acknowledge verification tools in backpressure gate
-            if (toolName in BackpressureGate.VERIFICATION_TOOLS && !toolResult.isError) {
-                backpressureGate.acknowledgeVerification()
+            // Acknowledge verification tools in backpressure gate and self-correction gate
+            if (toolName in BackpressureGate.VERIFICATION_TOOLS) {
+                if (!toolResult.isError) {
+                    backpressureGate.acknowledgeVerification()
+                }
+                // Self-correction: record verification result per file
+                val verifiedFile = selfCorrectionGate.extractFilePathFromArgs(toolName, toolCall.function.arguments)
+                selfCorrectionGate.recordVerification(verifiedFile, passed = !toolResult.isError, errorDetails = if (toolResult.isError) toolResult.content.take(1500) else null)
+                // If verification failed on a tracked file, inject reflection prompt
+                if (toolResult.isError && verifiedFile != null && selfCorrectionGate.isTracked(verifiedFile)) {
+                    val reflection = selfCorrectionGate.buildReflectionPrompt(verifiedFile, toolName, toolResult.content)
+                    if (reflection != null) {
+                        contextManager.addMessage(reflection)
+                    }
+                }
             }
             // Backpressure error on test/build failures
             if (toolResult.isError && toolName in setOf("run_command", "run_tests", "compile_module")) {
@@ -944,7 +1032,7 @@ class SingleAgentSession(
                     val argsObj = json.decodeFromString<JsonObject>(toolCall.function.arguments)
                     ToolCallInfo(
                         toolName = toolName,
-                        args = toolCall.function.arguments.take(200),
+                        args = toolCall.function.arguments.take(1000),
                         result = toolResult.summary,
                         durationMs = toolDurationMs,
                         isError = toolResult.isError,
@@ -953,12 +1041,12 @@ class SingleAgentSession(
                         editNewText = argsObj["new_string"]?.toString()?.removeSurrounding("\"")?.take(500)
                     )
                 } catch (_: Exception) {
-                    ToolCallInfo(toolName = toolName, args = toolCall.function.arguments.take(200), result = toolResult.summary, durationMs = toolDurationMs, isError = toolResult.isError)
+                    ToolCallInfo(toolName = toolName, args = toolCall.function.arguments.take(1000), result = toolResult.summary, durationMs = toolDurationMs, isError = toolResult.isError)
                 }
             } else {
                 ToolCallInfo(
                     toolName = toolName,
-                    args = toolCall.function.arguments.take(200),
+                    args = toolCall.function.arguments.take(1000),
                     result = toolResult.summary,
                     durationMs = toolDurationMs,
                     isError = toolResult.isError
@@ -998,6 +1086,25 @@ class SingleAgentSession(
         if (backpressureNudge != null) {
             contextManager.addMessage(backpressureNudge)
         }
+
+        // Self-correction gate: demand verification after edits
+        val verificationDemand = selfCorrectionGate.getVerificationDemand()
+        if (verificationDemand != null) {
+            contextManager.addMessage(verificationDemand)
+        }
+
+        // Emit checkpoint after each iteration for durable execution
+        try {
+            val lastTool = toolCalls.lastOrNull()?.function?.name
+            onCheckpoint?.invoke(IterationCheckpointData(
+                iteration = iteration,
+                tokensUsed = totalTokensUsed,
+                lastToolCall = lastTool,
+                editedFiles = editedFiles.toList(),
+                hasPlan = contextManager.hasPlanAnchor,
+                lastActivity = "Iteration $iteration: ${toolNames.joinToString(", ")}"
+            ))
+        } catch (_: Exception) { /* checkpoint is best-effort */ }
 
         return null // continue loop
     }
@@ -1126,7 +1233,7 @@ class SingleAgentSession(
             tokensUsed = 0, // Don't access contextManager from parallel context
             toolCallInfo = ToolCallInfo(
                 toolName = toolName,
-                args = toolCall.function.arguments.take(200),
+                args = toolCall.function.arguments.take(1000),
                 isError = false
             )
         ))
@@ -1307,6 +1414,42 @@ class SingleAgentSession(
             what files were changed, and any issues encountered.
             </output>
         """.trimIndent()
+    }
+
+    /**
+     * Build a [SessionScorecard] from current session state.
+     * Called at each session exit point (completed, failed, cancelled, rotated).
+     */
+    internal fun buildScorecard(
+        sessionId: String,
+        status: String,
+        selfCorrectionGate: SelfCorrectionGate?,
+        durationMs: Long,
+        project: Project
+    ): SessionScorecard {
+        val planManager = try {
+            com.workflow.orchestrator.agent.AgentService.getInstance(project).currentPlanManager
+        } catch (_: Exception) { null }
+        val plan = planManager?.currentPlan
+        val planStepsTotal = plan?.steps?.size ?: 0
+        val planStepsCompleted = plan?.steps?.count { it.status == "completed" || it.status == "done" } ?: 0
+
+        return SessionScorecard.compute(
+            sessionId = sessionId,
+            taskDescription = currentTask,
+            status = status,
+            agentMetrics = metrics,
+            selfCorrectionGate = selfCorrectionGate,
+            planStepsTotal = planStepsTotal,
+            planStepsCompleted = planStepsCompleted,
+            durationMs = durationMs,
+            totalInputTokens = sessionInputTokens,
+            totalOutputTokens = sessionOutputTokens,
+            hallucinationFlags = hallucinationFlags,
+            credentialLeakAttempts = credentialLeakAttempts,
+            doomLoopTriggers = doomLoopTriggers,
+            guardrailHits = guardrailHits
+        )
     }
 
 }

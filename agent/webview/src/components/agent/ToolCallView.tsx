@@ -110,7 +110,7 @@ function extractTarget(args: string): string {
     const parsed: unknown = JSON.parse(args);
     if (typeof parsed === 'object' && parsed !== null) {
       const obj = parsed as Record<string, unknown>;
-      for (const key of ['file_path', 'path', 'pattern', 'command', 'query', 'glob']) {
+      for (const key of ['file_path', 'path', 'pattern', 'command', 'query', 'glob', 'class_name', 'expression', 'name', 'module_name']) {
         const val = obj[key];
         if (typeof val === 'string' && val.length > 0) {
           if (val.length > 60) {
