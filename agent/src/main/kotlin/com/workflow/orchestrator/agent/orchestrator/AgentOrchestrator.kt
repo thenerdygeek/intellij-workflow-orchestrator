@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
+import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
@@ -113,6 +114,13 @@ class AgentOrchestrator(
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
         val maxOutputTokens = settings?.state?.maxOutputTokens ?: SourcegraphChatClient.MAX_OUTPUT_TOKENS
+
+        // Scope API debug dumps to the active session directory.
+        // Counter resets per session so file numbering restarts from 001.
+        if (brain is OpenAiCompatBrain) {
+            brain.setApiDebugDir(session?.store?.sessionDirectory)
+            if (session == null) brain.resetApiCallCounter()
+        }
 
         // Default: Single Agent Mode
         onProgress(AgentProgress("Starting task...", tokensUsed = 0))
@@ -239,8 +247,13 @@ class AgentOrchestrator(
 
         // Create event log and session trace for observability (per-task, not per-session)
         val traceId = session?.sessionId ?: UUID.randomUUID().toString().take(12)
-        val eventLog = project.basePath?.let { AgentEventLog(traceId, it) }
-        val sessionTrace = project.basePath?.let { SessionTrace(traceId, it) }
+        val sessionDirForLogs: java.io.File? = session?.store?.sessionDirectory
+            ?: project.basePath?.let {
+                com.workflow.orchestrator.core.util.ProjectIdentifier.sessionsDir(it)
+                    .resolve(traceId).also { dir -> dir.mkdirs() }
+            }
+        val eventLog = sessionDirForLogs?.let { AgentEventLog(traceId, it) }
+        val sessionTrace = sessionDirForLogs?.let { SessionTrace(traceId, it) }
         eventLog?.let {
             it.log(AgentEventType.SNAPSHOT_CREATED, "checkpoint:$checkpointId")
         }

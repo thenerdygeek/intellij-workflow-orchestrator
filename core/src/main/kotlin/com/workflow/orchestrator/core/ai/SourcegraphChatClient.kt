@@ -476,21 +476,31 @@ class SourcegraphChatClient(
     }
 
     // ═══ API Debug Logging ═══
-    // Dumps full request/response to ~/.workflow-orchestrator/agent/logs/api-debug/
-    // for diagnosing multi-turn context issues.
+    // Dumps full request/response to the active session's api-debug/ subdirectory.
+    // No-ops when no session is active (e.g., commit message generation).
 
-    private val apiDebugDir by lazy {
-        java.io.File(System.getProperty("user.home"), ".workflow-orchestrator/agent/logs/api-debug").also {
-            it.mkdirs()
-        }
+    /** Session-scoped directory for API debug dumps. Set by caller when a session is active. */
+    @Volatile var apiDebugSessionDir: java.io.File? = null
+
+    private val apiDebugDir: java.io.File? get() {
+        val sessionDir = apiDebugSessionDir
+        return if (sessionDir != null) {
+            java.io.File(sessionDir, "api-debug").also { it.mkdirs() }
+        } else null
     }
 
     @Volatile private var apiCallCounter = 0
 
+    /** Reset the API call counter — call when starting a new session. */
+    fun resetApiCallCounter() {
+        apiCallCounter = 0
+    }
+
     private fun dumpApiRequest(messages: List<ChatMessage>, tools: List<ToolDefinition>?, bodyLength: Int) {
+        val dir = apiDebugDir ?: return
         try {
             val idx = ++apiCallCounter
-            val file = java.io.File(apiDebugDir, "call-${String.format("%03d", idx)}-request.txt")
+            val file = java.io.File(dir, "call-${String.format("%03d", idx)}-request.txt")
             file.writeText(buildString {
                 appendLine("=== API Request #$idx === ${java.time.Instant.now()} ===")
                 appendLine("Model: $model")
@@ -522,9 +532,10 @@ class SourcegraphChatClient(
     }
 
     private fun dumpApiResponse(response: ChatCompletionResponse) {
+        val dir = apiDebugDir ?: return
         try {
             val idx = apiCallCounter
-            val file = java.io.File(apiDebugDir, "call-${String.format("%03d", idx)}-response.txt")
+            val file = java.io.File(dir, "call-${String.format("%03d", idx)}-response.txt")
             val choice = response.choices.firstOrNull()
             file.writeText(buildString {
                 appendLine("=== API Response #$idx === ${java.time.Instant.now()} ===")
@@ -547,9 +558,10 @@ class SourcegraphChatClient(
     }
 
     private fun dumpApiError(code: Int, body: String) {
+        val dir = apiDebugDir ?: return
         try {
             val idx = apiCallCounter
-            val file = java.io.File(apiDebugDir, "call-${String.format("%03d", idx)}-error.txt")
+            val file = java.io.File(dir, "call-${String.format("%03d", idx)}-error.txt")
             file.writeText(buildString {
                 appendLine("=== API Error #$idx === ${java.time.Instant.now()} ===")
                 appendLine("HTTP $code")

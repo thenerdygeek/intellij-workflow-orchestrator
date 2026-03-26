@@ -68,4 +68,20 @@ class OpenAiCompatBrain(
     }
 
     override fun estimateTokens(text: String): Int = TokenEstimator.estimate(text)
+
+    /**
+     * Set the session-scoped directory for API debug dumps.
+     * Pass null to disable dumping (e.g., when no session is active).
+     */
+    fun setApiDebugDir(dir: java.io.File?) {
+        client.apiDebugSessionDir = dir
+    }
+
+    /**
+     * Reset the API call counter. Call at the start of each new session
+     * so dump file numbering restarts from 001.
+     */
+    fun resetApiCallCounter() {
+        client.resetApiCallCounter()
+    }
 }
