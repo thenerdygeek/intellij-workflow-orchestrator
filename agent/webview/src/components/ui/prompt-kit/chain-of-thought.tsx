@@ -39,14 +39,22 @@ export interface ChainOfThoughtStepProps {
   children: React.ReactNode;
   className?: string;
   defaultOpen?: boolean;
+  /** When true, force the step open (controlled mode). */
+  forceOpen?: boolean;
 }
 
 export function ChainOfThoughtStep({
   children,
   className,
   defaultOpen = false,
+  forceOpen,
 }: ChainOfThoughtStepProps) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [isOpen, setIsOpen] = useState(defaultOpen || !!forceOpen);
+
+  // Force open when forceOpen transitions to true
+  React.useEffect(() => {
+    if (forceOpen) setIsOpen(true);
+  }, [forceOpen]);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>

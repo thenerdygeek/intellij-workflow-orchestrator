@@ -134,7 +134,13 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
   let command = toolCall.name;
   try {
     const parsed = JSON.parse(toolCall.args) as Record<string, unknown>;
-    if (typeof parsed.command === 'string') command = parsed.command;
+    if (typeof parsed.command === 'string') {
+      command = parsed.command;
+    } else if (toolCall.name === 'run_tests' && typeof parsed.class_name === 'string') {
+      command = `run_tests ${parsed.class_name}${typeof parsed.method === 'string' ? `#${parsed.method}` : ''}`;
+    } else if (toolCall.name === 'compile_module' && typeof parsed.module === 'string') {
+      command = `compile ${parsed.module}`;
+    }
   } catch { /* ignore */ }
 
   return (
@@ -160,6 +166,7 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
   return (
     <ChainOfThoughtStep
       defaultOpen={false}
+      forceOpen={isRunning && isCmdTool}
     >
       <ChainOfThoughtTrigger
         isActive={isRunning}
