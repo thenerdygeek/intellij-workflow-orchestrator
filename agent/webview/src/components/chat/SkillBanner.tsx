@@ -13,6 +13,8 @@ export const SkillBanner = memo(function SkillBanner() {
 
   return (
     <div
+      role="status"
+      aria-live="polite"
       className="flex items-center justify-between px-3 py-1 shrink-0 select-none animate-[fade-in_200ms_ease-out]"
       style={{
         borderBottom: '1px solid var(--border, #333)',
@@ -57,9 +59,10 @@ export const SkillBanner = memo(function SkillBanner() {
         title="Deactivate skill"
         aria-label={`Deactivate ${skillName} skill`}
       >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" className="mr-0.5">
           <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
+        Deactivate
       </button>
     </div>
   );
