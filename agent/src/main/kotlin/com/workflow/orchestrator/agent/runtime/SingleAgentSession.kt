@@ -132,16 +132,6 @@ class SingleAgentSession(
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think", "attempt_completion")
 
-        /** Patterns that indicate the model intended to use a tool but stopped without calling it. */
-        private val TOOL_INTENT_PATTERNS = listOf(
-            "let me check", "let me run", "let me read", "let me look",
-            "i'll check", "i'll run", "i'll read", "i'll look",
-            "i will check", "i will run", "i will read", "i will look",
-            "let me search", "let me find", "i'll search", "i'll find",
-            "let me examine", "let me inspect", "let me verify",
-            "i'll examine", "i'll inspect", "i'll verify",
-            "let me see", "i'll see what", "let me get", "i'll get",
-        )
 
         /** Read-only tools safe to execute in parallel (no side effects on project state). */
         private val READ_ONLY_TOOLS = setOf(
@@ -688,6 +678,13 @@ class SingleAgentSession(
             onStreamChunk(cleanMessage.content!!)
         }
 
+        // Flush the stream buffer after each LLM response so that text-only
+        // responses (no tool calls) become discrete chat messages instead of
+        // concatenating with the next iteration's text output.
+        if (toolCalls.isNullOrEmpty() && !cleanMessage.content.isNullOrBlank()) {
+            onProgress(AgentProgress(step = "__flush_stream__", tokensUsed = contextManager.currentTokens))
+        }
+
         // Handle truncated responses (output token limit hit).
         // finishReason="length" means the model hit max_tokens before completing.
         // Two cases: (1) truncated text response, (2) truncated tool call (invalid JSON).
@@ -773,22 +770,7 @@ class SingleAgentSession(
             }
 
             // No tool calls — about to return final response
-
-            // Detect truncated tool intent: the model said it would use a tool but stopped
-            // without actually calling it (common when API silently caps output tokens).
             val content = message.content ?: ""
-            val lowerContent = content.lowercase()
-            val hasUnfulfilledIntent = TOOL_INTENT_PATTERNS.any { lowerContent.contains(it) }
-            if (hasUnfulfilledIntent && iteration < maxIterations - 1) {
-                LOG.info("SingleAgentSession: detected unfulfilled tool intent in text, nudging model to follow through")
-                onDebugLog?.invoke("warn", "nudge", "Detected unfulfilled tool intent — nudging model to act", null)
-                contextManager.addMessage(ChatMessage(
-                    role = "user",
-                    content = "You said you would use a tool but your response ended without making the tool call. " +
-                        "Please make the actual tool call now — don't describe what you'll do, just do it."
-                ))
-                return null // continue loop
-            }
 
             // Confused response detection: very short or multiple questions
             if (isConfusedResponse(content) && iteration < maxIterations - 1) {
@@ -803,7 +785,9 @@ class SingleAgentSession(
             // No-tool-call nudge / implicit completion tracking
             consecutiveNoToolResponses++
 
-            if (consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
+            // When forceTextOnly is active (iteration 95%+ or malformed retries exhausted),
+            // tools are disabled — skip the nudge and go straight to gatekeeper.
+            if (!forceTextOnly && consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
                 metrics.nudgeCount++
                 contextManager.addMessage(ChatMessage(
                     role = "user",
