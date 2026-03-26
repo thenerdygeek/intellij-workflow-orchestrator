@@ -102,36 +102,39 @@ class PromptAssembler(
         // 8. Planning instructions
         sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
 
-        // 9. Delegation instructions — only if agent/delegate tools available
+        // 9. Completion instructions — tell the agent when and how to call attempt_completion
+        sections.add(COMPLETION_RULES)
+
+        // 10. Delegation instructions — only if agent/delegate tools available
         sections.add(DELEGATION_RULES)
 
-        // 10. Memory instructions
+        // 11. Memory instructions
         sections.add(MEMORY_RULES)
 
-        // 11. Thinking tool guidance
+        // 12. Thinking tool guidance
         sections.add(THINKING_RULES)
 
-        // 12. @ Mention context guidance
+        // 13. @ Mention context guidance
         sections.add(MENTION_RULES)
 
-        // 13. Rich output rendering capabilities — only if JCEF UI is active
+        // 14. Rich output rendering capabilities — only if JCEF UI is active
         if (hasJcefUi) {
             sections.add(RENDERING_RULES)
         }
 
-        // 14. Context management awareness (anti-hallucination)
+        // 15. Context management awareness (anti-hallucination)
         sections.add(CONTEXT_MANAGEMENT_RULES)
 
-        // 15. Efficiency constraints (prevents 13-iteration exploration for simple questions)
+        // 16. Efficiency constraints (prevents 13-iteration exploration for simple questions)
         sections.add(EFFICIENCY_RULES)
 
-        // 16. Few-shot examples (high-attention zone)
+        // 17. Few-shot examples (high-attention zone)
         sections.add(FEW_SHOT_EXAMPLES)
 
-        // 17. Error recovery guidance
+        // 18. Error recovery guidance
         sections.add(OrchestratorPrompts.ERROR_RECOVERY_RULES)
 
-        // 18. Integration-specific rules — only include for active tool categories
+        // 19. Integration-specific rules — only include for active tool categories
         val activeToolNames = if (activeTools.isNotEmpty()) {
             activeTools.map { it.name }.toSet()
         } else {
@@ -143,7 +146,7 @@ class PromptAssembler(
             sections.add(integrationRules)
         }
 
-        // 19. Rules and Constraints (including anti-loop)
+        // 20. Rules and Constraints (including anti-loop)
         sections.add(RULES)
 
         return sections.joinToString("\n\n")
@@ -347,6 +350,15 @@ class PromptAssembler(
             - If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
         """.trimIndent()
+
+        private const val COMPLETION_RULES = """
+## Completion
+
+When you have fully completed ALL parts of the user's request, call the attempt_completion tool with a summary of what you accomplished.
+Do not end your response without either calling a tool or calling attempt_completion.
+If you stop without calling any tool, you will be asked to continue.
+Do NOT call attempt_completion when completing individual plan steps — use update_plan_step for that.
+"""
 
         val THINKING_RULES = """
             <thinking>
