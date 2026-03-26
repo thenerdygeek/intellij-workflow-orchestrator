@@ -101,6 +101,18 @@ object ProcessRegistry {
         }
     }
 
+    /**
+     * Returns all processes whose [ManagedProcess.lastOutputAt] is non-zero and
+     * at least [thresholdMs] milliseconds in the past (i.e. idle based on output activity).
+     */
+    fun getIdleProcesses(thresholdMs: Long): List<ManagedProcess> {
+        val now = System.currentTimeMillis()
+        return running.values.filter { managed ->
+            val lastOutput = managed.lastOutputAt.get()
+            lastOutput > 0 && (now - lastOutput) >= thresholdMs
+        }
+    }
+
     fun isRunning(toolCallId: String): Boolean {
         val managed = running[toolCallId] ?: return false
         return managed.process.isAlive

@@ -149,6 +149,26 @@ class ProcessRegistryTest {
         assertTrue(process.isAlive)
     }
 
+    // -----------------------------------------------------------------------
+    // getIdleProcesses
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `getIdleProcesses returns processes idle past threshold`() {
+        val process = ProcessBuilder("sleep", "60").start()
+        val managed = ProcessRegistry.register("idle-get-test", process, "sleep 60")
+        managed.lastOutputAt.set(System.currentTimeMillis() - 20_000) // 20s ago
+
+        val idle = ProcessRegistry.getIdleProcesses(15_000)
+        assertEquals(1, idle.size)
+        assertEquals("idle-get-test", idle.first().toolCallId)
+
+        val notIdle = ProcessRegistry.getIdleProcesses(30_000)
+        assertTrue(notIdle.isEmpty())
+
+        process.destroyForcibly()
+    }
+
     @Test
     fun `reapIdleProcesses does not kill processes idle for less than threshold`() {
         val process = ProcessBuilder("sleep", "60").start()
