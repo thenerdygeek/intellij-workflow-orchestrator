@@ -38,6 +38,13 @@ sealed class AgentResult {
 
     /** User cancelled the task. */
     data class Cancelled(val completedSteps: Int) : AgentResult()
+
+    /** Context exhausted but state externalized for rotation to a new session. */
+    data class ContextRotated(
+        val summary: String,
+        val rotationStatePath: String,
+        val tokensUsed: Int
+    ) : AgentResult()
 }
 
 /**
@@ -269,6 +276,13 @@ class AgentOrchestrator(
                 AgentResult.Failed(
                     result.error,
                     rollbackCheckpointId = checkpointId
+                )
+            }
+            is SingleAgentResult.ContextRotated -> {
+                AgentResult.ContextRotated(
+                    summary = result.summary,
+                    rotationStatePath = result.rotationStatePath,
+                    tokensUsed = result.tokensUsed
                 )
             }
         }

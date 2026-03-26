@@ -892,6 +892,13 @@ class AgentController(
                 dashboard.appendStatus("Cancelled after ${result.completedSteps} steps.", RichStreamingPanel.StatusType.WARNING)
                 dashboard.completeSession(0, result.completedSteps, emptyList(), durationMs, RichStreamingPanel.SessionStatus.CANCELLED)
             }
+            is AgentResult.ContextRotated -> {
+                dashboard.appendStatus(
+                    "Context full — rotating to fresh session. ${result.summary}",
+                    RichStreamingPanel.StatusType.WARNING
+                )
+                dashboard.completeSession(result.tokensUsed, 0, emptyList(), durationMs, RichStreamingPanel.SessionStatus.CANCELLED)
+            }
         }
     }
 

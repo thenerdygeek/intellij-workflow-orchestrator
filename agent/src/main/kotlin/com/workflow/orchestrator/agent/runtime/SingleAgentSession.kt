@@ -49,6 +49,13 @@ sealed class SingleAgentResult {
         val snapshotRef: String? = null
     ) : SingleAgentResult()
 
+    /** Context exhausted but state externalized for rotation to a new session. */
+    data class ContextRotated(
+        val summary: String,
+        val rotationStatePath: String,
+        val tokensUsed: Int
+    ) : SingleAgentResult()
+
 }
 
 /**
@@ -264,6 +271,56 @@ class SingleAgentSession(
                     LOG.warn("SingleAgentSession: budget exhausted at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
                     eventLog?.log(AgentEventType.SESSION_FAILED, "Budget terminated at ${budgetEnforcer.utilizationPercent()}%")
                     sessionTrace?.sessionFailed("Budget terminated at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
+
+                    // Attempt context rotation if we have structured state to hand off
+                    val planManager = try {
+                        com.workflow.orchestrator.agent.AgentService.getInstance(project).currentPlanManager
+                    } catch (_: Exception) { null }
+                    val currentPlan = planManager?.currentPlan
+                    val sessionDir = try {
+                        com.workflow.orchestrator.agent.AgentService.getInstance(project).currentSessionDir
+                    } catch (_: Exception) { null }
+
+                    if (currentPlan != null && sessionDir != null) {
+                        val accomplishments = currentPlan.steps
+                            .filter { it.status == "done" }
+                            .joinToString("; ") { it.title }
+                        val remaining = currentPlan.steps
+                            .filter { it.status != "done" }
+                            .joinToString("; ") { it.title }
+                        val guardrails = loopGuard.guardrailStore?.toContextString()?.lines()
+                            ?.filter { it.startsWith("- ") }
+                            ?.map { it.removePrefix("- ") }
+                            ?: emptyList()
+                        val facts = contextManager.factsStore?.toContextString()?.lines()
+                            ?.filter { it.startsWith("- ") }
+                            ?.map { it.removePrefix("- ") }
+                            ?: emptyList()
+
+                        val rotationState = RotationState(
+                            goal = currentPlan.goal,
+                            accomplishments = accomplishments.ifBlank { "In progress" },
+                            remainingWork = remaining.ifBlank { "Unknown — check plan" },
+                            modifiedFiles = editedFiles.toList(),
+                            guardrails = guardrails,
+                            factsSnapshot = facts
+                        )
+                        RotationState.save(rotationState, sessionDir)
+
+                        val summary = "Context full (${budgetEnforcer.utilizationPercent()}%). " +
+                            "Accomplished: $accomplishments. Remaining: $remaining."
+
+                        loopGuard.guardrailStore?.save()
+                        agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = "Context rotated")
+
+                        return SingleAgentResult.ContextRotated(
+                            summary = summary,
+                            rotationStatePath = java.io.File(sessionDir, "rotation-state.json").absolutePath,
+                            tokensUsed = totalTokensUsed
+                        )
+                    }
+
+                    // No plan — fall back to hard failure
                     val budgetTerminateError = "Context budget exhausted at ${budgetEnforcer.utilizationPercent()}%. Please start a new conversation for remaining work."
                     agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = budgetTerminateError)
                     loopGuard.guardrailStore?.save()
