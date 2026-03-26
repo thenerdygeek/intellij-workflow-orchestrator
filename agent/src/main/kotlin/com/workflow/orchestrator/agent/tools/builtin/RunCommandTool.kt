@@ -253,7 +253,7 @@ class RunCommandTool : AgentTool {
                 ?: "run-cmd-${processIdCounter.incrementAndGet()}"
 
             // Register in ProcessRegistry for kill/killAll support
-            ProcessRegistry.register(toolCallId, process)
+            ProcessRegistry.register(toolCallId, process, command)
 
             // Stream output line-by-line in a daemon thread
             val outputBuilder = StringBuilder()
