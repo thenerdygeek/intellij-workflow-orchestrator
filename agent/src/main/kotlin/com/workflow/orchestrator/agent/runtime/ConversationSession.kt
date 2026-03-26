@@ -132,9 +132,23 @@ class ConversationSession private constructor(
         persistedMessageCount = allMessages.size
     }
 
-    /** Save a checkpoint for this session (call after each tool execution). */
-    fun saveCheckpoint(iteration: Int, tokensUsed: Int, lastToolCall: String?, rollbackCheckpointId: String?) {
+    /**
+     * Save a checkpoint for this session (call after each tool execution).
+     * Includes enough state for resume orientation and interruption detection.
+     */
+    fun saveCheckpoint(
+        iteration: Int,
+        tokensUsed: Int,
+        lastToolCall: String?,
+        rollbackCheckpointId: String?,
+        editedFiles: List<String> = emptyList(),
+        hasPlan: Boolean = false,
+        lastActivity: String? = null
+    ) {
         try {
+            // Persist messages incrementally so they survive a crash
+            persistNewMessages()
+
             SessionCheckpoint.save(
                 SessionCheckpoint(
                     sessionId = sessionId,
@@ -144,7 +158,11 @@ class ConversationSession private constructor(
                     lastToolCall = lastToolCall,
                     touchedFiles = emptyList(),
                     rollbackCheckpointId = rollbackCheckpointId,
-                    timestamp = System.currentTimeMillis()
+                    timestamp = System.currentTimeMillis(),
+                    editedFiles = editedFiles,
+                    persistedMessageCount = persistedMessageCount,
+                    hasPlan = hasPlan,
+                    lastActivity = lastActivity
                 ),
                 store.sessionDirectory
             )
@@ -205,11 +223,19 @@ class ConversationSession private constructor(
                 RepoMapGenerator.generate(project, maxTokens = 1500)
             } catch (_: Exception) { "" }
 
-            // Load cross-session memories
+            // Load cross-session memories (legacy markdown files)
             val memoryContext = try {
                 val basePath = project.basePath
                 if (basePath != null) {
                     AgentMemoryStore(java.io.File(basePath)).loadMemories(maxLines = 200)
+                } else null
+            } catch (_: Exception) { null }
+
+            // Load core memory (always-in-prompt, self-editable)
+            val coreMemoryContext = try {
+                val basePath = project.basePath
+                if (basePath != null) {
+                    com.workflow.orchestrator.agent.context.CoreMemory.forProject(basePath).render()
                 } else null
             } catch (_: Exception) { null }
 
@@ -268,6 +294,7 @@ class ConversationSession private constructor(
                 projectPath = project.basePath,
                 repoMapContext = repoMap.ifBlank { null },
                 memoryContext = memoryContext,
+                coreMemoryContext = coreMemoryContext,
                 skillDescriptions = skillDescriptions.ifBlank { null },
                 agentDescriptions = agentDescriptions.ifBlank { null },
                 guardrailsContext = guardrailsContext,
@@ -411,6 +438,30 @@ class ConversationSession private constructor(
             try {
                 agentService.currentSessionDir = loaded.store.sessionDirectory
             } catch (_: Exception) {}
+
+            // Load checkpoint data and inject resume context if session was interrupted
+            val checkpoint = SessionCheckpoint.load(loaded.store.sessionDirectory)
+            if (checkpoint != null && (metadata.status == "interrupted" || metadata.status == "active")) {
+                val resumeContext = buildString {
+                    appendLine("<session_resumed>")
+                    appendLine("This session was interrupted and has been resumed.")
+                    appendLine("Last state: iteration ${checkpoint.iteration}, ${checkpoint.tokensUsed} tokens used.")
+                    if (checkpoint.editedFiles.isNotEmpty()) {
+                        appendLine("Files edited before interruption: ${checkpoint.editedFiles.joinToString(", ")}")
+                        appendLine("IMPORTANT: Re-read these files to see their current state before making further edits.")
+                    }
+                    checkpoint.lastActivity?.let { appendLine("Last activity: $it") }
+                    if (checkpoint.hasPlan) {
+                        appendLine("An active plan was in progress — check plan status before continuing.")
+                    }
+                    appendLine("Review what was accomplished so far, then continue where you left off.")
+                    appendLine("</session_resumed>")
+                }
+                loaded.contextManager.addMessage(ChatMessage(role = "system", content = resumeContext))
+            }
+
+            // Mark as active again now that it's been resumed
+            loaded.status = "active"
 
             return loaded
         }

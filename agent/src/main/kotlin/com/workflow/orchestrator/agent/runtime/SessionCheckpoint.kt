@@ -5,13 +5,18 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
- * Lightweight checkpoint saved after each tool execution in a session.
+ * Checkpoint saved after each tool execution in a session.
  *
- * Allows detection of interrupted sessions on IDE restart. Stored as
- * checkpoint.json alongside the JSONL messages file in the session directory.
+ * Enables two capabilities:
+ * 1. **Interruption detection** — on IDE restart, sessions with phase="executing"
+ *    are marked as "interrupted" and the user is offered a resume action.
+ * 2. **Resume context** — when resuming, checkpoint data tells the agent what
+ *    was happening (edited files, iteration count, plan status) so it can
+ *    orient itself without re-discovering project state.
  *
- * Not used for full replay (ConversationStore handles that) — this is purely
- * for detecting interruptions and providing resume metadata.
+ * Stored as checkpoint.json alongside the JSONL messages file in the session directory.
+ * Messages are the authoritative conversation record (ConversationStore handles replay);
+ * this provides supplementary loop state.
  */
 @Serializable
 data class SessionCheckpoint(
@@ -22,15 +27,25 @@ data class SessionCheckpoint(
     val lastToolCall: String? = null,
     val touchedFiles: List<String> = emptyList(),
     val rollbackCheckpointId: String? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** Files edited during this session — used by SelfCorrectionGate on resume. */
+    val editedFiles: List<String> = emptyList(),
+    /** Total persisted message count at checkpoint time — for verifying JSONL integrity. */
+    val persistedMessageCount: Int = 0,
+    /** Whether the session had an active plan at checkpoint time. */
+    val hasPlan: Boolean = false,
+    /** Brief description of what the agent was doing when checkpointed. */
+    val lastActivity: String? = null
 ) {
     companion object {
         private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
         fun save(checkpoint: SessionCheckpoint, sessionDir: File) {
             sessionDir.mkdirs()
-            val file = File(sessionDir, "checkpoint.json")
-            file.writeText(json.encodeToString(serializer(), checkpoint))
+            // Atomic write: temp file then rename
+            val tmp = File(sessionDir, "checkpoint.json.tmp")
+            tmp.writeText(json.encodeToString(serializer(), checkpoint))
+            tmp.renameTo(File(sessionDir, "checkpoint.json"))
         }
 
         fun load(sessionDir: File): SessionCheckpoint? {

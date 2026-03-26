@@ -31,6 +31,7 @@ AgentController (UI entry point)
 - **BudgetEnforcer** — Four-status budget monitoring: OK (<80%), COMPRESS (80-88%), NUDGE (88-93%), STRONG_NUDGE (93-97%), TERMINATE (>97%).
 - **GuardrailStore** — Persistent learned constraints (`.workflow/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
 - **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
+- **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
@@ -104,6 +105,8 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 
 3. **Backpressure Gates** — `BackpressureGate` tracks edits and injects verification nudges after every N edits (default 3). Escalates to stronger nudge if ignored. Test/build failures generate structured `<backpressure_error>` feedback.
 
+5. **Self-Correction Loop** — `SelfCorrectionGate` enforces verify-reflect-retry per edited file. After each `edit_file`, demands `diagnostics`. On failure, injects `<self_correction>` reflection prompt (what failed, why, how to fix). Caps at 3 retries per file. Blocks completion until all edits verified or retries exhausted.
+
 4. **Context Rotation** — When budget hits TERMINATE (97%), instead of hard-failing, externalizes state to `rotation-state.json` (goal, accomplishments, remaining work, files, guardrails, facts) and returns `ContextRotated`. AgentController shows rotation summary. Only works when an active plan exists; falls back to `Failed` otherwise.
 
 ## Token Management
@@ -125,21 +128,61 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 2. **Context** — `<active_plan>` system message with structured summary, updated in-place (`PlanAnchor` + `ContextManager.planAnchor`)
 3. **UI** — Editor tab + chat card, real-time step updates
 
-## Conversation Persistence
+## Conversation Persistence & Durable Execution
 
 - Messages: `{systemPath}/workflow-agent/sessions/{sessionId}/messages.jsonl` (append-only)
 - Metadata: `{sessionId}/metadata.json`
 - Plan: `{sessionId}/plan.json`
-- Checkpoints: `{sessionId}/checkpoint.json`
+- Checkpoints: `{sessionId}/checkpoint.json` — saved after every iteration with: iteration, tokensUsed, editedFiles, hasPlan, lastActivity, persistedMessageCount
 - Global index: `GlobalSessionIndex` (app-level `PersistentStateComponent`)
 
-## Cross-Session Memory
+**Durable execution flow:**
+1. After each ReAct iteration, `onCheckpoint` callback fires → `ConversationSession.saveCheckpoint()` persists messages (incremental JSONL append) + checkpoint state
+2. On IDE crash: session stays "active" in GlobalSessionIndex
+3. On next startup: `AgentStartupActivity` detects "active" sessions, marks as "interrupted", shows notification with "Resume Session" action
+4. On resume: `ConversationSession.load()` replays JSONL messages, loads checkpoint, injects `<session_resumed>` context (edited files, iteration count, plan status) so the agent can orient and continue
 
+## Three-Tier Memory System
+
+### Tier 1: Core Memory (always in prompt, 4KB)
+- Location: `{projectBasePath}/.workflow/agent/core-memory.json`
+- Fixed-size key-value store, injected as `<core_memory>` in system prompt
+- Self-editable by agent via `core_memory_read`, `core_memory_append`, `core_memory_replace` tools
+- Use for: build system quirks, key file paths, user preferences, active constraints
+- Loaded at session start by `CoreMemory.forProject()`
+
+### Tier 2: Archival Memory (searchable, unlimited)
+- Location: `{projectBasePath}/.workflow/agent/archival/store.json`
+- JSON-backed store with LLM-generated tags for keyword search
+- Insert via `archival_memory_insert` (requires tags for searchability)
+- Search via `archival_memory_search` (keyword matching with 3x tag boost)
+- Types: error_resolution, code_pattern, decision, api_behavior, project_convention, agent_memory
+- Cap: 5000 entries, oldest evicted when full
+- No ML models — uses tag-boosted keyword matching (sub-millisecond for <5K entries)
+
+### Tier 3: Conversation Recall (past session search)
+- Searches JSONL transcripts across all past sessions
+- `conversation_search` tool for keyword search
+- Returns matching messages with session context
+- Read-only — sessions persisted by ConversationStore
+
+### Legacy: Markdown Memory
 - Location: `{projectBasePath}/.workflow/agent/memory/`
 - Index: `MEMORY.md` (first 200 lines loaded at session start)
-- Topic files: `{topic}.md` (loaded inline after index, most recent first)
 - LLM saves via `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
-- Injected into system prompt as `<agent_memory>` section
+- Injected as `<agent_memory>` section (kept for backward compatibility)
+
+### Memory Tools (6 new + 1 legacy)
+| Tool | Tier | Description |
+|------|------|-------------|
+| `core_memory_read` | Core | Read current core memory block |
+| `core_memory_append` | Core | Add/update entry in core memory |
+| `core_memory_replace` | Core | Replace or delete core memory entry |
+| `archival_memory_insert` | Archival | Store long-term knowledge with tags |
+| `archival_memory_search` | Archival | Keyword search over archival store |
+| `conversation_search` | Recall | Search past session transcripts |
+| `save_memory` | Legacy | Save markdown memory file |
+
 - `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
 ## Interactive Debugging
@@ -222,6 +265,27 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 - `local`: `.workflow/agent-memory-local/{name}/`
 
 Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt. Legacy `delegate_task(agent="name", task="...")` still supported but deprecated.
+
+## Evaluation & Observability
+
+### SessionScorecard
+
+End-of-session quality scorecard computed at every session exit point (completed, failed, cancelled, rotated). Captures:
+
+- **SessionScorecardMetrics** — iterations, tool calls (total + unique), errors, compressions, input/output tokens, estimated cost (Claude Sonnet pricing baseline), plan progress, self-correction stats, approvals, subagent count, duration
+- **QualitySignals** — hallucination flags (OutputValidator), credential leak attempts (CredentialRedactor), doom loop triggers (LoopGuard), circuit breaker trips (AgentMetrics), guardrail hits, files edited/verified/exhausted (SelfCorrectionGate)
+
+Computed via `SessionScorecard.compute()` which pulls from `AgentMetrics.snapshot()`, `SelfCorrectionGate.getFileStates()`, and `PlanManager.currentPlan`. Wired into `SingleAgentResult.Completed`, `Failed`, and `ContextRotated`.
+
+### MetricsStore
+
+Persists scorecards as JSON files for trend analysis:
+- Location: `{projectBasePath}/.workflow/agent/metrics/scorecard-{sessionId}.json`
+- `save(scorecard)` / `load(sessionId)` / `loadAll()` / `loadRecent(limit)`
+- `getSummaryStats()` — aggregate: completion rate, avg cost, avg iterations, total quality signal counts
+- `cleanup(maxAge, maxCount)` — evicts old scorecards (default: 30 days, 100 max)
+
+Auto-persisted by `AgentOrchestrator` after each `SingleAgentSession.execute()` returns.
 
 ## Security
 

@@ -99,6 +99,8 @@ class ContextManager(
     var toolOutputStore: ToolOutputStore? = null
     /** Dedicated plan anchor — survives compression, updated in-place. */
     private var planAnchor: ChatMessage? = null
+    /** Whether an active plan exists in the context. */
+    val hasPlanAnchor: Boolean get() = planAnchor != null
     /** Dedicated skill anchor — survives compression, updated on skill activation/deactivation. */
     private var skillAnchor: ChatMessage? = null
     /** Dedicated mention anchor — file content from @ mentions, survives compression. */

@@ -35,6 +35,7 @@ class PromptAssembler(
         previousStepResults: List<String>? = null,
         repoMapContext: String? = null,
         memoryContext: String? = null,
+        coreMemoryContext: String? = null,
         skillDescriptions: String? = null,
         agentDescriptions: String? = null,
         planMode: Boolean = false,
@@ -68,7 +69,12 @@ class PromptAssembler(
             sections.add("<repo_map>\n$repoMapContext\n</repo_map>")
         }
 
-        // 5. Cross-session Memory (only if available)
+        // 5. Core Memory (always-in-prompt, self-editable — highest priority memory)
+        if (!coreMemoryContext.isNullOrBlank()) {
+            sections.add("<core_memory>\n$coreMemoryContext\n</core_memory>")
+        }
+
+        // 5a. Cross-session Memory (markdown files, legacy)
         if (!memoryContext.isNullOrBlank()) {
             sections.add("<agent_memory>\n$memoryContext\n</agent_memory>")
         }
@@ -316,7 +322,13 @@ class PromptAssembler(
 
         val MEMORY_RULES = """
             <memory>
-            You have access to save_memory to persist project-specific learnings across sessions.
+            You have a three-tier memory system:
+
+            1. **Core Memory** (always in prompt, 4KB) — Use core_memory_append/core_memory_replace for frequently-needed context: build system, key paths, user preferences. Self-edit to keep it current.
+            2. **Archival Memory** (searchable, unlimited) — Use archival_memory_insert to store long-term knowledge with tags. Use archival_memory_search to recall past decisions, error resolutions, patterns.
+            3. **Conversation Recall** — Use conversation_search to find what was discussed in past sessions.
+
+            Also available: save_memory for simple markdown-file persistence (legacy).
 
             Save a memory when you discover:
             - Build configuration quirks (e.g., "tests require Redis on port 6379")

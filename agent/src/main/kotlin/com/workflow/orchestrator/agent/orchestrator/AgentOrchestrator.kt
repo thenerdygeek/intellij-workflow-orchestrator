@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.agent.service.MetricsStore
 import com.workflow.orchestrator.agent.tools.DynamicToolSelector
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.settings.AgentSettings
@@ -261,8 +262,33 @@ class AgentOrchestrator(
             sessionId = traceId,
             onProgress = onProgress,
             onStreamChunk = onStreamChunk,
-            onDebugLog = onDebugLog
+            onDebugLog = onDebugLog,
+            onCheckpoint = { data ->
+                session?.saveCheckpoint(
+                    iteration = data.iteration,
+                    tokensUsed = data.tokensUsed,
+                    lastToolCall = data.lastToolCall,
+                    rollbackCheckpointId = checkpointId,
+                    editedFiles = data.editedFiles,
+                    hasPlan = data.hasPlan,
+                    lastActivity = data.lastActivity
+                )
+            }
         )
+
+        // Persist scorecard for trend analysis
+        val scorecard = when (result) {
+            is SingleAgentResult.Completed -> result.scorecard
+            is SingleAgentResult.Failed -> result.scorecard
+            is SingleAgentResult.ContextRotated -> result.scorecard
+        }
+        if (scorecard != null && project.basePath != null) {
+            try {
+                MetricsStore(project.basePath!!).save(scorecard)
+            } catch (e: Exception) {
+                LOG.warn("AgentOrchestrator: failed to persist scorecard", e)
+            }
+        }
 
         return when (result) {
             is SingleAgentResult.Completed -> {

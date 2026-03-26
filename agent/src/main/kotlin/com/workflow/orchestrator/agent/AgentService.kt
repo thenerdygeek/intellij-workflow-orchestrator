@@ -41,6 +41,11 @@ class AgentService(
     /** Reference to the active AgentController, used for session resume from History tab. */
     var activeController: com.workflow.orchestrator.agent.ui.AgentController? = null
 
+    /** Resume an interrupted session by delegating to the active controller. */
+    fun resumeSession(sessionId: String) {
+        activeController?.resumeSession(sessionId)
+    }
+
     /** Plan manager for the current agent session, set by SingleAgentSession. */
     @Volatile var currentPlanManager: PlanManager? = null
 
@@ -234,6 +239,12 @@ class AgentService(
             register(DelegateTaskTool())
             register(ThinkTool())
             register(SaveMemoryTool())
+            register(CoreMemoryReadTool())
+            register(CoreMemoryAppendTool())
+            register(CoreMemoryReplaceTool())
+            register(ArchivalMemoryInsertTool())
+            register(ArchivalMemorySearchTool())
+            register(ConversationSearchTool())
             register(ActivateSkillTool())
             register(DeactivateSkillTool())
 
