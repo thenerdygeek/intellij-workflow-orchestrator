@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.brain
 
+import com.workflow.orchestrator.agent.TestModels
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
@@ -25,7 +26,7 @@ class OpenAiCompatBrainTest {
         brain = OpenAiCompatBrain(
             sourcegraphUrl = server.url("/").toString().trimEnd('/'),
             tokenProvider = tokenProvider,
-            model = "anthropic/claude-sonnet-4",
+            model = TestModels.MOCK_MODEL,
             httpClientOverride = OkHttpClient.Builder()
                 .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))
                 .build()
@@ -58,6 +59,6 @@ class OpenAiCompatBrainTest {
 
     @Test
     fun `modelId returns configured model`() {
-        assertEquals("anthropic/claude-sonnet-4", brain.modelId)
+        assertEquals(TestModels.MOCK_MODEL, brain.modelId)
     }
 }

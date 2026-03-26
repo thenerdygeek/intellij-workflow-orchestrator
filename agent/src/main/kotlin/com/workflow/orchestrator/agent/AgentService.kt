@@ -21,6 +21,7 @@ import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.psi.*
 import com.workflow.orchestrator.agent.tools.runtime.*
 import com.workflow.orchestrator.agent.tools.vcs.*
+import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.intellij.openapi.util.Disposer
@@ -341,10 +342,13 @@ class AgentService(
         val settings = AgentSettings.getInstance(project)
         val connections = ConnectionSettings.getInstance()
         val credentialStore = CredentialStore()
+        val model = settings.state.sourcegraphChatModel
+            ?: ModelCache.pickBest(ModelCache.getCached())?.id
+            ?: throw IllegalStateException("No model configured. Open Settings > Agent and load models.")
         OpenAiCompatBrain(
             sourcegraphUrl = connections.state.sourcegraphUrl.trimEnd('/'),
             tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) },
-            model = settings.state.sourcegraphChatModel ?: "anthropic/claude-sonnet-4"
+            model = model
         )
     }
 

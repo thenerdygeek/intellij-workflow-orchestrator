@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.api
 
+import com.workflow.orchestrator.agent.TestModels
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
@@ -32,7 +33,7 @@ class SourcegraphChatClientStreamTest {
         client = SourcegraphChatClient(
             baseUrl = server.url("/").toString().trimEnd('/'),
             tokenProvider = tokenProvider,
-            model = "anthropic/claude-sonnet-4",
+            model = TestModels.MOCK_MODEL,
             httpClientOverride = testHttpClient(tokenProvider)
         )
     }

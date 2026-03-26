@@ -14,10 +14,9 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var agentEnabled by property(false)
         /**
          * Model name in Sourcegraph format: provider::apiVersion::modelId
-         * Default is Sonnet 4, but auto-upgraded to latest Opus when models are loaded
-         * (if user hasn't manually changed the model).
+         * Auto-resolved from API on first use. User can override in settings.
          */
-        var sourcegraphChatModel by string("anthropic::2024-10-22::claude-sonnet-4-20250514")
+        var sourcegraphChatModel by string(null)
         /** Tracks whether the user has manually selected a model (prevents auto-upgrade). */
         var userManuallySelectedModel by property(false)
         var maxInputTokens by property(190000)

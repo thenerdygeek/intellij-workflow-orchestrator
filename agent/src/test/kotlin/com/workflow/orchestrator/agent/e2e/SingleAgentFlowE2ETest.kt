@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.e2e
 
+import com.workflow.orchestrator.agent.TestModels
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
@@ -72,7 +73,7 @@ class SingleAgentFlowE2ETest {
         val baseBrain = OpenAiCompatBrain(
             sourcegraphUrl = server.url("/").toString().trimEnd('/'),
             tokenProvider = { "sgp_test-token" },
-            model = "anthropic::2024-10-22::claude-sonnet-4-20250514",
+            model = TestModels.MOCK_MODEL,
             httpClientOverride = OkHttpClient()
         )
         brain = NonStreamingBrainWrapper(baseBrain)

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.workflow.orchestrator.agent.TestModels
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -111,7 +112,7 @@ class ConversationStoreTest {
             projectName = "MyProject",
             projectPath = "/path/to/project",
             title = "Fix the bug in AuthService",
-            model = "anthropic::2024-10-22::claude-sonnet-4-20250514",
+            model = TestModels.MOCK_MODEL,
             createdAt = 1000L,
             lastMessageAt = 2000L,
             messageCount = 5,
@@ -126,7 +127,7 @@ class ConversationStoreTest {
         assertEquals("MyProject", loaded.projectName)
         assertEquals("/path/to/project", loaded.projectPath)
         assertEquals("Fix the bug in AuthService", loaded.title)
-        assertEquals("anthropic::2024-10-22::claude-sonnet-4-20250514", loaded.model)
+        assertEquals(TestModels.MOCK_MODEL, loaded.model)
         assertEquals(1000L, loaded.createdAt)
         assertEquals(2000L, loaded.lastMessageAt)
         assertEquals(5, loaded.messageCount)

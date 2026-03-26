@@ -13,6 +13,7 @@ import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.ModelInfo
+import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
@@ -190,6 +191,8 @@ class AgentSettingsConfigurable(
                     when (result) {
                         is ApiResult.Success -> {
                             cachedModels = result.data.data
+                            // Share with ModelCache so LlmBrainFactory can use cached models
+                            ModelCache.populateFromExternal(cachedModels)
                             populateModelDropdown(cachedModels)
                             modelStatusLabel?.icon = AllIcons.General.InspectionsOK
                             modelStatusLabel?.text = "${cachedModels.size} models loaded"
@@ -266,31 +269,10 @@ class AgentSettingsConfigurable(
 
     /**
      * Find the best available model: prefer latest Opus thinking > Opus > latest Sonnet.
+     * Delegates to ModelCache.pickBest for consistent model selection across the plugin.
      */
     private fun findBestModel(models: List<ModelInfo>): ModelInfo? {
-        // Priority: Anthropic Opus thinking > Anthropic Opus > Anthropic Sonnet > other Opus > other
-        val anthropicModels = models.filter { it.provider == "anthropic" }
-
-        // 1. Latest Opus (thinking models are Opus-class)
-        val opusThinking = anthropicModels
-            .filter { it.isOpusClass && it.isThinkingModel }
-            .maxByOrNull { it.modelName }
-        if (opusThinking != null) return opusThinking
-
-        // 2. Latest Opus (any)
-        val opus = anthropicModels
-            .filter { it.isOpusClass }
-            .maxByOrNull { it.modelName }
-        if (opus != null) return opus
-
-        // 3. Latest Sonnet
-        val sonnet = anthropicModels
-            .filter { it.modelName.lowercase().contains("sonnet") }
-            .maxByOrNull { it.modelName }
-        if (sonnet != null) return sonnet
-
-        // 4. Any Anthropic model
-        return anthropicModels.maxByOrNull { it.modelName } ?: models.firstOrNull()
+        return ModelCache.pickBest(models)
     }
 
     private fun selectModelInDropdown(combo: JComboBox<ModelItem>, comboModel: DefaultComboBoxModel<ModelItem>, modelId: String) {
