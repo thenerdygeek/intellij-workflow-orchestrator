@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.context
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -29,7 +30,7 @@ class CoreMemory(
 
         fun forProject(projectBasePath: String): CoreMemory {
             return instanceCache.getOrPut(projectBasePath) {
-                val dir = File(projectBasePath, ".workflow/agent")
+                val dir = ProjectIdentifier.agentDir(projectBasePath)
                 dir.mkdirs()
                 CoreMemory(File(dir, "core-memory.json"))
             }

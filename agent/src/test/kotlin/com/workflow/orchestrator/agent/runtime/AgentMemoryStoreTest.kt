@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -22,7 +23,7 @@ class AgentMemoryStoreTest {
     fun `saveMemory creates memory file and updates index`() {
         store.saveMemory("Build Config", "Always use Gradle wrapper for builds")
 
-        val memoryDir = File(tempDir, ".workflow/agent/memory")
+        val memoryDir = File(ProjectIdentifier.agentDir(tempDir.absolutePath), "memory")
         val topicFile = File(memoryDir, "build-config.md")
         val indexFile = File(memoryDir, "MEMORY.md")
 
@@ -78,7 +79,7 @@ class AgentMemoryStoreTest {
         store.saveMemory("Config", "Version 1 content")
         store.saveMemory("Config", "Version 2 content")
 
-        val memoryDir = File(tempDir, ".workflow/agent/memory")
+        val memoryDir = File(ProjectIdentifier.agentDir(tempDir.absolutePath), "memory")
         val topicFile = File(memoryDir, "config.md")
         val content = topicFile.readText()
 
@@ -93,7 +94,7 @@ class AgentMemoryStoreTest {
 
         store.deleteMemory("Temporary")
 
-        val memoryDir = File(tempDir, ".workflow/agent/memory")
+        val memoryDir = File(ProjectIdentifier.agentDir(tempDir.absolutePath), "memory")
         val deletedFile = File(memoryDir, "temporary.md")
         val indexFile = File(memoryDir, "MEMORY.md")
 

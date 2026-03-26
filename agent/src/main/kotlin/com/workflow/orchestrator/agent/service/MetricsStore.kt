@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.service
 
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.runtime.SessionScorecard
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -29,13 +30,12 @@ class MetricsStore(
             encodeDefaults = true
             prettyPrint = true
         }
-        private const val METRICS_DIR = ".workflow/agent/metrics"
         private const val DEFAULT_MAX_COUNT = 100
         private const val DEFAULT_MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000 // 30 days
     }
 
     private val metricsDir: File
-        get() = File(basePath, METRICS_DIR).also { it.mkdirs() }
+        get() = File(ProjectIdentifier.agentDir(basePath), "metrics").also { it.mkdirs() }
 
     /**
      * Persist a scorecard to disk.

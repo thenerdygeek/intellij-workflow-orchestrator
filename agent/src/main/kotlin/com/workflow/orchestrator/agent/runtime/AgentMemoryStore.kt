@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.runtime
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import java.io.File
 
 /**
@@ -15,12 +16,11 @@ class AgentMemoryStore(private val projectBasePath: File) {
 
     companion object {
         private val LOG = Logger.getInstance(AgentMemoryStore::class.java)
-        private const val MEMORY_DIR = ".workflow/agent/memory"
         private const val INDEX_FILE = "MEMORY.md"
     }
 
     private val memoryDir: File
-        get() = File(projectBasePath, MEMORY_DIR)
+        get() = File(ProjectIdentifier.agentDir(projectBasePath.absolutePath), "memory")
 
     /**
      * Save a memory under the given topic. Creates or overwrites the topic file

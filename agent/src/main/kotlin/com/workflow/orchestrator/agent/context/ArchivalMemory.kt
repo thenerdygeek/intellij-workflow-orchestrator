@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.context
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -30,7 +31,7 @@ class ArchivalMemory(
 
         fun forProject(projectBasePath: String): ArchivalMemory {
             return instanceCache.getOrPut(projectBasePath) {
-                val dir = File(projectBasePath, ".workflow/agent/archival")
+                val dir = File(ProjectIdentifier.agentDir(projectBasePath), "archival")
                 dir.mkdirs()
                 ArchivalMemory(File(dir, "store.json"))
             }

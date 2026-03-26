@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -64,7 +65,7 @@ class SaveMemoryToolTest {
         assertTrue(result.content.contains("Memory saved"))
         assertTrue(result.content.contains("build-config"))
 
-        val memoryFile = File(tempDir.toFile(), ".workflow/agent/memory/build-config.md")
+        val memoryFile = File(ProjectIdentifier.agentDir(tempDir.toFile().absolutePath), "memory/build-config.md")
         assertTrue(memoryFile.exists(), "Memory file should be created")
         val fileContent = memoryFile.readText()
         assertTrue(fileContent.contains("build-config"))

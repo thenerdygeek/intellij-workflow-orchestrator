@@ -4,6 +4,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.security.CredentialRedactor
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,7 +40,7 @@ import java.time.format.DateTimeFormatter
  * - Credential-redacted via [CredentialRedactor.redact]
  * - Truncated to a safe maximum to prevent unbounded file growth
  */
-class AgentFileLogger(parent: Disposable) : Disposable {
+class AgentFileLogger(parent: Disposable, private val projectBasePath: String) : Disposable {
 
     // -------------------------------------------------------------------------
     // Companion / constants
@@ -67,10 +68,7 @@ class AgentFileLogger(parent: Disposable) : Disposable {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val logDir: File = File(
-        System.getProperty("user.home"),
-        ".workflow-orchestrator/agent/logs"
-    )
+    private val logDir: File = ProjectIdentifier.logsDir(projectBasePath).also { it.mkdirs() }
 
     /** Active writer — replaced on day roll-over. Protected by [getWriter]. */
     @Volatile
@@ -84,10 +82,9 @@ class AgentFileLogger(parent: Disposable) : Disposable {
         // Register with parent so disposal is automatic
         Disposer.register(parent, this)
 
-        // Best-effort directory setup and retention cleanup — on IO thread
+        // Best-effort retention cleanup — on IO thread (directory already created at init)
         scope.launch {
             try {
-                logDir.mkdirs()
                 pruneOldLogs()
             } catch (e: Exception) {
                 LOG.warn("AgentFileLogger: init cleanup failed", e)

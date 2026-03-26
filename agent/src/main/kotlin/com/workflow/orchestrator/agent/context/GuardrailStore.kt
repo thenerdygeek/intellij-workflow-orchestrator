@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.context
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import java.io.File
 
 /**
@@ -20,7 +21,6 @@ class GuardrailStore(
 ) {
     companion object {
         private val LOG = Logger.getInstance(GuardrailStore::class.java)
-        private const val GUARDRAILS_DIR = ".workflow/agent"
         private const val GUARDRAILS_FILE = "guardrails.md"
     }
 
@@ -40,7 +40,7 @@ class GuardrailStore(
 
     fun load() {
         try {
-            val file = File(projectBasePath, "$GUARDRAILS_DIR/$GUARDRAILS_FILE")
+            val file = File(ProjectIdentifier.agentDir(projectBasePath.absolutePath), GUARDRAILS_FILE)
             if (!file.exists()) return
 
             val lines = file.readLines()
@@ -62,7 +62,7 @@ class GuardrailStore(
 
     fun save() {
         try {
-            val dir = File(projectBasePath, GUARDRAILS_DIR)
+            val dir = ProjectIdentifier.agentDir(projectBasePath.absolutePath)
             dir.mkdirs()
             val file = File(dir, GUARDRAILS_FILE)
             val content = buildString {

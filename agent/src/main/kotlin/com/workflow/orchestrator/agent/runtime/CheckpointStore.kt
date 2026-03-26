@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.runtime
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -37,7 +38,7 @@ class CheckpointStore(
          * {projectDir}/.workflow/agent/
          */
         fun forProject(projectBasePath: String): CheckpointStore {
-            return CheckpointStore(File(projectBasePath, ".workflow/agent"))
+            return CheckpointStore(ProjectIdentifier.agentDir(projectBasePath))
         }
     }
 

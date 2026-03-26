@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.service
 
 import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -83,7 +84,7 @@ class MetricsStoreTest {
 
     @Test
     fun `load returns null for corrupt file`() {
-        val metricsDir = File(tempDir.toFile(), ".workflow/agent/metrics")
+        val metricsDir = File(ProjectIdentifier.agentDir(tempDir.toString()), "metrics")
         metricsDir.mkdirs()
         File(metricsDir, "scorecard-corrupt.json").writeText("not valid json {{{")
 
@@ -111,7 +112,7 @@ class MetricsStoreTest {
     @Test
     fun `loadAll skips corrupt files`() {
         store.save(makeScorecard("good1", timestamp = 2000))
-        val metricsDir = File(tempDir.toFile(), ".workflow/agent/metrics")
+        val metricsDir = File(ProjectIdentifier.agentDir(tempDir.toString()), "metrics")
         File(metricsDir, "scorecard-bad.json").writeText("corrupted")
         store.save(makeScorecard("good2", timestamp = 1000))
 
@@ -164,7 +165,7 @@ class MetricsStoreTest {
     fun `cleanup removes old files by age`() {
         store.save(makeScorecard("old"))
         // Set the file modification time to 31 days ago
-        val metricsDir = File(tempDir.toFile(), ".workflow/agent/metrics")
+        val metricsDir = File(ProjectIdentifier.agentDir(tempDir.toString()), "metrics")
         val oldFile = File(metricsDir, "scorecard-old.json")
         oldFile.setLastModified(System.currentTimeMillis() - 31L * 24 * 60 * 60 * 1000)
 
@@ -183,7 +184,7 @@ class MetricsStoreTest {
         store.save(makeScorecard("s3", timestamp = 3000))
 
         // Set different last-modified times so ordering is deterministic
-        val metricsDir = File(tempDir.toFile(), ".workflow/agent/metrics")
+        val metricsDir = File(ProjectIdentifier.agentDir(tempDir.toString()), "metrics")
         File(metricsDir, "scorecard-s1.json").setLastModified(1000)
         File(metricsDir, "scorecard-s2.json").setLastModified(2000)
         File(metricsDir, "scorecard-s3.json").setLastModified(3000)

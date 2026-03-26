@@ -94,7 +94,9 @@ class AgentService(
     }
 
     /** Structured JSONL file logger for all agent activity — one instance per project, lifecycle tied to the service. */
-    val agentFileLogger: AgentFileLogger by lazy { AgentFileLogger(project) }
+    val agentFileLogger: AgentFileLogger by lazy {
+        AgentFileLogger(project, project.basePath ?: System.getProperty("user.home"))
+    }
 
     /**
      * Callback invoked when a background worker completes.
