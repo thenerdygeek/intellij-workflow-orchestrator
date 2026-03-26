@@ -8,7 +8,7 @@ import com.intellij.openapi.project.Project
 class AiSettings : PersistentStateComponent<AiSettings.State> {
 
     class State : BaseState() {
-        var sourcegraphChatModel by string("anthropic::2024-10-22::claude-sonnet-4-20250514")
+        var sourcegraphChatModel by string(null)
         var maxOutputTokens by property(64000)
     }
 
