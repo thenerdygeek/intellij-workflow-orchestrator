@@ -194,11 +194,21 @@ class AgentOrchestrator(
                 } else null
             } catch (_: Exception) { null }
 
+            val guardrailsContext = try {
+                val basePath = project.basePath
+                if (basePath != null) {
+                    val store = com.workflow.orchestrator.agent.context.GuardrailStore(java.io.File(basePath))
+                    store.load()
+                    store.toContextString().ifBlank { null }
+                } else null
+            } catch (_: Exception) { null }
+
             val promptAssembler = PromptAssembler(toolRegistry)
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
                 projectName = project.name,
                 projectPath = project.basePath,
                 repoMapContext = repoMap.ifBlank { null },
+                guardrailsContext = guardrailsContext,
                 repoContext = repoContext
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)

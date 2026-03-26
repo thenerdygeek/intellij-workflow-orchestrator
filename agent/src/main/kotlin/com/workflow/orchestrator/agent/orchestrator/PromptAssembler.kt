@@ -39,6 +39,7 @@ class PromptAssembler(
         agentDescriptions: String? = null,
         planMode: Boolean = false,
         repoContext: String? = null,
+        guardrailsContext: String? = null,
         activeTools: Collection<AgentTool> = emptyList(),
         hasJcefUi: Boolean = true
     ): String {
@@ -70,6 +71,11 @@ class PromptAssembler(
         // 5. Cross-session Memory (only if available)
         if (!memoryContext.isNullOrBlank()) {
             sections.add("<agent_memory>\n$memoryContext\n</agent_memory>")
+        }
+
+        // 5b. Learned Guardrails (only if available)
+        if (!guardrailsContext.isNullOrBlank()) {
+            sections.add(guardrailsContext)
         }
 
         // 6. Available Skills (only if discovered)

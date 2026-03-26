@@ -105,6 +105,8 @@ class ContextManager(
     private var mentionAnchor: ChatMessage? = null
     /** Dedicated facts anchor — compression-proof structured knowledge from FactsStore. */
     private var factsAnchor: ChatMessage? = null
+    /** Dedicated guardrails anchor — compression-proof learned constraints. */
+    private var guardrailsAnchor: ChatMessage? = null
     /** Facts store for recording verified findings that survive compression. */
     var factsStore: FactsStore? = null
     private var totalTokens = 0
@@ -177,6 +179,15 @@ class ContextManager(
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 
+    /**
+     * Set or update the anchored guardrails context. Dedicated compression-proof slot
+     * containing learned constraints from previous sessions.
+     */
+    fun setGuardrailsAnchor(message: ChatMessage?) {
+        guardrailsAnchor = message
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
     /** Get all messages including any summary prefixes. */
     fun getMessages(): List<ChatMessage> {
         val result = mutableListOf<ChatMessage>()
@@ -193,6 +204,7 @@ class ContextManager(
         skillAnchor?.let { result.add(it) }
         mentionAnchor?.let { result.add(it) }
         factsAnchor?.let { result.add(it) }
+        guardrailsAnchor?.let { result.add(it) }
 
         result.addAll(messages)
         return result
@@ -698,6 +710,7 @@ critical for continuing the task.
         skillAnchor = null
         mentionAnchor = null
         factsAnchor = null
+        guardrailsAnchor = null
         factsStore?.clear()
         totalTokens = 0
     }

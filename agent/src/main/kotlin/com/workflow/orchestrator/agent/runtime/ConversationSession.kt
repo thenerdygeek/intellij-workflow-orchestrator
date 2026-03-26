@@ -213,6 +213,16 @@ class ConversationSession private constructor(
                 } else null
             } catch (_: Exception) { null }
 
+            // Load learned guardrails
+            val guardrailsContext = try {
+                val basePath = project.basePath
+                if (basePath != null) {
+                    val store = com.workflow.orchestrator.agent.context.GuardrailStore(java.io.File(basePath))
+                    store.load()
+                    store.toContextString().ifBlank { null }
+                } else null
+            } catch (_: Exception) { null }
+
             // Discover skills
             val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
             skillRegistry.scan()
@@ -260,6 +270,7 @@ class ConversationSession private constructor(
                 memoryContext = memoryContext,
                 skillDescriptions = skillDescriptions.ifBlank { null },
                 agentDescriptions = agentDescriptions.ifBlank { null },
+                guardrailsContext = guardrailsContext,
                 planMode = planMode,
                 repoContext = repoContext
             )
@@ -300,6 +311,11 @@ class ConversationSession private constructor(
                     status = "active"
                 ))
             } catch (_: Exception) { /* best effort — index may not be available in tests */ }
+
+            // Set guardrails anchor for compression-proof learned constraints
+            if (!guardrailsContext.isNullOrBlank()) {
+                contextManager.setGuardrailsAnchor(ChatMessage(role = "system", content = guardrailsContext))
+            }
 
             // Wire disk spillover for full tool outputs (OpenCode pattern)
             session.contextManager.toolOutputStore = ToolOutputStore(session.store.sessionDirectory)
