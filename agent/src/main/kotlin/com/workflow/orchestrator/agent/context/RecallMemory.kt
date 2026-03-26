@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.context
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.runtime.ConversationStore
 import com.workflow.orchestrator.agent.runtime.SessionMetadata
+import java.io.File
 
 /**
  * Searchable conversation history across all past sessions (Letta pattern).
@@ -54,16 +55,15 @@ class RecallMemory {
         if (queryTerms.isEmpty()) return emptyList()
 
         return try {
-            val sessions = ConversationStore.listSessions()
+            val sessions = ConversationStore.listSessions(projectBasePath = projectPath)
                 .filter { s ->
                     s.status in setOf("completed", "interrupted") &&
-                    s.hasMessages &&
-                    (projectPath == null || s.sessionDir?.absolutePath?.contains(projectPath) != false)
+                    s.hasMessages
                 }
                 .take(50) // Limit scanning to last 50 sessions for performance
 
             sessions.mapNotNull { summary ->
-                searchSession(summary.sessionId, summary.title, queryTerms, maxMessagesPerSession)
+                searchSession(summary.sessionId, summary.title, summary.sessionDir, queryTerms, maxMessagesPerSession)
             }
             .filter { it.score > 0 }
             .sortedByDescending { it.score }
@@ -77,11 +77,12 @@ class RecallMemory {
     private fun searchSession(
         sessionId: String,
         title: String,
+        sessionDir: File?,
         queryTerms: List<String>,
         maxMessages: Int
     ): RecallResult? {
         return try {
-            val store = ConversationStore(sessionId)
+            val store = ConversationStore(sessionId, baseDir = sessionDir?.parentFile)
             val messages = store.loadMessages()
 
             val matchingMessages = messages

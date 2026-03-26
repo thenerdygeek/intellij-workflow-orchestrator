@@ -47,7 +47,7 @@ class AgentStartupActivity : ProjectActivity {
 
                 // Load checkpoint for the most recent session to show context
                 val latest = interrupted.first()
-                val sessionDir = File(ConversationStore.getSessionsDir(), latest.sessionId)
+                val sessionDir = File(ConversationStore.getSessionsDir(projectBasePath = projectPath), latest.sessionId)
                 val checkpoint = SessionCheckpoint.load(sessionDir)
 
                 val detail = buildString {

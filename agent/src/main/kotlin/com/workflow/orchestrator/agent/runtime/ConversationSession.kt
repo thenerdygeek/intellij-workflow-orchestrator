@@ -47,7 +47,9 @@ class ConversationSession private constructor(
     var status: String = "active", // "active", "completed", "interrupted", "failed"
     val skillManager: SkillManager? = null,
     /** Tools auto-detected from project type (Maven/Spring/JPA). Detected once at session creation. */
-    val projectTools: Set<String> = emptySet()
+    val projectTools: Set<String> = emptySet(),
+    /** Project base path — used for ProjectIdentifier-based session storage. */
+    val projectBasePath: String? = null
 ) {
     /** Tracks which tools are active in this session. Tools only expand, never shrink. */
     var activeToolNames: MutableSet<String> = mutableSetOf()
@@ -68,7 +70,7 @@ class ConversationSession private constructor(
     val workingSet: WorkingSet = WorkingSet()
 
     /** Store for JSONL persistence. */
-    val store: ConversationStore = ConversationStore(sessionId)
+    val store: ConversationStore = ConversationStore(sessionId, projectBasePath = projectBasePath)
 
     /** Tracks how many messages have already been persisted to avoid duplicates. */
     var persistedMessageCount: Int = 0
@@ -322,7 +324,8 @@ class ConversationSession private constructor(
                 reservedTokens = reservedTokens,
                 createdAt = System.currentTimeMillis(),
                 skillManager = skillManager,
-                projectTools = projectTools
+                projectTools = projectTools,
+                projectBasePath = project.basePath
             )
 
             // Register in the global session index for cross-project history
@@ -365,7 +368,7 @@ class ConversationSession private constructor(
          * Returns null if metadata or messages are missing/corrupt.
          */
         fun load(sessionId: String, project: Project, agentService: AgentService): ConversationSession? {
-            val store = ConversationStore(sessionId)
+            val store = ConversationStore(sessionId, projectBasePath = project.basePath)
             val metadata = store.loadMetadata() ?: return null
             val messages = store.loadMessages()
             if (messages.isEmpty()) return null
@@ -405,7 +408,8 @@ class ConversationSession private constructor(
                 lastMessageAt = metadata.lastMessageAt,
                 messageCount = metadata.messageCount,
                 status = metadata.status,
-                skillManager = skillManager
+                skillManager = skillManager,
+                projectBasePath = project.basePath
             )
 
             // Replay messages into context manager

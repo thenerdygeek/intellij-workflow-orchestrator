@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.runtime
 
-import com.intellij.openapi.application.PathManager
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -63,8 +63,8 @@ private val prettyJson = Json {
  * Persists conversation history to JSONL files so conversations survive IDE restarts.
  *
  * Storage layout per session:
- *   {systemPath}/workflow-agent/sessions/{sessionId}/messages.jsonl
- *   {systemPath}/workflow-agent/sessions/{sessionId}/metadata.json
+ *   ~/.workflow-orchestrator/{ProjectName-hash}/agent/sessions/{sessionId}/messages.jsonl
+ *   ~/.workflow-orchestrator/{ProjectName-hash}/agent/sessions/{sessionId}/metadata.json
  *
  * Messages are appended one-per-line (JSONL) for crash-safety — a crash mid-write
  * loses at most one message. Metadata is overwritten after each turn.
@@ -74,12 +74,17 @@ private val prettyJson = Json {
  */
 class ConversationStore(
     private val sessionId: String,
-    /** Override for testing — when null, uses PathManager.getSystemPath(). */
-    private val baseDir: File? = null
+    /** Override for testing — when null, uses ProjectIdentifier-based path. */
+    private val baseDir: File? = null,
+    /** Project base path — required when baseDir is null. */
+    private val projectBasePath: String? = null
 ) {
     private val sessionDir: File by lazy {
-        val parent = baseDir ?: File(PathManager.getSystemPath(), "workflow-agent/sessions")
-        File(parent, sessionId)
+        val parent = baseDir ?: run {
+            require(projectBasePath != null) { "ConversationStore requires projectBasePath when baseDir is not provided" }
+            ProjectIdentifier.sessionsDir(projectBasePath)
+        }
+        File(parent, sessionId).also { it.mkdirs() }
     }
 
     /** Expose the session directory for checkpoint storage. */
@@ -142,17 +147,20 @@ class ConversationStore(
 
         /**
          * Get the root sessions directory.
-         * Uses [baseDir] override for testing, otherwise PathManager.
+         * Uses [baseDir] override for testing, otherwise ProjectIdentifier.
          */
-        fun getSessionsDir(baseDir: File? = null): File {
-            return baseDir ?: File(PathManager.getSystemPath(), "workflow-agent/sessions")
+        fun getSessionsDir(baseDir: File? = null, projectBasePath: String? = null): File {
+            return baseDir ?: run {
+                require(projectBasePath != null) { "getSessionsDir requires projectBasePath when baseDir is not provided" }
+                ProjectIdentifier.sessionsDir(projectBasePath)
+            }
         }
 
         /**
          * List all session IDs (subdirectory names under sessions/).
          */
-        fun listSessionIds(baseDir: File? = null): List<String> {
-            val dir = getSessionsDir(baseDir)
+        fun listSessionIds(baseDir: File? = null, projectBasePath: String? = null): List<String> {
+            val dir = getSessionsDir(baseDir, projectBasePath)
             if (!dir.exists()) return emptyList()
             return dir.listFiles()
                 ?.filter { it.isDirectory && File(it, "metadata.json").exists() }
@@ -163,8 +171,8 @@ class ConversationStore(
         /**
          * Delete an entire session directory.
          */
-        fun deleteSession(sessionId: String, baseDir: File? = null) {
-            val dir = File(getSessionsDir(baseDir), sessionId)
+        fun deleteSession(sessionId: String, baseDir: File? = null, projectBasePath: String? = null) {
+            val dir = File(getSessionsDir(baseDir, projectBasePath), sessionId)
             if (dir.exists()) {
                 dir.deleteRecursively()
             }
@@ -257,11 +265,12 @@ class ConversationStore(
          * Unlike [listSessionIds] which returns only IDs, this method returns full metadata
          * for each session, enabling UI display of session history.
          *
-         * @param baseDir Override for testing; when null, uses PathManager
+         * @param baseDir Override for testing; when null, uses ProjectIdentifier
+         * @param projectBasePath Required when baseDir is null
          * @return List of [SessionSummary] entries sorted by last message time descending
          */
-        fun listSessions(baseDir: File? = null): List<SessionSummary> {
-            val dir = getSessionsDir(baseDir)
+        fun listSessions(baseDir: File? = null, projectBasePath: String? = null): List<SessionSummary> {
+            val dir = getSessionsDir(baseDir, projectBasePath)
             if (!dir.exists()) return emptyList()
 
             return dir.listFiles()

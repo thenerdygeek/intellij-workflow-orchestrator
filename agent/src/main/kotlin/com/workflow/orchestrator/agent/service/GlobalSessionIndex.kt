@@ -90,10 +90,13 @@ class GlobalSessionIndex : PersistentStateComponent<GlobalSessionIndex.State> {
      */
     fun deleteSession(sessionId: String) {
         val sessions = myState.sessions.toMutableList()
+        val entry = sessions.firstOrNull { it.sessionId == sessionId }
         sessions.removeAll { it.sessionId == sessionId }
         myState.sessions = sessions
-        // Also delete JSONL files
-        ConversationStore.deleteSession(sessionId)
+        // Also delete JSONL files — use projectPath from the entry so the correct
+        // ProjectIdentifier-based directory is resolved
+        val projectPath = entry?.projectPath?.takeIf { it.isNotBlank() }
+        ConversationStore.deleteSession(sessionId, projectBasePath = projectPath)
     }
 
     /**
@@ -109,13 +112,19 @@ class GlobalSessionIndex : PersistentStateComponent<GlobalSessionIndex.State> {
 
         // Remove sessions older than maxAge
         val expired = sessions.filter { now - it.lastMessageAt > maxAge }
-        expired.forEach { ConversationStore.deleteSession(it.sessionId) }
+        expired.forEach { entry ->
+            val projectPath = entry.projectPath.takeIf { it.isNotBlank() }
+            ConversationStore.deleteSession(entry.sessionId, projectBasePath = projectPath)
+        }
         sessions.removeAll(expired.toSet())
 
         // Trim to maxCount, removing oldest (they're sorted newest-first)
         if (sessions.size > maxCount) {
             val toRemove = sessions.subList(maxCount, sessions.size).toList()
-            toRemove.forEach { ConversationStore.deleteSession(it.sessionId) }
+            toRemove.forEach { entry ->
+                val projectPath = entry.projectPath.takeIf { it.isNotBlank() }
+                ConversationStore.deleteSession(entry.sessionId, projectBasePath = projectPath)
+            }
             sessions.retainAll(sessions.take(maxCount).toSet())
         }
 
