@@ -37,7 +37,7 @@ class MentionSearchProviderTest {
             assertNotNull(obj["type"])
             assertNotNull(obj["icon"])
             assertNotNull(obj["label"])
-            assertNotNull(obj["hint"])
+            assertNotNull(obj["description"])
         }
     }
 

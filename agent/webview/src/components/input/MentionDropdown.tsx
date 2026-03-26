@@ -39,8 +39,8 @@ const TYPE_ORDER: Record<string, number> = { file: 0, folder: 1, symbol: 2 };
  * - Substring match (anywhere in text)
  * - Path segment match
  */
-function relevanceScore(label: string, path: string | undefined, query: string): number {
-  if (!query) return 0;
+function relevanceScore(label: string | undefined, path: string | undefined, query: string): number {
+  if (!query || !label) return 0;
   const q = query.toLowerCase();
   const l = label.toLowerCase();
   const p = (path ?? '').toLowerCase();

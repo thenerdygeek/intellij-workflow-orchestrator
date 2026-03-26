@@ -169,8 +169,12 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata, diffContent ?? undefined);
   },
   receiveMentionResults(resultsJson: string) {
-    const results = JSON.parse(resultsJson);
-    stores?.getChatStore().receiveMentionResults(results);
+    try {
+      const results = JSON.parse(resultsJson);
+      stores?.getChatStore().receiveMentionResults(results);
+    } catch (e) {
+      console.error('[bridge] receiveMentionResults parse error:', e);
+    }
   },
   applyTheme(vars: Record<string, string> | string) {
     stores?.getThemeStore().applyTheme(vars);

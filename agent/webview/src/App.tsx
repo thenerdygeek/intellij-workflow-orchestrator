@@ -8,6 +8,7 @@ import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/chat/TopBar'
 import { DebugPanel } from '@/components/chat/DebugPanel'
 import { InputBar } from '@/components/input/InputBar'
+import { ErrorBoundary } from '@/components/chat/ErrorBoundary'
 import { SkillBanner } from '@/components/chat/SkillBanner'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
@@ -72,7 +73,15 @@ function App() {
       <SkillBanner />
       <ChatView />
       <DebugPanel />
-      <InputBar />
+      <ErrorBoundary
+        fallback={
+          <div className="px-4 py-3 text-[12px]" style={{ color: 'var(--error, #ef4444)', borderTop: '1px solid var(--border)' }}>
+            Input crashed. <button className="underline" onClick={() => window.location.reload()}>Reload</button>
+          </div>
+        }
+      >
+        <InputBar />
+      </ErrorBoundary>
     </div>
   );
 }

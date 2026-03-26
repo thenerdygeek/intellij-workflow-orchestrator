@@ -50,31 +50,31 @@ class MentionSearchProvider(private val project: Project) {
             put("type", JsonPrimitive("file"))
             put("icon", JsonPrimitive("[F]"))
             put("label", JsonPrimitive("File"))
-            put("hint", JsonPrimitive("Search project files"))
+            put("description", JsonPrimitive("Search project files"))
         })
         add(buildJsonObject {
             put("type", JsonPrimitive("folder"))
             put("icon", JsonPrimitive("[D]"))
             put("label", JsonPrimitive("Folder"))
-            put("hint", JsonPrimitive("Search project directories"))
+            put("description", JsonPrimitive("Search project directories"))
         })
         add(buildJsonObject {
             put("type", JsonPrimitive("symbol"))
             put("icon", JsonPrimitive("&#x2726;"))
             put("label", JsonPrimitive("Symbol"))
-            put("hint", JsonPrimitive("Search classes, methods"))
+            put("description", JsonPrimitive("Search classes, methods"))
         })
         add(buildJsonObject {
             put("type", JsonPrimitive("tool"))
             put("icon", JsonPrimitive("&#x2699;"))
             put("label", JsonPrimitive("Tool"))
-            put("hint", JsonPrimitive("Agent tools"))
+            put("description", JsonPrimitive("Agent tools"))
         })
         add(buildJsonObject {
             put("type", JsonPrimitive("skill"))
             put("icon", JsonPrimitive("&#x26A1;"))
             put("label", JsonPrimitive("Skill"))
-            put("hint", JsonPrimitive("Workflow skills"))
+            put("description", JsonPrimitive("Workflow skills"))
         })
     }.toString()
 
@@ -112,9 +112,9 @@ class MentionSearchProvider(private val project: Project) {
                     val relativePath = child.path.removePrefix("$basePath/")
                     results.add(buildJsonObject {
                         put("type", JsonPrimitive("file"))
-                        put("name", JsonPrimitive(child.name))
-                        put("value", JsonPrimitive(relativePath))
-                        put("desc", JsonPrimitive(relativePath.substringBeforeLast('/')))
+                        put("label", JsonPrimitive(child.name))
+                        put("path", JsonPrimitive(relativePath))
+                        put("description", JsonPrimitive(relativePath.substringBeforeLast('/')))
                     })
                 }
             }
@@ -149,9 +149,9 @@ class MentionSearchProvider(private val project: Project) {
         if (query.isBlank() || dir.name.lowercase().contains(query) || relativePath.lowercase().contains(query)) {
             results.add(buildJsonObject {
                 put("type", JsonPrimitive("folder"))
-                put("name", JsonPrimitive(dir.name + "/"))
-                put("value", JsonPrimitive(relativePath))
-                put("desc", JsonPrimitive(relativePath))
+                put("label", JsonPrimitive(dir.name + "/"))
+                put("path", JsonPrimitive(relativePath))
+                put("description", JsonPrimitive(relativePath))
             })
         }
         for (child in dir.children) {
@@ -181,9 +181,9 @@ class MentionSearchProvider(private val project: Project) {
                         } ?: ""
                         results.add(buildJsonObject {
                             put("type", JsonPrimitive("symbol"))
-                            put("name", JsonPrimitive(name))
-                            put("value", JsonPrimitive(qualifiedName))
-                            put("desc", JsonPrimitive(filePath))
+                            put("label", JsonPrimitive(name))
+                            put("path", JsonPrimitive(qualifiedName))
+                            put("description", JsonPrimitive(filePath))
                         })
                     }
                 }
@@ -207,9 +207,9 @@ class MentionSearchProvider(private val project: Project) {
             for (tool in tools) {
                 add(buildJsonObject {
                     put("type", JsonPrimitive("tool"))
-                    put("name", JsonPrimitive(tool.name))
-                    put("value", JsonPrimitive(tool.name))
-                    put("desc", JsonPrimitive(tool.description.take(60)))
+                    put("label", JsonPrimitive(tool.name))
+                    put("path", JsonPrimitive(tool.name))
+                    put("description", JsonPrimitive(tool.description.take(60)))
                 })
             }
         }.toString()
@@ -230,9 +230,9 @@ class MentionSearchProvider(private val project: Project) {
             for (skill in skills) {
                 add(buildJsonObject {
                     put("type", JsonPrimitive("skill"))
-                    put("name", JsonPrimitive(skill.name))
-                    put("value", JsonPrimitive(skill.name))
-                    put("desc", JsonPrimitive(skill.description.take(60)))
+                    put("label", JsonPrimitive(skill.name))
+                    put("path", JsonPrimitive(skill.name))
+                    put("description", JsonPrimitive(skill.description.take(60)))
                 })
             }
         }.toString()
@@ -251,24 +251,82 @@ class MentionSearchProvider(private val project: Project) {
         return try {
             val jiraService = try {
                 project.getService(JiraService::class.java)
-            } catch (_: Exception) { return "[]" }
+            } catch (e: Exception) {
+                LOG.warn("MentionSearchProvider: JiraService not available: ${e.message}")
+                return "[]"
+            }
 
-            // Load sprint tickets from the same source as the Sprint tab
+            // Load sprint tickets — mirrors the Sprint tab's logic:
+            // 1. Use configured board ID from settings
+            // 2. If not configured, auto-discover (prefer scrum boards)
+            // 3. For scrum boards: load active sprint issues
+            // 4. For kanban/other boards: load board issues directly
             val sprintTickets = cachedSprintTickets ?: run {
                 val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
-                val boardId = settings.state.jiraBoardId
-                if (boardId > 0) {
-                    // Get active sprint for the configured board
+                var boardId = settings.state.jiraBoardId
+                var boardType = settings.state.jiraBoardType ?: ""
+                LOG.info("MentionSearchProvider: boardId=$boardId, boardType='$boardType'")
+
+                // Auto-discover board if not configured (same as Sprint tab)
+                if (boardId <= 0) {
+                    val boards = jiraService.getBoards()
+                    if (!boards.isError && boards.data.isNotEmpty()) {
+                        val board = boards.data.firstOrNull { it.type == "scrum" } ?: boards.data.first()
+                        boardId = board.id
+                        boardType = board.type
+                        LOG.info("MentionSearchProvider: auto-discovered board ${board.name} (id=$boardId, type=$boardType)")
+                    } else {
+                        LOG.warn("MentionSearchProvider: board discovery failed: ${if (boards.isError) boards.summary else "no boards"}")
+                    }
+                }
+
+                if (boardId <= 0) {
+                    LOG.warn("MentionSearchProvider: no board ID available, returning empty")
+                    return@run emptyList()
+                }
+
+                if (boardType == "scrum" || boardType.isBlank()) {
+                    // Scrum board: get active sprint issues
                     val sprints = jiraService.getAvailableSprints(boardId)
+                    if (sprints.isError) {
+                        LOG.warn("MentionSearchProvider: getAvailableSprints failed: ${sprints.summary}")
+                    }
                     val activeSprint = if (!sprints.isError) {
                         sprints.data.firstOrNull { it.state == "active" }
                     } else null
 
                     if (activeSprint != null) {
+                        LOG.info("MentionSearchProvider: loading issues from sprint '${activeSprint.name}' (id=${activeSprint.id})")
                         val issues = jiraService.getSprintIssues(activeSprint.id)
-                        if (!issues.isError) issues.data else emptyList()
-                    } else emptyList()
-                } else emptyList()
+                        if (issues.isError) {
+                            LOG.warn("MentionSearchProvider: getSprintIssues failed: ${issues.summary}")
+                            emptyList()
+                        } else {
+                            LOG.info("MentionSearchProvider: loaded ${issues.data.size} sprint tickets")
+                            issues.data
+                        }
+                    } else {
+                        // No active sprint — fall back to board issues
+                        LOG.info("MentionSearchProvider: no active sprint, falling back to board issues")
+                        val issues = jiraService.getBoardIssues(boardId)
+                        if (issues.isError) {
+                            LOG.warn("MentionSearchProvider: getBoardIssues failed: ${issues.summary}")
+                            emptyList()
+                        } else {
+                            issues.data
+                        }
+                    }
+                } else {
+                    // Kanban/other board: load board issues directly
+                    LOG.info("MentionSearchProvider: kanban board, loading board issues")
+                    val issues = jiraService.getBoardIssues(boardId)
+                    if (issues.isError) {
+                        LOG.warn("MentionSearchProvider: getBoardIssues failed: ${issues.summary}")
+                        emptyList()
+                    } else {
+                        issues.data
+                    }
+                }
             }.also { cachedSprintTickets = it }
 
             // Filter by query
