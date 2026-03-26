@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.workflow.orchestrator.agent.runtime.ConversationStore
 import com.workflow.orchestrator.agent.runtime.SessionCheckpoint
+import com.workflow.orchestrator.agent.runtime.StorageMigration
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import java.io.File
@@ -30,6 +31,9 @@ class AgentStartupActivity : ProjectActivity {
             return
         }
         if (!settings.state.agentEnabled) return
+
+        // Run storage migration (one-time, idempotent) — must run before any storage access
+        project.basePath?.let { StorageMigration.migrateIfNeeded(it) }
 
         // Check for interrupted sessions in global index
         try {
