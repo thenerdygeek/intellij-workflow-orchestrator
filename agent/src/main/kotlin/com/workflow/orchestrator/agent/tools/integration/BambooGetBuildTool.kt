@@ -11,7 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class BambooGetBuildTool : AgentTool {
     override val name = "bamboo_get_build"
-    override val description = "Get a specific Bamboo build result by build key. Shows state, stages, duration, and test results."
+    override val description = "Fetch detailed results for a specific Bamboo build by its build key (format: PROJ-PLAN-123), returning build state, individual stage statuses, total duration, and test result summary. Use this to investigate why a specific build failed, check stage-level results, or verify a build passed before deploying or creating a PR. Do NOT use this to discover builds (use bamboo_recent_builds to find build keys first) or for a quick pass/fail check (use bamboo_build_status instead). The build_key must be an exact Bamboo result key including the build number."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "build_key" to ParameterProperty(type = "string", description = "Bamboo build key (e.g., PROJ-PLAN-123)")

@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonObject
 
 class DeactivateSkillTool : AgentTool {
     override val name = "deactivate_skill"
-    override val description = "Deactivate the current active skill when the workflow is complete."
+    override val description = "Deactivate the currently active skill, removing its instructions from the conversation context and freeing the token budget it occupied. Use this after completing a skill's workflow or when the skill is no longer relevant to the current task. Do NOT use this to switch skills — simply activate the new skill directly and the previous one will be replaced. Has no effect if no skill is currently active."
     override val parameters = FunctionParameters(
         properties = emptyMap(),
         required = emptyList()

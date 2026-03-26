@@ -11,7 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class JiraSearchIssuesTool : AgentTool {
     override val name = "jira_search_issues"
-    override val description = "Full-text search for Jira issues assigned to the current user. Returns matching tickets with summary, status, and priority."
+    override val description = "Full-text search across Jira issue summaries and descriptions to find tickets matching a keyword or phrase, returning matching issues with their key, summary, status, and priority. Use this to find tickets by keyword when you do not know the exact issue key, or to locate related work items for a feature or bug. This only searches issues assigned to the current authenticated user, so it will not find tickets assigned to others. Do NOT use this if you already know the issue key (use jira_get_ticket for direct lookup) or if you need all issues in a sprint (use jira_get_sprint_issues for sprint-scoped queries)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "text" to ParameterProperty(type = "string", description = "Search text to match against issue summary and description"),

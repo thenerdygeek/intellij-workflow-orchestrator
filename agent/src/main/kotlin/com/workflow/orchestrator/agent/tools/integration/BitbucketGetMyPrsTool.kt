@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class BitbucketGetMyPrsTool : AgentTool {
     override val name = "bitbucket_get_my_prs"
-    override val description = "Get pull requests authored by the current user. Optionally filter by state (OPEN, MERGED, DECLINED)."
+    override val description = "Retrieve pull requests authored by the current authenticated user from Bitbucket, with optional filtering by state (OPEN, MERGED, or DECLINED). Use this to check the status of your open PRs, find a specific PR you created, or review your recently merged work. Returns OPEN PRs by default if no state filter is specified. This only returns PRs where you are the author — do NOT use this for PRs where you are a reviewer (use bitbucket_get_reviewing_prs instead) or for detailed information about a specific PR (use bitbucket_get_pr_detail instead)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "state" to ParameterProperty(type = "string", description = "PR state filter: 'OPEN', 'MERGED', or 'DECLINED' (default: OPEN)"),

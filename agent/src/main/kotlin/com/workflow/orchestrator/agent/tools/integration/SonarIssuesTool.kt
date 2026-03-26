@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class SonarIssuesTool : AgentTool {
     override val name = "sonar_issues"
-    override val description = "Get open SonarQube issues for a project, optionally filtered by file."
+    override val description = "Retrieve open SonarQube issues for a project, returning bugs, vulnerabilities, and code smells with their severity, type, file location, and line number. Use this during code review, quality assessment, or when fixing issues before creating a pull request — optionally filter by file path to focus on a specific source file. Do NOT use this for pass/fail quality gate status (use sonar_quality_gate instead) or for line-level coverage data (use sonar_coverage instead). Requires a valid sonar_project_key which must be configured in plugin settings or passed explicitly."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "project_key" to ParameterProperty(type = "string", description = "SonarQube project key (e.g., 'com.example:my-service')"),

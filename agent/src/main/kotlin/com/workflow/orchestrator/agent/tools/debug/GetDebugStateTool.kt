@@ -18,7 +18,7 @@ class GetDebugStateTool(
     private val controller: AgentDebugController
 ) : AgentTool {
     override val name = "get_debug_state"
-    override val description = "Get the current state of a debug session including pause status, position, and thread information"
+    override val description = "Get the current state of a debug session, returning whether it is running, paused, or stopped, along with the current execution position (file and line), suspended thread names, and breakpoint hit information. Use this to check if the debugger is paused at a breakpoint, determine the current execution point before stepping, or inspect which threads are suspended. This requires an active debug session — if none exists, start one first with start_debug_session. Do NOT use this for inspecting variable values (use get_variables instead) or for viewing the full call stack (use get_stack_frames instead)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "session_id" to ParameterProperty(

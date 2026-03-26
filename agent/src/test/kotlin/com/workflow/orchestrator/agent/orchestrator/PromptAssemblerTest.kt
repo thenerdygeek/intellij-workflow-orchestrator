@@ -34,15 +34,14 @@ class PromptAssemblerTest {
             previousStepResults = listOf("Analyzed UserService.kt — 3 methods found")
         )
 
-        // Identity
+        // Identity + core directives
         assertTrue(prompt.contains("AI coding assistant"), "Should contain core identity")
-        assertTrue(prompt.contains("<capabilities>"), "Should contain capabilities block")
+        assertTrue(prompt.contains("<core_directives>"), "Should contain core directives block")
+        assertTrue(prompt.contains("Persistence"), "Should contain persistence directive")
 
-        // Tools
-        assertTrue(prompt.contains("<available_tools>"), "Should contain tools section")
-        assertTrue(prompt.contains("read_file"), "Should list read_file tool")
-        assertTrue(prompt.contains("edit_file"), "Should list edit_file tool")
-        assertTrue(prompt.contains("run_command"), "Should list run_command tool")
+        // Tool activation note
+        assertTrue(prompt.contains("<tool_activation>"), "Should contain tool activation section")
+        assertTrue(prompt.contains("request_tools"), "Should mention request_tools for activation")
 
         // Project context
         assertTrue(prompt.contains("<project_context>"), "Should contain project context")
@@ -60,17 +59,14 @@ class PromptAssemblerTest {
     }
 
     @Test
-    fun `tool summary includes all registered tools`() {
+    fun `tool activation note is present`() {
         val prompt = assembler.buildSingleAgentPrompt()
 
-        val toolNames = listOf("read_file", "edit_file", "run_command")
-        for (toolName in toolNames) {
-            assertTrue(prompt.contains(toolName), "Should include tool: $toolName")
-        }
-
-        // Verify descriptions are included (truncated to 100 chars)
-        assertTrue(prompt.contains("Read a file from disk"), "Should include tool description")
-        assertTrue(prompt.contains("Edit a file with precise string replacement"), "Should include tool description")
+        // Tool activation note should explain how to activate tools
+        assertTrue(prompt.contains("<tool_activation>"), "Should have tool activation section")
+        assertTrue(prompt.contains("request_tools"), "Should mention request_tools")
+        // Tool definitions are sent via API tools parameter, not in system prompt
+        assertFalse(prompt.contains("Read a file from disk"), "Tool descriptions should not be in system prompt (sent via API)")
     }
 
     @Test
@@ -105,12 +101,12 @@ class PromptAssemblerTest {
     fun `prompt without optional sections still has identity and rules`() {
         val prompt = assembler.buildSingleAgentPrompt()
 
-        // Must have identity
+        // Must have identity + directives
         assertTrue(prompt.contains("AI coding assistant"), "Should contain core identity")
-        assertTrue(prompt.contains("<capabilities>"), "Should contain capabilities")
+        assertTrue(prompt.contains("<core_directives>"), "Should contain core directives")
 
-        // Must have tools (always present since registry has tools)
-        assertTrue(prompt.contains("<available_tools>"), "Should contain tools")
+        // Must have tool activation note
+        assertTrue(prompt.contains("<tool_activation>"), "Should contain tool activation")
 
         // Must have rules
         assertTrue(prompt.contains("<rules>"), "Should contain rules")
@@ -153,15 +149,13 @@ class PromptAssemblerTest {
     }
 
     @Test
-    fun `empty tool registry produces empty tool summary`() {
+    fun `empty tool registry still has tool activation note`() {
         val emptyRegistry = ToolRegistry()
         val emptyAssembler = PromptAssembler(emptyRegistry)
 
         val prompt = emptyAssembler.buildSingleAgentPrompt()
-        assertTrue(prompt.contains("<available_tools>"), "Should still have tools section")
-        // The tool list itself should be empty (the section may still contain usage notes)
-        val toolsSection = prompt.substringAfter("<available_tools>\n").substringBefore("\n\nNote:")
-        assertTrue(toolsSection.isBlank(), "Tool list should be empty")
+        assertTrue(prompt.contains("<tool_activation>"), "Should still have tool activation section")
+        assertTrue(prompt.contains("request_tools"), "Should mention request_tools")
     }
 
     // --- Step 2/5: Repo map injection ---
@@ -222,6 +216,30 @@ class PromptAssemblerTest {
         val prompt = assembler.buildSingleAgentPrompt()
         assertTrue(prompt.contains("multiple repositories"), "Should contain multi-repo rule")
         assertTrue(prompt.contains("bitbucket_list_repos"), "Should mention bitbucket_list_repos for discovery")
+    }
+
+    // --- Few-shot examples ---
+
+    @Test
+    fun `prompt contains few-shot examples`() {
+        val prompt = assembler.buildSingleAgentPrompt()
+        assertTrue(prompt.contains("<examples>"), "Should contain examples section")
+        assertTrue(prompt.contains("parallel-exploration"), "Should contain parallel exploration example")
+        assertTrue(prompt.contains("edit-with-verification"), "Should contain edit verification example")
+        assertTrue(prompt.contains("error-recovery"), "Should contain error recovery example")
+        assertTrue(prompt.contains("when-to-plan"), "Should contain planning example")
+    }
+
+    // --- U-shaped critical reminders ---
+
+    @Test
+    fun `prompt has critical reminders at the end`() {
+        val prompt = assembler.buildSingleAgentPrompt()
+        assertTrue(prompt.contains("<critical_reminders>"), "Should contain critical reminders section")
+        // Reminders should appear AFTER rules (U-shaped attention)
+        val rulesPos = prompt.indexOf("<rules>")
+        val remindersPos = prompt.indexOf("<critical_reminders>")
+        assertTrue(remindersPos > rulesPos, "Critical reminders should appear after rules")
     }
 
     // --- Anti-loop rules ---

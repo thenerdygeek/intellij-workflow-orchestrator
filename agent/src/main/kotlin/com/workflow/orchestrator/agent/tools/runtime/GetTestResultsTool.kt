@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class GetTestResultsTool : AgentTool {
     override val name = "get_test_results"
-    override val description = "Get structured test results from the most recent test run with pass/fail status, assertions, and stack traces per test"
+    override val description = "Get structured test results from the IDE's most recent test run, returning pass/fail status, assertion messages, and stack traces for each individual test case. Use this after running tests with run_tests to check which tests passed or failed and to diagnose specific test failures from assertion details and stack traces. This only returns results from the most recent test run in the IDE — if you need to execute tests first, use run_tests. Do NOT use this for raw console output (use get_run_output instead). Results are ordered with failures first and output is capped at approximately 3000 tokens."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "config_name" to ParameterProperty(

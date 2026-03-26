@@ -25,7 +25,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 class ContextManager(
     private val maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
     private val brain: LlmBrain? = null,
-    private val tMaxRatio: Double = 0.93,
+    private val tMaxRatio: Double = 0.85,
     private val tRetainedRatio: Double = 0.70,
     private val toolResultMaxTokens: Int = 4000,
     private var reservedTokens: Int = 0,
@@ -202,13 +202,18 @@ class ContextManager(
             ))
         }
 
-        planAnchor?.let { result.add(it) }
+        // Anchors that provide background context go BEFORE conversation history
         skillAnchor?.let { result.add(it) }
         mentionAnchor?.let { result.add(it) }
         factsAnchor?.let { result.add(it) }
         guardrailsAnchor?.let { result.add(it) }
 
         result.addAll(messages)
+
+        // Plan anchor goes AFTER conversation history for maximum attention
+        // (U-shaped attention: LLMs attend most to beginning and end of context)
+        planAnchor?.let { result.add(it) }
+
         return result
     }
 

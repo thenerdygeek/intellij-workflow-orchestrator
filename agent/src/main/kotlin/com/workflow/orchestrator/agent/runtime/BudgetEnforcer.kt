@@ -22,7 +22,7 @@ class BudgetEnforcer(
         private val LOG = Logger.getInstance(BudgetEnforcer::class.java)
         private const val COMPRESSION_RATIO = 0.80   // Was 0.60 — aligned with OpenCode (~85%)
         private const val NUDGE_RATIO = 0.88         // Was 0.75
-        private const val STRONG_NUDGE_RATIO = 0.93  // Was 0.85 — match tMaxRatio
+        private const val STRONG_NUDGE_RATIO = 0.93  // Was 0.85 — above tMaxRatio (0.85) to catch post-compression overflow
         private const val TERMINATE_RATIO = 0.97     // Was 0.95 — leave only 3% emergency buffer
     }
 

@@ -11,7 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class JiraGetTicketTool : AgentTool {
     override val name = "jira_get_ticket"
-    override val description = "Get Jira ticket details: summary, status, assignee, type, priority, description, and available transitions."
+    override val description = "Retrieve full details for a Jira ticket by its issue key, including summary, status, assignee, type, priority, description, available workflow transitions, and linked pull requests. Use this before making code changes related to a ticket to understand requirements, before transitioning a ticket to check available transitions, or to verify ticket status and assignment. Do NOT use this for searching tickets by keyword (use jira_search_issues instead) or for viewing sprint-level overviews (use jira_get_sprint_issues instead)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "key" to ParameterProperty(type = "string", description = "Jira ticket key (e.g., PROJ-123)")

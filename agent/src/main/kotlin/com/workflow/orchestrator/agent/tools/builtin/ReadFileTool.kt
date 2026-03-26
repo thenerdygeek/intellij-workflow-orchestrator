@@ -13,7 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class ReadFileTool : AgentTool {
     override val name = "read_file"
-    override val description = "Read the contents of a file. Use offset and limit for large files."
+    override val description = "Read the contents of a file by path, returning numbered lines for source code, configs, build files, or any text file. Use this tool to understand code before editing it, verify file contents, or check configuration values. Do NOT use this if the file content is already available in the conversation context from a previous read or mention. Binary files (images, JARs, ZIPs) are rejected — use search_code to find content within them. For files over 200 lines, provide offset and limit parameters to read specific sections rather than loading the entire file, as output is capped at 10MB and lines are truncated at 2000 characters."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path"),

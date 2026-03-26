@@ -13,7 +13,7 @@ import kotlinx.serialization.json.JsonObject
 
 class GitStatusTool : AgentTool {
     override val name = "git_status"
-    override val description = "Get git status: current branch, remote tracking, changed files (staged/unstaged), and untracked files."
+    override val description = "Get the current git working tree status including branch name, remote tracking info, staged and unstaged changed files, and untracked files. Use this before making commits to see what has changed, to understand the current workspace state, or to check for uncommitted changes before switching branches. Do NOT use this for viewing actual content of changes (use git_diff instead) or for commit history (use git_log instead). Output is truncated to 50 changed files and 30 untracked files for large projects, so some entries may be omitted in very active repositories."
     override val parameters = FunctionParameters(properties = emptyMap(), required = emptyList())
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
 
