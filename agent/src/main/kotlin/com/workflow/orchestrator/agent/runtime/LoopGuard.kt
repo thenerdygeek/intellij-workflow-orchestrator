@@ -146,6 +146,17 @@ class LoopGuard(
         readFiles.clear()
     }
 
+    /**
+     * Check if a file was read in this session before allowing an edit.
+     * Returns an error message if the file hasn't been read, or null if safe to proceed.
+     *
+     * This is a hard gate — the edit tool should return this as an error to the LLM.
+     */
+    fun checkPreEditRead(filePath: String): String? {
+        if (filePath in readFiles) return null
+        return "Edit blocked: you haven't read '$filePath' in this session. Read the file first to see its current content, then retry the edit. This prevents blind edits with incorrect old_string values."
+    }
+
     /** Reset state (for reuse across sessions). */
     fun reset() {
         recentDoomCalls.clear()

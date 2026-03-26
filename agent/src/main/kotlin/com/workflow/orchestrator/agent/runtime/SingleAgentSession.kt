@@ -785,8 +785,27 @@ class SingleAgentSession(
                 contextManager.addToolResult(toolCall.id, "Cancelled by user", "Cancelled")
                 break
             }
-            val (_, toolResult, toolDurationMs) = executeSingleToolRaw(toolCall, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
             val toolName = toolCall.function.name
+
+            // Pre-edit search enforcement: block edit_file if file not read in this session
+            if (toolName == "edit_file") {
+                val editPathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolCall.function.arguments)
+                val editPath = editPathMatch?.groupValues?.get(1)
+                if (editPath != null) {
+                    val preEditWarning = loopGuard.checkPreEditRead(editPath)
+                    if (preEditWarning != null) {
+                        contextManager.addToolResult(toolCall.id, preEditWarning, "Edit blocked: file not read")
+                        toolResults.add(toolCall.id to true)
+                        onProgress(AgentProgress(
+                            step = "Edit blocked: $editPath not read yet",
+                            tokensUsed = contextManager.currentTokens
+                        ))
+                        continue  // Skip to next tool call
+                    }
+                }
+            }
+
+            val (_, toolResult, toolDurationMs) = executeSingleToolRaw(toolCall, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
 
             // 5C: Redact credentials before injecting tool results into LLM context
             val redactedWriteContent = CredentialRedactor.redact(toolResult.content)
