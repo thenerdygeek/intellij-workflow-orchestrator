@@ -204,6 +204,14 @@ class AgentDashboardPanel(
         cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent)
     }
 
+    fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
+        cefPanel?.showProcessInput(processId, description, prompt, command)
+    }
+
+    fun setCefProcessInputCallbacks(onInput: (String) -> Unit) {
+        cefPanel?.onProcessInputResolved = onInput
+    }
+
     fun setCefSkillCallbacks(onDismiss: () -> Unit) {
         cefPanel?.onSkillDismissed = onDismiss
     }

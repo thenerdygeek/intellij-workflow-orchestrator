@@ -116,6 +116,16 @@ class AgentController(
             }
         )
 
+        // Wire ask_user_input callbacks
+        com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.showInputCallback = { processId, description, prompt, command ->
+            com.intellij.openapi.application.invokeLater {
+                dashboard.showProcessInput(processId, description, prompt, command)
+            }
+        }
+        dashboard.setCefProcessInputCallbacks(
+            onInput = { input -> com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input) }
+        )
+
         // Wire interactive HTML message callback
         dashboard.setCefInteractiveHtmlCallback { json ->
             LOG.info("Interactive HTML message: ${json.take(200)}")

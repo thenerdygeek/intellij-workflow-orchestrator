@@ -81,6 +81,7 @@ class AgentCefPanel(
     private var acceptDiffHunkQuery: JBCefJSQuery? = null
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
+    private var processInputQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
     @Volatile private var pageLoaded = false
@@ -150,6 +151,8 @@ class AgentCefPanel(
     var onRejectDiffHunk: ((String, Int) -> Unit)? = null
     /** Callback when user clicks "Kill" on a running tool call. Param: toolCallId. */
     var onKillToolCall: ((String) -> Unit)? = null
+    /** Callback when user submits process input from the ProcessInputView. Param: input string. */
+    var onProcessInputResolved: ((String) -> Unit)? = null
 
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
@@ -412,6 +415,9 @@ class AgentCefPanel(
         killToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
         }
+        processInputQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -564,6 +570,10 @@ class AgentCefPanel(
                     killToolCallQuery?.let { q ->
                         val killJs = q.inject("toolCallId")
                         js("window._killToolCall = function(toolCallId) { $killJs }")
+                    }
+                    processInputQuery?.let { q ->
+                        val inputJs = q.inject("input")
+                        js("window._resolveProcessInput = function(input) { $inputJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -789,6 +799,10 @@ class AgentCefPanel(
         callJs("showApproval(${jsonStr(toolName)},${jsonStr(riskLevel)},${jsonStr(description)},${jsonStr(metadataJson)},$diffArg)")
     }
 
+    fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
+        callJs("showProcessInput(${jsonStr(processId)},${jsonStr(description)},${jsonStr(prompt)},${jsonStr(command)})")
+    }
+
     // ── Debug log panel ──
 
     /**
@@ -986,6 +1000,7 @@ class AgentCefPanel(
         acceptDiffHunkQuery?.dispose()
         rejectDiffHunkQuery?.dispose()
         killToolCallQuery?.dispose()
+        processInputQuery?.dispose()
         browser?.dispose()
         undoQuery = null
         traceQuery = null
@@ -1022,6 +1037,7 @@ class AgentCefPanel(
         acceptDiffHunkQuery = null
         rejectDiffHunkQuery = null
         killToolCallQuery = null
+        processInputQuery = null
         browser = null
     }
 }

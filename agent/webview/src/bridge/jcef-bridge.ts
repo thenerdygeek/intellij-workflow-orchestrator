@@ -168,6 +168,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const metadata = metadataJson ? JSON.parse(metadataJson) : [];
     stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata, diffContent ?? undefined);
   },
+  showProcessInput(processId: string, description: string, prompt: string, command: string) {
+    stores?.getChatStore().showProcessInput(processId, description, prompt, command);
+  },
   receiveMentionResults(resultsJson: string) {
     try {
       const results = JSON.parse(resultsJson);
@@ -252,6 +255,7 @@ export const kotlinBridge = {
   openSettings(): void { callKotlin('_openSettings'); },
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
   killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },
+  resolveProcessInput(input: string): void { callKotlin('_resolveProcessInput', input); },
   searchMentions(type: string, query: string): void { callKotlin('_searchMentions', `${type}:${query}`); },
   sendMessageWithMentions(text: string, mentionsJson: string): void {
     const payload = JSON.stringify({ text, mentions: JSON.parse(mentionsJson) });

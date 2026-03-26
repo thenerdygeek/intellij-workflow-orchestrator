@@ -7,6 +7,7 @@ import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
 import { ApprovalView } from '@/components/agent/ApprovalView';
+import { ProcessInputView } from '@/components/agent/ProcessInputView';
 import {
   ChatContainerRoot,
   ChatContainerContent,
@@ -127,6 +128,8 @@ export const ChatView = memo(function ChatView() {
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
   const pendingApproval = useChatStore(s => s.pendingApproval);
   const resolveApproval = useChatStore(s => s.resolveApproval);
+  const pendingProcessInput = useChatStore(s => s.pendingProcessInput);
+  const resolveProcessInput = useChatStore(s => s.resolveProcessInput);
   const retryMessage = useChatStore(s => s.retryMessage);
 
   const approvalRef = useRef<HTMLDivElement>(null);
@@ -262,6 +265,17 @@ export const ChatView = memo(function ChatView() {
               onAllowForSession={handleAllowForSession}
             />
           </div>
+        )}
+
+        {/* Process input prompt — shown when ask_user_input tool requests user input */}
+        {pendingProcessInput && (
+          <ProcessInputView
+            processId={pendingProcessInput.processId}
+            description={pendingProcessInput.description}
+            prompt={pendingProcessInput.prompt}
+            command={pendingProcessInput.command}
+            onSubmit={resolveProcessInput}
+          />
         )}
 
         <ChatContainerScrollAnchor />

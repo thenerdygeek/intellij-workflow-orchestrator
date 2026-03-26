@@ -33,6 +33,14 @@ export interface DebugLogEntry {
 
 const DEBUG_LOG_MAX_ENTRIES = 200;
 
+// ── Process input state ──
+interface PendingProcessInput {
+  processId: string;
+  description: string;
+  prompt: string;
+  command: string;
+}
+
 // ── Approval state ──
 interface PendingApproval {
   toolName: string;
@@ -79,6 +87,7 @@ interface ChatState {
   tokenBudget: { used: number; max: number };
   mentionResults: MentionSearchResult[];
   pendingApproval: PendingApproval | null;
+  pendingProcessInput: PendingProcessInput | null;
   focusInputTrigger: number;
   debugLogVisible: boolean;
   debugLogEntries: DebugLogEntry[];
@@ -128,6 +137,8 @@ interface ChatState {
   receiveMentionResults(results: MentionSearchResult[]): void;
   showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
+  showProcessInput(processId: string, description: string, prompt: string, command: string): void;
+  resolveProcessInput(input: string): void;
   sendMessage(text: string, mentions: Mention[]): void;
   setDebugLogVisible(visible: boolean): void;
   addDebugLogEntry(entry: DebugLogEntry): void;
@@ -169,6 +180,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tokenBudget: { used: 0, max: 0 },
   mentionResults: [],
   pendingApproval: null,
+  pendingProcessInput: null,
   focusInputTrigger: 0,
   debugLogVisible: false,
   debugLogEntries: [],
@@ -575,6 +587,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else {
         (kotlinBridge as any).denyToolCall();
       }
+    });
+  },
+
+  showProcessInput(processId: string, description: string, prompt: string, command: string) {
+    set({ pendingProcessInput: { processId, description, prompt, command } });
+  },
+
+  resolveProcessInput(input: string) {
+    set({ pendingProcessInput: null });
+    import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
+      (kotlinBridge as any).resolveProcessInput(input);
     });
   },
 
