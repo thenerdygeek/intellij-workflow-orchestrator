@@ -1,16 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 40 40">
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
   <g stroke-width="0.5" stroke-linejoin="round">
-    <!-- Left Body (Bamboo Green) -->
+    <!-- Left Body (rotated from Bamboo Green) -->
     <polygon points="20,36 12,22 20,4" fill="#10b981" stroke="#10b981" />
-    <!-- Right Body (Sonar Cyan) -->
+    
+    <!-- Right Body (rotated from Sonar Cyan) -->
     <polygon points="20,36 28,22 20,4" fill="#0ea5e9" stroke="#0ea5e9" />
-    <!-- Left Wing Lower (Automation Yellow) -->
+    
+    <!-- Left Wing Lower/Nose (rotated from Automation Yellow) -->
     <polygon points="20,36 4,26 12,22" fill="#fbbf24" stroke="#fbbf24" />
-    <!-- Right Wing Lower (Jira Blue) -->
+    
+    <!-- Right Wing Lower/Nose (rotated from Jira Blue) -->
     <polygon points="20,36 36,26 28,22" fill="#0052cc" stroke="#0052cc" />
-    <!-- Left Wing Upper (Cody Purple) -->
+    
+    <!-- Left Wing Upper/Trailing (rotated from Cody Purple) -->
     <polygon points="12,22 4,26 8,10" fill="#8b5cf6" stroke="#8b5cf6" />
-    <!-- Right Wing Upper (Bitbucket Navy) -->
+    
+    <!-- Right Wing Upper/Trailing (rotated from Bitbucket Navy) -->
     <polygon points="28,22 36,26 32,10" fill="#205081" stroke="#205081" />
   </g>
 </svg>

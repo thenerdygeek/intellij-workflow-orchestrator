@@ -1,16 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 40 40">
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
   <g stroke-width="0.5" stroke-linejoin="round">
     <!-- Left Body -->
     <polygon points="20,36 12,22 20,4" fill="#34d399" stroke="#34d399" />
+    
     <!-- Right Body -->
     <polygon points="20,36 28,22 20,4" fill="#2dd4bf" stroke="#2dd4bf" />
-    <!-- Left Wing Lower -->
+    
+    <!-- Left Wing Lower/Nose -->
     <polygon points="20,36 4,26 12,22" fill="#fcd34d" stroke="#fcd34d" />
-    <!-- Right Wing Lower -->
+    
+    <!-- Right Wing Lower/Nose -->
     <polygon points="20,36 36,26 28,22" fill="#3b82f6" stroke="#3b82f6" />
-    <!-- Left Wing Upper -->
+    
+    <!-- Left Wing Upper/Trailing -->
     <polygon points="12,22 4,26 8,10" fill="#a855f7" stroke="#a855f7" />
-    <!-- Right Wing Upper -->
+    
+    <!-- Right Wing Upper/Trailing -->
     <polygon points="28,22 36,26 32,10" fill="#6366f1" stroke="#6366f1" />
   </g>
 </svg>
