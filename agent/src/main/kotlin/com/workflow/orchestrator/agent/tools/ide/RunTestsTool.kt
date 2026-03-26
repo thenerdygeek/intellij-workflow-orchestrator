@@ -4,7 +4,6 @@ import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
 import com.intellij.execution.configurations.ConfigurationType
-import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
@@ -31,6 +30,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -184,7 +184,18 @@ class RunTestsTool : AgentTool {
                                         }
                                     }, 500)
                                 } else {
+                                    // Stream console output to chat UI in real-time
+                                    val toolCallId = RunCommandTool.currentToolCallId.get()
+                                    val activeStreamCallback = RunCommandTool.streamCallback
+
                                     handler.addProcessListener(object : ProcessAdapter() {
+                                        override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
+                                            val text = event.text ?: return
+                                            if (toolCallId != null && text.isNotBlank()) {
+                                                activeStreamCallback?.invoke(toolCallId, text)
+                                            }
+                                        }
+
                                         override fun processTerminated(event: ProcessEvent) {
                                             // Small delay to let test framework populate results
                                             java.util.Timer().schedule(object : java.util.TimerTask() {
@@ -270,18 +281,54 @@ class RunTestsTool : AgentTool {
             val settings = runManager.createConfiguration(configName, factory)
 
             val config = settings.configuration
+            val isTestNG = testFramework == "TestNG"
 
-            // Set test class and method via reflection (avoids hard dep on JUnit plugin classes)
-            setConfigProperty(config, "setMainClassName", className)
-            if (method != null) {
-                setConfigProperty(config, "setMethodName", method)
-                // Set test type to METHOD (2) instead of CLASS (1)
-                try {
-                    val setter = config.javaClass.getMethod("setTestType", Int::class.javaPrimitiveType)
-                    setter.invoke(config, 2)
-                } catch (_: Exception) {
-                    // Different API version
+            // Set test class and method via the data object.
+            //
+            // JUnit:  getPersistentData() → JUnitConfiguration.Data
+            //         TEST_OBJECT values: lowercase — "class", "method", "package", etc.
+            //
+            // TestNG: getPersistantData() → TestData   (note: typo in API name, missing 'e')
+            //         TEST_OBJECT values: UPPERCASE — "CLASS", "METHOD", "PACKAGE", etc.
+            //
+            // Both have public fields: TEST_OBJECT, MAIN_CLASS_NAME, METHOD_NAME, PACKAGE_NAME.
+            // Using setMainClassName()/setMethodName() does NOT work — those methods don't exist.
+            try {
+                // TestNG uses getPersistantData (typo), JUnit uses getPersistentData
+                val dataMethodName = if (isTestNG) "getPersistantData" else "getPersistentData"
+                val getDataMethod = config.javaClass.methods.find { it.name == dataMethodName }
+                val data = getDataMethod?.invoke(config)
+                if (data != null) {
+                    val testObjectField = data.javaClass.getField("TEST_OBJECT")
+                    val mainClassField = data.javaClass.getField("MAIN_CLASS_NAME")
+
+                    // JUnit uses lowercase ("class"/"method"), TestNG uses UPPERCASE ("CLASS"/"METHOD")
+                    val testType = if (method != null) {
+                        if (isTestNG) "METHOD" else "method"
+                    } else {
+                        if (isTestNG) "CLASS" else "class"
+                    }
+                    testObjectField.set(data, testType)
+                    mainClassField.set(data, className)
+
+                    // Set package name (extracted from fully qualified class name)
+                    try {
+                        val packageField = data.javaClass.getField("PACKAGE_NAME")
+                        val packageName = className.substringBeforeLast('.', "")
+                        packageField.set(data, packageName)
+                    } catch (_: Exception) { /* optional field */ }
+
+                    if (method != null) {
+                        val methodField = data.javaClass.getField("METHOD_NAME")
+                        methodField.set(data, method)
+                    }
+                } else {
+                    // Data accessor not available — native runner won't work
+                    return null
                 }
+            } catch (_: Exception) {
+                // Plugin fields not accessible — fall back to shell
+                return null
             }
 
             // Resolve and set the module containing the test class.
@@ -359,15 +406,6 @@ class RunTestsTool : AgentTool {
             }
         } catch (_: Exception) {
             null
-        }
-    }
-
-    private fun setConfigProperty(config: RunConfiguration, methodName: String, value: String) {
-        try {
-            val setter = config.javaClass.getMethod(methodName, String::class.java)
-            setter.invoke(config, value)
-        } catch (_: Exception) {
-            // Method not found — different JUnit plugin version
         }
     }
 
@@ -582,22 +620,42 @@ class RunTestsTool : AgentTool {
             processBuilder.redirectErrorStream(true)
 
             val process = processBuilder.start()
-            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
 
-            val output = buildString {
-                process.inputStream.bufferedReader().use { reader ->
-                    var line = reader.readLine()
-                    while (line != null && length < MAX_OUTPUT_CHARS) {
-                        appendLine(line)
-                        line = reader.readLine()
+            // Get tool call ID for streaming (set by SingleAgentSession)
+            val toolCallId = RunCommandTool.currentToolCallId.get()
+            val activeStreamCallback = RunCommandTool.streamCallback
+
+            // Stream output line-by-line in a daemon thread (same pattern as RunCommandTool)
+            val outputBuilder = StringBuilder()
+            val readerThread = Thread {
+                try {
+                    process.inputStream.bufferedReader().use { reader ->
+                        var line = reader.readLine()
+                        while (line != null) {
+                            if (outputBuilder.length < MAX_OUTPUT_CHARS) {
+                                outputBuilder.appendLine(line)
+                            }
+                            if (toolCallId != null) {
+                                activeStreamCallback?.invoke(toolCallId, line + "\n")
+                            }
+                            line = reader.readLine()
+                        }
                     }
-                    if (line != null) appendLine("... (output truncated at $MAX_OUTPUT_CHARS chars)")
+                } catch (_: Exception) {
+                    // Process killed or stream closed — expected during timeout/cancel
                 }
+            }.apply {
+                isDaemon = true
+                name = "RunTests-Output-${toolCallId ?: "shell"}"
+                start()
             }
-            val truncatedOutput = output
+
+            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
 
             if (!completed) {
                 process.destroyForcibly()
+                readerThread.join(1000)
+                val truncatedOutput = outputBuilder.toString()
                 return ToolResult(
                     "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s for $testTarget.\nPartial output:\n$truncatedOutput",
                     "Test timeout",
@@ -605,6 +663,10 @@ class RunTestsTool : AgentTool {
                     isError = true
                 )
             }
+
+            // Wait for reader thread to finish consuming remaining output
+            readerThread.join(2000)
+            val truncatedOutput = outputBuilder.toString()
 
             val exitCode = process.exitValue()
             if (exitCode == 0) {
