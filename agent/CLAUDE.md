@@ -40,11 +40,12 @@ AgentController (UI entry point)
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (99 total, 10 categories)
+## Tools (102 total, 11 categories)
 
 | Category | Tools |
 |----------|-------|
 | Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think |
+| Process Interaction | send_stdin, kill_process, ask_user_input |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations |
 | Runtime & Debug | get_run_configurations, get_running_processes, get_run_output, get_test_results, add_breakpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_pause, debug_run_to_cursor, debug_stop, evaluate_expression, get_stack_frames, get_variables, create_run_config, modify_run_config, delete_run_config |
 | VCS | git_status, git_blame, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_stash_list, git_merge_base, git_file_history |

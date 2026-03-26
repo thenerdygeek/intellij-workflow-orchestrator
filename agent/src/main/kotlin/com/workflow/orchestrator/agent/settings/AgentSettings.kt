@@ -27,6 +27,11 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var tokenBudgetWarningPercent by property(80)
         var maxSessionTokens by property(500_000)
         var showDebugLog by property(false)
+        var commandIdleThresholdSeconds by property(15)
+        var buildCommandIdleThresholdSeconds by property(60)
+        var strictInteractiveMode by property(false)
+        var maxStdinPerProcess by property(10)
+        var askUserInputTimeoutMinutes by property(5)
     }
 
     companion object {

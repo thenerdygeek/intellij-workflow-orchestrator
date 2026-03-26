@@ -133,6 +133,9 @@ class AgentService(
             register(EditFileTool())
             register(SearchCodeTool())
             register(RunCommandTool())
+            register(SendStdinTool())
+            register(KillProcessTool())
+            register(AskUserInputTool())
             register(GlobFilesTool())
 
             // PSI tools

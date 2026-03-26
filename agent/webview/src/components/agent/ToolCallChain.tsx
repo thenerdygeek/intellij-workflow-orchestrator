@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import type { ToolCall } from '@/bridge/types';
 import { Terminal } from '@/components/ui/tool-ui/terminal';
 import {
@@ -136,6 +136,10 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
     || Object.values(allStreams).find(v => v.length > 0)
     || '';
   const isRunning = toolCall.status === 'RUNNING';
+
+  const handleKill = useCallback(() => {
+    useChatStore.getState().killToolCall(toolCall.id);
+  }, [toolCall.id]);
   const isError = toolCall.status === 'ERROR';
 
   let command = toolCall.name;
@@ -160,6 +164,8 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
       stderr={isError ? (toolCall.output || toolCall.result) : undefined}
       exitCode={isError ? 1 : toolCall.status === 'COMPLETED' ? 0 : undefined}
       durationMs={toolCall.durationMs}
+      isRunning={isRunning}
+      onKill={isRunning ? handleKill : undefined}
     />
   );
 }

@@ -7,7 +7,7 @@
 import { useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Terminal as TerminalIcon, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Terminal as TerminalIcon, Copy, Check, ChevronDown, ChevronUp, Square } from 'lucide-react';
 
 interface TerminalProps {
   command: string;
@@ -17,6 +17,8 @@ interface TerminalProps {
   durationMs?: number;
   maxCollapsedLines?: number;
   className?: string;
+  isRunning?: boolean;
+  onKill?: () => void;
 }
 
 function useCopyToClipboard(timeout = 2000) {
@@ -38,6 +40,8 @@ export function Terminal({
   durationMs,
   maxCollapsedLines = 10,
   className,
+  isRunning,
+  onKill,
 }: TerminalProps) {
   const [expanded, setExpanded] = useState(false);
   const { copied, copy } = useCopyToClipboard();
@@ -90,6 +94,17 @@ export function Terminal({
         >
           {copied ? <Check className="h-3 w-3" style={{ color: 'var(--success)' }} /> : <Copy className="h-3 w-3" style={{ color: 'var(--fg-muted)' }} />}
         </Button>
+        {isRunning && onKill && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 w-5 p-0 shrink-0"
+            onClick={onKill}
+            title="Stop process"
+          >
+            <Square className="h-3 w-3" style={{ color: 'var(--error)' }} />
+          </Button>
+        )}
       </div>
 
       {/* Output body */}

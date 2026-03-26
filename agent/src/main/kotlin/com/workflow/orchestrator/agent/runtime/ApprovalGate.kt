@@ -279,6 +279,9 @@ class ApprovalGate(
             "spring_boot_actuator", "spring_boot_autoconfig",
             "spring_boot_config_properties", "spring_boot_endpoints",
 
+            // Process interaction (kill is safe, ask_user_input is user-driven)
+            "kill_process", "ask_user_input",
+
             // Subagent spawning (runs in isolated context)
             "agent", "delegate_task"
         )
@@ -308,6 +311,7 @@ class ApprovalGate(
          */
         private val MEDIUM_RISK_TOOLS = setOf(
             "edit_file",
+            "send_stdin",
             "refactor_rename",
             "bitbucket_update_pr_title", "bitbucket_update_pr_description",
             "bitbucket_remove_reviewer",

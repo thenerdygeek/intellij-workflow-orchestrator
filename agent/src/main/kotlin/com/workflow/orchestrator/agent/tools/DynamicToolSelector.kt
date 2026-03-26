@@ -34,6 +34,7 @@ object DynamicToolSelector {
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "get_annotations", "get_method_body", "read_write_access", "dataflow_analysis",
         "diagnostics", "problem_view", "format_code", "optimize_imports",
+        "send_stdin", "kill_process", "ask_user_input",
         "agent",
         "delegate_task",
         "think"

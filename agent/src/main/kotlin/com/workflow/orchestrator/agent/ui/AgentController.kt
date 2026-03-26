@@ -58,7 +58,10 @@ class AgentController(
 
     init {
         // Tie coroutine scope to project lifecycle — cancel when project closes
-        com.intellij.openapi.util.Disposer.register(project, com.intellij.openapi.Disposable { scope.cancel() })
+        com.intellij.openapi.util.Disposer.register(project, com.intellij.openapi.Disposable {
+            scope.cancel()
+            ProcessRegistry.killAll()
+        })
 
         // Wire all JCEF toolbar/input callbacks via the unified bridge
         dashboard.setCefActionCallbacks(
@@ -525,6 +528,14 @@ class AgentController(
                     "model" to (settings?.state?.sourcegraphChatModel ?: "unknown"),
                     "tools" to currentSession.activeToolNames.size
                 ))
+                // Launch reaper coroutine to clean up idle processes
+                val reaperJob = launch {
+                    while (isActive) {
+                        delay(10_000)
+                        ProcessRegistry.reapIdleProcesses()
+                    }
+                }
+
                 val result = orchestrator.executeTask(
                     taskDescription = task,
                     session = currentSession,
@@ -534,6 +545,7 @@ class AgentController(
                     onDebugLog = onDebugLog
                 )
                 debugLog("info", "result", "Orchestrator returned: ${result::class.simpleName}")
+                reaperJob.cancel()
                 handleResult(result, System.currentTimeMillis() - sessionStartMs)
             } catch (e: CancellationException) {
                 debugLog("warn", "cancelled", "Task cancelled by user")
