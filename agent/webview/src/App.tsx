@@ -8,6 +8,7 @@ import { ChatView } from '@/components/chat/ChatView'
 import { TopBar } from '@/components/chat/TopBar'
 import { DebugPanel } from '@/components/chat/DebugPanel'
 import { InputBar } from '@/components/input/InputBar'
+import { SkillBanner } from '@/components/chat/SkillBanner'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 
@@ -68,6 +69,7 @@ function App() {
     <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
       <ScreenReaderAnnouncer />
       <TopBar />
+      <SkillBanner />
       <ChatView />
       <DebugPanel />
       <InputBar />
