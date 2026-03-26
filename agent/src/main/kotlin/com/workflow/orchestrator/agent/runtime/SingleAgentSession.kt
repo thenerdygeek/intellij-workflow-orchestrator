@@ -265,6 +265,7 @@ class SingleAgentSession(
                     sessionTrace?.sessionFailed("Budget terminated at ${budgetEnforcer.utilizationPercent()}%", totalTokensUsed, iteration)
                     val budgetTerminateError = "Context budget exhausted at ${budgetEnforcer.utilizationPercent()}%. Please start a new conversation for remaining work."
                     agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = budgetTerminateError)
+                    loopGuard.guardrailStore?.save()
                     return SingleAgentResult.Failed(
                         error = budgetTerminateError,
                         tokensUsed = totalTokensUsed
@@ -658,6 +659,9 @@ class SingleAgentSession(
             agentFileLogger?.logIteration(sessionId, iteration, usage?.promptTokens ?: 0, usage?.completionTokens ?: 0, choice.finishReason, emptyList(), System.currentTimeMillis() - iterationStartMs)
             agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs)
 
+            // Persist any learned guardrails
+            loopGuard.guardrailStore?.save()
+
             return SingleAgentResult.Completed(
                 content = sanitizedContent,
                 summary = summary,
@@ -739,6 +743,10 @@ class SingleAgentSession(
                     contextManager.addSystemMessage(
                         "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
                     )
+                    // Auto-record to guardrails
+                    loopGuard.guardrailStore?.record(
+                        "Tool '$toolName' frequently fails in this project — consider alternative approaches"
+                    )
                 }
 
                 agentFileLogger?.logToolCall(
@@ -819,6 +827,10 @@ class SingleAgentSession(
             if (metrics.isCircuitBroken(toolName)) {
                 contextManager.addSystemMessage(
                     "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
+                )
+                // Auto-record to guardrails
+                loopGuard.guardrailStore?.record(
+                    "Tool '$toolName' frequently fails in this project — consider alternative approaches"
                 )
             }
 
@@ -1046,7 +1058,7 @@ class SingleAgentSession(
             }
 
             // Set tool call ID for streaming output + process kill support
-            if (toolName == "run_command") {
+            if (toolName == "run_command" || toolName == "run_tests") {
                 RunCommandTool.currentToolCallId.set(toolCall.id)
             }
             val toolResult = try {

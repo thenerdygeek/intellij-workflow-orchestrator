@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.runtime
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolCall
+import com.workflow.orchestrator.agent.context.GuardrailStore
 
 /**
  * Guards against common agent loop failures:
@@ -12,7 +13,9 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
  * 5. Auto-verification -- after edit tools, prompt diagnostics check
  */
 class LoopGuard(
-    private val reminderIntervalIterations: Int = 4
+    private val reminderIntervalIterations: Int = 4,
+    /** Optional guardrail store for auto-recording failure patterns across sessions. */
+    var guardrailStore: GuardrailStore? = null
 ) {
     companion object {
         /** Number of identical sequential tool calls before doom loop warning. */
@@ -117,6 +120,10 @@ class LoopGuard(
             val lastN = recentDoomCalls.takeLast(DOOM_LOOP_THRESHOLD)
             if (lastN.distinct().size == 1) {
                 recentDoomCalls.clear()
+                // Auto-record guardrail from doom loop
+                guardrailStore?.record(
+                    "Avoid calling $toolName with repeated identical arguments — causes doom loops. Try a different approach or tool."
+                )
                 return "You have called $toolName with the same arguments $DOOM_LOOP_THRESHOLD times in a row. Try a different approach or summarize your findings."
             }
         }
