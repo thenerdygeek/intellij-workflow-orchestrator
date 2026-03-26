@@ -29,7 +29,9 @@ data class ToolResult(
     val summary: String,
     val tokenEstimate: Int,
     val artifacts: List<String> = emptyList(),
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val isCompletion: Boolean = false,
+    val verifyCommand: String? = null
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5
