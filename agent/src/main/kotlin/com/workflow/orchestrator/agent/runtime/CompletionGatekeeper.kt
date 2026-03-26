@@ -26,17 +26,35 @@ class CompletionGatekeeper(
     private var lastPlanIncompleteCount = Int.MAX_VALUE
     private var totalCompletionAttempts = 0
 
+    /**
+     * Name of the gate that blocked the most recent completion attempt, or null if all passed
+     * or completion was force-accepted. Callers can read this after [checkCompletion] returns
+     * a non-null block message to record per-gate block counts in metrics.
+     */
+    var lastBlockedGate: String? = null
+        private set
+
+    /**
+     * True when the last call to [checkCompletion] returned null because the max-attempts
+     * limit was exceeded (force-accept), rather than because all gates passed normally.
+     */
+    var wasForceAccepted: Boolean = false
+        private set
+
     /** Returns block message (String) if completion denied, null if all gates pass. */
     fun checkCompletion(): String? {
+        lastBlockedGate = null
+        wasForceAccepted = false
         totalCompletionAttempts++
         if (totalCompletionAttempts > MAX_TOTAL_COMPLETION_ATTEMPTS) {
             LOG.warn("CompletionGatekeeper: force-accepting after $totalCompletionAttempts attempts")
+            wasForceAccepted = true
             return null
         }
-        checkPostCompression()?.let { return it }
-        checkPlanCompletion()?.let { return it }
-        checkSelfCorrection()?.let { return it }
-        checkLoopGuard()?.let { return it }
+        checkPostCompression()?.let { lastBlockedGate = "post_compression"; return it }
+        checkPlanCompletion()?.let { lastBlockedGate = "plan"; return it }
+        checkSelfCorrection()?.let { lastBlockedGate = "self_correction"; return it }
+        checkLoopGuard()?.let { lastBlockedGate = "loop_guard"; return it }
         return null
     }
 

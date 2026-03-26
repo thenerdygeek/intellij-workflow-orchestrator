@@ -340,6 +340,7 @@ class SingleAgentSession(
                     if (consecutiveNoToolResponses > 0) {
                         val lastContent = contextManager.getMessages().lastOrNull { it.role == "assistant" }?.content ?: "Task completed (budget exhausted)"
                         LOG.warn("SingleAgentSession: budget TERMINATE — accepting last response as completion")
+                        metrics.forcedCompletionCount++
                         agentFileLogger?.logSessionEnd(sessionId, iteration, totalTokensUsed, System.currentTimeMillis() - sessionStartMs)
                         loopGuard.guardrailStore?.save()
                         return SingleAgentResult.Completed(
@@ -803,6 +804,7 @@ class SingleAgentSession(
             consecutiveNoToolResponses++
 
             if (consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
+                metrics.nudgeCount++
                 contextManager.addMessage(ChatMessage(
                     role = "user",
                     content = "You responded without calling any tools. If you've completed the task, " +
@@ -816,8 +818,14 @@ class SingleAgentSession(
             // Second consecutive no-tool response or near max iterations: run gatekeeper
             val gateBlock = completionGatekeeper?.checkCompletion()
             if (gateBlock != null && iteration < maxIterations - 1) {
+                val blockedGate = completionGatekeeper?.lastBlockedGate ?: "unknown"
+                metrics.completionGateBlocks[blockedGate] = (metrics.completionGateBlocks[blockedGate] ?: 0) + 1
                 contextManager.addMessage(ChatMessage(role = "user", content = gateBlock))
                 return null // continue loop
+            }
+            // Check if the gatekeeper force-accepted (max attempts exceeded)
+            if (completionGatekeeper?.wasForceAccepted == true) {
+                metrics.forcedCompletionCount++
             }
 
             // All gates passed (or no gatekeeper) — accept completion
@@ -1029,6 +1037,19 @@ class SingleAgentSession(
             }
 
             val (_, toolResult, toolDurationMs) = executeSingleToolRaw(toolCall, tools, project, approvalGate, eventLog, sessionTrace, onProgress)
+
+            // Track attempt_completion invocations and gate blocks
+            if (toolName == "attempt_completion") {
+                metrics.completionAttemptCount++
+                if (toolResult.isError && !toolResult.isCompletion) {
+                    // Blocked by a gate — record which gate blocked it
+                    val blockedGate = completionGatekeeper?.lastBlockedGate ?: "unknown"
+                    metrics.completionGateBlocks[blockedGate] = (metrics.completionGateBlocks[blockedGate] ?: 0) + 1
+                }
+                if (toolResult.isCompletion && completionGatekeeper?.wasForceAccepted == true) {
+                    metrics.forcedCompletionCount++
+                }
+            }
 
             // Handle attempt_completion success — exit loop immediately
             if (toolResult.isCompletion) {

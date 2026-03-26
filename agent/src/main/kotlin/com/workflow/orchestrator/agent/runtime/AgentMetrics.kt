@@ -31,7 +31,11 @@ data class SessionSnapshot(
     val compressionCount: Int,
     val approvalCount: Int,
     val subagentCount: Int,
-    val durationMs: Long
+    val durationMs: Long,
+    val completionAttemptCount: Int = 0,
+    val completionGateBlocks: Map<String, Int> = emptyMap(),
+    val forcedCompletionCount: Int = 0,
+    val nudgeCount: Int = 0
 )
 
 /**
@@ -69,6 +73,18 @@ class AgentMetrics {
 
     /** Number of subagent delegations. */
     var subagentCount: Int = 0
+
+    /** Number of times attempt_completion was called (including blocked attempts). */
+    var completionAttemptCount: Int = 0
+
+    /** Per-gate block counts: maps gate name → number of times that gate blocked completion. */
+    var completionGateBlocks: MutableMap<String, Int> = mutableMapOf()
+
+    /** Number of completions that were force-accepted (budget override or max attempts exceeded). */
+    var forcedCompletionCount: Int = 0
+
+    /** Number of no-tool-response nudges injected to guide the LLM toward completion. */
+    var nudgeCount: Int = 0
 
     /**
      * Record the result of a single tool call.
@@ -124,7 +140,11 @@ class AgentMetrics {
         compressionCount = compressionCount,
         approvalCount = approvalCount,
         subagentCount = subagentCount,
-        durationMs = System.currentTimeMillis() - startTime
+        durationMs = System.currentTimeMillis() - startTime,
+        completionAttemptCount = completionAttemptCount,
+        completionGateBlocks = completionGateBlocks.toMap(),
+        forcedCompletionCount = forcedCompletionCount,
+        nudgeCount = nudgeCount
     )
 
     /**
