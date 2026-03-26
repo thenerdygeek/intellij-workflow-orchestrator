@@ -86,7 +86,7 @@ class ContextManager(
         /** Tools whose results must never be pruned — they represent irreplaceable work. */
         val PROTECTED_TOOLS = setOf(
             "agent", "delegate_task", "create_plan", "update_plan_step",
-            "save_memory", "activate_skill", "ask_questions"
+            "save_memory", "activate_skill", "ask_questions", "attempt_completion"
         )
 
         /** Minimum token savings to justify pruning — skip results smaller than this. */

@@ -369,6 +369,8 @@ object DynamicToolSelector {
         // agent + delegate_task are always available — delegation escape hatches
         selectedNames.add("agent")
         selectedNames.add("delegate_task")
+        // attempt_completion is always available — the LLM must always be able to signal task completion
+        selectedNames.add("attempt_completion")
 
         return allTools.filter { it.name in selectedNames }
     }
