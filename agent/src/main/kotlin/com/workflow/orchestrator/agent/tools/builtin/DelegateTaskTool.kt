@@ -166,9 +166,16 @@ class DelegateTaskTool : AgentTool {
         val rollbackManager = AgentRollbackManager(project)
         val checkpointId = rollbackManager.createCheckpoint("delegate_task: $workerType - ${task.take(60)}")
 
-        // Create event log for telemetry
+        // Create event log for telemetry (write into parent session dir, or fallback to project-based path)
         val sessionId = "worker-${System.currentTimeMillis()}"
-        val eventLog = AgentEventLog(sessionId, project.basePath ?: ".")
+        val workerSessionDir: java.io.File = agentService.currentSessionDir
+            ?.let { it.resolve(sessionId).also { dir -> dir.mkdirs() } }
+            ?: project.basePath?.let {
+                com.workflow.orchestrator.core.util.ProjectIdentifier.sessionsDir(it)
+                    .resolve(sessionId).also { dir -> dir.mkdirs() }
+            }
+            ?: java.io.File(".").resolve(sessionId).also { it.mkdirs() }
+        val eventLog = AgentEventLog(sessionId, workerSessionDir)
         eventLog.log(AgentEventType.WORKER_SPAWNED, "type=$workerType, task=${task.take(100)}")
 
         try {

@@ -20,14 +20,14 @@ import java.io.File
  * - Compression events with before/after token counts
  * - Full diagnostic dump on failure
  *
- * Output: `.workflow/agent/traces/{sessionId}.trace.jsonl`
+ * Output: `{sessionDir}/traces/trace.jsonl`
  *
  * Design: append-only JSONL with typed entries. Each line is self-contained
  * so partial traces are still useful if the process crashes mid-session.
  */
 class SessionTrace(
     private val sessionId: String,
-    private val basePath: String
+    private val sessionDir: File
 ) {
     companion object {
         private val LOG = Logger.getInstance(SessionTrace::class.java)
@@ -35,9 +35,9 @@ class SessionTrace(
     }
 
     private val traceFile: File by lazy {
-        val dir = File(basePath, ".workflow/agent/traces")
+        val dir = File(sessionDir, "traces")
         dir.mkdirs()
-        File(dir, "$sessionId.trace.jsonl")
+        File(dir, "trace.jsonl")
     }
 
     private var sessionStartMs = System.currentTimeMillis()

@@ -13,7 +13,7 @@ class AgentEventLogTest {
 
     @Test
     fun `log records events in memory`() {
-        val log = AgentEventLog("session-1", tempDir.toString())
+        val log = AgentEventLog("session-1", tempDir.toFile())
 
         log.log(AgentEventType.SESSION_STARTED, "Task: fix bug")
         log.log(AgentEventType.TOOL_CALLED, "read_file(test.kt)")
@@ -30,12 +30,12 @@ class AgentEventLogTest {
 
     @Test
     fun `log persists to JSONL file`() {
-        val log = AgentEventLog("session-persist", tempDir.toString())
+        val log = AgentEventLog("session-persist", tempDir.toFile())
 
         log.log(AgentEventType.SESSION_STARTED, "Test persistence")
         log.log(AgentEventType.TOOL_CALLED, "edit_file")
 
-        val jsonlFile = File(tempDir.toFile(), ".workflow/agent/sessions/session-persist.jsonl")
+        val jsonlFile = File(tempDir.toFile(), "events.jsonl")
         assertTrue(jsonlFile.exists(), "JSONL file should be created")
 
         val lines = jsonlFile.readLines()
@@ -46,10 +46,10 @@ class AgentEventLogTest {
 
     @Test
     fun `JSONL lines are valid JSON`() {
-        val log = AgentEventLog("session-json", tempDir.toString())
+        val log = AgentEventLog("session-json", tempDir.toFile())
         log.log(AgentEventType.EDIT_APPLIED, "UserService.kt")
 
-        val jsonlFile = File(tempDir.toFile(), ".workflow/agent/sessions/session-json.jsonl")
+        val jsonlFile = File(tempDir.toFile(), "events.jsonl")
         val line = jsonlFile.readLines().first()
 
         // Should parse as JSON
@@ -62,7 +62,7 @@ class AgentEventLogTest {
 
     @Test
     fun `getEvents by type filters correctly`() {
-        val log = AgentEventLog("session-filter", tempDir.toString())
+        val log = AgentEventLog("session-filter", tempDir.toFile())
 
         log.log(AgentEventType.SESSION_STARTED, "Start")
         log.log(AgentEventType.TOOL_CALLED, "read_file")

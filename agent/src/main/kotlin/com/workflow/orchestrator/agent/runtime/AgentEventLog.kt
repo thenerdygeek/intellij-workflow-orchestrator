@@ -35,7 +35,7 @@ data class AgentEvent(
 /**
  * Append-only structured event log for agent sessions.
  *
- * Each session gets a JSONL file at `.workflow/agent/sessions/{sessionId}.jsonl`.
+ * Each session gets a JSONL file at `{sessionDir}/events.jsonl`.
  * Events are appended one per line for efficient streaming reads.
  *
  * This provides the enterprise audit trail: what the agent did, which tools it called,
@@ -43,7 +43,7 @@ data class AgentEvent(
  */
 class AgentEventLog(
     private val sessionId: String,
-    private val basePath: String
+    private val sessionDir: File
 ) {
     companion object {
         private val LOG = Logger.getInstance(AgentEventLog::class.java)
@@ -52,9 +52,8 @@ class AgentEventLog(
 
     private val events = mutableListOf<AgentEvent>()
     private val logFile: File by lazy {
-        val dir = File(basePath, ".workflow/agent/sessions")
-        dir.mkdirs()
-        File(dir, "$sessionId.jsonl")
+        sessionDir.mkdirs()
+        File(sessionDir, "events.jsonl")
     }
 
     /**

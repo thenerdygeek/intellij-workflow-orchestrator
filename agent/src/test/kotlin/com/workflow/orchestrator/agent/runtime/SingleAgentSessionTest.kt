@@ -523,7 +523,7 @@ class SingleAgentSessionTest {
             chatResponse("Done")
         )
 
-        val eventLog = AgentEventLog("test-session", System.getProperty("java.io.tmpdir"))
+        val eventLog = AgentEventLog("test-session", java.io.File(System.getProperty("java.io.tmpdir"), "test-session-lifecycle"))
 
         session.execute(
             task = "Test task",
@@ -568,7 +568,7 @@ class SingleAgentSessionTest {
             ApiResult.Success(chatResponse("Done"))
         )
 
-        val eventLog = AgentEventLog("test-session", System.getProperty("java.io.tmpdir"))
+        val eventLog = AgentEventLog("test-session", java.io.File(System.getProperty("java.io.tmpdir"), "test-session-tools"))
 
         session.execute(
             task = "Read a file",

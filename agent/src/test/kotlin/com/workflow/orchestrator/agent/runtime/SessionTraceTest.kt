@@ -17,7 +17,7 @@ class SessionTraceTest {
 
     @Test
     fun `session lifecycle is traced end-to-end`() {
-        val trace = SessionTrace("test-session", tempDir.toString())
+        val trace = SessionTrace("test-session", tempDir.toFile())
 
         trace.sessionStarted("Fix the bug", toolCount = 20, reservedTokens = 4900, effectiveBudget = 145100)
         trace.iterationStarted(1, budgetUsedTokens = 1200, budgetPercent = 0)
@@ -25,7 +25,7 @@ class SessionTraceTest {
         trace.iterationCompleted(1, promptTokens = 2000, completionTokens = 500, toolsCalled = listOf("read_file"), finishReason = "stop")
         trace.sessionCompleted(totalTokens = 2500, iterations = 1, artifacts = listOf("src/Main.kt"))
 
-        val file = File(tempDir.toFile(), ".workflow/agent/traces/test-session.trace.jsonl")
+        val file = File(tempDir.toFile(), "traces/trace.jsonl")
         assertTrue(file.exists(), "Trace file should be created")
 
         val lines = file.readLines()
@@ -48,7 +48,7 @@ class SessionTraceTest {
 
     @Test
     fun `failure dumps conversation state`() {
-        val trace = SessionTrace("fail-session", tempDir.toString())
+        val trace = SessionTrace("fail-session", tempDir.toFile())
 
         val messages = listOf(
             ChatMessage(role = "system", content = "You are an assistant"),
@@ -60,7 +60,7 @@ class SessionTraceTest {
         trace.dumpConversationState(messages, "llm_call_failed: Connection refused")
         trace.sessionFailed("Connection refused", totalTokens = 3000, iterations = 2)
 
-        val file = File(tempDir.toFile(), ".workflow/agent/traces/fail-session.trace.jsonl")
+        val file = File(tempDir.toFile(), "traces/trace.jsonl")
         val lines = file.readLines()
         assertEquals(2, lines.size)
 
@@ -75,12 +75,12 @@ class SessionTraceTest {
 
     @Test
     fun `tool execution captures timing and errors`() {
-        val trace = SessionTrace("tool-session", tempDir.toString())
+        val trace = SessionTrace("tool-session", tempDir.toFile())
 
         trace.toolExecuted("read_file", durationMs = 25, resultTokens = 100, isError = false)
         trace.toolExecuted("edit_file", durationMs = 150, resultTokens = 0, isError = true, errorMessage = "old_string not found")
 
-        val file = File(tempDir.toFile(), ".workflow/agent/traces/tool-session.trace.jsonl")
+        val file = File(tempDir.toFile(), "traces/trace.jsonl")
         val lines = file.readLines()
 
         val success = json.decodeFromString<SessionTrace.TraceEntry>(lines[0])
@@ -97,11 +97,11 @@ class SessionTraceTest {
 
     @Test
     fun `compression events track token savings`() {
-        val trace = SessionTrace("compress-session", tempDir.toString())
+        val trace = SessionTrace("compress-session", tempDir.toFile())
 
         trace.compressionTriggered("budget_enforcer", tokensBefore = 85000, tokensAfter = 55000, messagesDropped = 12)
 
-        val file = File(tempDir.toFile(), ".workflow/agent/traces/compress-session.trace.jsonl")
+        val file = File(tempDir.toFile(), "traces/trace.jsonl")
         val line = file.readLines().first()
         val entry = json.decodeFromString<SessionTrace.TraceEntry>(line)
 
@@ -114,12 +114,12 @@ class SessionTraceTest {
 
     @Test
     fun `HTTP request and response are traced`() {
-        val trace = SessionTrace("http-session", tempDir.toString())
+        val trace = SessionTrace("http-session", tempDir.toFile())
 
         trace.httpRequest("POST", "/.api/llm/chat/completions", bodyLength = 12500, messageCount = 8, toolDefCount = 20, maxTokens = 4000)
         trace.httpResponse(statusCode = 200, bodyLength = 3500, durationMs = 2800, promptTokens = 3000, completionTokens = 800, finishReason = "stop")
 
-        val file = File(tempDir.toFile(), ".workflow/agent/traces/http-session.trace.jsonl")
+        val file = File(tempDir.toFile(), "traces/trace.jsonl")
         val lines = file.readLines()
 
         val req = json.decodeFromString<SessionTrace.TraceEntry>(lines[0])
@@ -137,13 +137,13 @@ class SessionTraceTest {
 
     @Test
     fun `each trace entry has timestamp and session ID`() {
-        val trace = SessionTrace("ts-session", tempDir.toString())
+        val trace = SessionTrace("ts-session", tempDir.toFile())
 
         val before = System.currentTimeMillis()
         trace.sessionStarted("test", toolCount = 5, reservedTokens = 1000, effectiveBudget = 149000)
         val after = System.currentTimeMillis()
 
-        val file = File(tempDir.toFile(), ".workflow/agent/traces/ts-session.trace.jsonl")
+        val file = File(tempDir.toFile(), "traces/trace.jsonl")
         val entry = json.decodeFromString<SessionTrace.TraceEntry>(file.readLines().first())
 
         assertEquals("ts-session", entry.sessionId)

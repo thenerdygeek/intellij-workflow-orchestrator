@@ -238,9 +238,15 @@ class SpawnAgentTool : AgentTool {
         val rollbackManager = AgentRollbackManager(project)
         val checkpointId = rollbackManager.createCheckpoint("agent: $resolvedType - ${description.take(60)}")
 
-        // Create event log for telemetry
+        // Create event log for telemetry (write into parent session dir, or fallback to project-based path)
         val sessionId = "agent-${System.currentTimeMillis()}"
-        val eventLog = AgentEventLog(sessionId, project.basePath ?: ".")
+        val eventLogDir: java.io.File = sessionDir
+            ?: project.basePath?.let {
+                com.workflow.orchestrator.core.util.ProjectIdentifier.sessionsDir(it)
+                    .resolve(sessionId).also { dir -> dir.mkdirs() }
+            }
+            ?: java.io.File(".").resolve(sessionId).also { it.mkdirs() }
+        val eventLog = AgentEventLog(sessionId, eventLogDir)
         eventLog.log(AgentEventType.WORKER_SPAWNED, "type=$resolvedType, description=$description")
 
         try {
