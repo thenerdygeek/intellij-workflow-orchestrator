@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 98 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 99 tools.
 
 ## LLM API
 
@@ -33,12 +33,14 @@ AgentController (UI entry point)
 - **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
 - **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
 - **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
+- **CompletionGatekeeper** — Orchestrates 4 completion gates before accepting task completion: PostCompression (blocks if context was recently compressed), Plan (blocks if plan has incomplete steps, escalates after 3 blocks without progress), SelfCorrectionGate (existing, blocks if unverified edits), LoopGuard (existing, blocks if unverified files). Force-accepts after 5 total blocked attempts. `attempt_completion` tool delegates to this.
+- **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. Responses without tool calls trigger a nudge then implicit gating. Not available to WorkerSession (subagents use "no tool calls = done").
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
-## Tools (98 total, 10 categories)
+## Tools (99 total, 10 categories)
 
 | Category | Tools |
 |----------|-------|
@@ -51,7 +53,7 @@ AgentController (UI entry point)
 | CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results, bamboo_stop_build, bamboo_cancel_build, bamboo_get_artifacts, bamboo_recent_builds, bamboo_get_plans, bamboo_get_project_plans, bamboo_search_plans, bamboo_get_plan_branches, bamboo_get_running_builds, bamboo_get_build_variables, bamboo_get_plan_variables, bamboo_rerun_failed_jobs, bamboo_trigger_stage |
 | Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_branches, sonar_project_measures, sonar_source_lines, sonar_issues_paged |
 | Pull Requests — Bitbucket | bitbucket_create_pr, bitbucket_get_pr_commits, bitbucket_add_inline_comment, bitbucket_reply_to_comment, bitbucket_set_reviewer_status, bitbucket_get_file_content, bitbucket_add_reviewer, bitbucket_update_pr_title, bitbucket_get_branches, bitbucket_create_branch, bitbucket_search_users, bitbucket_get_my_prs, bitbucket_get_reviewing_prs, bitbucket_get_pr_detail, bitbucket_get_pr_activities, bitbucket_get_pr_changes, bitbucket_get_pr_diff, bitbucket_get_build_statuses, bitbucket_approve_pr, bitbucket_merge_pr, bitbucket_decline_pr, bitbucket_update_pr_description, bitbucket_add_pr_comment, bitbucket_check_merge_status, bitbucket_remove_reviewer, bitbucket_list_repos |
-| Planning | create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill |
+| Planning | create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill, attempt_completion |
 
 ## Tool Selection (Hybrid)
 

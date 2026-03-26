@@ -244,6 +244,30 @@ grep "http_request" ~/.workflow-orchestrator/YOUR-PROJECT/agent/sessions/SESSION
 
 ---
 
+### "The agent keeps trying to complete but gets blocked"
+
+**Step 1: Check completion metrics in the scorecard**
+
+```bash
+cat ~/.workflow-orchestrator/YOUR-PROJECT/agent/metrics/scorecard-SESSION_ID.json | python3 -m json.tool | grep -A5 completion
+```
+
+Fields: `completionAttemptCount`, `completionGateBlocks` (map of gate→count), `forcedCompletionCount`, `nudgeCount`.
+
+**Step 2: Check gate blocks in the trace**
+
+```bash
+grep "attempt_completion" ~/.workflow-orchestrator/YOUR-PROJECT/agent/sessions/SESSION_ID/traces/trace.jsonl
+```
+
+Tool calls with `isError=true` and content containing "COMPLETION BLOCKED" indicate which gate blocked.
+
+**Step 3: Check if force-accept was triggered**
+
+If `forcedCompletionCount > 0`, the agent was force-accepted after 5 blocked attempts. Check what was actually incomplete — the plan may have aspirational steps that should have been skipped.
+
+---
+
 ### "I need to replay a full session"
 
 The `messages.jsonl` file is a complete, append-only conversation transcript:
@@ -322,6 +346,14 @@ for i, line in enumerate(sys.stdin):
 **Problem:** After context compression, the LLM may respond with a vague summary ("I've completed the changes") instead of continuing work. The `TOOL_INTENT_PATTERNS` check only catches explicit phrases like "let me check" — not passive summarization.
 
 **What to look for:** A `compression` trace event immediately followed by `session_completed` with the final message being a summary, not a tool call.
+
+### Addressed Gaps (v0.34.0-agent-beta.50+)
+
+1. **Plan-aware completion** — `CompletionGatekeeper` checks plan progress before accepting. Blocks with specific step list if incomplete.
+2. **Post-compression continuation** — Blocks completion for 2 iterations after compression, forcing re-orientation.
+3. **Explicit completion tool** — `attempt_completion` replaces passive "no tool calls = done". LLM must actively declare completion.
+
+---
 
 ### 3. finish_reason Default When Missing
 
