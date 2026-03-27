@@ -28,7 +28,7 @@ class RequestToolsToolTest {
     fun `tool metadata is correct`() {
         assertEquals("request_tools", tool.name)
         assertTrue(tool.parameters.required.contains("category"))
-        assertTrue(tool.description.contains("Request additional tools"))
+        assertTrue(tool.description.contains("Request additional tool categories"))
     }
 
     @Test
