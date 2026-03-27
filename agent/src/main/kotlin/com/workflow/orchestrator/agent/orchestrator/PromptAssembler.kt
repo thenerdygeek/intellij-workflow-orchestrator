@@ -329,6 +329,15 @@ class PromptAssembler(
             - Debugging insights that would save time later
             - User preferences expressed during conversation
 
+            **Learn from corrections — this is critical:**
+            When the user corrects you, rejects your approach, says "no", "don't do that", "that's wrong",
+            or shows dissatisfaction with your output, IMMEDIATELY save a memory so you never repeat the mistake:
+            - Use core_memory_append for preferences that apply broadly (e.g., "User prefers single PRs over many small ones")
+            - Use archival_memory_insert with tags for specific technical corrections (e.g., "Don't use invokeAndWait in coroutine contexts — causes deadlock")
+            Watch for subtle signals too: if the user redoes your work differently, asks "why did you do X?",
+            or ignores your suggestion and does something else — that's implicit feedback worth saving.
+            Format: what you did wrong + what the user wanted instead + why.
+
             Do NOT save:
             - Information already in code or configuration files
             - Temporary task-specific context (use the plan for that)
