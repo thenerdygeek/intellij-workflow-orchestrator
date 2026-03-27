@@ -154,9 +154,6 @@
         <!-- SonarQube Project Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarDataService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.sonar.service.SpringEndpointCacheService"/>
-
         <!-- SonarQube Editor Integration -->
         <codeInsight.lineMarkerProvider language="JAVA"
             implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
@@ -168,16 +165,6 @@
         <externalAnnotator language="kotlin"
             implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
 
-        <editorNotificationProvider
-            implementation="com.workflow.orchestrator.sonar.ui.CoverageBannerProvider"/>
-
-        <codeInsight.lineMarkerProvider
-            language="JAVA"
-            implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
-        <codeInsight.lineMarkerProvider
-            language="kotlin"
-            implementationClass="com.workflow.orchestrator.cody.editor.CodyTestGenerator"/>
-
         <!-- Cody Intention Action (Alt+Enter) — registered without language to work for all file types -->
         <intentionAction>
             <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
@@ -187,15 +174,6 @@
         <!-- Cody Commit Message -->
         <vcsCheckinHandlerFactory
             implementation="com.workflow.orchestrator.cody.vcs.CodyCommitMessageHandlerFactory"/>
-
-        <!-- CVE Auto-Bumper -->
-        <intentionAction>
-            <language>XML</language>
-            <className>com.workflow.orchestrator.bamboo.editor.CveIntentionAction</className>
-            <category>Workflow Orchestrator CVE</category>
-        </intentionAction>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.bamboo.service.CveRemediationService"/>
 
         <!-- Automation Module Project Services -->
         <projectService
@@ -296,20 +274,8 @@
         <searchEverywhereContributor
             implementation="com.workflow.orchestrator.jira.search.JiraSearchContributorFactory"/>
 
-        <!-- SonarQube Global Inspection -->
-        <globalInspection
-            implementationClass="com.workflow.orchestrator.sonar.inspection.SonarGlobalInspectionTool"
-            shortName="SonarQubeIssues"
-            groupName="Workflow Orchestrator"
-            displayName="SonarQube Issues"
-            enabledByDefault="true"
-            level="WARNING"/>
-
         <!-- Bamboo Run Configuration -->
         <configurationType implementation="com.workflow.orchestrator.bamboo.run.BambooBuildConfigurationType"/>
-
-        <!-- Diff: Coverage Gutter Highlights -->
-        <diff.DiffExtension implementation="com.workflow.orchestrator.sonar.diff.CoverageDiffExtension"/>
 
         <!-- Before Run: Docker Tag Validation -->
         <stepsBeforeRunProvider

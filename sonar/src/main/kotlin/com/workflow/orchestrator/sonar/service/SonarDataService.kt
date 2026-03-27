@@ -203,10 +203,6 @@ class SonarDataService(private val project: Project) : Disposable {
         if (size > 0) {
             log.info("[Sonar:LineCoverage] Cleared line coverage cache ($size entries)")
         }
-        // Also clear the Spring endpoint cache so stale endpoint data is not used
-        try {
-            SpringEndpointCacheService.getInstance(project).clearCache()
-        } catch (_: Exception) { /* service not yet initialized */ }
     }
 
     /** Testable core — accepts explicit dependencies. Fetches both overall + new code data. */
