@@ -190,8 +190,8 @@ class PrDetailPanel(
     private var titleEditing = false
     private var currentUserApproved = false
     private val prIdLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(12).toFloat())
-        foreground = SECONDARY_TEXT
+        font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+        foreground = LINK_COLOR
     }
     private val branchLabel = JBLabel("").apply {
         font = font.deriveFont(JBUI.scale(11).toFloat())
@@ -542,7 +542,7 @@ class PrDetailPanel(
             border = JBUI.Borders.emptyBottom(4)
         }
         sourceRow.add(JBLabel("Source:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
             foreground = SECONDARY_TEXT
         })
         sourceRow.add(createSourceBranchLabel)
@@ -556,7 +556,7 @@ class PrDetailPanel(
             border = JBUI.Borders.emptyBottom(4)
         }
         targetRow.add(JBLabel("Target:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
             foreground = SECONDARY_TEXT
         })
         createTargetBranchCombo.preferredSize = Dimension(JBUI.scale(200), JBUI.scale(24))
@@ -571,7 +571,7 @@ class PrDetailPanel(
             border = JBUI.Borders.emptyBottom(4)
         }
         titleRow.add(JBLabel("Title:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
             foreground = SECONDARY_TEXT
             border = JBUI.Borders.emptyRight(8)
         }, BorderLayout.WEST)
@@ -580,7 +580,7 @@ class PrDetailPanel(
 
         // Description area
         contentPanel.add(JBLabel("Description:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
             foreground = SECONDARY_TEXT
             alignmentX = Component.LEFT_ALIGNMENT
             border = JBUI.Borders.emptyBottom(4)
@@ -601,7 +601,7 @@ class PrDetailPanel(
             border = JBUI.Borders.empty(8, 0, 4, 0)
         }
         reviewersRow.add(JBLabel("Reviewers:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
             foreground = SECONDARY_TEXT
         })
         reviewersRow.add(createReviewersPanel)
@@ -1557,13 +1557,7 @@ class PrDetailPanel(
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-                if (desktopHints != null) {
-                    desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-                } else {
-                    g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                }
+                com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
                 g2.color = color
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),
@@ -1637,13 +1631,7 @@ class PrDetailPanel(
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-                if (desktopHints != null) {
-                    desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-                } else {
-                    g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                }
+                com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
                 g2.color = color
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),

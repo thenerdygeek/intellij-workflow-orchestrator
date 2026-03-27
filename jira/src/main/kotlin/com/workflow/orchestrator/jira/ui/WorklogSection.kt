@@ -4,6 +4,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.ApiResult
@@ -16,11 +17,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.awt.BorderLayout
-import java.awt.Component
-import java.awt.Dimension
-import java.awt.FlowLayout
-import java.awt.Font
+import java.awt.*
+import java.awt.geom.RoundRectangle2D
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -31,8 +29,8 @@ import javax.swing.JPanel
 /**
  * Lazy-loaded worklog summary section for the ticket detail panel.
  *
- * Shows total time logged and the last 5 worklog entries with author,
- * time spent, date, and optional comment.
+ * Shows total time logged and a table of the last 5 worklog entries
+ * with User, Duration, and Date columns.
  */
 class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
 
@@ -46,7 +44,6 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
     fun loadWorklogs(issueKey: String) {
         removeAll()
 
-        // Show loading placeholder
         val loadingPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             isOpaque = false
             add(JBLabel(AnimatedIcon.Default()).apply {
@@ -110,72 +107,112 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
             isOpaque = false
         }
 
-        // Total time logged
+        // Total time badge
         val totalSeconds = worklogs.sumOf { it.timeSpentSeconds }
-        val totalLabel = JBLabel("Total: ${formatTimeSpent(totalSeconds)}").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
-            border = JBUI.Borders.empty(4, 8)
+        val totalRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 8, 8, 8)
             alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(24))
         }
-        container.add(totalLabel)
+        totalRow.add(JBLabel("Total: ${formatTimeSpent(totalSeconds)}").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+        }, BorderLayout.WEST)
+        container.add(totalRow)
 
-        // Last 5 worklogs (most recent first)
+        // Table container with border
+        val tablePanel = object : JPanel() {
+            init {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                border = JBUI.Borders.empty(0, 8, 4, 8)
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+        }
+
+        // Table header row
+        val headerRow = createTableRow("User", "Duration", "Date", isHeader = true)
+        tablePanel.add(headerRow)
+
+        // Data rows (last 5, most recent first)
         val recentWorklogs = worklogs.sortedByDescending { it.started }.take(5)
         for (worklog in recentWorklogs) {
-            container.add(createWorklogEntry(worklog))
+            val authorName = worklog.author?.displayName ?: "Unknown"
+            val timeStr = formatTimeSpent(worklog.timeSpentSeconds)
+            val dateStr = formatStartedDate(worklog.started)
+            tablePanel.add(createTableRow(authorName, timeStr, dateStr, isHeader = false))
+
+            // Comment sub-row (if worklog has a comment)
+            val comment = worklog.comment?.trim().orEmpty()
+            if (comment.isNotBlank()) {
+                val commentText = if (comment.length > 80) "${comment.take(80)}\u2026" else comment
+                val commentRow = JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(18))
+                    border = JBUI.Borders.empty(0, 16, 2, 8)
+                }
+                commentRow.add(JBLabel(commentText).apply {
+                    font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat())
+                    foreground = StatusColors.SECONDARY_TEXT
+                }, BorderLayout.WEST)
+                tablePanel.add(commentRow)
+            }
         }
 
+        container.add(tablePanel)
         add(container, BorderLayout.CENTER)
         revalidate()
         repaint()
     }
 
-    private fun createWorklogEntry(worklog: com.workflow.orchestrator.jira.api.dto.JiraWorklog): JPanel {
-        val entryPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            border = JBUI.Borders.empty(4, 8)
-            alignmentX = Component.LEFT_ALIGNMENT
-            maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
-        }
-
-        // Main row: "John Doe logged 2h 30m on Mar 15"
-        val authorName = worklog.author?.displayName ?: "Unknown"
-        val timeStr = formatTimeSpent(worklog.timeSpentSeconds)
-        val dateStr = formatStartedDate(worklog.started)
-
-        val mainRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-            isOpaque = false
-            alignmentX = Component.LEFT_ALIGNMENT
-        }
-        mainRow.add(JBLabel(authorName).apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-        })
-        mainRow.add(JBLabel("logged $timeStr on $dateStr").apply {
-            font = font.deriveFont(JBUI.scale(11).toFloat())
-            foreground = StatusColors.SECONDARY_TEXT
-        })
-        entryPanel.add(mainRow)
-
-        // Comment row (optional, dimmed, truncated)
-        val comment = worklog.comment?.trim()
-        if (!comment.isNullOrBlank()) {
-            val truncatedComment = if (comment.length > 80) {
-                comment.substring(0, 79) + "\u2026"
-            } else {
-                comment
-            }
-            val commentLabel = JBLabel(truncatedComment).apply {
-                font = font.deriveFont(JBUI.scale(10).toFloat())
-                foreground = StatusColors.SECONDARY_TEXT
-                border = JBUI.Borders.emptyLeft(JBUI.scale(4))
+    private fun createTableRow(col1: String, col2: String, col3: String, isHeader: Boolean): JPanel {
+        return object : JPanel(GridLayout(1, 3, JBUI.scale(4), 0)) {
+            init {
+                isOpaque = false
                 alignmentX = Component.LEFT_ALIGNMENT
-                if (comment.length > 80) toolTipText = comment
+                maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(if (isHeader) 24 else 28))
+                border = JBUI.Borders.empty(4, 8)
             }
-            entryPanel.add(commentLabel)
-        }
 
-        return entryPanel
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                if (isHeader) {
+                    val g2 = g.create() as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = TABLE_HEADER_BG
+                    g2.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(),
+                        JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()))
+                    g2.dispose()
+                }
+                // Draw bottom separator for data rows
+                if (!isHeader) {
+                    val g2 = g.create() as Graphics2D
+                    g2.color = SEPARATOR_COLOR
+                    g2.fillRect(JBUI.scale(8), height - 1, width - JBUI.scale(16), 1)
+                    g2.dispose()
+                }
+            }
+        }.apply {
+            val fontStyle = if (isHeader) Font.BOLD else Font.PLAIN
+            val fontSize = if (isHeader) JBUI.scale(10).toFloat() else JBUI.scale(11).toFloat()
+            val color = if (isHeader) StatusColors.SECONDARY_TEXT else JBColor.foreground()
+            val col2Color = if (isHeader) StatusColors.SECONDARY_TEXT else StatusColors.SECONDARY_TEXT
+            val col3Color = if (isHeader) StatusColors.SECONDARY_TEXT else StatusColors.SECONDARY_TEXT
+
+            add(JBLabel(if (isHeader) col1.uppercase() else col1).apply {
+                font = font.deriveFont(fontStyle, fontSize)
+                foreground = color
+            })
+            add(JBLabel(if (isHeader) col2.uppercase() else col2).apply {
+                font = font.deriveFont(fontStyle, fontSize)
+                foreground = col2Color
+            })
+            add(JBLabel(if (isHeader) col3.uppercase() else col3).apply {
+                font = font.deriveFont(if (isHeader) Font.BOLD else Font.ITALIC, fontSize)
+                foreground = col3Color
+            })
+        }
     }
 
     fun dispose() {
@@ -183,12 +220,9 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     companion object {
-        /**
-         * Format seconds into human-readable time:
-         * - < 60 min: "Xm"
-         * - < 8h: "Xh Ym"
-         * - >= 8h: "Xd Yh" (8h = 1 workday)
-         */
+        private val TABLE_HEADER_BG = JBColor(0xF0F1F3, 0x25282C)
+        private val SEPARATOR_COLOR = JBColor(0xE8EAED, 0x2D3035)
+
         internal fun formatTimeSpent(totalSeconds: Long): String {
             val totalMinutes = totalSeconds / 60
             val totalHours = totalMinutes / 60
@@ -209,9 +243,6 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
             }
         }
 
-        /**
-         * Parse ISO date string and format as "Mar 15" (same year) or "Mar 15, 2025" (different year).
-         */
         internal fun formatStartedDate(isoDate: String): String {
             return try {
                 val parsed = ZonedDateTime.parse(isoDate)
@@ -223,7 +254,6 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
                     date.format(DateTimeFormatter.ofPattern("MMM d, yyyy"))
                 }
             } catch (_: DateTimeParseException) {
-                // Fallback: try parsing just date portion
                 try {
                     val date = LocalDate.parse(isoDate.take(10))
                     val currentYear = LocalDate.now().year

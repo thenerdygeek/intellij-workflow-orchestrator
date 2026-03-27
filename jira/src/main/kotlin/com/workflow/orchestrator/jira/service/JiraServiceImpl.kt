@@ -327,7 +327,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             }
         }
         val closedSprints = when (val result = api.getClosedSprints(boardId)) {
-            is ApiResult.Success -> result.data
+            is ApiResult.Success -> result.data.values
             is ApiResult.Error -> {
                 log.warn("[JiraService] Failed to fetch closed sprints: ${result.message}")
                 emptyList()

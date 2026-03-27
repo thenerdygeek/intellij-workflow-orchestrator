@@ -67,16 +67,21 @@ class AutomationPanel(
             border = JBUI.Borders.empty(4, 8, 4, 8)
 
             val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-                add(JBLabel("Suite:").apply { foreground = StatusColors.SECONDARY_TEXT })
+                add(JBLabel("SUITE").apply {
+                    foreground = StatusColors.SECONDARY_TEXT
+                    font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(11).toFloat())
+                })
                 add(suiteCombo)
                 add(statusLabel)
             }
 
             val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
                 add(JButton("Queue Run").apply {
+                    isFocusPainted = false
                     addActionListener { onQueueRun() }
                 })
-                add(JButton("Trigger Now ▶").apply {
+                add(JButton("Trigger Now \u25B6").apply {
+                    isFocusPainted = false
                     addActionListener { onTriggerNow() }
                 })
             }

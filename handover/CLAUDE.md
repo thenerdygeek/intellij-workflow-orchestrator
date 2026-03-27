@@ -18,6 +18,7 @@ Task completion workflow: Jira closure, copyright enforcement, pre-review, QA ha
 - `HandoverPanel` — main container with toolbar and context panel
 - `HandoverContextPanel` — shows active ticket + PR context
 - Sub-panels: `JiraCommentPanel`, `TimeLogPanel`, `CopyrightPanel`, `PreReviewPanel`, `QaClipboardPanel`, `CompletionMacroPanel`
+- **UI Overhaul:** HandoverContextPanel uses vertical nav sidebar for step navigation. Accent-line detail panel headers, tonal architecture (subtle background tints per section).
 
 ## Workflow
 

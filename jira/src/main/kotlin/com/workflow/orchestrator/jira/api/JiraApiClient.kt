@@ -261,10 +261,9 @@ class JiraApiClient(
         return get<JiraWorklogResponse>("/rest/api/2/issue/$encoded/worklog?maxResults=$maxResults")
     }
 
-    suspend fun getClosedSprints(boardId: Int, maxResults: Int = 5): ApiResult<List<JiraSprint>> {
-        log.debug("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=closed")
-        return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=closed&maxResults=$maxResults")
-            .map { it.values }
+    suspend fun getClosedSprints(boardId: Int, startAt: Int = 0, maxResults: Int = 50): ApiResult<JiraSprintSearchResult> {
+        log.debug("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=closed&startAt=$startAt&maxResults=$maxResults")
+        return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=closed&startAt=$startAt&maxResults=$maxResults")
     }
 
     suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> {

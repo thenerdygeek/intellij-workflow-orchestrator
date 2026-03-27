@@ -5,7 +5,9 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
+import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JPanel
 
@@ -22,8 +24,21 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
     init {
         border = JBUI.Borders.empty(8)
 
-        val header = JBLabel("Jira Closure Comment").apply {
-            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
+        val headerLabel = JBLabel("JIRA CLOSURE COMMENT").apply {
+            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.emptyLeft(8)
+        }
+        val header = JPanel(BorderLayout()).apply {
+            add(headerLabel, BorderLayout.CENTER)
+            border = BorderFactory.createCompoundBorder(
+                JBUI.Borders.customLine(StatusColors.BORDER, 0, 0, 1, 0),
+                BorderFactory.createCompoundBorder(
+                    JBUI.Borders.customLine(StatusColors.LINK, 0, 2, 0, 0),
+                    JBUI.Borders.empty(6, 0, 6, 0)
+                )
+            )
+            isOpaque = false
         }
 
         editButton.addActionListener {

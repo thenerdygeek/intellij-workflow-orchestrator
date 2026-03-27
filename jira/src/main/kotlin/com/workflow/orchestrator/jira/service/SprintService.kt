@@ -105,13 +105,53 @@ class SprintService(private val apiClient: JiraApiClient) {
      */
     suspend fun loadAvailableSprints(boardId: Int): List<JiraSprint> {
         val activeResult = apiClient.getActiveSprints(boardId)
-        val closedResult = apiClient.getClosedSprints(boardId, maxResults = 5)
-
         val active = (activeResult as? ApiResult.Success)?.data ?: emptyList()
-        val closed = (closedResult as? ApiResult.Success)?.data ?: emptyList()
 
-        // Active sprints first, then closed sorted by endDate descending
-        return active + closed.sortedByDescending { it.endDate }
+        // Two-step fetch for closed sprints: probe to find count, then fetch the last page
+        val recentClosed = fetchRecentClosedSprints(boardId, count = 3)
+
+        // Active sprints first, then most recently closed (by endDate descending)
+        return active + recentClosed.sortedByDescending { it.endDate }
+    }
+
+    /**
+     * Fetch the N most recently closed sprints using cached pagination.
+     *
+     * First call: walks forward from 0 in pages of 50 until isLast=true,
+     * then caches the final startAt so future calls skip ahead.
+     *
+     * Subsequent calls: starts from (cachedStartAt - 50) to catch newly
+     * closed sprints, then walks forward to isLast=true. Usually 1-2 requests.
+     *
+     * Cache is file-based (~/.workflow-orchestrator/) and shared across all
+     * IDE instances for the same user.
+     */
+    private suspend fun fetchRecentClosedSprints(boardId: Int, count: Int): List<JiraSprint> {
+        val pageSize = 50
+        var startAt = SprintPaginationCache.getCachedStartAt(boardId, pageSize)
+        var lastBatch: List<JiraSprint> = emptyList()
+        var lastStartAt = startAt
+
+        log.info("[Jira:Sprint] Fetching recent closed sprints for board $boardId (startAt=$startAt, cached)")
+
+        while (true) {
+            val result = apiClient.getClosedSprints(boardId, startAt = startAt, maxResults = pageSize)
+            val page = (result as? ApiResult.Success)?.data ?: break
+
+            if (page.values.isNotEmpty()) {
+                lastBatch = page.values
+                lastStartAt = startAt
+            }
+
+            if (page.isLast) break
+            startAt += pageSize
+        }
+
+        // Cache the position of the last page for next time
+        SprintPaginationCache.saveCachedStartAt(boardId, lastStartAt)
+        log.info("[Jira:Sprint] Cached last page at startAt=$lastStartAt, got ${lastBatch.size} sprints")
+
+        return lastBatch.sortedByDescending { it.endDate }.take(count)
     }
 
     /**

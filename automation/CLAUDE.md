@@ -30,3 +30,4 @@ Key endpoints:
 - `MonitorPanel` — running suite status with polling
 - `AutomationStatusBarWidgetFactory` — queue indicator in status bar
 - `TagValidationBeforeRunProvider` — validates tags before triggering builds
+- **UI Overhaul:** Monospace docker tags, outline run status badges, uppercase section headers. RunListCellRenderer uses cached/pre-built components for performance.

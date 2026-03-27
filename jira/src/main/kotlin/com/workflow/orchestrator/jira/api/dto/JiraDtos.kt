@@ -181,6 +181,7 @@ data class JiraBoardSearchResult(
 data class JiraSprintSearchResult(
     val maxResults: Int = 50,
     val startAt: Int = 0,
+    val isLast: Boolean = true,
     val values: List<JiraSprint> = emptyList()
 )
 

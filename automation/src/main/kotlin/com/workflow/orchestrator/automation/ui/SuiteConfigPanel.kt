@@ -5,7 +5,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
+import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.*
@@ -25,14 +27,18 @@ class SuiteConfigPanel(
     init {
         border = JBUI.Borders.emptyTop(8)
 
-        val headerLabel = JBLabel("Variables & Stages").apply {
-            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
+        // Stitch: uppercase section headers
+        val headerLabel = JBLabel("VARIABLES & STAGES").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
         }
 
         val contentPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
 
-            add(JBLabel("Variables:").apply {
+            add(JBLabel("VARIABLES").apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
                 border = JBUI.Borders.emptyBottom(4)
             })
             add(variablesPanel)
@@ -76,6 +82,8 @@ class SuiteConfigPanel(
         val keyCombo = JComboBox(arrayOf(key)).apply {
             isEditable = false
             preferredSize = JBUI.size(150, 28)
+            // Stitch: monospace for variable keys
+            font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
         }
         val valueField = JBTextField(value).apply {
             preferredSize = JBUI.size(200, 28)

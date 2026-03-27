@@ -77,7 +77,7 @@ class SprintDashboardPanel(
     private val ticketList = JBList(listModel).apply {
         cellRenderer = TicketListCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        fixedCellHeight = JBUI.scale(52)
+        fixedCellHeight = JBUI.scale(56)
         border = JBUI.Borders.empty()
         isOpaque = false
     }
@@ -91,16 +91,20 @@ class SprintDashboardPanel(
 
     // -- Sprint header --
     private val sprintNameLabel = JBLabel("").apply {
-        font = font.deriveFont(Font.BOLD, JBUI.scale(14).toFloat())
+        font = font.deriveFont(Font.BOLD, JBUI.scale(13).toFloat())
         foreground = JBColor.foreground()
     }
     private val sprintMetaLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
+        font = font.deriveFont(JBUI.scale(10).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
     }
     private val ticketCountLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
+        font = font.deriveFont(JBUI.scale(10).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
+        border = javax.swing.BorderFactory.createCompoundBorder(
+            javax.swing.BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
+            JBUI.Borders.empty(1, 6)
+        )
     }
     private val sprintTimeBar = SprintTimeBar()
 
@@ -134,10 +138,7 @@ class SprintDashboardPanel(
     private lateinit var listCardLayout: CardLayout
     private lateinit var listCardPanel: JPanel
 
-    // -- Sort/Group controls --
-    private val groupByCombo = ComboBox(arrayOf("Assignee", "Status", "Priority", "Type", "None")).apply {
-        selectedItem = "None"
-    }
+    // -- Sort control --
     private val sortByCombo = ComboBox(arrayOf("Default", "Priority", "Status", "Updated", "Key"))
 
     // -- Detection banner --
@@ -165,6 +166,7 @@ class SprintDashboardPanel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     private lateinit var currentWorkSection: CurrentWorkSection
+    private lateinit var sprintCollapsible: CollapsibleSection
 
     /** Check if a JiraIssue is a section header (used for assignee grouping). */
     private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
@@ -173,9 +175,8 @@ class SprintDashboardPanel(
         background = JBColor.PanelBackground
         isOpaque = true
 
-        // Restore persisted sort/group preferences
+        // Restore persisted sort preference
         val initSettings = PluginSettings.getInstance(project)
-        groupByCombo.selectedItem = initSettings.state.sprintGroupBy ?: "Assignee"
         sortByCombo.selectedItem = initSettings.state.sprintSortBy ?: "Default"
 
         setupDetectionBanner()
@@ -345,13 +346,8 @@ class SprintDashboardPanel(
             isOpaque = false
             border = JBUI.Borders.empty(2, 0)
         }
-        val groupLabel = JBLabel("Group:").apply { font = JBUI.Fonts.smallFont() }
-        val sortLabel = JBLabel("Sort:").apply { font = JBUI.Fonts.smallFont() }
-        groupByCombo.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(24))
-        sortByCombo.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(24))
-        sortGroupPanel.add(groupLabel)
-        sortGroupPanel.add(groupByCombo)
-        sortGroupPanel.add(sortLabel)
+        sortByCombo.preferredSize = Dimension(JBUI.scale(140), JBUI.scale(24))
+        sortByCombo.toolTipText = "Sort by"
         sortGroupPanel.add(sortByCombo)
 
         val topControlsPanel = JPanel(BorderLayout()).apply {
@@ -374,10 +370,11 @@ class SprintDashboardPanel(
 
         sprintListInner.add(listCardPanel, BorderLayout.CENTER)
 
-        val sprintCollapsible = CollapsibleSection(
+        sprintCollapsible = CollapsibleSection(
             title = "SPRINT TICKETS",
             content = sprintListInner,
-            initiallyExpanded = true
+            initiallyExpanded = true,
+            count = 0
         )
 
         // Left panel: stacked collapsible sections
@@ -470,12 +467,7 @@ class SprintDashboardPanel(
             loadSprintBySelection(selectedSprint)
         }
 
-        // Sort/group combo changes trigger filter reapply and persist selection
-        groupByCombo.addActionListener {
-            val settings = PluginSettings.getInstance(project)
-            settings.state.sprintGroupBy = groupByCombo.selectedItem as? String ?: "Assignee"
-            applyFilter()
-        }
+        // Sort combo change triggers filter reapply and persists selection
         sortByCombo.addActionListener {
             val settings = PluginSettings.getInstance(project)
             settings.state.sprintSortBy = sortByCombo.selectedItem as? String ?: "Default"
@@ -607,53 +599,20 @@ class SprintDashboardPanel(
         listModel.clear()
 
         val sortBy = sortByCombo.selectedItem as? String ?: "Default"
-        val groupBy = if (showAllUsers) {
-            groupByCombo.selectedItem as? String ?: "Assignee"
-        } else {
-            groupByCombo.selectedItem as? String ?: "None"
-        }
-
         val sorted = sortIssues(issues, sortBy)
-        val grouped = groupIssues(sorted, groupBy)
 
-        if (groupBy != "None" && issues.isNotEmpty()) {
-            val sortedGroups = grouped.toSortedMap(compareBy {
-                if (it == "Unassigned" || it == "None" || it == "Unknown") "\uFFFF" else it.lowercase()
-            })
-            for ((groupName, groupIssues) in sortedGroups) {
-                val headerIssue = JiraIssue(
-                    id = "header-$groupName", key = "── $groupName (${groupIssues.size}) ──",
-                    fields = JiraIssueFields(
-                        summary = "",
-                        status = JiraStatus(name = "")
-                    )
-                )
-                listModel.addElement(headerIssue)
-                for (issue in groupIssues) {
-                    listModel.addElement(issue)
-                }
-            }
-        } else {
-            for (issue in sorted) {
-                listModel.addElement(issue)
-            }
+        for (issue in sorted) {
+            listModel.addElement(issue)
         }
+
+        // Update collapsible section count
+        sprintCollapsible.updateCount(issues.size)
+
         if (issues.isEmpty()) {
             detailPanel.showEmpty()
             listCardLayout.show(listCardPanel, "empty")
         } else {
             listCardLayout.show(listCardPanel, "list")
-        }
-    }
-
-    private fun groupIssues(issues: List<JiraIssue>, groupBy: String): Map<String, List<JiraIssue>> {
-        return when (groupBy) {
-            "Assignee" -> issues.groupBy { it.fields.assignee?.displayName ?: "Unassigned" }
-            "Status" -> issues.groupBy { it.fields.status.name }
-            "Priority" -> issues.groupBy { it.fields.priority?.name ?: "None" }
-            "Type" -> issues.groupBy { it.fields.issuetype?.name ?: "Unknown" }
-            "None" -> mapOf("" to issues)
-            else -> mapOf("" to issues)
         }
     }
 

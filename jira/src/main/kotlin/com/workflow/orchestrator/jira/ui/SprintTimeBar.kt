@@ -12,49 +12,70 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
-import javax.swing.BoxLayout
 import javax.swing.JPanel
 
 /**
  * Composite bar showing sprint time remaining with urgency coloring
  * and a proportional ticket breakdown (done/in-progress/todo).
+ * Uses a side-by-side layout with uppercase section labels.
  */
 class SprintTimeBar : JPanel() {
 
-    private val timeLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
-    }
-    private val timeProgressBar = TimeProgressBar()
-    private val ticketBar = TicketBreakdownBar()
-    private val ticketLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
+    // Time column labels
+    private val timeHeaderLabel = JBLabel("TIME ELAPSED").apply {
+        font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
     }
+    private val timeValueLabel = JBLabel("").apply {
+        font = font.deriveFont(JBUI.scale(10).toFloat())
+        horizontalAlignment = JBLabel.RIGHT
+    }
+    private val timeProgressBar = TimeProgressBar()
+
+    // Ticket column labels
+    private val ticketHeaderLabel = JBLabel("TICKET BREAKDOWN").apply {
+        font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+        foreground = StatusColors.SECONDARY_TEXT
+    }
+    private val ticketValueLabel = JBLabel("").apply {
+        font = font.deriveFont(JBUI.scale(10).toFloat())
+        foreground = StatusColors.SECONDARY_TEXT
+        horizontalAlignment = JBLabel.RIGHT
+    }
+    private val ticketBar = TicketBreakdownBar()
 
     init {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        layout = GridLayout(1, 2, JBUI.scale(16), 0)
         isOpaque = false
-        border = JBUI.Borders.empty(2, 0)
+        border = JBUI.Borders.empty(4, 0)
 
-        // Time row: label + thin progress bar
-        val timeRow = JPanel(BorderLayout()).apply {
+        // Left column: Time Elapsed
+        val timeColumn = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(2)
         }
-        timeRow.add(timeLabel, BorderLayout.WEST)
+        val timeLabelsRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+        }
+        timeLabelsRow.add(timeHeaderLabel, BorderLayout.WEST)
+        timeLabelsRow.add(timeValueLabel, BorderLayout.EAST)
+        timeColumn.add(timeLabelsRow, BorderLayout.NORTH)
         timeProgressBar.preferredSize = Dimension(0, JBUI.scale(4))
-        timeRow.add(timeProgressBar, BorderLayout.SOUTH)
-        add(timeRow)
+        timeColumn.add(timeProgressBar, BorderLayout.CENTER)
+        add(timeColumn)
 
-        // Ticket row: proportional bar + label
-        val ticketRow = JPanel(BorderLayout()).apply {
+        // Right column: Ticket Breakdown
+        val ticketColumn = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyTop(2)
         }
-        ticketBar.preferredSize = Dimension(0, JBUI.scale(6))
-        ticketRow.add(ticketBar, BorderLayout.NORTH)
-        ticketRow.add(ticketLabel, BorderLayout.SOUTH)
-        add(ticketRow)
+        val ticketLabelsRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+        }
+        ticketLabelsRow.add(ticketHeaderLabel, BorderLayout.WEST)
+        ticketLabelsRow.add(ticketValueLabel, BorderLayout.EAST)
+        ticketColumn.add(ticketLabelsRow, BorderLayout.NORTH)
+        ticketBar.preferredSize = Dimension(0, JBUI.scale(4))
+        ticketColumn.add(ticketBar, BorderLayout.CENTER)
+        add(ticketColumn)
     }
 
     /**
@@ -72,33 +93,30 @@ class SprintTimeBar : JPanel() {
             if (endDate != null) {
                 val daysRemaining = ChronoUnit.DAYS.between(now, endDate)
 
-                // Label text
-                timeLabel.text = when {
-                    daysRemaining < 0 -> "Sprint overdue by ${-daysRemaining} day${if (-daysRemaining != 1L) "s" else ""}"
-                    daysRemaining == 0L -> "Sprint ends today"
-                    daysRemaining <= 7 -> "$daysRemaining day${if (daysRemaining != 1L) "s" else ""} remaining"
-                    else -> "Sprint ends ${endDate.format(DateTimeFormatter.ofPattern("MMM d"))}"
+                timeValueLabel.text = when {
+                    daysRemaining < 0 -> "Overdue by ${-daysRemaining}d"
+                    daysRemaining == 0L -> "Ends today"
+                    daysRemaining <= 7 -> "${daysRemaining}d left"
+                    else -> "Ends ${endDate.format(DateTimeFormatter.ofPattern("MMM d"))}"
                 }
 
-                // Urgency color
-                timeLabel.foreground = when {
+                val urgencyColor = when {
                     daysRemaining < 1 -> StatusColors.ERROR
                     daysRemaining < 2 -> StatusColors.WARNING
                     else -> StatusColors.SUCCESS
                 }
+                timeValueLabel.foreground = urgencyColor
 
-                // Progress bar: elapsed / total
                 if (startDate != null) {
                     val totalDays = ChronoUnit.DAYS.between(startDate, endDate).toFloat()
                     val elapsed = ChronoUnit.DAYS.between(startDate, now).toFloat()
                     timeProgressBar.progress = if (totalDays > 0) (elapsed / totalDays).coerceIn(0f, 1f) else 1f
-                    timeProgressBar.urgencyColor = timeLabel.foreground
+                    timeProgressBar.urgencyColor = urgencyColor
                 } else {
                     timeProgressBar.progress = 0f
                     timeProgressBar.urgencyColor = StatusColors.INFO
                 }
 
-                // Tooltip
                 val startStr = sprint.startDate?.take(10) ?: "?"
                 val endStr = sprint.endDate.take(10)
                 toolTipText = "Sprint: ${sprint.name} | Started: $startStr | Ends: $endStr | $doneCount/$total tickets done"
@@ -106,8 +124,8 @@ class SprintTimeBar : JPanel() {
                 setNoTimeInfo(sprint)
             }
         } else {
-            timeLabel.text = if (sprint != null) sprint.name else ""
-            timeLabel.foreground = StatusColors.SECONDARY_TEXT
+            timeValueLabel.text = if (sprint != null) sprint.name else ""
+            timeValueLabel.foreground = StatusColors.SECONDARY_TEXT
             timeProgressBar.progress = 0f
             timeProgressBar.urgencyColor = StatusColors.INFO
             toolTipText = null
@@ -116,9 +134,9 @@ class SprintTimeBar : JPanel() {
         // -- Ticket breakdown --
         ticketBar.update(doneCount, inProgressCount, todoCount)
         if (total > 0) {
-            ticketLabel.text = "$doneCount done \u00B7 $inProgressCount in progress \u00B7 $todoCount to do"
+            ticketValueLabel.text = "$doneCount Done / $inProgressCount In-progress / $todoCount To-do"
         } else {
-            ticketLabel.text = ""
+            ticketValueLabel.text = ""
         }
 
         timeProgressBar.repaint()
@@ -126,7 +144,7 @@ class SprintTimeBar : JPanel() {
     }
 
     /**
-     * Update from a list of issues (convenience method matching old SprintProgressBar API).
+     * Update from a list of issues (convenience method).
      */
     fun updateFromIssues(sprint: JiraSprint?, issues: List<JiraIssue>) {
         val done = issues.count { it.fields.status.statusCategory?.key == "done" }
@@ -136,16 +154,13 @@ class SprintTimeBar : JPanel() {
     }
 
     private fun setNoTimeInfo(sprint: JiraSprint) {
-        timeLabel.text = sprint.name
-        timeLabel.foreground = StatusColors.SECONDARY_TEXT
+        timeValueLabel.text = sprint.name
+        timeValueLabel.foreground = StatusColors.SECONDARY_TEXT
         timeProgressBar.progress = 0f
         timeProgressBar.urgencyColor = StatusColors.INFO
         toolTipText = "Sprint: ${sprint.name}"
     }
 
-    /**
-     * Parse an ISO date string (e.g. "2026-03-10T10:00:00.000+05:30") to LocalDate.
-     */
     private fun parseIsoDate(iso: String): LocalDate? {
         return try {
             OffsetDateTime.parse(iso, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toLocalDate()
@@ -181,11 +196,9 @@ class SprintTimeBar : JPanel() {
             val barWidth = width.toFloat()
             val cornerRadius = barHeight / 2
 
-            // Background
             g2.color = PROGRESS_BG
             g2.fill(RoundRectangle2D.Float(0f, 0f, barWidth, barHeight, cornerRadius, cornerRadius))
 
-            // Filled portion
             if (progress > 0f) {
                 val filledWidth = barWidth * progress
                 g2.clip = java.awt.geom.Area(
@@ -210,8 +223,8 @@ class SprintTimeBar : JPanel() {
 
         init {
             isOpaque = false
-            preferredSize = Dimension(0, JBUI.scale(6))
-            minimumSize = Dimension(0, JBUI.scale(6))
+            preferredSize = Dimension(0, JBUI.scale(4))
+            minimumSize = Dimension(0, JBUI.scale(4))
         }
 
         fun update(done: Int, inProgress: Int, todo: Int) {
@@ -237,18 +250,15 @@ class SprintTimeBar : JPanel() {
             val barWidth = width.toFloat()
             val cornerRadius = barHeight / 2
 
-            // Background
             g2.color = PROGRESS_BG
             g2.fill(RoundRectangle2D.Float(0f, 0f, barWidth, barHeight, cornerRadius, cornerRadius))
 
-            // Clip to rounded rect
             g2.clip = java.awt.geom.Area(
                 RoundRectangle2D.Float(0f, 0f, barWidth, barHeight, cornerRadius, cornerRadius)
             )
 
             var x = 0f
 
-            // Done (green)
             if (doneRatio > 0f) {
                 val segW = barWidth * doneRatio
                 g2.color = StatusColors.SUCCESS
@@ -256,7 +266,6 @@ class SprintTimeBar : JPanel() {
                 x += segW
             }
 
-            // In-progress (blue)
             if (inProgressRatio > 0f) {
                 val segW = barWidth * inProgressRatio
                 g2.color = StatusColors.LINK
@@ -264,7 +273,6 @@ class SprintTimeBar : JPanel() {
                 x += segW
             }
 
-            // Todo (gray)
             if (todoRatio > 0f) {
                 val segW = barWidth * todoRatio
                 g2.color = StatusColors.INFO

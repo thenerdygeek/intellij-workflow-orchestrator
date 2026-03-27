@@ -66,7 +66,7 @@ class PrListPanel : JPanel(BorderLayout()) {
     val prList = JBList(listModel).apply {
         cellRenderer = PrListCellRenderer { showRepoBadge }
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        fixedCellHeight = JBUI.scale(62)
+        fixedCellHeight = JBUI.scale(58)
         border = JBUI.Borders.empty()
         isOpaque = false
     }
@@ -236,41 +236,63 @@ class PrListPanel : JPanel(BorderLayout()) {
             border = JBUI.Borders.empty(8, 8, 4, 8)
         }
         private val headerLabel = JBLabel().apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
             foreground = SECONDARY_TEXT
+        }
+        private val headerLine = JPanel().apply {
+            isOpaque = true
+            background = JBColor(0xE0E0E0, 0x333640)
+            preferredSize = Dimension(0, 1)
         }
 
         // Cached PR cell components
         private var selectedState = false
+        private var currentStatus = ""
         private val prPanel = object : JPanel(BorderLayout()) {
             init {
                 isOpaque = false
-                border = JBUI.Borders.empty(6, 8, 6, 8)
+                border = JBUI.Borders.empty(4, 8, 4, 8)
             }
 
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
-                if (selectedState) {
-                    val g2 = g.create() as Graphics2D
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                    g2.color = SELECTION_BG
-                    g2.fill(RoundRectangle2D.Float(
-                        JBUI.scale(2).toFloat(), 0f,
-                        (width - JBUI.scale(4)).toFloat(), height.toFloat(),
-                        JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
-                    ))
-                    g2.dispose()
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val r = JBUI.scale(2).toFloat()
+                val borderW = JBUI.scale(2)
+
+                // Card background — sharp edges, tonal dark
+                g2.color = if (selectedState) SELECTION_BG else CARD_BG
+                g2.fill(RoundRectangle2D.Float(
+                    JBUI.scale(2).toFloat(), 0f,
+                    (width - JBUI.scale(4)).toFloat(), height.toFloat(), r, r
+                ))
+
+                // Left border accent by PR status — sharp, no rounded corners
+                val accentColor = when (currentStatus.uppercase()) {
+                    "OPEN" -> STATUS_OPEN
+                    "MERGED" -> STATUS_MERGED
+                    "DECLINED" -> STATUS_DECLINED
+                    else -> null
                 }
+                if (accentColor != null) {
+                    g2.color = accentColor
+                    g2.fillRect(JBUI.scale(2), 0, borderW, height)
+                }
+
+                g2.dispose()
             }
         }
         private val topRow = JPanel(BorderLayout()).apply { isOpaque = false }
         private val topLeft = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
         private val idLabel = JBLabel().apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scale(11))
+            foreground = LINK_COLOR
         }
         private val repoBadgePanel = RepoBadgePanel()
         private val titleLabel = JBLabel().apply {
-            font = font.deriveFont(JBUI.scale(12).toFloat())
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+            foreground = SECONDARY_TEXT
             border = JBUI.Borders.emptyLeft(6)
         }
         private val statusBadgePanel = StatusBadgePanel()
@@ -297,7 +319,13 @@ class PrListPanel : JPanel(BorderLayout()) {
         private var bottomRowInitialized = false
 
         init {
-            headerPanel.add(headerLabel, BorderLayout.WEST)
+            // Header: centered text with line
+            val headerContent = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+                isOpaque = false
+            }
+            headerContent.add(headerLabel, BorderLayout.WEST)
+            headerContent.add(headerLine, BorderLayout.CENTER)
+            headerPanel.add(headerContent, BorderLayout.CENTER)
 
             topLeft.add(repoBadgePanel)
             topLeft.add(idLabel)
@@ -321,6 +349,7 @@ class PrListPanel : JPanel(BorderLayout()) {
             }
 
             selectedState = isSelected
+            currentStatus = value.status
 
             // Repo badge — only visible when multiple repos configured
             if (showRepoBadgeProvider() && value.repoName.isNotBlank()) {
@@ -334,12 +363,11 @@ class PrListPanel : JPanel(BorderLayout()) {
             idLabel.foreground = if (isSelected) JBColor.foreground() else LINK_COLOR
 
             titleLabel.text = truncate(value.title, 45)
-            titleLabel.foreground = JBColor.foreground()
+            titleLabel.foreground = if (isSelected) JBColor.foreground() else SECONDARY_TEXT
             titleLabel.toolTipText = if (value.title.length > 45) value.title else null
 
             statusBadgePanel.update(value.status)
 
-            // Add all labels once, then toggle visibility instead of removeAll/add
             if (!bottomRowInitialized) {
                 bottomRow.add(authorLabel)
                 bottomRow.add(branchLabel)
@@ -408,7 +436,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                 g2.color = StatusColors.INFO
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),
-                    JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
+                    JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
                 ))
                 g2.color = JBColor.WHITE
                 g2.font = BADGE_FONT
@@ -420,7 +448,7 @@ class PrListPanel : JPanel(BorderLayout()) {
             }
         }
 
-        /** Cached status badge that repaints with updated color/text. */
+        /** Status badge with outline/border style — transparent bg, 1px border in status color. */
         private class StatusBadgePanel : JPanel() {
             private var badgeColor: Color = SECONDARY_TEXT
             private var badgeText: String = ""
@@ -456,12 +484,15 @@ class PrListPanel : JPanel(BorderLayout()) {
                 if (badgeText.isEmpty()) return
                 val g2 = g.create() as Graphics2D
                 com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
+                val r = JBUI.scale(2).toFloat()
+                // 1px outline border in status color — no fill
                 g2.color = badgeColor
-                g2.fill(RoundRectangle2D.Float(
-                    0f, 0f, width.toFloat(), height.toFloat(),
-                    JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat()
+                g2.stroke = BasicStroke(JBUI.scale(1).toFloat())
+                g2.draw(RoundRectangle2D.Float(
+                    0.5f, 0.5f,
+                    width.toFloat() - 1f, height.toFloat() - 1f, r, r
                 ))
-                g2.color = JBColor.WHITE
+                // Text in status color
                 g2.font = BADGE_FONT
                 val fm = g2.fontMetrics
                 val textX = (width - fm.stringWidth(badgeText)) / 2
@@ -477,6 +508,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         private val LINK_COLOR = StatusColors.LINK
         private val BRANCH_TEXT = StatusColors.SECONDARY_TEXT
         private val SELECTION_BG get() = UIManager.getColor("List.selectionBackground") ?: StatusColors.HIGHLIGHT_BG
+        private val CARD_BG = JBColor(0xF5F5F5, 0x1C1B1B)
         private val STATUS_OPEN = StatusColors.OPEN
         private val STATUS_MERGED = StatusColors.MERGED
         private val STATUS_DECLINED = StatusColors.DECLINED

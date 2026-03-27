@@ -65,9 +65,15 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         val filterPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             val filterRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-                add(JBLabel("Type:"))
+                add(JBLabel("TYPE").apply {
+                    font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat())
+                    foreground = StatusColors.SECONDARY_TEXT
+                })
                 add(filterCombo)
-                add(JBLabel("Severity:"))
+                add(JBLabel("SEVERITY").apply {
+                    font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat())
+                    foreground = StatusColors.SECONDARY_TEXT
+                })
                 add(severityCombo)
                 add(countLabel)
             }
@@ -253,7 +259,6 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        border = JBUI.Borders.empty(4, 8)
         add(mainLabel)
         add(detailLabel.apply { font = SMALL_FONT })
     }
@@ -272,9 +277,16 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
         val typeStr = value.type.name.replace("_", " ")
         val fileName = java.io.File(value.filePath).name
 
-        // Main line: severity dot + type + severity + message + file:line
-        mainLabel.text = "<html><font color='$htmlColor'>\u25CF</font> $typeStr " +
-            "<font color='$htmlColor'>${value.severity}</font>  ${value.message} \u2014 $fileName:${value.startLine}</html>"
+        // Left accent border by severity (2px) + inner padding (Stitch design)
+        border = javax.swing.BorderFactory.createCompoundBorder(
+            javax.swing.BorderFactory.createMatteBorder(0, 2, 0, 0, severityColor),
+            JBUI.Borders.empty(4, 8)
+        )
+
+        // Main line: type + severity label in color + message + file:line
+        mainLabel.text = "<html>$typeStr " +
+            "<font color='$htmlColor'><b>[${value.severity}]</b></font>" +
+            "  ${value.message} \u2014 $fileName:${value.startLine}</html>"
         mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
 
         // Detail line: effort + age

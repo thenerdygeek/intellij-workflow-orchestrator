@@ -9,20 +9,34 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.awt.Font
 import javax.swing.*
 
 class QueueStatusPanel(
     private val project: Project
 ) : JPanel(BorderLayout()), Disposable {
 
-    private val statusLabel = JBLabel("Suite Idle")
-    private val positionLabel = JBLabel("")
-    private val estimateLabel = JBLabel("")
+    private val statusLabel = JBLabel("Suite Idle").apply {
+        foreground = StatusColors.SECONDARY_TEXT
+    }
+    private val positionLabel = JBLabel("").apply {
+        font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
+    }
+    private val estimateLabel = JBLabel("").apply {
+        foreground = StatusColors.SECONDARY_TEXT
+    }
     private val alertLabel = JBLabel("").apply { isVisible = false }
 
-    private val cancelButton = JButton("Cancel").apply { isEnabled = false }
-    private val queueButton = JButton("Queue Run")
-    private val triggerButton = JButton("Trigger Now \u25B6")
+    private val cancelButton = JButton("Cancel").apply {
+        isEnabled = false
+        isFocusPainted = false
+    }
+    private val queueButton = JButton("Queue Run").apply {
+        isFocusPainted = false
+    }
+    private val triggerButton = JButton("Trigger Now \u25B6").apply {
+        isFocusPainted = false
+    }
 
     var onCancel: (() -> Unit)? = null
     var onQueue: (() -> Unit)? = null
@@ -30,6 +44,13 @@ class QueueStatusPanel(
 
     init {
         border = JBUI.Borders.emptyBottom(8)
+
+        // Stitch: uppercase section header
+        val headerLabel = JBLabel("QUEUE STATUS").apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.emptyBottom(4)
+        }
 
         val statusBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             add(JBLabel("\u25CF").apply { foreground = JBColor.GRAY })
@@ -55,6 +76,7 @@ class QueueStatusPanel(
 
         val topPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(headerLabel)
             add(statusBar)
             add(alertLabel)
         }

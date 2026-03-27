@@ -682,36 +682,53 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     // ---------------------------------------------------------------
 
     private fun addHeader(issue: JiraIssue) {
-        val headerPanel = JPanel(BorderLayout()).apply {
+        val headerPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             border = JBUI.Borders.emptyBottom(8)
+            alignmentX = Component.LEFT_ALIGNMENT
         }
 
-        // Title: "PROJ-123: Summary"
-        val titleLabel = JBLabel("${issue.key}: ${issue.fields.summary}").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
-            foreground = JBColor.foreground()
-            border = JBUI.Borders.emptyBottom(6)
-        }
-        headerPanel.add(titleLabel, BorderLayout.NORTH)
-
-        // Tags row: status pill + priority + issue type
-        val tagsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        // Key + badges row
+        val keyRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
         }
+        keyRow.add(JBLabel(issue.key).apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = StatusColors.LINK
+        })
 
-        tagsRow.add(createStatusPill(
+        // Separator
+        val sep = JPanel().apply {
+            isOpaque = true
+            background = StatusColors.BORDER
+            preferredSize = Dimension(1, JBUI.scale(14))
+        }
+        keyRow.add(sep)
+
+        keyRow.add(createStatusPill(
             issue.fields.status.name,
             issue.fields.status.statusCategory?.key ?: ""
         ))
 
-        val priorityName = issue.fields.priority?.name ?: "Medium"
-        tagsRow.add(createColoredTag(priorityName, TicketListCellRenderer.getPriorityColor(priorityName)))
-
         val issueType = issue.fields.issuetype?.name ?: "Task"
-        tagsRow.add(createTextTag(issueType))
+        keyRow.add(createTextTag(issueType))
 
-        headerPanel.add(tagsRow, BorderLayout.CENTER)
+        val priorityName = issue.fields.priority?.name ?: "Medium"
+        val priorityColor = TicketListCellRenderer.getPriorityColor(priorityName)
+        keyRow.add(createColoredTag(priorityName, priorityColor))
+
+        headerPanel.add(keyRow)
+
+        // Title (large, below key)
+        headerPanel.add(JBLabel(issue.fields.summary).apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
+            foreground = JBColor.foreground()
+            border = JBUI.Borders.empty(4, 0, 0, 0)
+            alignmentX = Component.LEFT_ALIGNMENT
+        })
+
         addFullWidthComponent(headerPanel)
     }
 
@@ -720,66 +737,101 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     // ---------------------------------------------------------------
 
     private fun addInfoCards(issue: JiraIssue) {
-        val cardsPanel = JPanel(GridLayout(1, 3, JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(70))
-        }
+        val cardsPanel = object : JPanel(GridLayout(2, 2, JBUI.scale(8), JBUI.scale(8))) {
+            init {
+                isOpaque = false
+                border = JBUI.Borders.empty(0)
+            }
 
-        // Assignee card
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = StatusColors.CARD_BG
+                g2.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(),
+                    JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat()))
+                // Subtle border
+                g2.color = JBColor(0xE8EAED, 0x2D3035)
+                g2.draw(RoundRectangle2D.Float(0.5f, 0.5f, width - 1f, height - 1f,
+                    JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat()))
+                g2.dispose()
+            }
+        }
+        cardsPanel.border = JBUI.Borders.empty(12)
+
+        // Assignee
         val assignee = issue.fields.assignee
-        cardsPanel.add(createInfoCard("Assignee") {
+        cardsPanel.add(createInfoCell("ASSIGNEE") {
             if (assignee != null) {
-                add(AvatarCircle(assignee.displayName))
+                add(AvatarCircle(assignee.displayName).apply {
+                    val s = JBUI.scale(20)
+                    preferredSize = Dimension(s, s)
+                    minimumSize = preferredSize
+                    maximumSize = preferredSize
+                })
                 add(createSpacerH(6))
                 add(JBLabel(assignee.displayName).apply {
                     foreground = JBColor.foreground()
-                    font = font.deriveFont(JBUI.scale(12).toFloat())
+                    font = font.deriveFont(JBUI.scale(11).toFloat())
                 })
             } else {
                 add(JBLabel("Unassigned").apply {
-                    foreground = StatusColors.SECONDARY_TEXT
-                    font = font.deriveFont(JBUI.scale(12).toFloat())
-                })
-            }
-        })
-
-        // Sprint card
-        val sprint = issue.fields.sprint
-        cardsPanel.add(createInfoCard("Sprint") {
-            val sprintText = sprint?.name ?: "No sprint"
-            add(JBLabel(sprintText).apply {
-                foreground = if (sprint != null) JBColor.foreground() else StatusColors.SECONDARY_TEXT
-                font = font.deriveFont(JBUI.scale(12).toFloat())
-            })
-            if (sprint != null) {
-                add(createSpacerH(4))
-                add(JBLabel("(${sprint.state})").apply {
                     foreground = StatusColors.SECONDARY_TEXT
                     font = font.deriveFont(JBUI.scale(11).toFloat())
                 })
             }
         })
 
-        // Dates card
-        cardsPanel.add(createInfoCard("Dates") {
-            val created = issue.fields.created?.take(10) ?: "-"
-            val updated = issue.fields.updated?.take(10) ?: "-"
-            val datesPanel = JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                isOpaque = false
-            }
-            datesPanel.add(JBLabel("Created: $created").apply {
+        // Sprint
+        val sprint = issue.fields.sprint
+        cardsPanel.add(createInfoCell("SPRINT") {
+            add(JBLabel(sprint?.name ?: "No sprint").apply {
+                foreground = if (sprint != null) JBColor.foreground() else StatusColors.SECONDARY_TEXT
+                font = font.deriveFont(JBUI.scale(11).toFloat())
+            })
+        })
+
+        // Created
+        val created = issue.fields.created?.take(10) ?: "-"
+        cardsPanel.add(createInfoCell("CREATED") {
+            add(JBLabel(created).apply {
                 foreground = JBColor.foreground()
                 font = font.deriveFont(JBUI.scale(11).toFloat())
             })
-            datesPanel.add(JBLabel("Updated: $updated").apply {
-                foreground = StatusColors.SECONDARY_TEXT
+        })
+
+        // Updated
+        val updated = issue.fields.updated?.take(10) ?: "-"
+        cardsPanel.add(createInfoCell("UPDATED") {
+            add(JBLabel(updated).apply {
+                foreground = JBColor.foreground()
                 font = font.deriveFont(JBUI.scale(11).toFloat())
             })
-            add(datesPanel)
         })
 
         addFullWidthComponent(cardsPanel)
+    }
+
+    private fun createInfoCell(title: String, contentBuilder: JPanel.() -> Unit): JPanel {
+        return JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.empty(4)
+
+            add(JBLabel(title).apply {
+                foreground = StatusColors.SECONDARY_TEXT
+                font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+                border = JBUI.Borders.emptyBottom(4)
+                alignmentX = Component.LEFT_ALIGNMENT
+            })
+
+            val body = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                isOpaque = false
+                alignmentX = Component.LEFT_ALIGNMENT
+                contentBuilder()
+            }
+            add(body)
+        }
     }
 
     // ---------------------------------------------------------------
@@ -942,12 +994,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-                if (desktopHints != null) {
-                    desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-                } else {
-                    g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                }
+                com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
                 g2.color = pillColor
                 g2.fill(RoundRectangle2D.Float(
                     0f, 0f, width.toFloat(), height.toFloat(),
@@ -979,12 +1026,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-                if (desktopHints != null) {
-                    desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-                } else {
-                    g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-                }
+                com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
                 // Semi-transparent background (resolve JBColor for current theme)
                 val resolved = color
                 g2.color = Color(resolved.red, resolved.green, resolved.blue, 30)
@@ -1047,9 +1089,9 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     }
 
     private fun addSectionHeader(text: String) {
-        val label = JBLabel(text).apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(13).toFloat())
-            foreground = JBColor.foreground()
+        val label = JBLabel(text.uppercase()).apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
             border = JBUI.Borders.emptyLeft(2)
             alignmentX = Component.LEFT_ALIGNMENT
         }
@@ -1103,12 +1145,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             super.paintComponent(g)
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val desktopHints = java.awt.Toolkit.getDefaultToolkit().getDesktopProperty("awt.font.desktophints") as? Map<*, *>
-            if (desktopHints != null) {
-                desktopHints.forEach { (k, v) -> if (k is java.awt.RenderingHints.Key && v != null) g2.setRenderingHint(k, v) }
-            } else {
-                g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-            }
+            com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
             val size = minOf(width, height).toFloat()
             g2.color = avatarColor
             g2.fill(Ellipse2D.Float(0f, 0f, size, size))
