@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.sonar.ui
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInsight.daemon.LineMarkerInfo
 import com.intellij.codeInsight.daemon.LineMarkerProvider
 import com.intellij.openapi.editor.markup.GutterIconRenderer
@@ -21,6 +20,8 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         if (element.parent !is PsiFile && element != element.parent?.firstChild) return null
 
         val project = element.project
+
+        if (com.intellij.openapi.project.DumbService.isDumb(project)) return null
 
         // Check if gutter markers are enabled
         try {
@@ -44,24 +45,11 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
             // Not yet fetched — trigger async fetch, then re-render when done
             val projectPending = getProjectPendingFetches(project)
             if (projectPending.putIfAbsent(relativePath, true) == null) {
-                val psiFile = element.containingFile
                 service.fetchLineCoverageAsync(relativePath) {
-                    try {
-                        // Re-trigger gutter marker rendering on the EDT
-                        // PSI validity checks require a read action when called from background threads
-                        val isValid = com.intellij.openapi.application.ReadAction.compute<Boolean, RuntimeException> {
-                            !project.isDisposed && psiFile.isValid
-                        }
-                        if (isValid) {
-                            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-                                if (!project.isDisposed && psiFile.isValid) {
-                                    DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
-                                }
-                            }
-                        }
-                    } finally {
-                        projectPending.remove(relativePath)
-                    }
+                    projectPending.remove(relativePath)
+                    // Data is now cached. Markers will appear on the next natural daemon pass
+                    // (typing, save, tab switch). No DaemonCodeAnalyzer.restart() needed —
+                    // restart() re-runs ALL annotators/markers/inspections, causing cascade overhead.
                 }
             }
             return null
