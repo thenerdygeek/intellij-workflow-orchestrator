@@ -879,15 +879,15 @@ class AgentCefPanel(
             "diff-rem-bg" to c.hex(c.diffRemBg), "diff-rem-fg" to c.hex(c.diffRemText),
             "success" to c.hex(c.success), "error" to c.hex(c.error),
             "warning" to c.hex(c.warning), "link" to c.hex(c.linkText),
-            "hover-overlay" to "rgba(255,255,255,0.03)",
-            "hover-overlay-strong" to "rgba(255,255,255,0.05)",
+            "hover-overlay" to "rgba(255,255,255,0.04)",
+            "hover-overlay-strong" to "rgba(255,255,255,0.07)",
             "divider-subtle" to "rgba(255,255,255,0.05)",
             "row-alt" to "rgba(255,255,255,0.02)",
-            "input-bg" to "#1a1c22",
+            "input-bg" to "#3c3c3c",
             "input-border" to "rgba(255,255,255,0.08)",
-            "toolbar-bg" to "#1e2028",
-            "chip-bg" to "rgba(255,255,255,0.03)",
-            "chip-border" to "rgba(255,255,255,0.07)"
+            "toolbar-bg" to "#252526",
+            "chip-bg" to "rgba(255,255,255,0.04)",
+            "chip-border" to "rgba(255,255,255,0.08)"
         ) else mapOf(
             "bg" to "#FFFFFF", "fg" to "#1E293B",
             "fg-secondary" to "#475569", "fg-muted" to "#64748B",
