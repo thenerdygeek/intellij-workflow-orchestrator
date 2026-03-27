@@ -748,31 +748,13 @@ class SprintDashboardPanel(
 
             val allRepos = settings.getRepos().filter { it.isConfigured }
             val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-            val detectedRepo = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-            val detectedIndex = allRepos.indexOfFirst {
-                it.bitbucketProjectKey == detectedRepo?.bitbucketProjectKey &&
-                    it.bitbucketRepoSlug == detectedRepo?.bitbucketRepoSlug
-            }.takeIf { it >= 0 } ?: 0
 
             if (allRepos.isEmpty()) {
                 setLoading(false, "Configure at least one repository in Settings first")
                 return
             }
 
-            val initialRepo = allRepos[detectedIndex]
-            val projectKey = initialRepo.bitbucketProjectKey.orEmpty()
-            val repoSlug = initialRepo.bitbucketRepoSlug.orEmpty()
-
-            if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
-                setLoading(false, "Configure Bitbucket URL, project key, and repo slug in Settings first")
-                return
-            }
-
             val credentialStore = CredentialStore()
-            val branchClient = BitbucketBranchClient(
-                baseUrl = bitbucketUrl,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
 
             val needsCody = BranchNameValidator.requiresCodySummary(pattern)
             log.info("[Jira:StartWork] Pattern='$pattern', needsCody=$needsCody")
@@ -790,12 +772,38 @@ class SprintDashboardPanel(
                 )
             } else ""
 
-            val repoDisplay = initialRepo.displayLabel
-
             setLoading(true, "Fetching branches\u2026")
 
             scope.launch {
-                val gitRepo = GitRepositoryManager.getInstance(project).repositories.firstOrNull()
+                // Resolve repo context off-EDT to avoid synchronous VCS repository update
+                val detectedRepo = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                    resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+                }
+                val detectedIndex = allRepos.indexOfFirst {
+                    it.bitbucketProjectKey == detectedRepo?.bitbucketProjectKey &&
+                        it.bitbucketRepoSlug == detectedRepo?.bitbucketRepoSlug
+                }.takeIf { it >= 0 } ?: 0
+
+                val initialRepo = allRepos[detectedIndex]
+                val projectKey = initialRepo.bitbucketProjectKey.orEmpty()
+                val repoSlug = initialRepo.bitbucketRepoSlug.orEmpty()
+                val repoDisplay = initialRepo.displayLabel
+
+                if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
+                    withContext(Dispatchers.EDT) {
+                        setLoading(false, "Configure Bitbucket URL, project key, and repo slug in Settings first")
+                    }
+                    return@launch
+                }
+
+                val branchClient = BitbucketBranchClient(
+                    baseUrl = bitbucketUrl,
+                    tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
+                )
+
+                val gitRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+                    GitRepositoryManager.getInstance(project).repositories.firstOrNull()
+                }
                 val defaultSource = gitRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
                 val branchesResult = branchingService.fetchRemoteBranches(branchClient, projectKey, repoSlug)
 

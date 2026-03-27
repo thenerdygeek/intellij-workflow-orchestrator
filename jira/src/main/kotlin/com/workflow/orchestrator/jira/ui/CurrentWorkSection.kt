@@ -142,9 +142,11 @@ class CurrentWorkSection(
 
         scope.launch {
             val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-            val repos = GitRepositoryManager.getInstance(project).repositories
-            val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+            val targetRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+                val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+                val repos = GitRepositoryManager.getInstance(project).repositories
+                repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+            }
             val currentBranch = targetRepo?.currentBranchName ?: ""
             val targetBranch = targetRepo?.let {
                 DefaultBranchResolver.getInstance(project).resolve(it)
@@ -182,8 +184,9 @@ class CurrentWorkSection(
     }
 
     private fun showBranchPicker() {
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val repo = repos.firstOrNull() ?: return
+        val repo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+            GitRepositoryManager.getInstance(project).repositories.firstOrNull()
+        } ?: return
         val branches = repo.branches.remoteBranches
             .map { it.nameForRemoteOperations }
             .filter { it != "HEAD" }

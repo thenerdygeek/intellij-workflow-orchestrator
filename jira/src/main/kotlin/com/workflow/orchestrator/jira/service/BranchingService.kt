@@ -87,14 +87,21 @@ class BranchingService(
     ): ApiResult<String> {
         log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key}")
 
-        val repositories = GitRepositoryManager.getInstance(project).repositories
-        if (repositories.isEmpty()) {
-            return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
-        }
-
         try {
             val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = withContext(Dispatchers.EDT) { resolver.resolveFromCurrentEditor() } ?: resolver.getPrimary()
+            // Get editor file on EDT, resolve repo config off-EDT
+            val editorFile = withContext(Dispatchers.EDT) {
+                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
+            }
+            val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                if (editorFile != null) resolver.resolveFromFile(editorFile) else resolver.getPrimary()
+            }
+            val repositories = com.intellij.openapi.application.ReadAction.compute<List<git4idea.repo.GitRepository>, Throwable> {
+                GitRepositoryManager.getInstance(project).repositories
+            }
+            if (repositories.isEmpty()) {
+                return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
+            }
             val repo = if (repoConfig?.localVcsRootPath != null) {
                 repositories.find { it.root.path == repoConfig.localVcsRootPath }
             } else {
@@ -179,15 +186,21 @@ class BranchingService(
         }
 
         // 2. Fetch and checkout locally
-        val repositories = GitRepositoryManager.getInstance(project).repositories
-        if (repositories.isEmpty()) {
-            return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
-        }
-
         try {
             // Fetch from remote to get the new branch
             val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = withContext(Dispatchers.EDT) { resolver.resolveFromCurrentEditor() } ?: resolver.getPrimary()
+            val editorFile2 = withContext(Dispatchers.EDT) {
+                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
+            }
+            val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                if (editorFile2 != null) resolver.resolveFromFile(editorFile2) else resolver.getPrimary()
+            }
+            val repositories = com.intellij.openapi.application.ReadAction.compute<List<git4idea.repo.GitRepository>, Throwable> {
+                GitRepositoryManager.getInstance(project).repositories
+            }
+            if (repositories.isEmpty()) {
+                return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
+            }
             val repo = if (repoConfig?.localVcsRootPath != null) {
                 repositories.find { it.root.path == repoConfig.localVcsRootPath }
             } else {
