@@ -244,7 +244,7 @@ class AgentService(
             register(SpawnAgentTool())
             register(DelegateTaskTool())
             register(ThinkTool())
-            register(SaveMemoryTool())
+            // SaveMemoryTool removed — deprecated in favor of three-tier memory system
             register(CoreMemoryReadTool())
             register(CoreMemoryAppendTool())
             register(CoreMemoryReplaceTool())

@@ -211,9 +211,6 @@ class ApprovalGate(
             // Planning (creates plan context, doesn't modify files)
             "create_plan", "update_plan_step", "ask_questions",
 
-            // Memory (writes to .workflow/ dir, not project files)
-            "save_memory",
-
             // Core read-only
             "read_file", "search_code", "glob_files", "file_structure",
             "find_definition", "find_references", "type_hierarchy", "call_hierarchy",

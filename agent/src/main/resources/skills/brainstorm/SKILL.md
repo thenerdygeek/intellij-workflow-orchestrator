@@ -7,12 +7,12 @@ description: >
   "new feature", "architecture for", "approach for". Also use proactively before any non-trivial
   implementation — understanding what to build prevents wasted work.
 user-invocable: true
-preferred-tools: [think, ask_questions, create_plan, save_memory, read_file, search_code, find_definition, find_references, file_structure, agent]
+preferred-tools: [think, ask_questions, create_plan, core_memory_append, archival_memory_insert, read_file, search_code, find_definition, find_references, file_structure, agent]
 ---
 
 # Brainstorming — Ideas Into Designs
 
-Turn vague ideas into concrete, implementable designs through structured dialogue. This skill uses existing tools — question wizard for structured choices, think for reasoning, explorer subagent for codebase research, create_plan for the final output, save_memory for cross-session persistence.
+Turn vague ideas into concrete, implementable designs through structured dialogue. This skill uses existing tools — question wizard for structured choices, think for reasoning, explorer subagent for codebase research, create_plan for the final output, core_memory_append/archival_memory_insert for cross-session persistence.
 
 ## Why This Matters
 
@@ -30,7 +30,7 @@ User's idea
   → Present design section by section
   → User approves or revises
   → Create implementation plan (use create_plan)
-  → Save key decisions to memory (use save_memory)
+  → Save key decisions to memory (use core_memory_append or archival_memory_insert)
 ```
 
 ## Step 1: Understand the Context

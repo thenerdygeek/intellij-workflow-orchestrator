@@ -127,7 +127,7 @@ object DynamicToolSelector {
         "find_implementations", "semantic_diagnostics"
     )
 
-    private val MEMORY_TOOL_NAMES = setOf("save_memory")
+    private val MEMORY_TOOL_NAMES = setOf("core_memory_append", "archival_memory_insert", "archival_memory_search")
 
     private val SKILL_TOOL_NAMES = setOf("activate_skill", "deactivate_skill")
 

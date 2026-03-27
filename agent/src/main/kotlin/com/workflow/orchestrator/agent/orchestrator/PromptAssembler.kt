@@ -322,8 +322,6 @@ class PromptAssembler(
             2. **Archival Memory** (searchable, unlimited) — Use archival_memory_insert to store long-term knowledge with tags. Use archival_memory_search to recall past decisions, error resolutions, patterns.
             3. **Conversation Recall** — Use conversation_search to find what was discussed in past sessions.
 
-            Also available: save_memory for simple markdown-file persistence (legacy).
-
             Save a memory when you discover:
             - Build configuration quirks (e.g., "tests require Redis on port 6379")
             - API behaviors or workarounds (e.g., "Bamboo returns XML for build logs")
