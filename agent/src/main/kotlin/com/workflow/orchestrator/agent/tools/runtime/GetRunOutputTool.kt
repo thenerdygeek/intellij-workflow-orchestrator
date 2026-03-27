@@ -190,12 +190,14 @@ class GetRunOutputTool : AgentTool {
         } catch (_: Exception) { null }
     }
 
-    /** Fallback: try to get text via getEditor().document.text */
-    private fun readViaEditor(console: Any): String? {
+    /** Fallback: try to get text via getEditor().document.text — must run on EDT for document access. */
+    private suspend fun readViaEditor(console: Any): String? {
         return try {
-            val editorMethod = console.javaClass.getMethod("getEditor")
-            val editor = editorMethod.invoke(console) as? com.intellij.openapi.editor.Editor
-            editor?.document?.text
+            withContext(Dispatchers.EDT) {
+                val editorMethod = console.javaClass.getMethod("getEditor")
+                val editor = editorMethod.invoke(console) as? com.intellij.openapi.editor.Editor
+                editor?.document?.text
+            }
         } catch (_: Exception) { null }
     }
 
