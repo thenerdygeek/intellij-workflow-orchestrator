@@ -157,6 +157,54 @@ class AuthService(private val credentials: CredentialStore) {
   w.endStream?.();
 }
 
+export function simulateDiff(): void {
+  const w = window as any;
+  w.appendDiff?.(
+    'src/services/auth.ts',
+    [
+      'import { CredentialStore } from "./credentials";',
+      '',
+      'export class AuthService {',
+      '    private store: CredentialStore;',
+      '',
+      '    constructor(store: CredentialStore) {',
+      '        this.store = store;',
+      '    }',
+      '',
+      '    async login(user: string, pass: string): Promise<boolean> {',
+      '        const token = await this.store.getToken(user);',
+      '        return token !== null;',
+      '    }',
+      '}',
+    ],
+    [
+      'import { CredentialStore } from "./credentials";',
+      'import { Logger } from "./logger";',
+      '',
+      'export class AuthService {',
+      '    private store: CredentialStore;',
+      '    private log = Logger.getInstance("AuthService");',
+      '',
+      '    constructor(store: CredentialStore) {',
+      '        this.store = store;',
+      '    }',
+      '',
+      '    async login(user: string, pass: string): Promise<boolean> {',
+      '        this.log.info(`Login attempt for user: ${user}`);',
+      '        const token = await this.store.getToken(user);',
+      '        if (token === null) {',
+      '            this.log.warn(`Login failed for user: ${user}`);',
+      '            return false;',
+      '        }',
+      '        this.log.info(`Login successful for user: ${user}`);',
+      '        return true;',
+      '    }',
+      '}',
+    ],
+    true
+  );
+}
+
 export function clearChat(): void {
   const w = window as any;
   w.clearChat?.();
@@ -269,7 +317,7 @@ export function installMockBridge(): void {
     w.__bridge?.addDebugLogEntry?.(entryJson);
   };
 
-  w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming, clearChat };
+  w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming, simulateDiff, clearChat };
   console.log(
     '%c[Mock Bridge] Dev mode active. Available simulations:\n' +
     '  __mock.simulateAgentResponse()\n' +

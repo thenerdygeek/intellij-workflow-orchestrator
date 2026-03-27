@@ -651,8 +651,8 @@ class AgentCefPanel(
     fun appendEditDiff(
         filePath: String, oldText: String, newText: String, accepted: Boolean? = null
     ) {
-        val oldLines = oldText.lines().take(20).joinToString(",") { jsonStr(it) }
-        val newLines = newText.lines().take(20).joinToString(",") { jsonStr(it) }
+        val oldLines = oldText.lines().take(100).joinToString(",") { jsonStr(it) }
+        val newLines = newText.lines().take(100).joinToString(",") { jsonStr(it) }
         val acceptedJs = when (accepted) { true -> "true"; false -> "false"; null -> "null" }
         callJs("appendDiff(${jsonStr(filePath)},[$oldLines],[$newLines],$acceptedJs)")
     }

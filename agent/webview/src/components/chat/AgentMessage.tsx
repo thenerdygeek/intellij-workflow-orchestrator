@@ -3,6 +3,7 @@ import type { Message } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
+import { EditDiffView } from '@/components/agent/EditDiffView';
 import {
   Message as PkMessage,
   MessageAvatar,
@@ -27,7 +28,7 @@ export const AgentMessage = memo(function AgentMessage({
   // System messages: thinking blocks and status lines
   if (message.role === 'system') {
     try {
-      const parsed = JSON.parse(message.content) as { type?: string; text?: string; message?: string; result?: string; verifyCommand?: string };
+      const parsed = JSON.parse(message.content) as Record<string, any>;
       if (parsed.type === 'thinking') {
         return <ThinkingView content={parsed.text ?? ''} isStreaming={false} />;
       }
@@ -39,6 +40,17 @@ export const AgentMessage = memo(function AgentMessage({
           <div className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
             {parsed.message}
           </div>
+        );
+      }
+      // Edit diffs from the Kotlin bridge (has filePath + oldLines + newLines)
+      if (parsed.filePath && Array.isArray(parsed.oldLines) && Array.isArray(parsed.newLines)) {
+        return (
+          <EditDiffView
+            filePath={parsed.filePath}
+            oldLines={parsed.oldLines}
+            newLines={parsed.newLines}
+            accepted={parsed.accepted ?? null}
+          />
         );
       }
     } catch {
