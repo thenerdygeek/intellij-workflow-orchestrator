@@ -22,6 +22,12 @@ class CoverageLineMarkerProvider : LineMarkerProvider {
         if (element.parent !is PsiFile && element != element.parent?.firstChild) return null
 
         val project = element.project
+
+        // Check if gutter markers are enabled
+        try {
+            if (!com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.coverageGutterMarkersEnabled) return null
+        } catch (_: Exception) { return null }
+
         val file = element.containingFile?.virtualFile ?: return null
 
         val baseDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }

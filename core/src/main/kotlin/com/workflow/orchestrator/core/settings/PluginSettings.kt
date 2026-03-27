@@ -130,6 +130,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // SonarQube
         var sonarMetricKeys by string("coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,new_coverage,new_branch_coverage")
+        var coverageGutterMarkersEnabled by property(true)
 
         // Automation
         var tagHistoryMaxEntries by property(5)

@@ -28,6 +28,7 @@ import java.awt.Font
 import javax.swing.BoxLayout
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
+import javax.swing.JCheckBox
 import javax.swing.JPanel
 
 class QualityDashboardPanel(
@@ -106,6 +107,22 @@ class QualityDashboardPanel(
 
         // Header: left label + right toggle + refresh
         // Use FlowLayout so elements wrap at narrow widths instead of overlapping
+        val gutterMarkersCheckbox = JCheckBox("Gutter Markers").apply {
+            isSelected = settings.state.coverageGutterMarkersEnabled
+            toolTipText = "Show coverage markers in the editor gutter"
+            isFocusPainted = false
+            addActionListener {
+                settings.state.coverageGutterMarkersEnabled = isSelected
+                // Re-trigger daemon analysis to show/hide markers
+                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedTextEditor?.let { editor ->
+                    val psiFile = com.intellij.psi.PsiDocumentManager.getInstance(project).getPsiFile(editor.document)
+                    if (psiFile != null) {
+                        com.intellij.codeInsight.daemon.DaemonCodeAnalyzer.getInstance(project).restart(psiFile)
+                    }
+                }
+            }
+        }
+
         val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(2))).apply {
             border = JBUI.Borders.empty(4, 8)
             if (repoSelector != null) {
@@ -114,6 +131,7 @@ class QualityDashboardPanel(
             add(headerLabel)
             add(newCodeButton)
             add(overallButton)
+            add(gutterMarkersCheckbox)
         }
 
         // Branch info bar
