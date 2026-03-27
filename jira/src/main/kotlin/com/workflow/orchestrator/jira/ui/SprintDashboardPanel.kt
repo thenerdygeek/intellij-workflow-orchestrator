@@ -77,7 +77,7 @@ class SprintDashboardPanel(
     private val ticketList = JBList(listModel).apply {
         cellRenderer = TicketListCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        fixedCellHeight = JBUI.scale(52)
+        fixedCellHeight = JBUI.scale(56)
         border = JBUI.Borders.empty()
         isOpaque = false
     }
@@ -91,16 +91,20 @@ class SprintDashboardPanel(
 
     // -- Sprint header --
     private val sprintNameLabel = JBLabel("").apply {
-        font = font.deriveFont(Font.BOLD, JBUI.scale(14).toFloat())
+        font = font.deriveFont(Font.BOLD, JBUI.scale(13).toFloat())
         foreground = JBColor.foreground()
     }
     private val sprintMetaLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
+        font = font.deriveFont(JBUI.scale(10).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
     }
     private val ticketCountLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(11).toFloat())
+        font = font.deriveFont(JBUI.scale(10).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
+        border = javax.swing.BorderFactory.createCompoundBorder(
+            javax.swing.BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
+            JBUI.Borders.empty(1, 6)
+        )
     }
     private val sprintTimeBar = SprintTimeBar()
 
@@ -341,17 +345,15 @@ class SprintDashboardPanel(
         searchField.preferredSize = Dimension(0, JBUI.scale(28))
 
         // Sort/Group controls row
-        val sortGroupPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        val sortGroupPanel = JPanel(GridLayout(1, 2, JBUI.scale(4), 0)).apply {
             isOpaque = false
             border = JBUI.Borders.empty(2, 0)
         }
-        val groupLabel = JBLabel("Group:").apply { font = JBUI.Fonts.smallFont() }
-        val sortLabel = JBLabel("Sort:").apply { font = JBUI.Fonts.smallFont() }
-        groupByCombo.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(24))
-        sortByCombo.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(24))
-        sortGroupPanel.add(groupLabel)
+        groupByCombo.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(24))
+        sortByCombo.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(24))
+        groupByCombo.toolTipText = "Group by"
+        sortByCombo.toolTipText = "Sort by"
         sortGroupPanel.add(groupByCombo)
-        sortGroupPanel.add(sortLabel)
         sortGroupPanel.add(sortByCombo)
 
         val topControlsPanel = JPanel(BorderLayout()).apply {

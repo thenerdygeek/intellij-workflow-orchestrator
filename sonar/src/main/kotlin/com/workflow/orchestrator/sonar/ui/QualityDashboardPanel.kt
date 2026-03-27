@@ -49,7 +49,8 @@ class QualityDashboardPanel(
 
     // UI components
     private val headerLabel = JBLabel("").apply {
-        font = font.deriveFont(Font.PLAIN, 11f)
+        font = font.deriveFont(Font.BOLD, 11f)
+        foreground = StatusColors.SECONDARY_TEXT
         border = JBUI.Borders.empty(4, 8)
     }
     private val branchInfoLabel = JBLabel("").apply {
@@ -268,10 +269,10 @@ class QualityDashboardPanel(
             QualityGateStatus.NONE -> "—"
         }
 
-        val modeLabel = if (state.newCodeMode) "New Code" else "Overall"
+        val modeLabel = if (state.newCodeMode) "NEW CODE" else "OVERALL"
         val coverage = state.activeOverallCoverage
         val issueCount = state.activeIssues.size
-        headerLabel.text = "${state.projectKey}  $gateIcon $modeLabel  \u2022  Coverage: ${"%.1f".format(coverage.lineCoverage)}%  \u2022  Issues: $issueCount"
+        headerLabel.text = "${state.projectKey.uppercase()}  $gateIcon $modeLabel  \u2022  COVERAGE: ${"%.1f".format(coverage.lineCoverage)}%  \u2022  ISSUES: $issueCount"
 
         updateToggleAppearance(state.newCodeMode)
 

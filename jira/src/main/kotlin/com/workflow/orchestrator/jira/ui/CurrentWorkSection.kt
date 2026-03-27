@@ -13,8 +13,9 @@ import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
-import java.awt.BorderLayout
-import java.awt.FlowLayout
+import java.awt.*
+import java.awt.geom.RoundRectangle2D
+import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
@@ -31,7 +32,7 @@ class CurrentWorkSection(
     private val settings get() = PluginSettings.getInstance(project)
 
     private val ticketKeyLabel = JBLabel("").apply {
-        font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(13).toFloat())
+        font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
         foreground = StatusColors.LINK
     }
     private val summaryLabel = JBLabel("").apply {
@@ -41,12 +42,12 @@ class CurrentWorkSection(
         foreground = StatusColors.SECONDARY_TEXT
         font = font.deriveFont(JBUI.scale(10).toFloat())
     }
-    private val targetArrowLabel = JBLabel("").apply {
+    private val targetBranchChip = JBLabel("").apply {
         foreground = StatusColors.SECONDARY_TEXT
-        font = font.deriveFont(JBUI.scale(10).toFloat())
+        font = font.deriveFont(JBUI.scale(9).toFloat())
     }
     private val editTargetLabel = JBLabel(AllIcons.Actions.Edit).apply {
-        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         toolTipText = "Change target branch"
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -54,6 +55,9 @@ class CurrentWorkSection(
     private val emptyPanel = JPanel(BorderLayout())
 
     companion object {
+        private val ACTIVE_BG = JBColor(0xE8F5E9, 0x2A3B2A)
+        private val ACTIVE_BORDER = JBColor(0xA5D6A7, 0x3B5D3E)
+        private val CHIP_BG = JBColor(0xE0E0E0, 0x2D3035)
         private val EMPTY_BG = StatusColors.CARD_BG
     }
 
@@ -76,37 +80,70 @@ class CurrentWorkSection(
 
     private fun buildActiveState(ticketId: String, summary: String) {
         removeAll()
-        background = StatusColors.SUCCESS_BG
-        border = JBUI.Borders.customLine(StatusColors.SUCCESS, 0, 0, 1, 0)
+
+        // Card with green-tinted background and border
+        val cardPanel = object : JPanel(BorderLayout()) {
+            init {
+                isOpaque = false
+                border = JBUI.Borders.empty(8, 10)
+            }
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val r = JBUI.scale(6).toFloat()
+                // Fill
+                g2.color = ACTIVE_BG
+                g2.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(), r, r))
+                // Border
+                g2.color = ACTIVE_BORDER
+                g2.draw(RoundRectangle2D.Float(0.5f, 0.5f, width - 1f, height - 1f, r, r))
+                g2.dispose()
+            }
+        }
 
         val inner = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            border = JBUI.Borders.empty(8, 10)
+            border = JBUI.Borders.empty(6, 8)
         }
 
-        // Section header
-        val headerLabel = JBLabel("Currently Working On").apply {
-            foreground = StatusColors.SECONDARY_TEXT
-            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(9).toFloat())
-        }
-        inner.add(headerLabel)
-        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
-
-        // Ticket key + summary
-        ticketKeyLabel.text = ticketId
-        inner.add(ticketKeyLabel)
-        summaryLabel.text = summary
-        inner.add(summaryLabel)
-        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
-
-        // Branch + status row
-        val metaRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        // Header row: label + bolt icon
+        val headerRow = JPanel(BorderLayout()).apply {
             isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(14))
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        headerRow.add(JBLabel("CURRENTLY WORKING ON").apply {
+            foreground = JBColor(0x66BB6A, 0xA5D6A7)
+            font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
+        }, BorderLayout.WEST)
+        headerRow.add(JBLabel("\u26A1").apply {
+            foreground = JBColor(0x66BB6A, 0xA5D6A7)
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+        }, BorderLayout.EAST)
+        inner.add(headerRow)
+        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
+
+        // Ticket key
+        ticketKeyLabel.text = ticketId
+        ticketKeyLabel.alignmentX = Component.LEFT_ALIGNMENT
+        inner.add(ticketKeyLabel)
+
+        // Summary
+        summaryLabel.text = summary
+        summaryLabel.alignmentX = Component.LEFT_ALIGNMENT
+        inner.add(summaryLabel)
+        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
+
+        // Branch row: branch icon + name + target chip + edit
+        val metaRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
         }
 
         metaRow.add(branchLabel)
-        metaRow.add(targetArrowLabel)
+        metaRow.add(targetBranchChip)
         metaRow.add(editTargetLabel)
         inner.add(metaRow)
 
@@ -133,16 +170,23 @@ class CurrentWorkSection(
                     branchLabel.icon = AllIcons.Vcs.Branch
                 }
                 if (targetBranch.isNotBlank()) {
-                    targetArrowLabel.text = "→ $targetBranch"
+                    targetBranchChip.text = targetBranch
+                    targetBranchChip.border = BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
+                        JBUI.Borders.empty(1, 4)
+                    )
+                    targetBranchChip.isOpaque = false
                 }
                 revalidate()
                 repaint()
             }
         }
-        add(inner, BorderLayout.CENTER)
+
+        cardPanel.add(inner, BorderLayout.CENTER)
+        add(cardPanel, BorderLayout.CENTER)
 
         // Click to select ticket in the list
-        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         mouseListeners.forEach { removeMouseListener(it) }
         addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
@@ -171,7 +215,7 @@ class CurrentWorkSection(
                 val resolver = DefaultBranchResolver.getInstance(project)
                 val repoPath = repo.root.path
                 resolver.setOverride(repoPath, repo.currentBranchName ?: "", selected)
-                targetArrowLabel.text = "→ $selected"
+                targetBranchChip.text = selected
                 revalidate()
                 repaint()
             }
@@ -182,8 +226,27 @@ class CurrentWorkSection(
 
     private fun buildEmptyState() {
         removeAll()
-        background = EMPTY_BG
-        border = JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0)
+        isOpaque = false
+
+        val cardPanel = object : JPanel(BorderLayout()) {
+            init {
+                isOpaque = false
+                border = JBUI.Borders.empty(8, 10)
+            }
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val r = JBUI.scale(6).toFloat()
+                g2.color = EMPTY_BG
+                g2.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(), r, r))
+                // Dashed border
+                g2.color = StatusColors.BORDER
+                g2.stroke = BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f, floatArrayOf(4f, 4f), 0f)
+                g2.draw(RoundRectangle2D.Float(0.5f, 0.5f, width - 1f, height - 1f, r, r))
+                g2.dispose()
+            }
+        }
 
         val inner = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -191,20 +254,24 @@ class CurrentWorkSection(
             border = JBUI.Borders.empty(8, 10)
         }
 
-        inner.add(JBLabel("Currently Working On").apply {
+        inner.add(JBLabel("CURRENTLY WORKING ON").apply {
             foreground = StatusColors.SECONDARY_TEXT
-            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(9).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
+            alignmentX = Component.LEFT_ALIGNMENT
         })
         inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
         inner.add(JBLabel("No active ticket").apply {
             foreground = StatusColors.SECONDARY_TEXT
             font = font.deriveFont(JBUI.scale(11).toFloat())
+            alignmentX = Component.LEFT_ALIGNMENT
         })
         inner.add(JBLabel("Select a ticket and click Start Work").apply {
             foreground = StatusColors.LINK
             font = font.deriveFont(JBUI.scale(10).toFloat())
+            alignmentX = Component.LEFT_ALIGNMENT
         })
 
-        add(inner, BorderLayout.CENTER)
+        cardPanel.add(inner, BorderLayout.CENTER)
+        add(cardPanel, BorderLayout.CENTER)
     }
 }

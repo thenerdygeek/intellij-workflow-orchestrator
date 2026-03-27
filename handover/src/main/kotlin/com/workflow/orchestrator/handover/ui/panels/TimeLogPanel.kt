@@ -4,10 +4,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -17,7 +19,7 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val cardLayout = CardLayout()
     private val cardPanel = JPanel(cardLayout)
     private val emptyLabel = JBLabel("Select a ticket to log time.").apply {
-        foreground = JBUI.CurrentTheme.Label.disabledForeground()
+        foreground = StatusColors.SECONDARY_TEXT
         horizontalAlignment = SwingConstants.CENTER
         border = JBUI.Borders.emptyTop(40)
     }
@@ -48,8 +50,21 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
     init {
         border = JBUI.Borders.empty(8)
 
-        val header = JBLabel("Time Tracking").apply {
-            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
+        val headerLabel = JBLabel("TIME TRACKING").apply {
+            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(12).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.emptyLeft(8)
+        }
+        val header = JPanel(BorderLayout()).apply {
+            add(headerLabel, BorderLayout.CENTER)
+            border = BorderFactory.createCompoundBorder(
+                JBUI.Borders.customLine(StatusColors.BORDER, 0, 0, 1, 0),
+                BorderFactory.createCompoundBorder(
+                    JBUI.Borders.customLine(StatusColors.LINK, 0, 2, 0, 0),
+                    JBUI.Borders.empty(6, 0, 6, 0)
+                )
+            )
+            isOpaque = false
         }
 
         val formPanel = JPanel(GridBagLayout())

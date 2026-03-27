@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBScrollPane
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Component
+import java.awt.Font
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
@@ -48,11 +49,29 @@ class TagStagingPanel(
 
             columnModel.getColumn(1).cellEditor = DefaultCellEditor(JTextField())
             setDefaultRenderer(Any::class.java, TagTableCellRenderer())
+
+            // Stitch: uppercase bold table headers
+            tableHeader.defaultRenderer = object : DefaultTableCellRenderer() {
+                override fun getTableCellRendererComponent(
+                    table: JTable, value: Any?, isSelected: Boolean,
+                    hasFocus: Boolean, row: Int, col: Int
+                ): Component {
+                    val c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, col)
+                    if (c is JLabel) {
+                        c.text = (value as? String)?.uppercase() ?: ""
+                        c.font = c.font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+                        c.foreground = StatusColors.SECONDARY_TEXT
+                        c.border = JBUI.Borders.empty(4, 6)
+                    }
+                    return c
+                }
+            }
         }
 
-        add(JBLabel("Docker Tags").apply {
+        add(JBLabel("DOCKER TAGS").apply {
             border = JBUI.Borders.emptyBottom(4)
-            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
         }, BorderLayout.NORTH)
 
         cardPanel.add(JBScrollPane(table), "table")
@@ -152,6 +171,30 @@ class TagStagingPanel(
             val component = super.getTableCellRendererComponent(
                 table, value, isSelected, hasFocus, row, col
             )
+
+            // Stitch: monospace for tag/key columns
+            if (col == 0 || col == 1 || col == 2) {
+                font = Font(Font.MONOSPACED, font.style, font.size)
+            }
+
+            // Stitch: outline-style status indicators in Registry/Status columns
+            if (col == 3 || col == 4) {
+                val model = table.model as TagTableModel
+                if (row < model.entries.size) {
+                    val entry = model.entries[row]
+                    foreground = when {
+                        col == 3 && entry.registryStatus == RegistryStatus.VALID -> StatusColors.SUCCESS
+                        col == 3 && entry.registryStatus == RegistryStatus.NOT_FOUND -> StatusColors.ERROR
+                        col == 4 && entry.isCurrentRepo -> StatusColors.LINK
+                        col == 4 && entry.isDrift -> StatusColors.WARNING
+                        col == 4 && entry.registryStatus == RegistryStatus.VALID -> StatusColors.SUCCESS
+                        col == 4 && entry.registryStatus == RegistryStatus.NOT_FOUND -> StatusColors.ERROR
+                        else -> StatusColors.SECONDARY_TEXT
+                    }
+                }
+            }
+
+            // Stitch: tonal background shifts instead of borders
             if (!isSelected) {
                 val model = table.model as TagTableModel
                 if (row < model.entries.size) {

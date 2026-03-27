@@ -69,6 +69,22 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
     init {
         border = JBUI.Borders.empty(8)
+
+        // Stitch design: uppercase bold header text in SECONDARY_TEXT color
+        table.tableHeader.defaultRenderer = object : DefaultTableCellRenderer() {
+            override fun getTableCellRendererComponent(
+                table: JTable, value: Any?, isSelected: Boolean,
+                hasFocus: Boolean, row: Int, column: Int
+            ): Component {
+                val comp = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+                text = value?.toString()?.uppercase() ?: ""
+                font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                border = JBUI.Borders.empty(4, 6)
+                return comp
+            }
+        }
+
         add(scrollPane, BorderLayout.CENTER)
 
         // File name column renderer with tooltip showing full path

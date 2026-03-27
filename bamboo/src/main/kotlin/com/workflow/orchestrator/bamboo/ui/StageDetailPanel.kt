@@ -47,10 +47,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import com.intellij.openapi.application.invokeLater
-import java.awt.BorderLayout
-import java.awt.Component
-import java.awt.FlowLayout
-import java.awt.Font
+import java.awt.*
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.io.OutputStream
@@ -154,9 +151,10 @@ class StageDetailPanel(
             add(logTopPanel, BorderLayout.NORTH)
             add(consolePanel, BorderLayout.CENTER)
         }
-        addTab("Log", logTab)
-        addTab("Tests", testsPlaceholder)
-        addTab("Artifacts", artifactsPanel)
+        // Stitch design: uppercase tab headers
+        addTab("LOG", logTab)
+        addTab("TESTS", testsPlaceholder)
+        addTab("ARTIFACTS", artifactsPanel)
     }
 
     // Store full log for "Open in editor"
@@ -544,14 +542,19 @@ class StageDetailPanel(
 
     /**
      * Cached cell renderer for artifact list items.
-     * Shows: name, formatted size, Download button, and Open button for HTML artifacts.
+     * Stitch design: left border accent (INFO color), monospace artifact name,
+     * sharp corners, tonal background shifts.
      */
     private inner class ArtifactCellRenderer : ListCellRenderer<ArtifactData> {
         private val panel = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(4, 8)
+            border = javax.swing.border.CompoundBorder(
+                StitchLeftAccentBorder(StatusColors.INFO, JBUI.scale(3)),
+                JBUI.Borders.empty(4, 8, 4, 4)
+            )
         }
         private val nameLabel = JBLabel().apply {
-            font = JBUI.Fonts.label()
+            // Monospace bold for artifact names
+            font = Font(Font.MONOSPACED, Font.BOLD, JBUI.Fonts.label().size)
         }
         private val sizeLabel = JBLabel().apply {
             font = JBUI.Fonts.smallFont()
@@ -614,8 +617,14 @@ class StageDetailPanel(
             }
 
             panel.background = if (isSelected) list.selectionBackground else list.background
-            nameLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
+            nameLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.LINK
             panel.isOpaque = true
+
+            // Re-apply left accent border on each render (border instance is stable)
+            panel.border = javax.swing.border.CompoundBorder(
+                StitchLeftAccentBorder(StatusColors.INFO, JBUI.scale(3)),
+                JBUI.Borders.empty(4, 8, 4, 4)
+            )
 
             return panel
         }

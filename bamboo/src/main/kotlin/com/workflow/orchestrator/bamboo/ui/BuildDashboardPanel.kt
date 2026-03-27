@@ -48,9 +48,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.awt.BorderLayout
-import java.awt.Cursor
-import java.awt.FlowLayout
+import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.ComboBoxModel
@@ -59,6 +57,7 @@ import javax.swing.DefaultListModel
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
+import javax.swing.border.AbstractBorder
 
 class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
@@ -133,9 +132,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         isVisible = false
 
         val historyHeader = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(4, 8, 2, 8)
-            val titleLabel = JBLabel("Build History").apply {
+            border = JBUI.Borders.empty(6, 8, 2, 8)
+            val titleLabel = JBLabel("BUILD HISTORY").apply {
                 icon = AllIcons.Vcs.History
+                font = Font(font.family, Font.BOLD, JBUI.scale(10))
+                foreground = StatusColors.SECONDARY_TEXT
             }
             add(titleLabel, BorderLayout.WEST)
         }
@@ -943,9 +944,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     /**
      * Cell renderer for the build history list.
-     * Shows: #buildNumber  status_icon  State  duration  relative_time
+     * Stitch design: left border accent by status, monospace bold build number,
+     * outline status badges, sharp 2px corners.
      */
     private class BuildHistoryCellRenderer : ColoredListCellRenderer<BuildResultData>() {
+
         override fun customizeCellRenderer(
             list: JList<out BuildResultData>,
             value: BuildResultData,
@@ -953,7 +956,22 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             selected: Boolean,
             hasFocus: Boolean
         ) {
-            // Build number in link color
+            // Determine status color for left border accent
+            val stateNormalized = value.state.lowercase()
+            val statusColor = when {
+                stateNormalized == "successful" || stateNormalized == "success" -> StatusColors.SUCCESS
+                stateNormalized == "failed" || stateNormalized == "error" -> StatusColors.ERROR
+                stateNormalized == "inprogress" || stateNormalized == "building" -> StatusColors.WARNING
+                else -> StatusColors.SECONDARY_TEXT
+            }
+
+            // Left border accent (3px colored strip) + padding
+            border = javax.swing.border.CompoundBorder(
+                StitchLeftAccentBorder(statusColor, JBUI.scale(3)),
+                JBUI.Borders.empty(4, 8, 4, 4)
+            )
+
+            // Build number in monospace bold, LINK color
             append("#${value.buildNumber}", SimpleTextAttributes(
                 SimpleTextAttributes.STYLE_BOLD,
                 if (!selected) StatusColors.LINK else null
@@ -962,7 +980,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             append("  ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
 
             // Status icon and text
-            val stateNormalized = value.state.lowercase()
             when {
                 stateNormalized == "successful" || stateNormalized == "success" -> {
                     icon = AllIcons.General.InspectionsOK
@@ -1014,5 +1031,28 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             val secs = seconds % 60
             return if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
         }
+    }
+}
+
+/**
+ * Stitch design: left border accent strip — a thin colored bar on the left edge of a list item.
+ */
+internal class StitchLeftAccentBorder(
+    private val color: Color,
+    private val thickness: Int = JBUI.scale(3)
+) : AbstractBorder() {
+    override fun paintBorder(c: Component, g: Graphics, x: Int, y: Int, width: Int, height: Int) {
+        val g2 = g.create() as Graphics2D
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g2.color = color
+        // Sharp rectangle (no rounding) for the accent strip
+        g2.fillRect(x, y, thickness, height)
+        g2.dispose()
+    }
+
+    override fun getBorderInsets(c: Component): Insets = Insets(0, thickness, 0, 0)
+    override fun getBorderInsets(c: Component, insets: Insets): Insets {
+        insets.set(0, thickness, 0, 0)
+        return insets
     }
 }

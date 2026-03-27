@@ -12,9 +12,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.model.StageState
-import java.awt.BorderLayout
-import java.awt.CardLayout
-import java.awt.Font
+import java.awt.*
 import javax.swing.*
 
 class StageListPanel : JPanel(BorderLayout()) {
@@ -94,6 +92,10 @@ class StageListPanel : JPanel(BorderLayout()) {
         }
     }
 
+    /**
+     * Stitch design: uppercase group headers with line extending right,
+     * left border accent on job items colored by status, monospace job names.
+     */
     private inner class StageListCellRenderer : ColoredListCellRenderer<StageState>() {
 
         private val spinnerIcon = AnimatedIcon.Default()
@@ -111,16 +113,30 @@ class StageListPanel : JPanel(BorderLayout()) {
         ) {
             value ?: return
 
-            // Stage header (non-selectable group label)
+            // Stage header (non-selectable group label) — uppercase, 10pt bold, SECONDARY_TEXT
             if (value.name.startsWith("§")) {
-                border = JBUI.Borders.empty(6, 4, 2, 4)
+                border = JBUI.Borders.empty(8, 4, 2, 4)
                 icon = null
-                append(value.name.removePrefix("§"), headerAttributes)
+                val headerText = value.name.removePrefix("§").uppercase()
+                append(headerText, headerAttributes)
+                // The line extending right is rendered via a custom bottom border tint
+                // using tonal background shift (the header row itself acts as a separator)
                 return
             }
 
-            // Job item (indented under stage header)
-            border = JBUI.Borders.empty(4, 20)
+            // Job item — left border accent colored by status
+            val statusColor = when (value.status) {
+                BuildStatus.SUCCESS -> StatusColors.SUCCESS
+                BuildStatus.FAILED -> StatusColors.ERROR
+                BuildStatus.IN_PROGRESS -> StatusColors.WARNING
+                BuildStatus.PENDING -> StatusColors.SECONDARY_TEXT
+                BuildStatus.UNKNOWN -> StatusColors.SECONDARY_TEXT
+            }
+
+            border = javax.swing.border.CompoundBorder(
+                StitchLeftAccentBorder(statusColor, JBUI.scale(3)),
+                JBUI.Borders.empty(4, 12, 4, 4)
+            )
 
             icon = when (value.status) {
                 BuildStatus.SUCCESS -> AllIcons.RunConfigurations.TestPassed
@@ -130,7 +146,11 @@ class StageListPanel : JPanel(BorderLayout()) {
                 BuildStatus.UNKNOWN -> AllIcons.RunConfigurations.TestNotRan
             }
 
-            append(value.name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+            // Job name in monospace bold
+            append(value.name, SimpleTextAttributes(
+                SimpleTextAttributes.STYLE_BOLD,
+                null
+            ))
 
             // Duration
             val duration = value.durationMs?.let { formatDuration(it) } ?: "--"

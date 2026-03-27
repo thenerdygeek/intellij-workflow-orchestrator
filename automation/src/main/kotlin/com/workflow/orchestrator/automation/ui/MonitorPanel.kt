@@ -21,8 +21,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.cancel
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
+import java.awt.geom.RoundRectangle2D
 import javax.swing.*
 
 /**
@@ -210,10 +215,19 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 else -> "⟳"
             }
 
-            add(JBLabel("$statusIcon ${entry.suiteName} #${entry.buildNumber}").apply {
-                font = JBUI.Fonts.label().deriveFont(Font.BOLD)
-                foreground = statusColor
-            }, BorderLayout.WEST)
+            val headerRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                isOpaque = false
+                add(JBLabel("$statusIcon ${entry.suiteName}").apply {
+                    font = JBUI.Fonts.label().deriveFont(Font.BOLD)
+                    foreground = statusColor
+                })
+                // Stitch: monospace build number
+                add(JBLabel("#${entry.buildNumber}").apply {
+                    font = Font(Font.MONOSPACED, Font.BOLD, JBUI.Fonts.label().size)
+                    foreground = statusColor
+                })
+            }
+            add(headerRow, BorderLayout.WEST)
 
             val actionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
             if (entry.bambooUrl.isNotBlank()) {
@@ -244,8 +258,13 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         })
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
-        // Test summary
+        // Stitch: uppercase test summary header
         if (entry.totalTests > 0) {
+            content.add(JBLabel("TESTS").apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                border = JBUI.Borders.emptyBottom(2)
+            })
             val testSummary = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(12), 0))
             testSummary.add(JBLabel("✓ ${entry.totalTests - entry.failedTests} passed").apply {
                 foreground = StatusColors.SUCCESS
@@ -259,25 +278,43 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             content.add(Box.createVerticalStrut(JBUI.scale(8)))
         }
 
-        // Stages as chips
+        // Stitch: stages section header uppercase
         if (entry.stages.isNotEmpty()) {
+            content.add(JBLabel("STAGES").apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                border = JBUI.Borders.emptyBottom(4)
+            })
             val stagesPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
             for (stage in entry.stages) {
-                val chipColor = when (stage.state.lowercase()) {
-                    "successful" -> JBColor(ColorUtil.withAlpha(StatusColors.SUCCESS, 0.2), ColorUtil.withAlpha(StatusColors.SUCCESS, 0.2))
-                    "failed" -> JBColor(ColorUtil.withAlpha(StatusColors.ERROR, 0.2), ColorUtil.withAlpha(StatusColors.ERROR, 0.2))
-                    else -> JBColor(ColorUtil.withAlpha(StatusColors.LINK, 0.2), ColorUtil.withAlpha(StatusColors.LINK, 0.2))
+                // Stitch: outline-style stage chips with sharp corners (2px radius)
+                val stageColor = when (stage.state.lowercase()) {
+                    "successful" -> StatusColors.SUCCESS
+                    "failed" -> StatusColors.ERROR
+                    else -> StatusColors.LINK
                 }
                 val icon = when (stage.state.lowercase()) {
-                    "successful" -> "✓"
-                    "failed" -> "✗"
-                    "inprogress" -> "⟳"
-                    else -> "○"
+                    "successful" -> "\u2713"
+                    "failed" -> "\u2717"
+                    "inprogress" -> "\u27F3"
+                    else -> "\u25CB"
                 }
-                stagesPanel.add(JBLabel("$icon ${stage.name} ${stage.duration}").apply {
+                stagesPanel.add(object : JBLabel("$icon ${stage.name} ${stage.duration}") {
+                    override fun paintComponent(g: Graphics) {
+                        val g2 = g.create() as Graphics2D
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                        g2.color = stageColor
+                        g2.draw(RoundRectangle2D.Float(
+                            0.5f, 0.5f, width - 1f, height - 1f,
+                            JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
+                        ))
+                        g2.dispose()
+                        super.paintComponent(g)
+                    }
+                }.apply {
                     border = JBUI.Borders.empty(2, 6)
-                    isOpaque = true
-                    background = chipColor
+                    isOpaque = false
+                    foreground = stageColor
                 })
             }
             content.add(stagesPanel)
@@ -286,15 +323,15 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
         // Failed test names
         if (entry.failedTestNames.isNotEmpty()) {
-            content.add(JBLabel("Failed Tests (${entry.failedTests}):").apply {
-                font = JBUI.Fonts.label().deriveFont(Font.BOLD)
+            content.add(JBLabel("FAILED TESTS (${entry.failedTests})").apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
                 foreground = StatusColors.SECONDARY_TEXT
             })
             content.add(Box.createVerticalStrut(JBUI.scale(4)))
             for (testName in entry.failedTestNames.take(20)) {
-                content.add(JBLabel("  ✗ $testName").apply {
+                content.add(JBLabel("  \u2717 $testName").apply {
                     foreground = StatusColors.ERROR
-                    font = font.deriveFont(JBUI.scale(11).toFloat())
+                    font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
                 })
             }
             if (entry.failedTestNames.size > 20) {
@@ -343,32 +380,93 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         return BambooServiceImpl.getInstance(project).getApiClient()
     }
 
-    private class RunListCellRenderer : DefaultListCellRenderer() {
+    private class RunListCellRenderer : ListCellRenderer<RunEntry> {
         override fun getListCellRendererComponent(
-            list: JList<*>, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
+            list: JList<out RunEntry>, value: RunEntry?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
         ): java.awt.Component {
-            super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-            val entry = value as? RunEntry ?: return this
-            border = JBUI.Borders.empty(4, 8)
+            val entry = value ?: return JBLabel("")
 
-            val icon = when (entry.status.lowercase()) {
-                "successful" -> "✓"
-                "failed" -> "⚠"
-                else -> "⟳"
-            }
             val statusColor = when (entry.status.lowercase()) {
                 "successful" -> StatusColors.SUCCESS
                 "failed" -> StatusColors.ERROR
                 else -> StatusColors.LINK
             }
 
-            text = "<html><b style='color:${StatusColors.htmlColor(statusColor)};'>$icon ${entry.suiteName}</b>" +
-                "<br><span style='color:gray;'>#${entry.buildNumber} • ${entry.status}" +
-                (if (entry.failedTests > 0) " • ${entry.failedTests} failed" else "") +
-                "</span></html>"
-            return this
-        }
+            val panel = object : JPanel(BorderLayout()) {
+                override fun paintComponent(g: Graphics) {
+                    super.paintComponent(g)
+                    // Stitch: left border accent colored by status
+                    val g2 = g.create() as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    g2.color = statusColor
+                    g2.fillRect(0, 0, JBUI.scale(3), height)
+                    g2.dispose()
+                }
+            }
+            panel.border = JBUI.Borders.empty(6, 8, 6, 6)
+            panel.isOpaque = true
+            panel.background = if (isSelected) list.selectionBackground else {
+                // Stitch: tonal shift on alternating rows
+                if (index % 2 == 0) list.background else StatusColors.CARD_BG
+            }
 
-        private fun colorToHex(c: JBColor): String = StatusColors.htmlColor(c)
+            // Suite name
+            val nameLabel = JBLabel(entry.suiteName).apply {
+                font = font.deriveFont(Font.BOLD)
+                foreground = if (isSelected) list.selectionForeground else list.foreground
+            }
+
+            // Stitch: monospace build number
+            val buildLabel = JBLabel("#${entry.buildNumber}").apply {
+                font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+                foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+            }
+
+            // Stitch: outline status badge (1px border, no fill, sharp corners)
+            val statusBadge = object : JBLabel(entry.status) {
+                override fun paintComponent(g: Graphics) {
+                    val g2 = g.create() as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    // Outline only
+                    g2.color = statusColor
+                    g2.draw(RoundRectangle2D.Float(
+                        0.5f, 0.5f, width - 1f, height - 1f,
+                        JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
+                    ))
+                    g2.dispose()
+                    super.paintComponent(g)
+                }
+            }.apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                foreground = statusColor
+                border = JBUI.Borders.empty(1, 4)
+                isOpaque = false
+            }
+
+            val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                isOpaque = false
+                add(nameLabel)
+                add(buildLabel)
+            }
+            val bottomRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                isOpaque = false
+                add(statusBadge)
+                if (entry.failedTests > 0) {
+                    add(JBLabel("${entry.failedTests} failed").apply {
+                        foreground = StatusColors.ERROR
+                        font = font.deriveFont(JBUI.scale(10).toFloat())
+                    })
+                }
+            }
+
+            val content = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                add(topRow)
+                add(bottomRow)
+            }
+            panel.add(content, BorderLayout.CENTER)
+            return panel
+        }
     }
 }

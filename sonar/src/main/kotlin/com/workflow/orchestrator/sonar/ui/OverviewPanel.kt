@@ -19,7 +19,13 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         private val FONT_BOLD_18 by lazy { JBFont.regular().deriveFont(Font.BOLD, JBUI.scale(18).toFloat()) }
         private val FONT_PLAIN_10 by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(10).toFloat()) }
         private val FONT_PLAIN_11 by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(11).toFloat()) }
-        private val FONT_PLAIN_9 by lazy { JBFont.regular().deriveFont(Font.PLAIN, JBUI.scale(9).toFloat()) }
+        private val FONT_BOLD_10 by lazy { JBFont.regular().deriveFont(Font.BOLD, JBUI.scale(10).toFloat()) }
+
+        // Accent colors for card left borders (Stitch design)
+        private val ACCENT_GATE = StatusColors.LINK
+        private val ACCENT_COVERAGE = StatusColors.SUCCESS
+        private val ACCENT_ISSUES = StatusColors.WARNING
+        private val ACCENT_HEALTH = StatusColors.MERGED
     }
 
     private val gateStatusLabel = JBLabel("—")
@@ -50,7 +56,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         }
 
         // Quality Gate card
-        val gateCard = createCard("QUALITY GATE", gateStatusLabel, gateConditionsPanel)
+        val gateCard = createCard("QUALITY GATE", gateStatusLabel, gateConditionsPanel, ACCENT_GATE)
         cardsPanel.add(gateCard)
 
         // Coverage card
@@ -58,15 +64,15 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             isOpaque = false
             add(coverageBar, BorderLayout.NORTH)
             add(branchCoverageLabel, BorderLayout.CENTER)
-        })
+        }, ACCENT_COVERAGE)
         cardsPanel.add(coverageCard)
 
         // Issues card
-        val issuesCard = createCard("ISSUES", issueCountLabel, issueBreakdownLabel)
+        val issuesCard = createCard("ISSUES", issueCountLabel, issueBreakdownLabel, ACCENT_ISSUES)
         cardsPanel.add(issuesCard)
 
         // Project Health card
-        val healthCard = createCard("PROJECT HEALTH", healthRatingLabel, healthDetailsPanel)
+        val healthCard = createCard("PROJECT HEALTH", healthRatingLabel, healthDetailsPanel, ACCENT_HEALTH)
         cardsPanel.add(healthCard)
 
         // Wrap in scroll pane for narrow tool windows
@@ -86,8 +92,8 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             border = JBUI.Borders.emptyTop(16)
             isOpaque = false
             val header = JBLabel("RECENT ISSUES").apply {
-                foreground = JBColor.GRAY
-                font = FONT_PLAIN_10
+                foreground = StatusColors.SECONDARY_TEXT
+                font = FONT_BOLD_10
             }
             add(header, BorderLayout.NORTH)
             add(JBScrollPane(recentIssuesPanel).apply {
@@ -111,6 +117,13 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         gateStatusLabel.text = gateText
         gateStatusLabel.foreground = gateColor
         gateStatusLabel.font = FONT_BOLD_18
+        gateStatusLabel.isOpaque = true
+        gateStatusLabel.background = when (state.qualityGate.status) {
+            QualityGateStatus.PASSED -> StatusColors.SUCCESS_BG
+            QualityGateStatus.FAILED -> JBColor(Color(0xFD, 0xE7, 0xE9), Color(0x4A, 0x1A, 0x1A))
+            QualityGateStatus.NONE -> JBColor(Color(0xF5, 0xF5, 0xF5), Color(0x35, 0x35, 0x35))
+        }
+        gateStatusLabel.border = JBUI.Borders.empty(2, 6)
 
         gateConditionsPanel.removeAll()
         state.qualityGate.conditions.forEach { cond ->
@@ -243,15 +256,19 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
-    private fun createCard(title: String, mainContent: JComponent, subContent: JComponent): JPanel {
+    private fun createCard(title: String, mainContent: JComponent, subContent: JComponent, accentColor: JBColor): JPanel {
         return JPanel(BorderLayout()).apply {
+            // Tonal background instead of line border (Stitch design)
+            background = StatusColors.CARD_BG
+            isOpaque = true
+            // 2px left accent border + inner padding
             border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(JBColor.border(), 1),
+                BorderFactory.createMatteBorder(0, 2, 0, 0, accentColor),
                 JBUI.Borders.empty(10)
             )
             val titleLabel = JBLabel(title).apply {
-                foreground = JBColor.GRAY
-                font = FONT_PLAIN_9
+                foreground = StatusColors.SECONDARY_TEXT
+                font = FONT_BOLD_10
             }
             add(titleLabel, BorderLayout.NORTH)
             add(mainContent, BorderLayout.CENTER)
@@ -324,9 +341,9 @@ private class CoverageProgressBar : JPanel() {
         val g2 = g as Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2.color = JBColor(Color(0xE0, 0xE0, 0xE0), Color(0x3C, 0x3C, 0x3C))
-        g2.fillRoundRect(0, 0, width, height, 4, 4)
+        g2.fillRoundRect(0, 0, width, height, 2, 2)
         val fillWidth = (width * value / 100.0).toInt()
         g2.color = CoverageThresholds.colorForCoverage(value, highThreshold, mediumThreshold)
-        g2.fillRoundRect(0, 0, fillWidth, height, 4, 4)
+        g2.fillRoundRect(0, 0, fillWidth, height, 2, 2)
     }
 }
