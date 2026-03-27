@@ -163,7 +163,8 @@ class PrBar(
         gbc.gridx = 1; gbc.weightx = 1.0
         val targetLabel = JBLabel("develop")
         scope.launch {
-            val target = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+            val repo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> { getGitRepo() }
+            val target = repo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
             invokeLater { targetLabel.text = target }
         }
         fields.add(targetLabel, gbc)
@@ -271,13 +272,13 @@ class PrBar(
      * then shows the dialog on EDT.
      */
     private fun openCreatePrDialog() {
-        val currentBranch = resolveCurrentBranch() ?: return
         val ticketId = settings.state.activeTicketId.orEmpty()
         val prService = PrService.getInstance(project)
         val defaultReviewers = prService.buildDefaultReviewers().map { it.user.name }
 
         // Fetch data in background, show dialog when ready
         scope.launch {
+            val currentBranch = com.intellij.openapi.application.ReadAction.compute<_, Throwable> { resolveCurrentBranch() } ?: return@launch
             val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
             val projectKey = settings.state.bitbucketProjectKey.orEmpty()
             val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
@@ -341,12 +342,6 @@ class PrBar(
         }
         isVisible = true
 
-        val currentBranch = resolveCurrentBranch() ?: run {
-            log.warn("[Build:PrBar] No Git branch detected")
-            return
-        }
-        log.info("[Build:PrBar] Fetching PRs for branch '$currentBranch'")
-
         val credentialStore = CredentialStore()
         val client = BitbucketBranchClient(
             baseUrl = bitbucketUrl,
@@ -354,6 +349,14 @@ class PrBar(
         )
 
         scope.launch {
+            // Resolve branch off-EDT to avoid synchronous VCS repository update on EDT
+            val currentBranch = com.intellij.openapi.application.ReadAction.compute<_, Throwable> { resolveCurrentBranch() }
+            if (currentBranch == null) {
+                log.warn("[Build:PrBar] No Git branch detected")
+                return@launch
+            }
+            log.info("[Build:PrBar] Fetching PRs for branch '$currentBranch'")
+
             val result = client.getPullRequestsForBranch(projectKey, repoSlug, currentBranch)
             invokeLater {
                 when (result) {
@@ -413,12 +416,10 @@ class PrBar(
     }
 
     private fun getGitRepo(): git4idea.repo.GitRepository? {
-        return com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
-            val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-            val repos = GitRepositoryManager.getInstance(project).repositories
-            repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-        }
+        val resolver = RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
     }
 
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
@@ -436,8 +437,6 @@ class PrBar(
         val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
         val projectKey = settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
-        val fromBranch = resolveCurrentBranch() ?: ""
-
         submitButton.isEnabled = false
         regenerateButton.isEnabled = false
         formResultLabel.text = "Creating PR..."
@@ -448,7 +447,9 @@ class PrBar(
         val reviewers = prService.buildDefaultReviewers()
 
         scope.launch {
-            val toBranch = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+            val fromBranch = com.intellij.openapi.application.ReadAction.compute<String?, Throwable> { resolveCurrentBranch() } ?: ""
+            val toRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> { getGitRepo() }
+            val toBranch = toRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
             val client = BitbucketBranchClient(
                 baseUrl = bitbucketUrl,
                 tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
@@ -485,7 +486,6 @@ class PrBar(
     }
 
     private fun onRegenerateDescription() {
-        val branch = resolveCurrentBranch() ?: ""
         val ticketId = settings.state.activeTicketId.orEmpty()
         val ticketSummary = settings.state.activeTicketSummary.orEmpty()
         val prService = PrService.getInstance(project)
@@ -494,6 +494,7 @@ class PrBar(
         formResultLabel.text = "Generating..."
 
         scope.launch {
+            val branch = com.intellij.openapi.application.ReadAction.compute<_, Throwable> { resolveCurrentBranch() } ?: ""
             val changedFiles = withContext(Dispatchers.IO) {
                 try {
                     val changes = com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project).allChanges
