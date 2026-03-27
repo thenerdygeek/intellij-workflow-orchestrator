@@ -1033,6 +1033,13 @@ class SingleAgentSession(
                     CredentialRedactor.redact(toolResult.content)
                 } else toolResult.content
 
+                // Persist the completion summary in conversation context so follow-up messages retain it
+                contextManager.addToolResult(
+                    toolCallId = toolCall.id,
+                    content = sanitizedContent,
+                    summary = toolResult.summary
+                )
+
                 // Emit completion summary as streamed text, not a tool call card
                 onProgress(AgentProgress(
                     step = "__completion__",
@@ -1311,8 +1318,8 @@ class SingleAgentSession(
             ), 0L)
         }
 
-        // Check approval gate before executing risky tools
-        if (approvalGate != null) {
+        // Check approval gate before executing risky tools (skip for attempt_completion — internal orchestration)
+        if (approvalGate != null && toolName != "attempt_completion") {
             // Convert tool call arguments to map for context-aware risk classification + approval display
             val paramsMap: Map<String, Any?> = try {
                 val jsonElement = json.parseToJsonElement(toolCall.function.arguments)
