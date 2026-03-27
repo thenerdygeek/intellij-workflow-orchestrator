@@ -31,6 +31,8 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
 
     override fun checkinSuccessful() {
         val settings = PluginSettings.getInstance(project)
+        if (!settings.state.autoTransitionOnCommit) return
+
         val ticketId = settings.state.activeTicketId
         if (ticketId.isNullOrBlank()) return
 
@@ -38,8 +40,9 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         if (baseUrl.isBlank()) return
 
         // Fire-and-forget: post-commit transition check must not block the commit flow.
-        // Use project.coroutineScope so the job is cancelled on project close (no leaked scope).
-        CoroutineScope(Dispatchers.IO).launch {
+        // Guard against project disposal to prevent accessing disposed services.
+        @Suppress("RAW_SCOPE")
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             if (project.isDisposed) return@launch
             try {
                 val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
@@ -67,7 +70,9 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                                             notification.addAction(object : com.intellij.notification.NotificationAction("Transition") {
                                                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
                                                     notification.expire()
-                                                    CoroutineScope(Dispatchers.IO).launch {
+                                                    @Suppress("RAW_SCOPE")
+                                                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                                                        if (project.isDisposed) return@launch
                                                         try {
                                                             client.transitionIssue(ticketId, inProgressTransition.id)
                                                             log.info("[Jira:PostCommit] Transitioned $ticketId to In Progress")

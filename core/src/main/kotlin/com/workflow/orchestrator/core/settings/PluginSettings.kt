@@ -114,6 +114,10 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var maxWorklogHours by property(7.0f)
         var worklogIncrementHours by property(0.5f)
 
+        // VCS commit handler toggles
+        var autoLogTimeOnCommit by property(true)
+        var autoTransitionOnCommit by property(true)
+
         // Branching & PRs
         var branchMaxSummaryLength by property(50)
         var prTitleFormat by string("{ticketId}: {summary}")

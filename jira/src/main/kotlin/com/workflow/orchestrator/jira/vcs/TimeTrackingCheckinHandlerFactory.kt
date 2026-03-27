@@ -97,6 +97,8 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         if (minutes <= 0) return
 
         val settings = PluginSettings.getInstance(project)
+        if (!settings.state.autoLogTimeOnCommit) return
+
         val ticketId = settings.state.activeTicketId
         if (ticketId.isNullOrBlank()) return
 
@@ -106,8 +108,9 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)
 
         // Fire-and-forget: post-commit time logging must not block the commit flow.
-        // Use project.coroutineScope so the job is cancelled on project close (no leaked scope).
-        CoroutineScope(Dispatchers.IO).launch {
+        // Guard against project disposal to prevent accessing disposed services.
+        @Suppress("RAW_SCOPE")
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             if (project.isDisposed) return@launch
             try {
                 val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
