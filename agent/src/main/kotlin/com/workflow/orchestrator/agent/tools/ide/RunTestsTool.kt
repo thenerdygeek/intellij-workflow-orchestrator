@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.tools.ide
 
-import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
 import com.intellij.execution.configurations.ConfigurationType
@@ -9,10 +8,11 @@ import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
-import com.intellij.execution.testframework.AbstractTestProxy
+import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
+import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
-import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -22,7 +22,6 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -125,6 +124,11 @@ class RunTestsTool : AgentTool {
     /**
      * Execute tests via IntelliJ's native test runner.
      * Returns null if JUnit configuration cannot be created (e.g., JUnit plugin not available).
+     *
+     * Uses the official IntelliJ APIs:
+     * - ProgramRunner.Callback to get the exact RunContentDescriptor for this execution
+     * - TestResultsViewer.EventsListener.onTestingFinished() to know when test tree is fully populated
+     * - SMTRunnerConsoleView.getResultsViewer() (public method) to access test results
      */
     private suspend fun executeWithNativeRunner(
         project: Project,
@@ -138,88 +142,60 @@ class RunTestsTool : AgentTool {
             ?: return null // JUnit plugin not available, signal to fall back
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
-        val simpleClassName = className.substringAfterLast('.')
+        val descriptorRef = AtomicReference<RunContentDescriptor?>(null)
 
         // Launch the test run on EDT and wait for completion with timeout
         val result = withTimeoutOrNull(timeoutSeconds * 1000) {
-            withContext(Dispatchers.EDT) {
-                val executor = DefaultRunExecutor.getRunExecutorInstance()
-                val env = ExecutionEnvironmentBuilder
-                    .createOrNull(executor, settings)
-                    ?.build()
-                    ?: return@withContext null
-
-                ProgramRunnerUtil.executeConfiguration(env, false, true)
-            }
-
-            // Poll for the run descriptor to appear and attach a process listener.
-            // No internal poll limit — the outer withTimeoutOrNull handles the deadline.
-            // Build + compilation can take minutes for large Gradle/Maven projects.
+            // Use suspendCancellableCoroutine to bridge callback-based API to coroutine
             suspendCancellableCoroutine { continuation ->
-                val timer = java.util.Timer()
-                continuation.invokeOnCancellation {
-                    timer.cancel()
-                }
-                timer.schedule(object : java.util.TimerTask() {
-                    override fun run() {
-                        try {
-                            val contentManager = RunContentManager.getInstance(project)
-                            // Match by class name OR by any descriptor with a running/recently-started process
-                            val descriptor = contentManager.allDescriptors.firstOrNull { desc ->
-                                val name = desc.displayName ?: ""
-                                name.contains(simpleClassName, ignoreCase = true) ||
-                                    name.contains(className, ignoreCase = true)
-                            } ?: contentManager.allDescriptors.firstOrNull { desc ->
-                                // Fallback: find the most recent descriptor with an active process
-                                desc.processHandler?.let { !it.isProcessTerminated || it.isProcessTerminating } == true
-                            }
+                // Launch on EDT — ProgramRunnerUtil requires it
+                com.intellij.openapi.application.invokeLater {
+                    try {
+                        val executor = DefaultRunExecutor.getRunExecutorInstance()
+                        val env = ExecutionEnvironmentBuilder
+                            .createOrNull(executor, settings)
+                            ?.build()
 
-                            val handler = descriptor?.processHandler
-                            if (handler != null) {
-                                timer.cancel()
-                                processHandlerRef.set(handler)
+                        if (env == null) {
+                            if (continuation.isActive) continuation.resume(null)
+                            return@invokeLater
+                        }
 
-                                if (handler.isProcessTerminated) {
-                                    // Wait for test framework to populate SMTestProxy tree
-                                    waitForResultsThenResume(continuation, project, simpleClassName, testTarget)
-                                } else {
-                                    // Stream console output to chat UI in real-time
-                                    val toolCallId = RunCommandTool.currentToolCallId.get()
-                                    val activeStreamCallback = RunCommandTool.streamCallback
-
-                                    handler.addProcessListener(object : ProcessAdapter() {
-                                        override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
-                                            val text = event.text ?: return
-                                            if (toolCallId != null && text.isNotBlank()) {
-                                                activeStreamCallback?.invoke(toolCallId, text)
-                                            }
-                                        }
-
-                                        override fun processTerminated(event: ProcessEvent) {
-                                            waitForResultsThenResume(continuation, project, simpleClassName, testTarget)
-                                        }
-                                    })
+                        // Use ProgramRunner.Callback — the official way to get the descriptor
+                        val callback = object : ProgramRunner.Callback {
+                            override fun processStarted(descriptor: RunContentDescriptor?) {
+                                if (descriptor == null) {
+                                    if (continuation.isActive) continuation.resume(null)
+                                    return
                                 }
-                            }
-                            // else: keep polling — outer withTimeoutOrNull handles the deadline
-                        } catch (e: Exception) {
-                            timer.cancel()
-                            if (continuation.isActive) {
-                                continuation.resume(null)
+
+                                handleDescriptorReady(
+                                    descriptor, continuation, testTarget,
+                                    descriptorRef, processHandlerRef
+                                )
                             }
                         }
+
+                        try {
+                            ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+                        } catch (_: NoSuchMethodError) {
+                            // Fallback: set callback on env directly, then use sync call
+                            env.callback = callback
+                            ProgramRunnerUtil.executeConfiguration(env, false, true)
+                        }
+                    } catch (e: Exception) {
+                        if (continuation.isActive) continuation.resume(null)
                     }
-                }, 100, 500) // Initial 100ms delay, poll every 500ms
+                }
             }
         }
 
         if (result == null && processHandlerRef.get() != null) {
             // Timed out — kill process and collect partial results
             processHandlerRef.get()?.destroyProcess()
-            // Brief delay to let results populate
-            delay(300)
 
-            val partialResult = extractNativeResults(project, simpleClassName, testTarget)
+            val descriptor = descriptorRef.get()
+            val partialResult = descriptor?.let { extractNativeResults(it, testTarget) }
             return if (partialResult != null) {
                 partialResult.copy(
                     content = "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s. Partial results:\n\n${partialResult.content}",
@@ -239,36 +215,83 @@ class RunTestsTool : AgentTool {
     }
 
     /**
-     * Poll for SMTestProxy results to be populated after process termination.
-     * The test framework populates the tree asynchronously — a fixed delay is unreliable.
-     * Polls every 200ms for up to 5 seconds for leaf test results to appear.
+     * Handle a successfully started RunContentDescriptor from the test runner callback.
+     * Extracted from processStarted to reduce nesting depth.
      */
-    private fun waitForResultsThenResume(
-        continuation: kotlin.coroutines.Continuation<ToolResult?>,
-        project: Project,
-        simpleClassName: String,
-        testTarget: String
+    private fun handleDescriptorReady(
+        descriptor: RunContentDescriptor,
+        continuation: kotlinx.coroutines.CancellableContinuation<ToolResult?>,
+        testTarget: String,
+        descriptorRef: AtomicReference<RunContentDescriptor?>,
+        processHandlerRef: AtomicReference<ProcessHandler?>
     ) {
-        val cancellable = continuation as? kotlinx.coroutines.CancellableContinuation<ToolResult?> ?: return
-        val timer = java.util.Timer()
-        timer.schedule(object : java.util.TimerTask() {
-            private var polls = 0
-            override fun run() {
-                polls++
-                if (!cancellable.isActive) {
-                    timer.cancel()
-                    return
-                }
-                val result = extractNativeResults(project, simpleClassName, testTarget)
-                val hasLeafResults = result != null && !result.content.contains("no test methods found") && !result.content.contains("no structured results")
-                if (hasLeafResults || polls >= 25) {
-                    timer.cancel()
-                    if (cancellable.isActive) {
-                        cancellable.resume(result)
+        descriptorRef.set(descriptor)
+        val handler = descriptor.processHandler
+        processHandlerRef.set(handler)
+
+        // Stream console output to chat UI
+        val toolCallId = RunCommandTool.currentToolCallId.get()
+        val activeStreamCallback = RunCommandTool.streamCallback
+
+        if (handler != null && toolCallId != null) {
+            handler.addProcessListener(object : ProcessAdapter() {
+                override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
+                    val text = event.text ?: return
+                    if (text.isNotBlank()) {
+                        activeStreamCallback?.invoke(toolCallId, text)
                     }
                 }
+            })
+        }
+
+        // Check if the console is an SMTRunnerConsoleView (test console)
+        val console = descriptor.executionConsole
+        if (console is SMTRunnerConsoleView) {
+            // Use TestResultsViewer.EventsListener — the official callback for test completion.
+            // onTestingFinished fires AFTER the SMTestProxy tree is fully populated.
+            val resultsViewer = console.resultsViewer
+            resultsViewer.addEventsListener(object : TestResultsViewer.EventsListener {
+                override fun onTestingFinished(sender: TestResultsViewer) {
+                    val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
+                    if (root != null && continuation.isActive) {
+                        val allTests = collectTestResults(root)
+                        val result = if (allTests.isNotEmpty()) {
+                            formatStructuredResults(allTests, descriptor.displayName ?: testTarget)
+                        } else {
+                            ToolResult(
+                                "Test run completed for $testTarget but no test methods found in results.",
+                                "No tests found", 10
+                            )
+                        }
+                        continuation.resume(result)
+                    }
+                }
+            })
+        } else {
+            // Not a test console — fall back to waiting for process termination
+            if (handler != null) {
+                if (handler.isProcessTerminated) {
+                    if (continuation.isActive) {
+                        continuation.resume(extractNativeResults(descriptor, testTarget))
+                    }
+                } else {
+                    handler.addProcessListener(object : ProcessAdapter() {
+                        override fun processTerminated(event: ProcessEvent) {
+                            // Give framework a moment to populate results
+                            java.util.Timer().schedule(object : java.util.TimerTask() {
+                                override fun run() {
+                                    if (continuation.isActive) {
+                                        continuation.resume(extractNativeResults(descriptor, testTarget))
+                                    }
+                                }
+                            }, 2000)
+                        }
+                    })
+                }
+            } else {
+                if (continuation.isActive) continuation.resume(null)
             }
-        }, 500, 200) // Initial 500ms delay, then poll every 200ms
+        }
     }
 
     /**
@@ -429,15 +452,9 @@ class RunTestsTool : AgentTool {
     }
 
     /**
-     * Extract structured test results from the most recent RunContentDescriptor
-     * matching the given class name, using SMTestProxy tree.
+     * Extract structured test results from the given RunContentDescriptor using SMTestProxy tree.
      */
-    private fun extractNativeResults(project: Project, simpleClassName: String, testTarget: String): ToolResult? {
-        val contentManager = RunContentManager.getInstance(project)
-        val descriptor = contentManager.allDescriptors.firstOrNull { desc ->
-            desc.displayName?.contains(simpleClassName, ignoreCase = true) == true
-        } ?: return null
-
+    private fun extractNativeResults(descriptor: RunContentDescriptor, testTarget: String): ToolResult? {
         val testRoot = findTestRoot(descriptor)
         if (testRoot == null) {
             return ToolResult(
@@ -460,61 +477,61 @@ class RunTestsTool : AgentTool {
         return formatStructuredResults(allTests, descriptor.displayName ?: testTarget)
     }
 
+    /**
+     * Find the SMTestProxy root from a descriptor's execution console.
+     * Uses public API: SMTRunnerConsoleView.getResultsViewer().getTestsRootNode()
+     * Also handles wrapper consoles via BaseTestsOutputConsoleView.getConsole().
+     */
     private fun findTestRoot(descriptor: RunContentDescriptor): SMTestProxy.SMRootTestProxy? {
-        return try {
-            val console = descriptor.executionConsole ?: return null
-            val viewerMethod = console.javaClass.methods.find { it.name == "getResultsViewer" }
-            val viewer = viewerMethod?.invoke(console) ?: return null
-            val rootMethod = viewer.javaClass.methods.find { it.name == "getTestsRootNode" }
-            rootMethod?.invoke(viewer) as? SMTestProxy.SMRootTestProxy
-        } catch (_: Exception) {
-            null
+        val console = descriptor.executionConsole ?: return null
+
+        // Direct: console IS an SMTRunnerConsoleView (most common for JUnit/TestNG)
+        if (console is SMTRunnerConsoleView) {
+            return console.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
         }
+
+        // Wrapper: console wraps an inner console — try getConsole() (public on BaseTestsOutputConsoleView)
+        try {
+            val getConsole = console.javaClass.getMethod("getConsole")
+            val innerConsole = getConsole.invoke(console)
+            if (innerConsole is SMTRunnerConsoleView) {
+                return innerConsole.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
+            }
+        } catch (_: Exception) {}
+
+        return null
     }
 
     private fun collectTestResults(root: SMTestProxy): List<TestResultEntry> {
-        val results = mutableListOf<TestResultEntry>()
-        collectLeafTests(root, results)
-        return results
+        return root.allTests
+            .filterIsInstance<SMTestProxy>()
+            .filter { it.isLeaf }
+            .map { mapToTestResultEntry(it) }
     }
 
-    private fun collectLeafTests(proxy: AbstractTestProxy, results: MutableList<TestResultEntry>) {
-        if (proxy.isLeaf) {
-            val smProxy = proxy as? SMTestProxy
-            val status = when {
-                smProxy?.isDefect == true -> {
-                    if (smProxy.stacktrace?.contains("AssertionError") == true ||
-                        smProxy.stacktrace?.contains("AssertionFailedError") == true
-                    ) {
-                        TestStatus.FAILED
-                    } else {
-                        TestStatus.ERROR
-                    }
-                }
-                smProxy?.isIgnored == true -> TestStatus.SKIPPED
-                else -> TestStatus.PASSED
+    private fun mapToTestResultEntry(proxy: SMTestProxy): TestResultEntry {
+        val status = when {
+            proxy.isDefect -> {
+                if (proxy.stacktrace?.contains("AssertionError") == true ||
+                    proxy.stacktrace?.contains("AssertionFailedError") == true
+                ) TestStatus.FAILED else TestStatus.ERROR
             }
-
-            val stackTrace = smProxy?.stacktrace
-                ?.lines()
-                ?.filter { it.trimStart().startsWith("at ") || it.contains("Exception") || it.contains("Error") }
-                ?.take(MAX_STACK_FRAMES)
-                ?: emptyList()
-
-            results.add(
-                TestResultEntry(
-                    name = proxy.name,
-                    status = status,
-                    durationMs = smProxy?.duration?.toLong() ?: 0L,
-                    errorMessage = smProxy?.errorMessage,
-                    stackTrace = stackTrace
-                )
-            )
-        } else {
-            for (child in proxy.children) {
-                collectLeafTests(child, results)
-            }
+            proxy.isIgnored -> TestStatus.SKIPPED
+            else -> TestStatus.PASSED
         }
+        val stackTrace = proxy.stacktrace
+            ?.lines()
+            ?.filter { it.trimStart().startsWith("at ") || it.contains("Exception") || it.contains("Error") }
+            ?.take(MAX_STACK_FRAMES)
+            ?: emptyList()
+
+        return TestResultEntry(
+            name = proxy.name,
+            status = status,
+            durationMs = proxy.duration?.toLong() ?: 0L,
+            errorMessage = proxy.errorMessage,
+            stackTrace = stackTrace
+        )
     }
 
     // ──────────────────────────────────────────────────────────────────────
