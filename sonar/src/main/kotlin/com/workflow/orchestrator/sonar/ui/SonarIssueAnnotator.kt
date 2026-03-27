@@ -71,6 +71,8 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
      */
     override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): SonarAnnotationInput? {
         val project = file.project
+        if (com.intellij.openapi.project.DumbService.isDumb(project)) return null
+        if (!com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.sonarInlineAnnotationsEnabled) return null
         val virtualFile = file.virtualFile ?: return null
 
         val baseDir = project.basePath?.let {
@@ -175,13 +177,10 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
      */
     override fun apply(file: PsiFile, annotationResult: SonarAnnotationResult, holder: AnnotationHolder) {
         val doc = file.viewProvider.document ?: return
-        val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(file.project)
-            .selectedTextEditor
 
         for (annotation in annotationResult.annotations) {
             val issue = annotation.issue
 
-            // Compute the actual TextRange from the document (lightweight integer ops)
             val startLine = (issue.startLine - 1).coerceIn(0, doc.lineCount - 1)
             val endLine = (issue.endLine - 1).coerceIn(0, doc.lineCount - 1)
 
@@ -203,15 +202,6 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
                 .range(textRange)
                 .tooltip(annotation.tooltip)
                 .create()
-
-            // Store issue in highlighter for CodyIntentionAction to retrieve
-            if (editor != null) {
-                val highlighters = editor.markupModel.allHighlighters
-                    .filter { it.startOffset == textRange.startOffset && it.endOffset == textRange.endOffset }
-                for (hl in highlighters) {
-                    hl.putUserData(SONAR_ISSUE_KEY, issue)
-                }
-            }
         }
     }
 

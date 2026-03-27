@@ -132,6 +132,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var sonarMetricKeys by string("coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,new_coverage,new_branch_coverage")
         var coverageGutterMarkersEnabled by property(true)
         var sonarIntentionActionEnabled by property(false)
+        var sonarInlineAnnotationsEnabled by property(false)
 
         // Automation
         var tagHistoryMaxEntries by property(5)
