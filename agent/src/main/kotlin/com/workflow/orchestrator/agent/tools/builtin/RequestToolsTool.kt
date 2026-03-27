@@ -29,14 +29,14 @@ class RequestToolsTool : AgentTool {
     override val description: String
         get() {
             val cats = ToolCategoryRegistry.getActivatableCategories()
-            val catList = cats.joinToString("; ") { "'${it.id}': ${it.description}" }
-            return "Request additional tools. Available categories: $catList. Call when you need tools not currently available."
+            val catList = cats.joinToString("\n") { "- ${it.id}: ${it.description} (${it.tools.size} tools)" }
+            return "Request additional tool categories not currently available. Call this when you need capabilities beyond your active tools.\n\nAvailable categories:\n$catList"
         }
     override val parameters = FunctionParameters(
         properties = mapOf(
             "category" to ParameterProperty(
                 type = "string",
-                description = "Category to activate: ${ToolCategoryRegistry.getActivatableCategories().joinToString(", ") { it.id }}"
+                description = "Category ID to activate. One of: ${ToolCategoryRegistry.getActivatableCategories().joinToString(", ") { it.id }}"
             ),
             "reason" to ParameterProperty(
                 type = "string",
@@ -48,10 +48,12 @@ class RequestToolsTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        val categoryId = params["category"]?.jsonPrimitive?.content
+        val rawCategoryId = params["category"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'category' required", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val reason = params["reason"]?.jsonPrimitive?.content ?: ""
 
+        // Resolve aliases (e.g., "debug" → "runtime_debug", "git" → "vcs")
+        val categoryId = ToolCategoryRegistry.resolveCategory(rawCategoryId)
         val toolNames = ToolCategoryRegistry.getToolsInCategory(categoryId)
         if (toolNames.isEmpty()) {
             val available = ToolCategoryRegistry.getActivatableCategories().joinToString(", ") { it.id }

@@ -153,14 +153,68 @@ object ToolCategoryRegistry {
         )
     )
 
+    /**
+     * Aliases for category IDs — maps natural names an LLM might guess
+     * to the actual category ID. Prevents wasted iterations on "Unknown category".
+     */
+    private val CATEGORY_ALIASES = mapOf(
+        // runtime_debug aliases
+        "debug" to "runtime_debug",
+        "debugging" to "runtime_debug",
+        "runtime" to "runtime_debug",
+        "breakpoint" to "runtime_debug",
+        "breakpoints" to "runtime_debug",
+        // vcs aliases
+        "git" to "vcs",
+        "version_control" to "vcs",
+        // framework aliases
+        "spring" to "framework",
+        "maven" to "framework",
+        "gradle" to "framework",
+        "jpa" to "framework",
+        // bamboo aliases
+        "build" to "bamboo",
+        "ci" to "bamboo",
+        "cicd" to "bamboo",
+        "ci_cd" to "bamboo",
+        "pipeline" to "bamboo",
+        // bitbucket aliases
+        "pr" to "bitbucket",
+        "pull_request" to "bitbucket",
+        "pullrequest" to "bitbucket",
+        "code_review" to "bitbucket",
+        // sonar aliases
+        "quality" to "sonar",
+        "coverage" to "sonar",
+        "sonarqube" to "sonar",
+        // ide aliases
+        "test" to "ide",
+        "testing" to "ide",
+        "refactor" to "ide",
+        "inspect" to "ide",
+        "inspection" to "ide",
+        // planning aliases
+        "plan" to "planning",
+        "memory" to "planning",
+    )
+
+    /** Resolve a category ID, trying aliases if the exact ID doesn't match. */
+    fun resolveCategory(id: String): String {
+        val lowered = id.lowercase().trim()
+        if (CATEGORIES.any { it.id == lowered }) return lowered
+        return CATEGORY_ALIASES[lowered] ?: lowered
+    }
+
     fun getCategoryForTool(toolName: String): ToolCategory? =
         CATEGORIES.find { toolName in it.tools }
 
     fun getActivatableCategories(): List<ToolCategory> =
         CATEGORIES.filter { !it.alwaysActive }
 
-    fun getToolsInCategory(categoryId: String): List<String> =
-        CATEGORIES.find { it.id == categoryId }?.tools ?: emptyList()
+    fun getToolsInCategory(categoryId: String): List<String> {
+        val resolved = resolveCategory(categoryId)
+        return CATEGORIES.find { it.id == resolved }?.tools ?: emptyList()
+    }
 
     fun getAllToolNames(): Set<String> =
         CATEGORIES.flatMap { it.tools }.toSet()
