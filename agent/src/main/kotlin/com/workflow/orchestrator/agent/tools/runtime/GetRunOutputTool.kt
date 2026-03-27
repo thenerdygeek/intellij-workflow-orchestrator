@@ -8,6 +8,9 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.intellij.openapi.application.EDT
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -132,23 +135,66 @@ class GetRunOutputTool : AgentTool {
         }
     }
 
-    private fun extractConsoleText(descriptor: RunContentDescriptor): String? {
+    /**
+     * Extract console text from a RunContentDescriptor.
+     *
+     * For test consoles: executionConsole is SMTRunnerConsoleView (extends BaseTestsOutputConsoleView).
+     * The actual console output is in the INNER console: BaseTestsOutputConsoleView.getConsole() → ConsoleViewImpl.
+     *
+     * For regular consoles: executionConsole is directly a ConsoleViewImpl.
+     *
+     * Uses performWhenNoDeferredOutput to ensure all buffered text is flushed before reading.
+     */
+    private suspend fun extractConsoleText(descriptor: RunContentDescriptor): String? {
         val console = descriptor.executionConsole ?: return null
 
-        // Direct approach: ConsoleViewImpl has getText()
+        // Case 1: Direct ConsoleViewImpl (regular run configurations)
         if (console is com.intellij.execution.impl.ConsoleViewImpl) {
-            return try {
-                com.intellij.openapi.application.invokeAndWaitIfNeeded {
-                    console.flushDeferredText()
-                    console.text
-                }
-            } catch (_: Exception) { null }
+            return readConsoleViewText(console)
         }
 
-        // Fallback: try via Editor document
+        // Case 2: BaseTestsOutputConsoleView (test runs) — use public getConsole()
+        // SMTRunnerConsoleView extends BaseTestsOutputConsoleView which has public getConsole()
+        if (console is com.intellij.execution.testframework.ui.BaseTestsOutputConsoleView) {
+            val innerConsole = console.console
+            if (innerConsole is com.intellij.execution.impl.ConsoleViewImpl) {
+                return readConsoleViewText(innerConsole)
+            }
+            // Inner console might be another ConsoleView type — try editor fallback
+            return readViaEditor(innerConsole)
+        }
+
+        // Case 3: Other wrapper consoles — try getConsole() via reflection
+        try {
+            val getConsole = console.javaClass.getMethod("getConsole")
+            val innerConsole = getConsole.invoke(console)
+            if (innerConsole is com.intellij.execution.impl.ConsoleViewImpl) {
+                return readConsoleViewText(innerConsole)
+            }
+            if (innerConsole != null) {
+                return readViaEditor(innerConsole)
+            }
+        } catch (_: Exception) {}
+
+        // Case 4: Try editor directly on the console itself
+        return readViaEditor(console)
+    }
+
+    /** Read text from a ConsoleViewImpl, ensuring deferred text is flushed first. */
+    private suspend fun readConsoleViewText(console: com.intellij.execution.impl.ConsoleViewImpl): String? {
         return try {
-            val editorMethod = console.javaClass.methods.find { it.name == "getEditor" && it.parameterCount == 0 }
-            val editor = editorMethod?.invoke(console) as? com.intellij.openapi.editor.Editor
+            withContext(Dispatchers.EDT) {
+                console.flushDeferredText()
+                console.editor?.document?.text
+            }
+        } catch (_: Exception) { null }
+    }
+
+    /** Fallback: try to get text via getEditor().document.text */
+    private fun readViaEditor(console: Any): String? {
+        return try {
+            val editorMethod = console.javaClass.getMethod("getEditor")
+            val editor = editorMethod.invoke(console) as? com.intellij.openapi.editor.Editor
             editor?.document?.text
         } catch (_: Exception) { null }
     }
