@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
-import com.intellij.execution.testframework.AbstractTestProxy
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.project.Project
@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -41,15 +42,16 @@ class GetTestResultsTool : AgentTool {
             val allDescriptors = contentManager.allDescriptors
 
             // Find matching descriptor
-            val descriptor = if (configName != null) {
+            var descriptor = if (configName != null) {
                 allDescriptors.find { desc ->
                     desc.displayName?.contains(configName, ignoreCase = true) == true
                 }
             } else {
-                // Find the most recent test run descriptor
-                allDescriptors.firstOrNull { desc ->
-                    hasTestResults(desc)
-                }
+                // Find the most recent test run descriptor (prefer one with results, fall back to running)
+                allDescriptors.firstOrNull { desc -> hasTestResults(desc) }
+                    ?: allDescriptors.firstOrNull { desc ->
+                        desc.processHandler?.let { !it.isProcessTerminated } == true
+                    }
             }
 
             if (descriptor == null) {
@@ -59,6 +61,46 @@ class GetTestResultsTool : AgentTool {
                     "No test run results available."
                 }
                 return ToolResult(msg, "No test results", 10, isError = true)
+            }
+
+            // Wait for process to terminate first (covers build + compilation + test execution).
+            // Build/compilation can take minutes for large projects, so we use a generous limit.
+            val handler = descriptor.processHandler
+            if (handler != null && !handler.isProcessTerminated) {
+                val toolCallId = com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.currentToolCallId.get()
+                val streamCallback = com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback
+                var waited = 0
+                val maxWaitMs = MAX_PROCESS_WAIT_SECONDS * 1000
+                while (!handler.isProcessTerminated && waited < maxWaitMs) {
+                    delay(2000)
+                    waited += 2000
+                    if (waited % 10_000 == 0 && toolCallId != null) {
+                        streamCallback?.invoke(toolCallId, "[waiting for process... ${waited / 1000}s elapsed]\n")
+                    }
+                }
+                if (!handler.isProcessTerminated) {
+                    return ToolResult(
+                        "Process for '${descriptor.displayName}' is still running after ${MAX_PROCESS_WAIT_SECONDS}s " +
+                            "(may still be building/compiling). Try again later.",
+                        "Process still running",
+                        20,
+                        isError = true
+                    )
+                }
+            }
+
+            // Process terminated — now wait for the test framework to finalize the SMTestProxy tree.
+            // resultsViewer.isRunning goes false when onTestingFinished fires (tree fully populated).
+            val console = descriptor.executionConsole
+            if (console is SMTRunnerConsoleView) {
+                var waited = 0
+                while (console.resultsViewer.isRunning && waited < 10_000) {
+                    delay(200)
+                    waited += 200
+                }
+            } else {
+                // Non-SMTRunner console — brief delay for any async result population
+                delay(1000)
             }
 
             // Extract test proxy tree from the descriptor
@@ -161,65 +203,64 @@ class GetTestResultsTool : AgentTool {
     }
 
     private fun hasTestResults(descriptor: RunContentDescriptor): Boolean {
-        return findTestRoot(descriptor) != null
+        val root = findTestRoot(descriptor) ?: return false
+        return root.children.isNotEmpty()
     }
 
+    /**
+     * Find the SMTestProxy root from a descriptor's execution console.
+     * Uses public API: SMTRunnerConsoleView.getResultsViewer().getTestsRootNode()
+     */
     private fun findTestRoot(descriptor: RunContentDescriptor): SMTestProxy.SMRootTestProxy? {
-        return try {
-            // The test framework stores the root proxy on the execution console
-            val console = descriptor.executionConsole ?: return null
-            // Try to access the test results via the console's properties
-            val method = console.javaClass.methods.find { it.name == "getResultsViewer" }
-            val viewer = method?.invoke(console) ?: return null
-            val rootMethod = viewer.javaClass.methods.find { it.name == "getTestsRootNode" }
-            rootMethod?.invoke(viewer) as? SMTestProxy.SMRootTestProxy
-        } catch (_: Exception) {
-            null
+        val console = descriptor.executionConsole ?: return null
+
+        // Direct: console IS an SMTRunnerConsoleView
+        if (console is SMTRunnerConsoleView) {
+            return console.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
         }
+
+        // Wrapper: try getConsole() for inner view
+        try {
+            val getConsole = console.javaClass.getMethod("getConsole")
+            val innerConsole = getConsole.invoke(console)
+            if (innerConsole is SMTRunnerConsoleView) {
+                return innerConsole.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
+            }
+        } catch (_: Exception) {}
+
+        return null
     }
 
     private fun collectTestResults(root: SMTestProxy): List<TestResultEntry> {
-        val results = mutableListOf<TestResultEntry>()
-        collectLeafTests(root, results)
-        return results
+        return root.allTests
+            .filterIsInstance<SMTestProxy>()
+            .filter { it.isLeaf }
+            .map { mapToTestResultEntry(it) }
     }
 
-    private fun collectLeafTests(proxy: AbstractTestProxy, results: MutableList<TestResultEntry>) {
-        if (proxy.isLeaf) {
-            val smProxy = proxy as? SMTestProxy
-            val status = when {
-                smProxy?.isDefect == true -> {
-                    if (smProxy.stacktrace?.contains("AssertionError") == true ||
-                        smProxy.stacktrace?.contains("AssertionFailedError") == true
-                    ) {
-                        TestStatus.FAILED
-                    } else {
-                        TestStatus.ERROR
-                    }
-                }
-                smProxy?.isIgnored == true -> TestStatus.SKIPPED
-                else -> TestStatus.PASSED
+    private fun mapToTestResultEntry(proxy: SMTestProxy): TestResultEntry {
+        val status = when {
+            proxy.isDefect -> {
+                if (proxy.stacktrace?.contains("AssertionError") == true ||
+                    proxy.stacktrace?.contains("AssertionFailedError") == true
+                ) TestStatus.FAILED else TestStatus.ERROR
             }
-
-            val errorMessage = smProxy?.errorMessage
-            val stackTrace = smProxy?.stacktrace
-                ?.lines()
-                ?.filter { it.trimStart().startsWith("at ") || it.contains("Exception") || it.contains("Error") }
-                ?.take(MAX_STACK_FRAMES)
-                ?: emptyList()
-
-            results.add(TestResultEntry(
-                name = proxy.name,
-                status = status,
-                durationMs = smProxy?.duration?.toLong() ?: 0L,
-                errorMessage = errorMessage,
-                stackTrace = stackTrace
-            ))
-        } else {
-            for (child in proxy.children) {
-                collectLeafTests(child, results)
-            }
+            proxy.isIgnored -> TestStatus.SKIPPED
+            else -> TestStatus.PASSED
         }
+        val stackTrace = proxy.stacktrace
+            ?.lines()
+            ?.filter { it.trimStart().startsWith("at ") || it.contains("Exception") || it.contains("Error") }
+            ?.take(MAX_STACK_FRAMES)
+            ?: emptyList()
+
+        return TestResultEntry(
+            name = proxy.name,
+            status = status,
+            durationMs = proxy.duration?.toLong() ?: 0L,
+            errorMessage = proxy.errorMessage,
+            stackTrace = stackTrace
+        )
     }
 
     private fun formatDuration(ms: Long): String {
@@ -243,5 +284,6 @@ class GetTestResultsTool : AgentTool {
         private const val MAX_STACK_FRAMES = 5
         private const val MAX_PASSED_SHOWN = 20
         private const val TOKEN_CAP_CHARS = 12000 // ~3000 tokens
+        private const val MAX_PROCESS_WAIT_SECONDS = 600 // 10 min — builds can be slow
     }
 }
