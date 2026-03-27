@@ -1,11 +1,13 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.workflow.orchestrator.core.services.JiraService
 import java.io.File
 
 /**
@@ -37,7 +39,7 @@ class MentionContextBuilder(private val project: Project) {
      * Build a context string from a list of mentions.
      * Returns XML-tagged context suitable for injection as a system message.
      */
-    fun buildContext(mentions: List<Mention>): String? {
+    suspend fun buildContext(mentions: List<Mention>): String? {
         if (mentions.isEmpty()) return null
         val basePath = project.basePath ?: return null
 
@@ -56,6 +58,7 @@ class MentionContextBuilder(private val project: Project) {
                 "symbol" -> buildSymbolContext(mention)
                 "tool" -> buildToolContext(mention)
                 "skill" -> buildSkillContext(mention)
+                "ticket" -> buildTicketContext(mention)
                 else -> null
             } ?: continue
 
@@ -153,5 +156,96 @@ class MentionContextBuilder(private val project: Project) {
 
     private fun buildSkillContext(mention: Mention): String {
         return "<mentioned_skill name=\"${mention.value}\">\nThe user wants you to activate the /${mention.value} skill.\n</mentioned_skill>\n\n"
+    }
+
+    private suspend fun buildTicketContext(mention: Mention): String? {
+        val ticketKey = mention.value.uppercase()
+        val jiraService = try {
+            project.service<JiraService>()
+        } catch (_: Exception) {
+            LOG.warn("JiraService not available for ticket mention: $ticketKey")
+            return "<mentioned_ticket key=\"$ticketKey\">\nJira service not available. Cannot fetch ticket details.\n</mentioned_ticket>\n\n"
+        }
+
+        val ticketResult = jiraService.getTicket(ticketKey)
+        if (ticketResult.isError) {
+            return "<mentioned_ticket key=\"$ticketKey\">\nError fetching ticket: ${ticketResult.summary}\n</mentioned_ticket>\n\n"
+        }
+
+        val ticket = ticketResult.data
+        val sb = StringBuilder()
+        sb.appendLine("<mentioned_ticket key=\"$ticketKey\">")
+        sb.appendLine("Title: ${ticket.summary}")
+        sb.append("Status: ${ticket.status}")
+        if (ticket.priority != null) sb.append(" | Priority: ${ticket.priority}")
+        sb.append(" | Assignee: ${ticket.assignee ?: "Unassigned"}")
+        sb.append(" | Type: ${ticket.type}")
+        sb.appendLine()
+        if (ticket.labels.isNotEmpty()) {
+            sb.appendLine("Labels: ${ticket.labels.joinToString(", ")}")
+        }
+
+        // Description (capped at 2000 chars)
+        val desc = ticket.description
+        if (!desc.isNullOrBlank()) {
+            sb.appendLine()
+            sb.appendLine("Description:")
+            if (desc.length > 2000) {
+                sb.appendLine(desc.take(2000))
+                sb.appendLine("[truncated at 2000 chars]")
+            } else {
+                sb.appendLine(desc)
+            }
+        }
+
+        // Subtasks
+        if (ticket.subtasks.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Subtasks (${ticket.subtasks.size}):")
+            for (st in ticket.subtasks) {
+                sb.appendLine("- ${st.key}: ${st.summary} [${st.status}]")
+            }
+        }
+
+        // Linked issues
+        if (ticket.linkedIssues.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Related Issues (${ticket.linkedIssues.size}):")
+            for (li in ticket.linkedIssues) {
+                sb.appendLine("- ${li.key}: ${li.summary} (${li.relationship}) [${li.status}]")
+            }
+        }
+
+        // Attachments count
+        if (ticket.attachments.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Attachments: ${ticket.attachments.size} file(s)")
+        }
+
+        // Comments (last 5, each capped at 500 chars)
+        val commentsResult = jiraService.getComments(ticketKey)
+        val comments = if (!commentsResult.isError) commentsResult.data else emptyList()
+        if (comments.isNotEmpty()) {
+            sb.appendLine()
+            val lastComments = comments.takeLast(5)
+            sb.appendLine("Comments (last ${lastComments.size}):")
+            for (c in lastComments) {
+                sb.appendLine("[${c.created} by ${c.author}]:")
+                val body = c.body
+                if (body.length > 500) {
+                    sb.appendLine(body.take(500))
+                    sb.appendLine("[truncated at 500 chars]")
+                } else {
+                    sb.appendLine(body)
+                }
+            }
+        }
+
+        sb.appendLine()
+        sb.appendLine("For more details on related tickets, use jira_get_ticket tool.")
+        sb.appendLine("</mentioned_ticket>")
+        sb.appendLine()
+
+        return sb.toString()
     }
 }

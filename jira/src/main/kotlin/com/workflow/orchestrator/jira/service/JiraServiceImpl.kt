@@ -12,6 +12,8 @@ import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
+import com.workflow.orchestrator.core.model.jira.JiraLinkedIssueRef
+import com.workflow.orchestrator.core.model.jira.JiraSubtaskRef
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.JiraTransitionData
 import com.workflow.orchestrator.core.model.jira.SprintData
@@ -76,6 +78,23 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                         sizeBytes = att.size
                     )
                 }
+                val subtasks = fields.subtasks.map { st ->
+                    JiraSubtaskRef(
+                        key = st.key,
+                        summary = st.fields.summary,
+                        status = st.fields.status.name
+                    )
+                }
+                val linkedIssues = fields.issuelinks.mapNotNull { link ->
+                    val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null
+                    val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward
+                    JiraLinkedIssueRef(
+                        key = linked.key,
+                        summary = linked.fields.summary,
+                        status = linked.fields.status.name,
+                        relationship = relationship
+                    )
+                }
                 val data = JiraTicketData(
                     key = issue.key,
                     summary = fields.summary,
@@ -85,7 +104,9 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     priority = fields.priority?.name,
                     description = fields.description?.take(500),
                     labels = fields.labels,
-                    attachments = attachments
+                    attachments = attachments,
+                    subtasks = subtasks,
+                    linkedIssues = linkedIssues
                 )
                 ToolResult.success(
                     data = data,
@@ -719,6 +740,23 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             labels = fields.labels,
             attachments = fields.attachment.map { att ->
                 JiraAttachmentData(id = att.id, filename = att.filename, mimeType = att.mimeType, sizeBytes = att.size)
+            },
+            subtasks = fields.subtasks.map { st ->
+                JiraSubtaskRef(
+                    key = st.key,
+                    summary = st.fields.summary,
+                    status = st.fields.status.name
+                )
+            },
+            linkedIssues = fields.issuelinks.mapNotNull { link ->
+                val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null
+                val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward
+                JiraLinkedIssueRef(
+                    key = linked.key,
+                    summary = linked.fields.summary,
+                    status = linked.fields.status.name,
+                    relationship = relationship
+                )
             }
         )
     }

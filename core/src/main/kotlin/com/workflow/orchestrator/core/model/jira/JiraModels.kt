@@ -17,7 +17,9 @@ data class JiraTicketData(
     val description: String?,
     val labels: List<String> = emptyList(),
     val transitions: List<JiraTransitionData> = emptyList(),
-    val attachments: List<JiraAttachmentData> = emptyList()
+    val attachments: List<JiraAttachmentData> = emptyList(),
+    val subtasks: List<JiraSubtaskRef> = emptyList(),
+    val linkedIssues: List<JiraLinkedIssueRef> = emptyList()
 )
 
 /**
@@ -115,6 +117,27 @@ data class StartWorkResultData(
     val branchName: String,
     val ticketKey: String,
     val transitioned: Boolean
+)
+
+/**
+ * Lightweight subtask reference — key, summary, and current status.
+ */
+@Serializable
+data class JiraSubtaskRef(
+    val key: String,
+    val summary: String,
+    val status: String
+)
+
+/**
+ * Lightweight linked issue reference — key, summary, status, and relationship type.
+ */
+@Serializable
+data class JiraLinkedIssueRef(
+    val key: String,
+    val summary: String,
+    val status: String,
+    val relationship: String  // e.g., "blocks", "is blocked by", "relates to"
 )
 
 /**
