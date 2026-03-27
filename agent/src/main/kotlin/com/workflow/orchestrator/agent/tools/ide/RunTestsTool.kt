@@ -246,6 +246,8 @@ class RunTestsTool : AgentTool {
 
         // Check if the console is an SMTRunnerConsoleView (test console)
         val console = descriptor.executionConsole
+        val logger = com.intellij.openapi.diagnostic.Logger.getInstance(RunTestsTool::class.java)
+        logger.info("[RunTestsTool] processStarted: console type = ${console?.javaClass?.name}, superclass = ${console?.javaClass?.superclass?.name}")
         if (console is SMTRunnerConsoleView) {
             // Use TestResultsViewer.EventsListener — the official callback for test completion.
             // onTestingFinished fires AFTER the SMTestProxy tree is fully populated.
@@ -457,9 +459,25 @@ class RunTestsTool : AgentTool {
     private fun extractNativeResults(descriptor: RunContentDescriptor, testTarget: String): ToolResult? {
         val testRoot = findTestRoot(descriptor)
         if (testRoot == null) {
+            val console = descriptor.executionConsole
+            val consoleType = console?.javaClass?.name ?: "null"
+            val consoleInterfaces = console?.javaClass?.interfaces?.joinToString { it.simpleName } ?: "none"
+            val consoleSuperclass = console?.javaClass?.superclass?.name ?: "none"
+            val hasGetConsole = try {
+                console?.javaClass?.getMethod("getConsole") != null
+            } catch (_: Exception) { false }
+            val innerConsoleType = try {
+                val m = console?.javaClass?.getMethod("getConsole")
+                m?.invoke(console)?.javaClass?.name ?: "null"
+            } catch (_: Exception) { "N/A" }
             return ToolResult(
                 "Test run completed for $testTarget but no structured results available.\n" +
-                    "Run session: ${descriptor.displayName}",
+                    "Run session: ${descriptor.displayName}\n" +
+                    "[DEBUG] console type: $consoleType\n" +
+                    "[DEBUG] superclass: $consoleSuperclass\n" +
+                    "[DEBUG] interfaces: $consoleInterfaces\n" +
+                    "[DEBUG] has getConsole(): $hasGetConsole\n" +
+                    "[DEBUG] inner console type: $innerConsoleType",
                 "Tests completed, no structured data",
                 20
             )

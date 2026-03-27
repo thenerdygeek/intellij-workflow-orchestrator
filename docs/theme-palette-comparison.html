@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Tab — Theme Palette Comparison</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #111; color: #eee; padding: 32px; }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 24px; font-weight: 600; }
+  .subtitle { text-align: center; color: #888; margin-bottom: 32px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 32px; max-width: 1200px; margin: 0 auto; }
+  .panel-wrapper { display: flex; flex-direction: column; align-items: center; }
+  .panel-label { font-size: 16px; font-weight: 600; margin-bottom: 12px; letter-spacing: 0.02em; }
+  .panel-label span { font-weight: 400; font-size: 12px; color: #888; margin-left: 8px; }
+
+  .chat-panel {
+    width: 100%; max-width: 420px; height: 580px;
+    border-radius: 8px; overflow: hidden;
+    display: flex; flex-direction: column;
+    font-size: 13px; line-height: 1.5;
+  }
+
+  /* Top bar */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; font-size: 12px; font-weight: 500;
+    border-bottom-width: 1px; border-bottom-style: solid;
+    flex-shrink: 0;
+  }
+  .topbar .model { display: flex; align-items: center; gap: 6px; }
+  .topbar .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .topbar .gear { opacity: 0.5; font-size: 14px; }
+
+  /* Chat area */
+  .chat { flex: 1; overflow-y: auto; padding: 16px 14px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* User message */
+  .user-msg { padding: 10px 14px; border-radius: 8px; font-size: 13px; max-width: 90%; align-self: flex-end; }
+
+  /* Assistant message */
+  .assistant-msg { font-size: 13px; }
+  .assistant-msg p { margin-bottom: 10px; }
+
+  /* Code block */
+  .code-block {
+    border-radius: 6px; padding: 12px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 11.5px; line-height: 1.6; overflow-x: auto; margin-top: 8px;
+  }
+  .code-block .kw { font-weight: 500; }
+
+  /* Tool call */
+  .tool-call {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-radius: 6px; font-size: 12px;
+    border-width: 1px; border-style: solid;
+  }
+  .tool-call .check { font-size: 14px; }
+  .tool-call .name { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; }
+  .tool-call .file { opacity: 0.6; font-size: 11px; }
+
+  /* Input bar */
+  .inputbar {
+    padding: 12px 14px; border-top-width: 1px; border-top-style: solid; flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .inputbar input {
+    flex: 1; border: none; outline: none; font-size: 13px;
+    padding: 8px 12px; border-radius: 6px;
+    border-width: 1px; border-style: solid;
+  }
+  .inputbar .send {
+    width: 32px; height: 32px; border-radius: 6px; border: none;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 16px; color: #fff;
+  }
+
+  /* ========== PALETTE A: GitHub Primer Dark ========== */
+  .github-dark .chat-panel { background: #0d1117; }
+  .github-dark .topbar { background: #161b22; border-color: #30363d; color: #e6edf3; }
+  .github-dark .topbar .dot { background: #3fb950; }
+  .github-dark .chat { background: #0d1117; }
+  .github-dark .user-msg { background: #1c2128; color: #e6edf3; }
+  .github-dark .assistant-msg { color: #e6edf3; }
+  .github-dark .assistant-msg .secondary { color: #8b949e; }
+  .github-dark .code-block { background: #161b22; color: #e6edf3; border: 1px solid #30363d; }
+  .github-dark .code-block .kw { color: #ff7b72; }
+  .github-dark .code-block .type { color: #79c0ff; }
+  .github-dark .code-block .str { color: #a5d6ff; }
+  .github-dark .code-block .comment { color: #8b949e; }
+  .github-dark .code-block .fn { color: #d2a8ff; }
+  .github-dark .tool-call { background: #161b22; border-color: #30363d; color: #e6edf3; }
+  .github-dark .tool-call .check { color: #3fb950; }
+  .github-dark .inputbar { background: #0d1117; border-color: #30363d; }
+  .github-dark .inputbar input { background: #161b22; color: #e6edf3; border-color: #30363d; }
+  .github-dark .inputbar input::placeholder { color: #484f58; }
+  .github-dark .send { background: #58a6ff; }
+
+  /* ========== PALETTE B: VS Code Dark+ ========== */
+  .vscode-dark .chat-panel { background: #1e1e1e; }
+  .vscode-dark .topbar { background: #252526; border-color: #3c3c3c; color: #d4d4d4; }
+  .vscode-dark .topbar .dot { background: #6a9955; }
+  .vscode-dark .chat { background: #1e1e1e; }
+  .vscode-dark .user-msg { background: #2d2d30; color: #d4d4d4; }
+  .vscode-dark .assistant-msg { color: #d4d4d4; }
+  .vscode-dark .assistant-msg .secondary { color: #808080; }
+  .vscode-dark .code-block { background: #1e1e1e; color: #d4d4d4; border-left: 3px solid #569cd6; }
+  .vscode-dark .code-block .kw { color: #c586c0; }
+  .vscode-dark .code-block .type { color: #4ec9b0; }
+  .vscode-dark .code-block .str { color: #ce9178; }
+  .vscode-dark .code-block .comment { color: #6a9955; }
+  .vscode-dark .code-block .fn { color: #dcdcaa; }
+  .vscode-dark .tool-call { background: #252526; border-color: #3c3c3c; color: #d4d4d4; }
+  .vscode-dark .tool-call .check { color: #6a9955; }
+  .vscode-dark .inputbar { background: #1e1e1e; border-color: #3c3c3c; }
+  .vscode-dark .inputbar input { background: #3c3c3c; color: #d4d4d4; border-color: #3c3c3c; }
+  .vscode-dark .inputbar input::placeholder { color: #5a5a5a; }
+  .vscode-dark .send { background: #569cd6; }
+
+  /* ========== PALETTE C: Claude / Anthropic ========== */
+  .claude-dark .chat-panel { background: #131315; }
+  .claude-dark .topbar { background: #1c1c20; border-color: #2a2b2f; color: #e2e4e9; }
+  .claude-dark .topbar .dot { background: #a78bfa; }
+  .claude-dark .chat { background: #131315; }
+  .claude-dark .user-msg { background: #23232a; color: #e2e4e9; }
+  .claude-dark .assistant-msg { color: #e2e4e9; }
+  .claude-dark .assistant-msg .secondary { color: #8e8f96; }
+  .claude-dark .code-block { background: #1c1c20; color: #e2e4e9; border: 1px solid #2a2b2f; }
+  .claude-dark .code-block .kw { color: #f472b6; }
+  .claude-dark .code-block .type { color: #818cf8; }
+  .claude-dark .code-block .str { color: #a78bfa; }
+  .claude-dark .code-block .comment { color: #8e8f96; }
+  .claude-dark .code-block .fn { color: #c4b5fd; }
+  .claude-dark .tool-call { background: #1c1c20; border-color: #2a2b2f; color: #e2e4e9; }
+  .claude-dark .tool-call .check { color: #22c55e; }
+  .claude-dark .inputbar { background: #131315; border-color: #2a2b2f; }
+  .claude-dark .inputbar input { background: #1c1c20; color: #e2e4e9; border-color: #2a2b2f; }
+  .claude-dark .inputbar input::placeholder { color: #4a4b52; }
+  .claude-dark .send { background: #a78bfa; }
+
+  /* ========== PALETTE D: GitHub Primer Light ========== */
+  .github-light .chat-panel { background: #ffffff; }
+  .github-light .topbar { background: #f6f8fa; border-color: #d0d7de; color: #1f2328; }
+  .github-light .topbar .dot { background: #1a7f37; }
+  .github-light .chat { background: #ffffff; }
+  .github-light .user-msg { background: #eef1f5; color: #1f2328; }
+  .github-light .assistant-msg { color: #1f2328; }
+  .github-light .assistant-msg .secondary { color: #656d76; }
+  .github-light .code-block { background: #f6f8fa; color: #1f2328; border: 1px solid #d0d7de; }
+  .github-light .code-block .kw { color: #cf222e; }
+  .github-light .code-block .type { color: #0550ae; }
+  .github-light .code-block .str { color: #0a3069; }
+  .github-light .code-block .comment { color: #6e7781; }
+  .github-light .code-block .fn { color: #8250df; }
+  .github-light .tool-call { background: #f6f8fa; border-color: #d0d7de; color: #1f2328; }
+  .github-light .tool-call .check { color: #1a7f37; }
+  .github-light .inputbar { background: #ffffff; border-color: #d0d7de; }
+  .github-light .inputbar input { background: #f6f8fa; color: #1f2328; border-color: #d0d7de; }
+  .github-light .inputbar input::placeholder { color: #8c959f; }
+  .github-light .send { background: #0969da; }
+
+  /* Swatch row */
+  .swatches { display: flex; gap: 4px; margin-top: 10px; }
+  .swatch { width: 24px; height: 24px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); }
+  .github-light .swatch { border-color: rgba(0,0,0,0.1); }
+</style>
+</head>
+<body>
+
+<h1>Agent Tab — Theme Palette Comparison</h1>
+<p class="subtitle">Same chat UI layout rendered with 4 different color palettes. Pick the tone you like.</p>
+
+<div class="grid">
+
+  <!-- A: GitHub Primer Dark -->
+  <div class="panel-wrapper github-dark">
+    <div class="panel-label">A) GitHub Primer Dark <span>Blue accent, cool grays</span></div>
+    <div class="chat-panel">
+      <div class="topbar">
+        <div class="model"><div class="dot"></div> Claude Sonnet 4</div>
+        <div class="gear">⚙</div>
+      </div>
+      <div class="chat">
+        <div class="user-msg">Fix the null pointer exception in UserService.java</div>
+        <div class="assistant-msg">
+          <p>I found the issue. The <code>getUser()</code> method doesn't handle the case when the user ID doesn't exist in the database.</p>
+          <div class="code-block"><span class="kw">if</span> (user == <span class="kw">null</span>) {<br>&nbsp;&nbsp;<span class="kw">throw new</span> <span class="type">UserNotFoundException</span>(<br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"User not found: "</span> + userId);<br>}</div>
+          <p class="secondary" style="font-size:12px; margin-top:10px;">I've added a null check before accessing user properties.</p>
+        </div>
+        <div class="tool-call">
+          <span class="check">✓</span>
+          <span class="name">edit_file</span>
+          <span class="file">UserService.java</span>
+        </div>
+      </div>
+      <div class="inputbar">
+        <input type="text" placeholder="Ask anything..." />
+        <button class="send">↑</button>
+      </div>
+    </div>
+    <div class="swatches">
+      <div class="swatch" style="background:#0d1117" title="#0d1117 bg"></div>
+      <div class="swatch" style="background:#161b22" title="#161b22 surface"></div>
+      <div class="swatch" style="background:#30363d" title="#30363d border"></div>
+      <div class="swatch" style="background:#8b949e" title="#8b949e secondary"></div>
+      <div class="swatch" style="background:#e6edf3" title="#e6edf3 text"></div>
+      <div class="swatch" style="background:#58a6ff" title="#58a6ff accent"></div>
+      <div class="swatch" style="background:#3fb950" title="#3fb950 success"></div>
+      <div class="swatch" style="background:#f85149" title="#f85149 error"></div>
+    </div>
+  </div>
+
+  <!-- B: VS Code Dark+ -->
+  <div class="panel-wrapper vscode-dark">
+    <div class="panel-label">B) VS Code Dark+ <span>Blue accent, warm neutrals</span></div>
+    <div class="chat-panel">
+      <div class="topbar">
+        <div class="model"><div class="dot"></div> Claude Sonnet 4</div>
+        <div class="gear">⚙</div>
+      </div>
+      <div class="chat">
+        <div class="user-msg">Fix the null pointer exception in UserService.java</div>
+        <div class="assistant-msg">
+          <p>I found the issue. The <code>getUser()</code> method doesn't handle the case when the user ID doesn't exist in the database.</p>
+          <div class="code-block"><span class="kw">if</span> (user == <span class="kw">null</span>) {<br>&nbsp;&nbsp;<span class="kw">throw new</span> <span class="type">UserNotFoundException</span>(<br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"User not found: "</span> + userId);<br>}</div>
+          <p class="secondary" style="font-size:12px; margin-top:10px;">I've added a null check before accessing user properties.</p>
+        </div>
+        <div class="tool-call">
+          <span class="check">✓</span>
+          <span class="name">edit_file</span>
+          <span class="file">UserService.java</span>
+        </div>
+      </div>
+      <div class="inputbar">
+        <input type="text" placeholder="Ask anything..." />
+        <button class="send">↑</button>
+      </div>
+    </div>
+    <div class="swatches">
+      <div class="swatch" style="background:#1e1e1e" title="#1e1e1e bg"></div>
+      <div class="swatch" style="background:#252526" title="#252526 surface"></div>
+      <div class="swatch" style="background:#3c3c3c" title="#3c3c3c border"></div>
+      <div class="swatch" style="background:#808080" title="#808080 secondary"></div>
+      <div class="swatch" style="background:#d4d4d4" title="#d4d4d4 text"></div>
+      <div class="swatch" style="background:#569cd6" title="#569cd6 accent"></div>
+      <div class="swatch" style="background:#6a9955" title="#6a9955 success"></div>
+      <div class="swatch" style="background:#f44747" title="#f44747 error"></div>
+    </div>
+  </div>
+
+  <!-- C: Claude / Anthropic -->
+  <div class="panel-wrapper claude-dark">
+    <div class="panel-label">C) Claude / Anthropic <span>Purple accent, cool-neutral</span></div>
+    <div class="chat-panel">
+      <div class="topbar">
+        <div class="model"><div class="dot"></div> Claude Sonnet 4</div>
+        <div class="gear">⚙</div>
+      </div>
+      <div class="chat">
+        <div class="user-msg">Fix the null pointer exception in UserService.java</div>
+        <div class="assistant-msg">
+          <p>I found the issue. The <code>getUser()</code> method doesn't handle the case when the user ID doesn't exist in the database.</p>
+          <div class="code-block"><span class="kw">if</span> (user == <span class="kw">null</span>) {<br>&nbsp;&nbsp;<span class="kw">throw new</span> <span class="type">UserNotFoundException</span>(<br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"User not found: "</span> + userId);<br>}</div>
+          <p class="secondary" style="font-size:12px; margin-top:10px;">I've added a null check before accessing user properties.</p>
+        </div>
+        <div class="tool-call">
+          <span class="check">✓</span>
+          <span class="name">edit_file</span>
+          <span class="file">UserService.java</span>
+        </div>
+      </div>
+      <div class="inputbar">
+        <input type="text" placeholder="Ask anything..." />
+        <button class="send">↑</button>
+      </div>
+    </div>
+    <div class="swatches">
+      <div class="swatch" style="background:#131315" title="#131315 bg"></div>
+      <div class="swatch" style="background:#1c1c20" title="#1c1c20 surface"></div>
+      <div class="swatch" style="background:#2a2b2f" title="#2a2b2f border"></div>
+      <div class="swatch" style="background:#8e8f96" title="#8e8f96 secondary"></div>
+      <div class="swatch" style="background:#e2e4e9" title="#e2e4e9 text"></div>
+      <div class="swatch" style="background:#a78bfa" title="#a78bfa accent"></div>
+      <div class="swatch" style="background:#22c55e" title="#22c55e success"></div>
+      <div class="swatch" style="background:#ef4444" title="#ef4444 error"></div>
+    </div>
+  </div>
+
+  <!-- D: GitHub Primer Light -->
+  <div class="panel-wrapper github-light">
+    <div class="panel-label">D) GitHub Primer Light <span>Blue accent, clean whites</span></div>
+    <div class="chat-panel">
+      <div class="topbar">
+        <div class="model"><div class="dot"></div> Claude Sonnet 4</div>
+        <div class="gear">⚙</div>
+      </div>
+      <div class="chat">
+        <div class="user-msg">Fix the null pointer exception in UserService.java</div>
+        <div class="assistant-msg">
+          <p>I found the issue. The <code>getUser()</code> method doesn't handle the case when the user ID doesn't exist in the database.</p>
+          <div class="code-block"><span class="kw">if</span> (user == <span class="kw">null</span>) {<br>&nbsp;&nbsp;<span class="kw">throw new</span> <span class="type">UserNotFoundException</span>(<br>&nbsp;&nbsp;&nbsp;&nbsp;<span class="str">"User not found: "</span> + userId);<br>}</div>
+          <p class="secondary" style="font-size:12px; margin-top:10px;">I've added a null check before accessing user properties.</p>
+        </div>
+        <div class="tool-call">
+          <span class="check">✓</span>
+          <span class="name">edit_file</span>
+          <span class="file">UserService.java</span>
+        </div>
+      </div>
+      <div class="inputbar">
+        <input type="text" placeholder="Ask anything..." />
+        <button class="send">↑</button>
+      </div>
+    </div>
+    <div class="swatches">
+      <div class="swatch" style="background:#ffffff" title="#ffffff bg"></div>
+      <div class="swatch" style="background:#f6f8fa" title="#f6f8fa surface"></div>
+      <div class="swatch" style="background:#d0d7de" title="#d0d7de border"></div>
+      <div class="swatch" style="background:#656d76" title="#656d76 secondary"></div>
+      <div class="swatch" style="background:#1f2328" title="#1f2328 text"></div>
+      <div class="swatch" style="background:#0969da" title="#0969da accent"></div>
+      <div class="swatch" style="background:#1a7f37" title="#1a7f37 success"></div>
+      <div class="swatch" style="background:#cf222e" title="#cf222e error"></div>
+    </div>
+  </div>
+
+</div>
+
+<p style="text-align:center; margin-top:32px; color:#666; font-size:12px;">
+  Hover over swatches to see hex values. D is the light-mode counterpart for when IDE uses a light theme.
+</p>
+
+</body>
+</html>
