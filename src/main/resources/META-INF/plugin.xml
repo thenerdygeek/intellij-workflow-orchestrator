@@ -149,10 +149,6 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
 
-        <!-- Ticket Status Bar Widget -->
-        <statusBarWidgetFactory id="WorkflowTicketStatusBar"
-            implementation="com.workflow.orchestrator.jira.ui.TicketStatusBarWidgetFactory"/>
-
         <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
         <!-- SonarQube Project Services -->
@@ -174,9 +170,6 @@
 
         <editorNotificationProvider
             implementation="com.workflow.orchestrator.sonar.ui.CoverageBannerProvider"/>
-
-        <projectViewNodeDecorator
-            implementation="com.workflow.orchestrator.sonar.ui.CoverageTreeDecorator"/>
 
         <codeInsight.lineMarkerProvider
             language="JAVA"
@@ -203,9 +196,6 @@
         </intentionAction>
         <projectService
             serviceImplementation="com.workflow.orchestrator.bamboo.service.CveRemediationService"/>
-        <externalAnnotator
-            language="XML"
-            implementationClass="com.workflow.orchestrator.bamboo.editor.CveAnnotator"/>
 
         <!-- Automation Module Project Services -->
         <projectService
@@ -294,10 +284,6 @@
         <!-- Jira Ticket Reference TODO Pattern -->
         <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
 
-        <!-- Editor Tab Ticket Badge -->
-        <editorTabTitleProvider
-            implementation="com.workflow.orchestrator.jira.editor.TicketEditorTabTitleProvider"/>
-
         <!-- Commit Dialog: Jira Time Tracking -->
         <checkinHandlerFactory
             implementation="com.workflow.orchestrator.jira.vcs.TimeTrackingCheckinHandlerFactory"/>
@@ -318,10 +304,6 @@
             displayName="SonarQube Issues"
             enabledByDefault="true"
             level="WARNING"/>
-
-        <!-- Project View: Build Status Badge -->
-        <projectViewNodeDecorator
-            implementation="com.workflow.orchestrator.bamboo.ui.BuildStatusNodeDecorator"/>
 
         <!-- Bamboo Run Configuration -->
         <configurationType implementation="com.workflow.orchestrator.bamboo.run.BambooBuildConfigurationType"/>
