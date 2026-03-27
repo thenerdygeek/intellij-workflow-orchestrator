@@ -85,17 +85,15 @@ class CurrentWorkSection(
         val cardPanel = object : JPanel(BorderLayout()) {
             init {
                 isOpaque = false
-                border = JBUI.Borders.empty(8, 10)
+                border = JBUI.Borders.empty(4, 8)
             }
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val r = JBUI.scale(6).toFloat()
-                // Fill
+                val r = JBUI.scale(4).toFloat()
                 g2.color = ACTIVE_BG
                 g2.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(), r, r))
-                // Border
                 g2.color = ACTIVE_BORDER
                 g2.draw(RoundRectangle2D.Float(0.5f, 0.5f, width - 1f, height - 1f, r, r))
                 g2.dispose()
@@ -105,38 +103,27 @@ class CurrentWorkSection(
         val inner = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            border = JBUI.Borders.empty(6, 8)
+            border = JBUI.Borders.empty(4, 8)
         }
 
-        // Header row: label + bolt icon
-        val headerRow = JPanel(BorderLayout()).apply {
+        // Ticket key + edit icon row
+        val keyRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(14))
             alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(18))
         }
-        headerRow.add(JBLabel("CURRENTLY WORKING ON").apply {
-            foreground = JBColor(0x66BB6A, 0xA5D6A7)
-            font = font.deriveFont(Font.BOLD, JBUI.scale(9).toFloat())
-        }, BorderLayout.WEST)
-        headerRow.add(JBLabel("\u26A1").apply {
-            foreground = JBColor(0x66BB6A, 0xA5D6A7)
-            font = font.deriveFont(JBUI.scale(11).toFloat())
-        }, BorderLayout.EAST)
-        inner.add(headerRow)
-        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
-
-        // Ticket key
         ticketKeyLabel.text = ticketId
-        ticketKeyLabel.alignmentX = Component.LEFT_ALIGNMENT
-        inner.add(ticketKeyLabel)
+        keyRow.add(ticketKeyLabel)
+        keyRow.add(editTargetLabel)
+        inner.add(keyRow)
 
         // Summary
         summaryLabel.text = summary
         summaryLabel.alignmentX = Component.LEFT_ALIGNMENT
         inner.add(summaryLabel)
-        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(6)))
+        inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
 
-        // Branch row: branch icon + name + target chip + edit
+        // Branch row: branch icon + name + target chip
         val metaRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             isOpaque = false
             alignmentX = Component.LEFT_ALIGNMENT
@@ -144,7 +131,6 @@ class CurrentWorkSection(
 
         metaRow.add(branchLabel)
         metaRow.add(targetBranchChip)
-        metaRow.add(editTargetLabel)
         inner.add(metaRow)
 
         editTargetLabel.mouseListeners.forEach { editTargetLabel.removeMouseListener(it) }

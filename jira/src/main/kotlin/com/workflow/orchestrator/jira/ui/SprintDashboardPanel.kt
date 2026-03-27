@@ -169,6 +169,7 @@ class SprintDashboardPanel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     private lateinit var currentWorkSection: CurrentWorkSection
+    private lateinit var sprintCollapsible: CollapsibleSection
 
     /** Check if a JiraIssue is a section header (used for assignee grouping). */
     private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
@@ -299,7 +300,6 @@ class SprintDashboardPanel(
         val nameRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             isOpaque = false
         }
-        nameRow.add(sprintSelector)
         nameRow.add(sprintNameLabel)
         nameRow.add(ticketCountLabel)
         sprintInfoPanel.add(nameRow)
@@ -376,10 +376,11 @@ class SprintDashboardPanel(
 
         sprintListInner.add(listCardPanel, BorderLayout.CENTER)
 
-        val sprintCollapsible = CollapsibleSection(
+        sprintCollapsible = CollapsibleSection(
             title = "SPRINT TICKETS",
             content = sprintListInner,
-            initiallyExpanded = true
+            initiallyExpanded = true,
+            count = 0
         )
 
         // Left panel: stacked collapsible sections
@@ -609,37 +610,15 @@ class SprintDashboardPanel(
         listModel.clear()
 
         val sortBy = sortByCombo.selectedItem as? String ?: "Default"
-        val groupBy = if (showAllUsers) {
-            groupByCombo.selectedItem as? String ?: "Assignee"
-        } else {
-            groupByCombo.selectedItem as? String ?: "None"
-        }
-
         val sorted = sortIssues(issues, sortBy)
-        val grouped = groupIssues(sorted, groupBy)
 
-        if (groupBy != "None" && issues.isNotEmpty()) {
-            val sortedGroups = grouped.toSortedMap(compareBy {
-                if (it == "Unassigned" || it == "None" || it == "Unknown") "\uFFFF" else it.lowercase()
-            })
-            for ((groupName, groupIssues) in sortedGroups) {
-                val headerIssue = JiraIssue(
-                    id = "header-$groupName", key = "── $groupName (${groupIssues.size}) ──",
-                    fields = JiraIssueFields(
-                        summary = "",
-                        status = JiraStatus(name = "")
-                    )
-                )
-                listModel.addElement(headerIssue)
-                for (issue in groupIssues) {
-                    listModel.addElement(issue)
-                }
-            }
-        } else {
-            for (issue in sorted) {
-                listModel.addElement(issue)
-            }
+        for (issue in sorted) {
+            listModel.addElement(issue)
         }
+
+        // Update collapsible section count
+        sprintCollapsible.updateCount(issues.size)
+
         if (issues.isEmpty()) {
             detailPanel.showEmpty()
             listCardLayout.show(listCardPanel, "empty")
