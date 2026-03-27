@@ -115,8 +115,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var worklogIncrementHours by property(0.5f)
 
         // VCS commit handler toggles
-        var autoLogTimeOnCommit by property(true)
-        var autoTransitionOnCommit by property(true)
+        var autoLogTimeOnCommit by property(false)
+        var autoTransitionOnCommit by property(false)
 
         // Branching & PRs
         var branchMaxSummaryLength by property(50)
@@ -134,7 +134,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // SonarQube
         var sonarMetricKeys by string("coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,new_coverage,new_branch_coverage")
-        var coverageGutterMarkersEnabled by property(true)
+        var coverageGutterMarkersEnabled by property(false)
         var sonarIntentionActionEnabled by property(false)
         var sonarInlineAnnotationsEnabled by property(false)
 
