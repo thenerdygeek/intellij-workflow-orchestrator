@@ -4,8 +4,8 @@ import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
-import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
+import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.project.Project
@@ -90,16 +90,17 @@ class GetTestResultsTool : AgentTool {
 
             // Process terminated — wait for the test framework to finalize the SMTestProxy tree.
             // Uses TestResultsViewer.EventsListener.onTestingFinished() callback (same as RunTestsTool).
-            val console = descriptor.executionConsole
-            if (console is SMTRunnerConsoleView) {
-                awaitTestingFinished(console.resultsViewer, TEST_TREE_FINALIZE_TIMEOUT_MS)
-            } else if (console !is SMTRunnerConsoleView) {
+            // Unwrap delegate wrappers (e.g. IntelliJ Ultimate's JavaConsoleWithProfilerWidget).
+            val testConsole = TestConsoleUtils.unwrapToTestConsole(descriptor.executionConsole)
+            if (testConsole != null) {
+                awaitTestingFinished(testConsole.resultsViewer, TEST_TREE_FINALIZE_TIMEOUT_MS)
+            } else {
                 // Non-SMTRunner console — brief delay for any async result population
                 delay(1000)
             }
 
             // Extract test proxy tree from the descriptor
-            val testRoot = findTestRoot(descriptor)
+            val testRoot = TestConsoleUtils.findTestRoot(descriptor)
             if (testRoot == null) {
                 return ToolResult(
                     "Run session '${descriptor.displayName}' found but no test results available. It may not be a test run.",
@@ -274,32 +275,8 @@ class GetTestResultsTool : AgentTool {
     }
 
     private fun hasTestResults(descriptor: RunContentDescriptor): Boolean {
-        val root = findTestRoot(descriptor) ?: return false
+        val root = TestConsoleUtils.findTestRoot(descriptor) ?: return false
         return root.children.isNotEmpty()
-    }
-
-    /**
-     * Find the SMTestProxy root from a descriptor's execution console.
-     * Uses public API: SMTRunnerConsoleView.getResultsViewer().getTestsRootNode()
-     */
-    private fun findTestRoot(descriptor: RunContentDescriptor): SMTestProxy.SMRootTestProxy? {
-        val console = descriptor.executionConsole ?: return null
-
-        // Direct: console IS an SMTRunnerConsoleView
-        if (console is SMTRunnerConsoleView) {
-            return console.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
-        }
-
-        // Wrapper: try getConsole() for inner view
-        try {
-            val getConsole = console.javaClass.getMethod("getConsole")
-            val innerConsole = getConsole.invoke(console)
-            if (innerConsole is SMTRunnerConsoleView) {
-                return innerConsole.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
-            }
-        } catch (_: Exception) {}
-
-        return null
     }
 
     private fun collectTestResults(root: SMTestProxy): List<TestResultEntry> {

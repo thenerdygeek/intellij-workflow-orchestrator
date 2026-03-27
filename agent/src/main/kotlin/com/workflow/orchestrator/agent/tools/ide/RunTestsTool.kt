@@ -20,6 +20,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -244,14 +245,13 @@ class RunTestsTool : AgentTool {
             })
         }
 
-        // Check if the console is an SMTRunnerConsoleView (test console)
-        val console = descriptor.executionConsole
-        val logger = com.intellij.openapi.diagnostic.Logger.getInstance(RunTestsTool::class.java)
-        logger.info("[RunTestsTool] processStarted: console type = ${console?.javaClass?.name}, superclass = ${console?.javaClass?.superclass?.name}")
-        if (console is SMTRunnerConsoleView) {
+        // Unwrap delegate wrappers (e.g. IntelliJ Ultimate's JavaConsoleWithProfilerWidget)
+        // to find the actual SMTRunnerConsoleView underneath.
+        val testConsole = TestConsoleUtils.unwrapToTestConsole(descriptor.executionConsole)
+        if (testConsole != null) {
             // Use TestResultsViewer.EventsListener — the official callback for test completion.
             // onTestingFinished fires AFTER the SMTestProxy tree is fully populated.
-            val resultsViewer = console.resultsViewer
+            val resultsViewer = testConsole.resultsViewer
             resultsViewer.addEventsListener(object : TestResultsViewer.EventsListener {
                 override fun onTestingFinished(sender: TestResultsViewer) {
                     val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
@@ -459,25 +459,9 @@ class RunTestsTool : AgentTool {
     private fun extractNativeResults(descriptor: RunContentDescriptor, testTarget: String): ToolResult? {
         val testRoot = findTestRoot(descriptor)
         if (testRoot == null) {
-            val console = descriptor.executionConsole
-            val consoleType = console?.javaClass?.name ?: "null"
-            val consoleInterfaces = console?.javaClass?.interfaces?.joinToString { it.simpleName } ?: "none"
-            val consoleSuperclass = console?.javaClass?.superclass?.name ?: "none"
-            val hasGetConsole = try {
-                console?.javaClass?.getMethod("getConsole") != null
-            } catch (_: Exception) { false }
-            val innerConsoleType = try {
-                val m = console?.javaClass?.getMethod("getConsole")
-                m?.invoke(console)?.javaClass?.name ?: "null"
-            } catch (_: Exception) { "N/A" }
             return ToolResult(
                 "Test run completed for $testTarget but no structured results available.\n" +
-                    "Run session: ${descriptor.displayName}\n" +
-                    "[DEBUG] console type: $consoleType\n" +
-                    "[DEBUG] superclass: $consoleSuperclass\n" +
-                    "[DEBUG] interfaces: $consoleInterfaces\n" +
-                    "[DEBUG] has getConsole(): $hasGetConsole\n" +
-                    "[DEBUG] inner console type: $innerConsoleType",
+                    "Run session: ${descriptor.displayName}",
                 "Tests completed, no structured data",
                 20
             )
@@ -495,30 +479,8 @@ class RunTestsTool : AgentTool {
         return formatStructuredResults(allTests, descriptor.displayName ?: testTarget)
     }
 
-    /**
-     * Find the SMTestProxy root from a descriptor's execution console.
-     * Uses public API: SMTRunnerConsoleView.getResultsViewer().getTestsRootNode()
-     * Also handles wrapper consoles via BaseTestsOutputConsoleView.getConsole().
-     */
-    private fun findTestRoot(descriptor: RunContentDescriptor): SMTestProxy.SMRootTestProxy? {
-        val console = descriptor.executionConsole ?: return null
-
-        // Direct: console IS an SMTRunnerConsoleView (most common for JUnit/TestNG)
-        if (console is SMTRunnerConsoleView) {
-            return console.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
-        }
-
-        // Wrapper: console wraps an inner console — try getConsole() (public on BaseTestsOutputConsoleView)
-        try {
-            val getConsole = console.javaClass.getMethod("getConsole")
-            val innerConsole = getConsole.invoke(console)
-            if (innerConsole is SMTRunnerConsoleView) {
-                return innerConsole.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
-            }
-        } catch (_: Exception) {}
-
-        return null
-    }
+    private fun findTestRoot(descriptor: RunContentDescriptor): SMTestProxy.SMRootTestProxy? =
+        TestConsoleUtils.findTestRoot(descriptor)
 
     private fun collectTestResults(root: SMTestProxy): List<TestResultEntry> {
         return root.allTests
