@@ -224,7 +224,8 @@ class PromptAssemblerTest {
     fun `prompt contains few-shot examples`() {
         val prompt = assembler.buildSingleAgentPrompt()
         assertTrue(prompt.contains("<examples>"), "Should contain examples section")
-        assertTrue(prompt.contains("parallel-exploration"), "Should contain parallel exploration example")
+        assertTrue(prompt.contains("open-ended-exploration"), "Should contain open-ended exploration example")
+        assertTrue(prompt.contains("targeted-lookup"), "Should contain targeted lookup example")
         assertTrue(prompt.contains("edit-with-verification"), "Should contain edit verification example")
         assertTrue(prompt.contains("error-recovery"), "Should contain error recovery example")
         assertTrue(prompt.contains("when-to-plan"), "Should contain planning example")
