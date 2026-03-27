@@ -313,12 +313,10 @@ class LoopGuardTest {
     // --- File re-read tracking ---
 
     @Test
-    fun `checkDoomLoop warns on re-reading same file`() {
+    fun `checkDoomLoop allows re-reading same file`() {
         assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
-        val warning = guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
-        assertNotNull(warning)
-        assertTrue(warning!!.contains("already read"))
-        assertTrue(warning.contains("/src/Main.kt"))
+        // Re-reading should NOT block — the read proceeds normally
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
     }
 
     @Test

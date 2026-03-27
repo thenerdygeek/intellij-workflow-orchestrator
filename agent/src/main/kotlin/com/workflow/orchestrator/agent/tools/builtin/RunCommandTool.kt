@@ -124,6 +124,21 @@ class RunCommandTool : AgentTool {
             return BUILD_COMMAND_PREFIXES.any { trimmed.startsWith(it) }
         }
 
+        /**
+         * Find Git Bash on Windows. Checks standard installation paths.
+         * Returns the absolute path to bash.exe, or null if not found.
+         */
+        private fun findGitBash(): String? {
+            val candidates = listOf(
+                System.getenv("PROGRAMFILES")?.let { "$it\\Git\\bin\\bash.exe" },
+                System.getenv("PROGRAMFILES(X86)")?.let { "$it\\Git\\bin\\bash.exe" },
+                System.getenv("LOCALAPPDATA")?.let { "$it\\Programs\\Git\\bin\\bash.exe" },
+                "C:\\Program Files\\Git\\bin\\bash.exe",
+                "C:\\Program Files (x86)\\Git\\bin\\bash.exe"
+            )
+            return candidates.filterNotNull().firstOrNull { File(it).exists() }
+        }
+
         private val ANSI_REGEX = Regex("\u001B\\[[;\\d]*[A-Za-z]")
 
         /**
@@ -286,9 +301,16 @@ class RunCommandTool : AgentTool {
         return try {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
 
-            // Use IntelliJ's GeneralCommandLine for proper cross-platform command escaping
+            // Use bash on all platforms for consistent LLM command syntax.
+            // On Windows: prefer Git Bash (ships with Git for Windows), fall back to cmd.exe.
             val commandLine = if (isWindows) {
-                GeneralCommandLine("cmd.exe", "/c", command)
+                val gitBash = findGitBash()
+                if (gitBash != null) {
+                    GeneralCommandLine(gitBash, "-c", command)
+                } else {
+                    LOG.warn("[Agent:RunCommand] Git Bash not found, falling back to cmd.exe")
+                    GeneralCommandLine("cmd.exe", "/c", command)
+                }
             } else {
                 GeneralCommandLine("sh", "-c", command)
             }

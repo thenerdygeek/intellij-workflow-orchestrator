@@ -96,12 +96,9 @@ class AddBreakpointTool(
                     val bpType = resolveBreakpointType(vFile.name)
 
                     val zeroBasedLine = line - 1
-                    val bp: XLineBreakpoint<*> = bpManager.addLineBreakpoint(
-                        bpType,
-                        fileUrl,
-                        zeroBasedLine,
-                        null,
-                        temporary
+                    val bp: XLineBreakpoint<*> = addLineBreakpointSafe(
+                        bpManager as com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerImpl,
+                        bpType, fileUrl, zeroBasedLine, vFile, temporary
                     ) ?: return@compute ToolResult(
                         "Failed to add breakpoint at ${vFile.name}:$line — line may not be breakpointable",
                         "Add failed",
@@ -156,6 +153,36 @@ class AddBreakpointTool(
          * Resolves the breakpoint type based on file extension.
          * Kotlin files use KotlinLineBreakpointType, everything else uses JavaLineBreakpointType.
          */
+        /**
+         * Add a line breakpoint with proper default properties to avoid
+         * @NotNull getProperties() crash in JavaBreakpointsUsageCollector.
+         * Uses a typed helper to satisfy generics on addLineBreakpoint.
+         */
+        private fun addLineBreakpointSafe(
+            bpManager: com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerImpl,
+            bpType: com.intellij.xdebugger.breakpoints.XLineBreakpointType<*>,
+            fileUrl: String,
+            line: Int,
+            vFile: com.intellij.openapi.vfs.VirtualFile,
+            temporary: Boolean
+        ): XLineBreakpoint<*>? {
+            return addTyped<com.intellij.xdebugger.breakpoints.XBreakpointProperties<*>>(bpManager, bpType, fileUrl, line, vFile, temporary)
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        private fun <P : com.intellij.xdebugger.breakpoints.XBreakpointProperties<*>> addTyped(
+            bpManager: com.intellij.xdebugger.impl.breakpoints.XBreakpointManagerImpl,
+            bpType: com.intellij.xdebugger.breakpoints.XLineBreakpointType<*>,
+            fileUrl: String,
+            line: Int,
+            vFile: com.intellij.openapi.vfs.VirtualFile,
+            temporary: Boolean
+        ): XLineBreakpoint<P>? {
+            val typed = bpType as com.intellij.xdebugger.breakpoints.XLineBreakpointType<P>
+            val properties = typed.createBreakpointProperties(vFile, line)
+            return bpManager.addLineBreakpoint(typed, fileUrl, line, properties, temporary)
+        }
+
         fun resolveBreakpointType(fileName: String): com.intellij.xdebugger.breakpoints.XLineBreakpointType<*> {
             val ext = fileName.substringAfterLast('.', "").lowercase()
             return if (ext == "kt" || ext == "kts") {

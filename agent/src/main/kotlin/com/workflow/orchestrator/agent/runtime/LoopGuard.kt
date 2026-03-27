@@ -103,14 +103,11 @@ class LoopGuard(
             recentDoomCalls.removeAt(0)
         }
 
-        // Track file reads for re-read detection
+        // Track file reads (no blocking — re-reads are allowed)
         if (toolName == "read_file") {
             val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(args)
             val filePath = pathMatch?.groupValues?.get(1)
             if (filePath != null) {
-                if (filePath in readFiles) {
-                    return "You already read '$filePath' earlier in this conversation. The content is in your history — check previous tool results instead of re-reading."
-                }
                 readFiles.add(filePath)
             }
         }

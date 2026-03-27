@@ -37,7 +37,10 @@ object DynamicToolSelector {
         "send_stdin", "kill_process", "ask_user_input",
         "agent",
         "delegate_task",
-        "think"
+        "think",
+        // Memory tools — always available so the agent can store/retrieve knowledge at any time
+        "core_memory_read", "core_memory_append", "core_memory_replace",
+        "archival_memory_insert", "archival_memory_search", "conversation_search"
     )
 
     // --- Tool name sets for each integration ---
@@ -127,7 +130,10 @@ object DynamicToolSelector {
         "find_implementations", "semantic_diagnostics"
     )
 
-    private val MEMORY_TOOL_NAMES = setOf("core_memory_append", "archival_memory_insert", "archival_memory_search")
+    private val MEMORY_TOOL_NAMES = setOf(
+        "core_memory_read", "core_memory_append", "core_memory_replace",
+        "archival_memory_insert", "archival_memory_search", "conversation_search"
+    )
 
     private val SKILL_TOOL_NAMES = setOf("activate_skill", "deactivate_skill")
 
