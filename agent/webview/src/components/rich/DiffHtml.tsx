@@ -8,20 +8,34 @@ type Diff2HtmlModule = typeof import('diff2html');
 let diff2htmlModulePromise: Promise<Diff2HtmlModule> | null = null;
 let cssLoaded = false;
 
+/** Race dynamic import against a timeout — JCEF's custom scheme can hang on chunk loads. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 function loadDiff2Html(): Promise<Diff2HtmlModule> {
   if (!diff2htmlModulePromise) {
-    // Load diff2html module. CSS is loaded separately to avoid hanging on
-    // dynamic CSS imports which can fail silently in JCEF's custom scheme.
-    diff2htmlModulePromise = import('diff2html').then((module) => {
-      // Try to load CSS but don't block on failure — the diff still renders,
-      // just without custom styling (fallback to inline styles).
-      if (!cssLoaded) {
-        import('diff2html/bundles/css/diff2html.min.css')
-          .then(() => { cssLoaded = true; })
-          .catch(() => { /* CSS load failed — non-fatal, diff still works */ });
-      }
-      return module;
-    });
+    // Load diff2html module with a 5s timeout to prevent infinite loading in JCEF.
+    // CSS is loaded separately and non-blocking.
+    diff2htmlModulePromise = withTimeout(import('diff2html'), 5000, 'diff2html import')
+      .then((module) => {
+        if (!cssLoaded) {
+          import('diff2html/bundles/css/diff2html.min.css')
+            .then(() => { cssLoaded = true; })
+            .catch(() => { /* CSS load failed — non-fatal, diff still works */ });
+        }
+        return module;
+      })
+      .catch((err) => {
+        // Reset so next attempt retries
+        diff2htmlModulePromise = null;
+        throw err;
+      });
   }
   return diff2htmlModulePromise;
 }
@@ -270,12 +284,43 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
     void renderDiff();
   }, [renderDiff]);
 
+  // Fallback: render raw diff with color-coded lines when diff2html fails to load
+  if (error) {
+    return (
+      <div className="my-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--code-bg)]">
+        {filePath && (
+          <div className="border-b border-[var(--border)] px-3 py-1.5 text-[11px] font-mono text-[var(--fg-muted)]">
+            {filePath}
+          </div>
+        )}
+        <pre className="overflow-auto px-3 py-2 text-[12px] leading-relaxed font-mono" style={{ maxHeight: '400px' }}>
+          {diffSource.split('\n').map((line, i) => {
+            let color = 'var(--fg)';
+            let bg = 'transparent';
+            if (line.startsWith('+') && !line.startsWith('+++')) {
+              color = 'var(--diff-add-fg, #b5cea8)';
+              bg = 'var(--diff-add-bg, rgba(106,153,85,0.15))';
+            } else if (line.startsWith('-') && !line.startsWith('---')) {
+              color = 'var(--diff-rem-fg, #f4a5a5)';
+              bg = 'var(--diff-rem-bg, rgba(244,71,71,0.15))';
+            } else if (line.startsWith('@@')) {
+              color = 'var(--fg-muted)';
+            }
+            return (
+              <div key={i} style={{ color, backgroundColor: bg }}>{line}</div>
+            );
+          })}
+        </pre>
+      </div>
+    );
+  }
+
   return (
     <RichBlock
       type="diff"
       source={diffSource}
       isLoading={isLoading}
-      error={error}
+      error={null}
       onRetry={() => void renderDiff()}
     >
       {filePath && (
