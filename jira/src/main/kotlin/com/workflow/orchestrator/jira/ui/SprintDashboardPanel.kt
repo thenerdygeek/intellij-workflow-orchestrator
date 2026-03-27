@@ -300,6 +300,7 @@ class SprintDashboardPanel(
         val nameRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             isOpaque = false
         }
+        nameRow.add(sprintSelector)
         nameRow.add(sprintNameLabel)
         nameRow.add(ticketCountLabel)
         sprintInfoPanel.add(nameRow)
