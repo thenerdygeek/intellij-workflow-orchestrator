@@ -286,7 +286,7 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
         // Main line: type + outline severity badge + message + file:line
         // Outline-style badge: 1px border, no fill (Stitch design)
         mainLabel.text = "<html>$typeStr " +
-            "<span style='border: 1px solid $htmlColor; color: $htmlColor; padding: 0 3px;'>${value.severity}</span>" +
+            "<font color='$htmlColor'><b>[${value.severity}]</b></font>" +
             "  ${value.message} \u2014 $fileName:${value.startLine}</html>"
         mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
 

@@ -32,3 +32,4 @@ Key endpoints:
 - `PrDashboardPanel` — split view: PR list + detail panel
 - `PrListPanel` — filterable PR list with status indicators
 - `PrDetailPanel` — PR metadata, reviewers, merge status, action buttons
+- **UI Overhaul:** Outline-style status badges (OPEN/MERGED/DECLINED), sharp card corners, monospace PR IDs, left border accent colored by PR status.

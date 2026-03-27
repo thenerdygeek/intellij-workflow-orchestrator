@@ -37,3 +37,4 @@ Key endpoints:
 - `CoverageDiffExtension` — diff view coverage highlighting
 - `SonarGlobalInspectionTool` — global inspection for batch analysis
 - `SonarProjectPickerDialog` — searchable project key selector
+- **UI Overhaul:** Accent-colored overview cards for metrics, uppercase table headers in issue/coverage tables, outline severity badges for issue priorities.

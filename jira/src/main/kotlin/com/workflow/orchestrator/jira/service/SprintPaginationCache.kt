@@ -14,6 +14,9 @@ import java.io.File
  * Stores per-board: the last known startAt offset where we found the final page
  * of closed sprints. On subsequent calls, we start from (cachedStartAt - pageSize)
  * to catch any newly closed sprints, instead of walking from 0.
+ *
+ * Thread-safe: all access is synchronized since multiple projects/coroutines
+ * may call concurrently.
  */
 object SprintPaginationCache {
 
@@ -27,7 +30,6 @@ object SprintPaginationCache {
     data class BoardCacheEntry(
         val boardId: Int,
         val lastStartAt: Int,
-        val totalSprints: Int = 0,
         val timestamp: Long = System.currentTimeMillis()
     )
 
@@ -36,6 +38,8 @@ object SprintPaginationCache {
         val boards: MutableMap<String, BoardCacheEntry> = mutableMapOf()
     )
 
+    private val lock = Any()
+    @Volatile
     private var cache: CacheData? = null
 
     /**
@@ -43,26 +47,29 @@ object SprintPaginationCache {
      * Returns 0 if no cache exists (first walk).
      */
     fun getCachedStartAt(boardId: Int, pageSize: Int): Int {
-        val data = loadCache()
-        val entry = data.boards[boardId.toString()] ?: return 0
-        // Start one page back from the cached position to catch newly closed sprints
-        return (entry.lastStartAt - pageSize).coerceAtLeast(0)
+        synchronized(lock) {
+            val data = loadCacheLocked()
+            val entry = data.boards[boardId.toString()] ?: return 0
+            return (entry.lastStartAt - pageSize).coerceAtLeast(0)
+        }
     }
 
     /**
      * Save the startAt offset of the last page for a board.
      */
-    fun saveCachedStartAt(boardId: Int, lastStartAt: Int, totalSprints: Int = 0) {
-        val data = loadCache()
-        data.boards[boardId.toString()] = BoardCacheEntry(
-            boardId = boardId,
-            lastStartAt = lastStartAt,
-            totalSprints = totalSprints
-        )
-        saveCache(data)
+    fun saveCachedStartAt(boardId: Int, lastStartAt: Int) {
+        synchronized(lock) {
+            val data = loadCacheLocked()
+            data.boards[boardId.toString()] = BoardCacheEntry(
+                boardId = boardId,
+                lastStartAt = lastStartAt
+            )
+            saveCacheLocked(data)
+        }
     }
 
-    private fun loadCache(): CacheData {
+    /** Must be called under [lock]. */
+    private fun loadCacheLocked(): CacheData {
         cache?.let { return it }
         return try {
             if (cacheFile.exists()) {
@@ -82,7 +89,8 @@ object SprintPaginationCache {
         }
     }
 
-    private fun saveCache(data: CacheData) {
+    /** Must be called under [lock]. */
+    private fun saveCacheLocked(data: CacheData) {
         try {
             cacheDir.mkdirs()
             cacheFile.writeText(json.encodeToString(CacheData.serializer(), data))

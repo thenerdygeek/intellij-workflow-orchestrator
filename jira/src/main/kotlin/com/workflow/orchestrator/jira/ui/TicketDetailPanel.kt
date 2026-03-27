@@ -716,18 +716,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         keyRow.add(createTextTag(issueType))
 
         val priorityName = issue.fields.priority?.name ?: "Medium"
-        // Priority dot + text inline
-        val priorityDot = JPanel().apply {
-            isOpaque = false
-            val dotSize = JBUI.scale(8)
-            preferredSize = Dimension(dotSize, dotSize)
-            minimumSize = preferredSize
-            maximumSize = preferredSize
-        }
-        keyRow.add(JBLabel(priorityName).apply {
-            font = font.deriveFont(JBUI.scale(10).toFloat())
-            foreground = StatusColors.SECONDARY_TEXT
-        })
+        val priorityColor = TicketListCellRenderer.getPriorityColor(priorityName)
+        keyRow.add(createColoredTag(priorityName, priorityColor))
 
         headerPanel.add(keyRow)
 

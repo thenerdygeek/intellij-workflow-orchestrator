@@ -141,6 +141,24 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
             val timeStr = formatTimeSpent(worklog.timeSpentSeconds)
             val dateStr = formatStartedDate(worklog.started)
             tablePanel.add(createTableRow(authorName, timeStr, dateStr, isHeader = false))
+
+            // Comment sub-row (if worklog has a comment)
+            if (!worklog.comment.isNullOrBlank()) {
+                val commentText = worklog.comment.take(80).let {
+                    if (worklog.comment.length > 80) "$it..." else it
+                }
+                val commentRow = JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(18))
+                    border = JBUI.Borders.empty(0, 16, 2, 8)
+                }
+                commentRow.add(JBLabel(commentText).apply {
+                    font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat())
+                    foreground = StatusColors.SECONDARY_TEXT
+                }, BorderLayout.WEST)
+                tablePanel.add(commentRow)
+            }
         }
 
         container.add(tablePanel)

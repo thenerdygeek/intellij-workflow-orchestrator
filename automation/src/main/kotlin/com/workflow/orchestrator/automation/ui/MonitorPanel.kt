@@ -381,91 +381,122 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     private class RunListCellRenderer : ListCellRenderer<RunEntry> {
+
+        // Mutable state read by custom paintComponent overrides
+        private var currentStatusColor: Color = StatusColors.LINK
+
+        // Cached top-level panel with left border accent
+        private val panel = object : JPanel(BorderLayout()) {
+            init {
+                isOpaque = true
+                border = JBUI.Borders.empty(6, 8, 6, 6)
+            }
+
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                // Stitch: left border accent colored by status
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = currentStatusColor
+                g2.fillRect(0, 0, JBUI.scale(3), height)
+                g2.dispose()
+            }
+        }
+
+        // Cached labels
+        private val nameLabel = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD)
+        }
+        private val buildLabel = JBLabel().apply {
+            font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+        }
+
+        // Stitch: outline status badge (1px border, no fill, sharp corners)
+        private val statusBadge = object : JBLabel() {
+            override fun paintComponent(g: Graphics) {
+                val g2 = g.create() as Graphics2D
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = currentStatusColor
+                g2.draw(RoundRectangle2D.Float(
+                    0.5f, 0.5f, width - 1f, height - 1f,
+                    JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
+                ))
+                g2.dispose()
+                super.paintComponent(g)
+            }
+        }.apply {
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+            border = JBUI.Borders.empty(1, 4)
+            isOpaque = false
+        }
+
+        private val failedLabel = JBLabel().apply {
+            foreground = StatusColors.ERROR
+            font = font.deriveFont(JBUI.scale(10).toFloat())
+        }
+
+        // Cached empty fallback
+        private val emptyLabel = JBLabel("")
+
+        // Cached layout panels
+        private val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+        }
+        private val bottomRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = false
+        }
+        private val content = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
+
+        init {
+            topRow.add(nameLabel)
+            topRow.add(buildLabel)
+            bottomRow.add(statusBadge)
+            bottomRow.add(failedLabel)
+            content.add(topRow)
+            content.add(bottomRow)
+            panel.add(content, BorderLayout.CENTER)
+        }
+
         override fun getListCellRendererComponent(
             list: JList<out RunEntry>, value: RunEntry?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
         ): java.awt.Component {
-            val entry = value ?: return JBLabel("")
+            val entry = value ?: return emptyLabel
 
             val statusColor = when (entry.status.lowercase()) {
                 "successful" -> StatusColors.SUCCESS
                 "failed" -> StatusColors.ERROR
                 else -> StatusColors.LINK
             }
+            currentStatusColor = statusColor
 
-            val panel = object : JPanel(BorderLayout()) {
-                override fun paintComponent(g: Graphics) {
-                    super.paintComponent(g)
-                    // Stitch: left border accent colored by status
-                    val g2 = g.create() as Graphics2D
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                    g2.color = statusColor
-                    g2.fillRect(0, 0, JBUI.scale(3), height)
-                    g2.dispose()
-                }
-            }
-            panel.border = JBUI.Borders.empty(6, 8, 6, 6)
-            panel.isOpaque = true
+            // Background: selection or alternating row tonal shift
             panel.background = if (isSelected) list.selectionBackground else {
-                // Stitch: tonal shift on alternating rows
                 if (index % 2 == 0) list.background else StatusColors.CARD_BG
             }
 
             // Suite name
-            val nameLabel = JBLabel(entry.suiteName).apply {
-                font = font.deriveFont(Font.BOLD)
-                foreground = if (isSelected) list.selectionForeground else list.foreground
-            }
+            nameLabel.text = entry.suiteName
+            nameLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
 
             // Stitch: monospace build number
-            val buildLabel = JBLabel("#${entry.buildNumber}").apply {
-                font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
-                foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+            buildLabel.text = "#${entry.buildNumber}"
+            buildLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+
+            // Status badge text and color
+            statusBadge.text = entry.status
+            statusBadge.foreground = statusColor
+
+            // Failed test count
+            if (entry.failedTests > 0) {
+                failedLabel.text = "${entry.failedTests} failed"
+                failedLabel.isVisible = true
+            } else {
+                failedLabel.isVisible = false
             }
 
-            // Stitch: outline status badge (1px border, no fill, sharp corners)
-            val statusBadge = object : JBLabel(entry.status) {
-                override fun paintComponent(g: Graphics) {
-                    val g2 = g.create() as Graphics2D
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                    // Outline only
-                    g2.color = statusColor
-                    g2.draw(RoundRectangle2D.Float(
-                        0.5f, 0.5f, width - 1f, height - 1f,
-                        JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
-                    ))
-                    g2.dispose()
-                    super.paintComponent(g)
-                }
-            }.apply {
-                font = font.deriveFont(JBUI.scale(10).toFloat())
-                foreground = statusColor
-                border = JBUI.Borders.empty(1, 4)
-                isOpaque = false
-            }
-
-            val topRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-                isOpaque = false
-                add(nameLabel)
-                add(buildLabel)
-            }
-            val bottomRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-                isOpaque = false
-                add(statusBadge)
-                if (entry.failedTests > 0) {
-                    add(JBLabel("${entry.failedTests} failed").apply {
-                        foreground = StatusColors.ERROR
-                        font = font.deriveFont(JBUI.scale(10).toFloat())
-                    })
-                }
-            }
-
-            val content = JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                isOpaque = false
-                add(topRow)
-                add(bottomRow)
-            }
-            panel.add(content, BorderLayout.CENTER)
             return panel
         }
     }

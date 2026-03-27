@@ -33,3 +33,4 @@ Key endpoints:
 - `TicketDetectionPopup` — confirmation popup for branch-detected tickets (Set as Active / Dismiss)
 - `TransitionDialog` — manual status transitions
 - `JiraSearchContributorFactory` — Search Everywhere integration for tickets
+- **UI Overhaul:** SprintPaginationCache (file-based cache at `~/.workflow-orchestrator/`) for sprint pagination state. Cell renderer uses left border accents by status, side-by-side SprintTimeBar, worklog table layout, and PR badge styling in DevStatusSection.

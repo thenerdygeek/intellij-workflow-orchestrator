@@ -138,10 +138,7 @@ class SprintDashboardPanel(
     private lateinit var listCardLayout: CardLayout
     private lateinit var listCardPanel: JPanel
 
-    // -- Sort/Group controls --
-    private val groupByCombo = ComboBox(arrayOf("Assignee", "Status", "Priority", "Type", "None")).apply {
-        selectedItem = "None"
-    }
+    // -- Sort control --
     private val sortByCombo = ComboBox(arrayOf("Default", "Priority", "Status", "Updated", "Key"))
 
     // -- Detection banner --
@@ -178,9 +175,8 @@ class SprintDashboardPanel(
         background = JBColor.PanelBackground
         isOpaque = true
 
-        // Restore persisted sort/group preferences
+        // Restore persisted sort preference
         val initSettings = PluginSettings.getInstance(project)
-        groupByCombo.selectedItem = initSettings.state.sprintGroupBy ?: "Assignee"
         sortByCombo.selectedItem = initSettings.state.sprintSortBy ?: "Default"
 
         setupDetectionBanner()
@@ -346,15 +342,12 @@ class SprintDashboardPanel(
         searchField.preferredSize = Dimension(0, JBUI.scale(28))
 
         // Sort/Group controls row
-        val sortGroupPanel = JPanel(GridLayout(1, 2, JBUI.scale(4), 0)).apply {
+        val sortGroupPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             isOpaque = false
             border = JBUI.Borders.empty(2, 0)
         }
-        groupByCombo.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(24))
-        sortByCombo.preferredSize = Dimension(JBUI.scale(120), JBUI.scale(24))
-        groupByCombo.toolTipText = "Group by"
+        sortByCombo.preferredSize = Dimension(JBUI.scale(140), JBUI.scale(24))
         sortByCombo.toolTipText = "Sort by"
-        sortGroupPanel.add(groupByCombo)
         sortGroupPanel.add(sortByCombo)
 
         val topControlsPanel = JPanel(BorderLayout()).apply {
@@ -474,12 +467,7 @@ class SprintDashboardPanel(
             loadSprintBySelection(selectedSprint)
         }
 
-        // Sort/group combo changes trigger filter reapply and persist selection
-        groupByCombo.addActionListener {
-            val settings = PluginSettings.getInstance(project)
-            settings.state.sprintGroupBy = groupByCombo.selectedItem as? String ?: "Assignee"
-            applyFilter()
-        }
+        // Sort combo change triggers filter reapply and persists selection
         sortByCombo.addActionListener {
             val settings = PluginSettings.getInstance(project)
             settings.state.sprintSortBy = sortByCombo.selectedItem as? String ?: "Default"
@@ -628,16 +616,7 @@ class SprintDashboardPanel(
         }
     }
 
-    private fun groupIssues(issues: List<JiraIssue>, groupBy: String): Map<String, List<JiraIssue>> {
-        return when (groupBy) {
-            "Assignee" -> issues.groupBy { it.fields.assignee?.displayName ?: "Unassigned" }
-            "Status" -> issues.groupBy { it.fields.status.name }
-            "Priority" -> issues.groupBy { it.fields.priority?.name ?: "None" }
-            "Type" -> issues.groupBy { it.fields.issuetype?.name ?: "Unknown" }
-            "None" -> mapOf("" to issues)
-            else -> mapOf("" to issues)
-        }
-    }
+
 
     private fun sortIssues(issues: List<JiraIssue>, sortBy: String): List<JiraIssue> {
         return when (sortBy) {

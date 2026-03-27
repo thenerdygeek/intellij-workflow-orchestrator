@@ -33,3 +33,4 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 - `BuildStatusNodeDecorator` — project tree build status badges
 - `CveAnnotator` / `CveIntentionAction` — inline CVE warnings + auto-fix in pom.xml
 - `BambooBuildConfigurationType` — run configuration for manual stage triggers
+- **UI Overhaul:** StitchLeftAccentBorder utility for status-colored left borders on cards. Uppercase section headers, monospace build numbers in cell renderers.
