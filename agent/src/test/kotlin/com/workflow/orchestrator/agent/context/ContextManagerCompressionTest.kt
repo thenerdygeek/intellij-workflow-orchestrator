@@ -3,6 +3,8 @@ package com.workflow.orchestrator.agent.context
 import com.workflow.orchestrator.agent.api.dto.ChatCompletionResponse
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.Choice
+import com.workflow.orchestrator.agent.api.dto.FunctionCall
+import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
@@ -58,14 +60,24 @@ class ContextManagerCompressionTest {
     /**
      * Build context above tRetained (4000) but below tMax (7000) with tool messages.
      * Auto-compress never fires. compressWithLlm will find messages to drop.
-     * Tool messages are among the oldest non-system = droppable.
+     * Tool messages are placed AFTER the first user-assistant exchange so they
+     * fall in the droppable sliding window zone.
      */
     private fun buildAboveRetainedWithTool(): ContextManager {
         val cm = createCm()
         cm.addMessage(ChatMessage(role = "system", content = "You are a helpful assistant."))
 
-        // Add a tool message early (will be among oldest non-system)
+        // First user-assistant exchange (protected by sliding window)
         cm.addMessage(ChatMessage(role = "user", content = "Analyze the build log"))
+        cm.addMessage(ChatMessage(role = "assistant", content = "I'll check the build."))
+
+        // Tool result AFTER the protected first exchange — in the droppable zone
+        cm.addMessage(ChatMessage(role = "user", content = "Here's the log"))
+        cm.addMessage(ChatMessage(
+            role = "assistant",
+            content = null,
+            toolCalls = listOf(ToolCall(id = "tc-1", function = FunctionCall(name = "run_command", arguments = """{"cmd":"build"}""")))
+        ))
         cm.addMessage(ChatMessage(
             role = "tool",
             content = "Build FAILED: src/Main.kt:42 NullPointerException in method foo(). " +
@@ -75,8 +87,6 @@ class ContextManagerCompressionTest {
         cm.addMessage(ChatMessage(role = "assistant", content = "I see the build failed with an NPE."))
 
         // Add more messages to push above tRetained=4000
-        // Each 350-char pair ≈ 208 tokens. Need ~4000 total. Already have ~80.
-        // Need ~(4000-80)/208 ≈ 19 pairs. Use 20 to be safe.
         for (i in 1..20) {
             cm.addMessage(ChatMessage(role = "user", content = "User msg $i: ${"X".repeat(350)}"))
             cm.addMessage(ChatMessage(role = "assistant", content = "Asst msg $i: ${"Y".repeat(350)}"))

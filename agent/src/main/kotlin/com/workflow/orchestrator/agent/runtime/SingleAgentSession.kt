@@ -72,7 +72,7 @@ sealed class SingleAgentResult {
  * Includes:
  * - [BudgetEnforcer] check before each LLM call
  * - [LoopGuard] for loop detection, error nudges, and auto-verification
- * - Nudge injection (NUDGE, STRONG_NUDGE) and budget termination instead of escalation
+ * - Sliding window compression (COMPRESS) and budget termination (TERMINATE)
  * - Graceful retry on rate limits (429) and context length exceeded
  * - [OutputValidator] on final content
  * - Progress callbacks for each iteration
@@ -95,10 +95,6 @@ class SingleAgentSession(
     // --- Completion gatekeeper state ---
     /** Tracks consecutive iterations with no tool calls (for nudge / implicit completion). */
     var consecutiveNoToolResponses = 0
-    /** Iterations since last context compression (for post-compression gate). */
-    var iterationsSinceCompression = Int.MAX_VALUE
-    /** Whether a completion attempt has been made after the most recent compression. */
-    var postCompressionCompletionAttempted = false
     /** Completion gatekeeper — initialized inside execute() where selfCorrectionGate/loopGuard are available. */
     var completionGatekeeper: CompletionGatekeeper? = null
 
@@ -241,15 +237,10 @@ class SingleAgentSession(
             com.workflow.orchestrator.agent.AgentService.getInstance(project).currentPlanManager
         } catch (_: Exception) { null }
         consecutiveNoToolResponses = 0
-        iterationsSinceCompression = Int.MAX_VALUE
-        postCompressionCompletionAttempted = false
         completionGatekeeper = CompletionGatekeeper(
             planManager = planManager,
             selfCorrectionGate = selfCorrectionGate,
-            loopGuard = loopGuard,
-            iterationsSinceCompression = { iterationsSinceCompression },
-            postCompressionCompletionAttempted = { postCompressionCompletionAttempted },
-            onPostCompressionAttempted = { postCompressionCompletionAttempted = true }
+            loopGuard = loopGuard
         )
 
         // Add attempt_completion tool to the active tool set
@@ -265,8 +256,7 @@ class SingleAgentSession(
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
         val editedFiles = mutableListOf<String>()
-        var nudgeEmitted = false
-        var strongNudgeEmitted = false
+        var compressionDone = false  // Re-arms if utilization drops below 80% and rises again
         var lastWarningPercent = 0
 
         var verificationPending = false
@@ -274,8 +264,6 @@ class SingleAgentSession(
         consecutiveMalformedRetries = 0
 
         for (iteration in 1..maxIterations) {
-            iterationsSinceCompression++
-
             // Mid-loop cancellation check
             if (cancelled.get()) {
                 LOG.info("SingleAgentSession: cancelled at iteration $iteration")
@@ -404,51 +392,26 @@ class SingleAgentSession(
                         scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
                     )
                 }
-                BudgetEnforcer.BudgetStatus.STRONG_NUDGE -> {
-                    if (!strongNudgeEmitted) {
-                        strongNudgeEmitted = true
-                        LOG.warn("SingleAgentSession: strong nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
-                        contextManager.addMessage(ChatMessage(
-                            role = "system",
-                            content = "WARNING: You have used ${budgetEnforcer.utilizationPercent()}% of your context budget. You MUST use delegate_task for any remaining task touching 2+ files. Single-file edits are still allowed directly."
-                        ))
-                        // Compress to free space at high utilization
+                BudgetEnforcer.BudgetStatus.COMPRESS -> {
+                    if (!compressionDone) {
+                        compressionDone = true
+                        LOG.info("SingleAgentSession: triggering sliding window compression at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
+                        eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration, ${budgetEnforcer.utilizationPercent()}% used")
                         val tokensBefore = contextManager.currentTokens
+                        val messagesBefore = contextManager.messageCount
                         contextManager.compressWithLlm(brain)
                         metrics.compressionCount++
                         loopGuard.clearAllFileReads()
-                        iterationsSinceCompression = 0
-                        postCompressionCompletionAttempted = false
-                        onDebugLog?.invoke("warn", "compression", "$tokensBefore → ${contextManager.currentTokens} tokens (strong nudge)", null)
+                        val tokensAfter = contextManager.currentTokens
+                        sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, tokensAfter, messagesBefore - contextManager.messageCount)
+                        agentFileLogger?.logCompression(sessionId, "budget_enforcer", tokensBefore, tokensAfter)
+                        onDebugLog?.invoke("warn", "compression", "$tokensBefore → $tokensAfter tokens", null)
                     }
                 }
-                BudgetEnforcer.BudgetStatus.NUDGE -> {
-                    if (!nudgeEmitted) {
-                        nudgeEmitted = true
-                        LOG.info("SingleAgentSession: nudge at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
-                        contextManager.addMessage(ChatMessage(
-                            role = "system",
-                            content = "Context at ${budgetEnforcer.utilizationPercent()}%. Prefer delegate_task for remaining multi-file work — each worker gets a fresh context window."
-                        ))
-                    }
+                BudgetEnforcer.BudgetStatus.OK -> {
+                    // Re-arm compression if utilization dropped below threshold after previous compression
+                    compressionDone = false
                 }
-                BudgetEnforcer.BudgetStatus.COMPRESS -> {
-                    LOG.info("SingleAgentSession: triggering LLM compression at iteration $iteration")
-                    eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration, ${budgetEnforcer.utilizationPercent()}% used")
-                    val tokensBefore = contextManager.currentTokens
-                    val messagesBefore = contextManager.messageCount
-                    // Use LLM-powered compression when brain is available
-                    contextManager.compressWithLlm(brain)
-                    metrics.compressionCount++
-                    loopGuard.clearAllFileReads()
-                    iterationsSinceCompression = 0
-                    postCompressionCompletionAttempted = false
-                    val tokensAfter = contextManager.currentTokens
-                    sessionTrace?.compressionTriggered("budget_enforcer", tokensBefore, tokensAfter, messagesBefore - contextManager.messageCount)
-                    agentFileLogger?.logCompression(sessionId, "budget_enforcer", tokensBefore, tokensAfter)
-                    onDebugLog?.invoke("warn", "compression", "$tokensBefore → $tokensAfter tokens", null)
-                }
-                BudgetEnforcer.BudgetStatus.OK -> { /* proceed */ }
             }
 
             // Ask user to confirm continuing after iteration 25
@@ -519,12 +482,15 @@ class SingleAgentSession(
                 contextManager.pruneOldToolResults()
                 // Phase 2: Full compression (LLM if brain available, otherwise truncation)
                 val tokensBefore = contextManager.currentTokens
+                val messagesBefore = contextManager.messageCount
                 try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
                 metrics.compressionCount++
                 loopGuard.clearAllFileReads()
-                iterationsSinceCompression = 0
-                postCompressionCompletionAttempted = false
-                onDebugLog?.invoke("warn", "compression", "$tokensBefore → ${contextManager.currentTokens} tokens (context overflow)", null)
+                compressionDone = true
+                val tokensAfter = contextManager.currentTokens
+                sessionTrace?.compressionTriggered("context_overflow", tokensBefore, tokensAfter, messagesBefore - contextManager.messageCount)
+                agentFileLogger?.logCompression(sessionId, "context_overflow", tokensBefore, tokensAfter)
+                onDebugLog?.invoke("warn", "compression", "$tokensBefore → $tokensAfter tokens (context overflow)", null)
                 // Re-fetch messages after compression
                 val compressedMessages = contextManager.getMessages()
                 // Retry with reduced tools and compressed context

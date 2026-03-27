@@ -6,15 +6,12 @@ import com.intellij.openapi.diagnostic.Logger
  * Orchestrates completion gates before accepting task completion.
  * Gates run in order — first block wins. Force-accepts after MAX_TOTAL_COMPLETION_ATTEMPTS.
  *
- * Gate order: PostCompression → Plan → SelfCorrection → LoopGuard
+ * Gate order: Plan → SelfCorrection → LoopGuard
  */
 class CompletionGatekeeper(
     private val planManager: PlanManager?,
     private val selfCorrectionGate: SelfCorrectionGate,
-    private val loopGuard: LoopGuard,
-    private val iterationsSinceCompression: () -> Int,
-    private val postCompressionCompletionAttempted: () -> Boolean,
-    private val onPostCompressionAttempted: () -> Unit
+    private val loopGuard: LoopGuard
 ) {
     companion object {
         private val LOG = Logger.getInstance(CompletionGatekeeper::class.java)
@@ -51,21 +48,10 @@ class CompletionGatekeeper(
             wasForceAccepted = true
             return null
         }
-        checkPostCompression()?.let { lastBlockedGate = "post_compression"; return it }
         checkPlanCompletion()?.let { lastBlockedGate = "plan"; return it }
         checkSelfCorrection()?.let { lastBlockedGate = "self_correction"; return it }
         checkLoopGuard()?.let { lastBlockedGate = "loop_guard"; return it }
         return null
-    }
-
-    private fun checkPostCompression(): String? {
-        if (iterationsSinceCompression() > 2) return null
-        if (postCompressionCompletionAttempted()) return null
-        onPostCompressionAttempted()
-        return "COMPLETION BLOCKED: Context was compressed recently. You may have lost " +
-            "track of the task. Review the [CONTEXT COMPRESSED] summary above and the " +
-            "active plan (if any). If there is remaining work, continue. " +
-            "If truly done, call attempt_completion again."
     }
 
     private fun checkPlanCompletion(): String? {

@@ -14,18 +14,11 @@ class CompletionGatekeeperTest {
     private lateinit var selfCorrectionGate: SelfCorrectionGate
     private lateinit var loopGuard: LoopGuard
 
-    private var iterationsSinceCompression = 10
-    private var postCompressionAttempted = false
-    private var postCompressionAttemptedCallCount = 0
-
     private fun makeGatekeeper(pm: PlanManager? = planManager): CompletionGatekeeper =
         CompletionGatekeeper(
             planManager = pm,
             selfCorrectionGate = selfCorrectionGate,
-            loopGuard = loopGuard,
-            iterationsSinceCompression = { iterationsSinceCompression },
-            postCompressionCompletionAttempted = { postCompressionAttempted },
-            onPostCompressionAttempted = { postCompressionAttemptedCallCount++ }
+            loopGuard = loopGuard
         )
 
     @BeforeEach
@@ -38,75 +31,14 @@ class CompletionGatekeeperTest {
         every { planManager.currentPlan } returns null
         every { selfCorrectionGate.checkCompletionReadiness() } returns null
         every { loopGuard.beforeCompletion() } returns null
-
-        iterationsSinceCompression = 10
-        postCompressionAttempted = false
-        postCompressionAttemptedCallCount = 0
     }
 
     // --- All gates pass ---
 
     @Test
-    fun `all gates pass when no plan, no compression, no blocks`() {
+    fun `all gates pass when no plan and no blocks`() {
         val gk = makeGatekeeper()
         assertNull(gk.checkCompletion())
-    }
-
-    @Test
-    fun `returns null with no plan and old compression`() {
-        iterationsSinceCompression = 5
-        val gk = makeGatekeeper()
-        assertNull(gk.checkCompletion())
-    }
-
-    // --- Post-compression gate ---
-
-    @Test
-    fun `post-compression gate blocks on recent compression when not yet attempted`() {
-        iterationsSinceCompression = 1
-        postCompressionAttempted = false
-        val gk = makeGatekeeper()
-
-        val result = gk.checkCompletion()
-
-        assertNotNull(result)
-        assertTrue(result!!.contains("COMPLETION BLOCKED"))
-        assertTrue(result.contains("compressed recently"))
-        assertEquals(1, postCompressionAttemptedCallCount)
-    }
-
-    @Test
-    fun `post-compression gate passes when already attempted once`() {
-        iterationsSinceCompression = 0
-        postCompressionAttempted = true  // already attempted
-        val gk = makeGatekeeper()
-
-        // Should not block on post-compression; no other gates block
-        assertNull(gk.checkCompletion())
-        assertEquals(0, postCompressionAttemptedCallCount) // callback not called again
-    }
-
-    @Test
-    fun `post-compression gate passes when compression is old (more than 2 iterations)`() {
-        iterationsSinceCompression = 3
-        postCompressionAttempted = false
-        val gk = makeGatekeeper()
-
-        assertNull(gk.checkCompletion())
-        assertEquals(0, postCompressionAttemptedCallCount) // gate not triggered
-    }
-
-    @Test
-    fun `post-compression gate passes exactly at boundary of 2 iterations`() {
-        iterationsSinceCompression = 2
-        postCompressionAttempted = false
-        val gk = makeGatekeeper()
-
-        val result = gk.checkCompletion()
-
-        // iterationsSinceCompression == 2 is NOT > 2, so gate fires
-        assertNotNull(result)
-        assertTrue(result!!.contains("compressed recently"))
     }
 
     // --- Plan gate ---
@@ -204,7 +136,6 @@ class CompletionGatekeeperTest {
         // Call 1: incomplete.size(1) != lastIncomplete(MAX_INT) -> planGateBlockCount stays 0, standard message
         val r1 = gk.checkCompletion()
         assertNotNull(r1)
-        // Standard message references update_plan_step but does NOT have the (Nx) escalation pattern
         assertFalse(r1!!.contains("(1x)") || r1.contains("no progress"))
 
         // Call 2: same count -> planGateBlockCount = 1, standard message
@@ -278,10 +209,8 @@ class CompletionGatekeeperTest {
     }
 
     @Test
-    fun `passes immediately on first call when no gates block (not counting toward force)`() {
+    fun `passes immediately on first call when no gates block`() {
         val gk = makeGatekeeper()
-
-        // Even on first call, if nothing blocks, returns null
         assertNull(gk.checkCompletion())
     }
 
@@ -345,26 +274,6 @@ class CompletionGatekeeperTest {
     }
 
     // --- Gate ordering ---
-
-    @Test
-    fun `post-compression gate fires before plan gate`() {
-        iterationsSinceCompression = 0
-        postCompressionAttempted = false
-
-        val plan = AgentPlan(
-            goal = "Implement feature",
-            steps = listOf(PlanStep(id = "1", title = "Write code", status = "pending"))
-        )
-        every { planManager.currentPlan } returns plan
-        val gk = makeGatekeeper()
-
-        val result = gk.checkCompletion()
-
-        assertNotNull(result)
-        // Post-compression message is returned, not the plan message
-        assertTrue(result!!.contains("compressed recently"))
-        assertFalse(result.contains("incomplete steps"))
-    }
 
     @Test
     fun `plan gate fires before self-correction gate`() {

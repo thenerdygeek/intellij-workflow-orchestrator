@@ -271,73 +271,31 @@ class ContextManager(
     }
 
     /**
-     * Compress the conversation to fit within T_retained.
-     * Strategy: Summarize the oldest non-system messages and replace them
-     * with a single summary message. Keep the most recent messages intact.
+     * Compress the conversation using a sliding window approach.
+     *
+     * Strategy (Cline-inspired):
+     * 1. Protect the first system message (original prompt at index 0)
+     * 2. Protect the first user-assistant exchange (preserves task context)
+     * 3. Remove 50% of remaining conversation history from the middle
+     * 4. Summarize removed messages and add as anchored summary
      *
      * Called automatically when addMessage() pushes totalTokens over tMax,
      * or explicitly by the session when BudgetEnforcer signals COMPRESS.
      */
     fun compress() {
-        if (messages.size <= 2) return // Nothing to compress
+        if (messages.size <= 4) return // Nothing meaningful to compress
 
-        // Find how many messages to drop to get below T_retained
-        var tokensToRemove = totalTokens - tRetained
-        val messagesToSummarize = mutableListOf<ChatMessage>()
-        val indicesToRemove = mutableListOf<Int>()
-
-        for (i in messages.indices) {
-            if (tokensToRemove <= 0) break
-            val msg = messages[i]
-            // Only protect the FIRST system message (original prompt at index 0).
-            // Allow other system messages (LoopGuard reminders, budget warnings) to be compressed.
-            if (msg.role == "system" && i == 0) continue
-
-            val msgTokens = TokenEstimator.estimate(listOf(msg))
-            messagesToSummarize.add(msg)
-            indicesToRemove.add(i)
-            tokensToRemove -= msgTokens
-        }
-
+        val (indicesToRemove, messagesToSummarize) = selectSlidingWindowMessages()
         if (messagesToSummarize.isEmpty()) return
 
-        // Orphan protection: if we're dropping an assistant message with tool_calls,
-        // also drop the corresponding tool result messages to avoid orphans.
-        val droppedToolCallIds = mutableSetOf<String>()
-        for (idx in indicesToRemove) {
-            val msg = messages[idx]
-            val tcs = msg.toolCalls
-            if (msg.role == "assistant" && tcs != null) {
-                tcs.forEach { tc -> droppedToolCallIds.add(tc.id) }
-            }
-        }
-        if (droppedToolCallIds.isNotEmpty()) {
-            for (i in messages.indices) {
-                if (i in indicesToRemove) continue
-                val msg = messages[i]
-                if (msg.role == "tool" && msg.toolCallId in droppedToolCallIds) {
-                    messagesToSummarize.add(msg)
-                    indicesToRemove.add(i)
-                }
-            }
-        }
-
-        // Create anchored summary of dropped messages.
-        // Uses LLM-powered summarization when brain is available, otherwise falls back
-        // to the default truncation summarizer.
+        // Create anchored summary of dropped messages
         val summary = summarizeMessages(messagesToSummarize)
-        anchoredSummaries.add(summary + "\n\n" + COMPRESSION_BOUNDARY)
-        // Cap at 3 summaries — consolidate older ones
-        if (anchoredSummaries.size > 3) {
-            val consolidated = anchoredSummaries.joinToString("\n---\n")
-            anchoredSummaries.clear()
-            anchoredSummaries.add(consolidated.take(4000))
-        }
+        addAnchoredSummary(summary)
 
         // Remove compressed messages (reverse order to preserve indices)
-        indicesToRemove.reversed().forEach { messages.removeAt(it) }
+        indicesToRemove.sorted().reversed().forEach { messages.removeAt(it) }
 
-        // Inject post-compression continuation message so the LLM knows context was compressed
+        // Inject post-compression continuation message
         injectPostCompressionGuidance()
 
         // Recalculate total tokens
@@ -345,55 +303,20 @@ class ContextManager(
     }
 
     /**
-     * LLM-powered compression: uses the LLM to summarize tool results (which contain
-     * high-information content like file paths, line numbers, code changes, and errors)
-     * while falling back to the truncation summarizer for non-tool messages or on error.
+     * LLM-powered compression with sliding window: removes 50% of conversation
+     * history (preserving first user-assistant exchange) and uses LLM to summarize
+     * the removed messages.
+     *
+     * Falls back to the truncation summarizer for non-tool messages or on error.
      *
      * Unlike [compress] (which is synchronous and called automatically from [addMessage]),
      * this method is a suspend function that must be called explicitly by the session loop.
      */
     suspend fun compressWithLlm(llmBrain: LlmBrain) {
-        if (messages.size <= 2) return
+        if (messages.size <= 4) return
 
-        var tokensToRemove = totalTokens - tRetained
-        val messagesToDrop = mutableListOf<ChatMessage>()
-        val indicesToRemove = mutableListOf<Int>()
-
-        for (i in messages.indices) {
-            if (tokensToRemove <= 0) break
-            val msg = messages[i]
-            // Only protect the FIRST system message (original prompt at index 0).
-            // Allow other system messages (LoopGuard reminders, budget warnings) to be compressed.
-            if (msg.role == "system" && i == 0) continue
-
-            val msgTokens = TokenEstimator.estimate(listOf(msg))
-            messagesToDrop.add(msg)
-            indicesToRemove.add(i)
-            tokensToRemove -= msgTokens
-        }
-
+        val (indicesToRemove, messagesToDrop) = selectSlidingWindowMessages()
         if (messagesToDrop.isEmpty()) return
-
-        // Orphan protection: if we're dropping an assistant message with tool_calls,
-        // also drop the corresponding tool result messages to avoid orphans.
-        val droppedToolCallIds = mutableSetOf<String>()
-        for (idx in indicesToRemove) {
-            val msg = messages[idx]
-            val tcs = msg.toolCalls
-            if (msg.role == "assistant" && tcs != null) {
-                tcs.forEach { tc -> droppedToolCallIds.add(tc.id) }
-            }
-        }
-        if (droppedToolCallIds.isNotEmpty()) {
-            for (i in messages.indices) {
-                if (i in indicesToRemove) continue
-                val msg = messages[i]
-                if (msg.role == "tool" && msg.toolCallId in droppedToolCallIds) {
-                    messagesToDrop.add(msg)
-                    indicesToRemove.add(i)
-                }
-            }
-        }
 
         val hasToolResults = messagesToDrop.any { it.role == "tool" }
 
@@ -445,24 +368,108 @@ critical for continuing the task.
                         if (!llmSummary.isNullOrBlank()) {
                             "Previous context summary (LLM): $llmSummary"
                         } else {
-                            // Empty LLM response — fall back
                             summarizer(messagesToDrop)
                         }
                     }
                     is ApiResult.Error -> {
-                        // LLM failed — fall back to truncation (never throw)
                         summarizer(messagesToDrop)
                     }
                 }
             } catch (_: Exception) {
-                // Catch-all safety net — fall back to truncation
                 summarizer(messagesToDrop)
             }
         } else {
-            // No tool results — truncation is sufficient and cheaper
             summarizer(messagesToDrop)
         }
 
+        addAnchoredSummary(summary)
+
+        // Remove compressed messages (reverse order to preserve indices)
+        indicesToRemove.sorted().reversed().forEach { messages.removeAt(it) }
+
+        // Inject post-compression continuation message
+        injectPostCompressionGuidance()
+
+        // Recalculate total tokens
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
+    /**
+     * Select messages to remove using the sliding window strategy:
+     * 1. Protect index 0 (system prompt)
+     * 2. Protect the first user-assistant exchange after the system prompt
+     * 3. From the remaining eligible messages, select the first 50% (oldest half) for removal
+     * 4. Apply orphan protection: if dropping an assistant with tool_calls, also drop its tool results
+     *
+     * Returns (indicesToRemove, messagesToSummarize) — indices are unsorted.
+     */
+    private fun selectSlidingWindowMessages(): Pair<MutableList<Int>, MutableList<ChatMessage>> {
+        // Find the first user-assistant exchange to protect
+        var protectedUpTo = 0 // index 0 is always protected (system prompt)
+        var foundUser = false
+        for (i in 1 until messages.size) {
+            val msg = messages[i]
+            if (!foundUser && msg.role == "user") {
+                foundUser = true
+                protectedUpTo = i
+            } else if (foundUser && msg.role == "assistant") {
+                protectedUpTo = i
+                // Also protect any tool results that belong to this assistant's tool calls
+                val toolCallIds = msg.toolCalls?.map { it.id }?.toSet() ?: emptySet()
+                if (toolCallIds.isNotEmpty()) {
+                    for (j in (i + 1) until messages.size) {
+                        if (messages[j].role == "tool" && messages[j].toolCallId in toolCallIds) {
+                            protectedUpTo = j
+                        } else break
+                    }
+                }
+                break
+            }
+        }
+
+        // Eligible messages: everything after the protected prefix
+        val eligibleStart = protectedUpTo + 1
+        val eligibleCount = messages.size - eligibleStart
+        if (eligibleCount <= 2) return Pair(mutableListOf(), mutableListOf())
+
+        // Remove 50% of eligible messages (the oldest half of the eligible window)
+        val removeCount = eligibleCount / 2
+        val indicesToRemove = mutableListOf<Int>()
+        val messagesToSummarize = mutableListOf<ChatMessage>()
+
+        for (i in eligibleStart until (eligibleStart + removeCount)) {
+            indicesToRemove.add(i)
+            messagesToSummarize.add(messages[i])
+        }
+
+        // Orphan protection: if we're dropping an assistant message with tool_calls,
+        // also drop the corresponding tool result messages
+        val droppedToolCallIds = mutableSetOf<String>()
+        for (idx in indicesToRemove.toList()) {
+            val msg = messages[idx]
+            val tcs = msg.toolCalls
+            if (msg.role == "assistant" && tcs != null) {
+                tcs.forEach { tc -> droppedToolCallIds.add(tc.id) }
+            }
+        }
+        if (droppedToolCallIds.isNotEmpty()) {
+            for (i in messages.indices) {
+                if (i in indicesToRemove) continue
+                val msg = messages[i]
+                if (msg.role == "tool" && msg.toolCallId in droppedToolCallIds) {
+                    messagesToSummarize.add(msg)
+                    indicesToRemove.add(i)
+                }
+            }
+        }
+
+        return Pair(indicesToRemove, messagesToSummarize)
+    }
+
+    /**
+     * Add a summary to the anchored summaries list, consolidating if needed.
+     */
+    private fun addAnchoredSummary(summary: String) {
         anchoredSummaries.add(summary + "\n\n" + COMPRESSION_BOUNDARY)
         // Cap at 3 summaries — consolidate older ones
         if (anchoredSummaries.size > 3) {
@@ -470,15 +477,6 @@ critical for continuing the task.
             anchoredSummaries.clear()
             anchoredSummaries.add(consolidated.take(4000))
         }
-
-        // Remove compressed messages (reverse order to preserve indices)
-        indicesToRemove.reversed().forEach { messages.removeAt(it) }
-
-        // Inject post-compression continuation message so the LLM knows context was compressed
-        injectPostCompressionGuidance()
-
-        // Recalculate total tokens
-        totalTokens = TokenEstimator.estimate(getMessages())
     }
 
     /** Metadata about a tool call that triggered a tool result. */

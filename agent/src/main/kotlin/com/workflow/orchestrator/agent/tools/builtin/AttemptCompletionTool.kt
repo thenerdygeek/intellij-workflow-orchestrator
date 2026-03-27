@@ -26,10 +26,10 @@ class AttemptCompletionTool(
         properties = mapOf(
             "result" to ParameterProperty(
                 type = "string",
-                description = "A well-structured markdown summary of what was accomplished. " +
-                    "Use bullet points for key changes, include file paths where relevant, " +
-                    "and note any insights or caveats. This is displayed as the final " +
-                    "completion card — make it scannable and informative."
+                description = "A short, concise summary of only the important things done. " +
+                    "Keep it brief — bullet points of key changes and outcomes. " +
+                    "Skip implementation details the user doesn't need to know. " +
+                    "This is displayed as the final completion card."
             ),
             "command" to ParameterProperty(
                 type = "string",

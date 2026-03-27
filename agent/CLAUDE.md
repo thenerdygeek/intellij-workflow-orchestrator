@@ -19,7 +19,7 @@ AgentController (UI entry point)
   → ConversationSession (long-lived, owns context + plan + question managers)
     → AgentOrchestrator.executeTask()
       → SingleAgentSession.execute() (ReAct loop, max 50 iterations)
-        → BudgetEnforcer (COMPRESS at 80%, NUDGE at 88%, STRONG_NUDGE at 93%, TERMINATE at 97%)
+        → BudgetEnforcer (COMPRESS at 80%, TERMINATE at 97%)
         → LoopGuard (loop detection, error nudges, auto-verification)
         → Tool execution with optional ApprovalGate
 ```
@@ -28,12 +28,12 @@ AgentController (UI entry point)
 
 - **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
 - **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Two-threshold compression (T_max=85%, T_retained=70%). Two-phase compression: Phase 1 prunes old tool results (protects last 30K tokens), Phase 2 is LLM/truncation summarization. `compressWithLlm()` uses structured compaction template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
-- **BudgetEnforcer** — Four-status budget monitoring: OK (<80%), COMPRESS (80-88%), NUDGE (88-93%), STRONG_NUDGE (93-97%), TERMINATE (>97%).
+- **ContextManager** — Sliding window compression (Cline-inspired). Phase 1 prunes old tool results (protects last 30K tokens). Phase 2 removes 50% of conversation history via sliding window — preserves system prompt and first user-assistant exchange, removes oldest half of remaining messages, LLM-summarizes dropped content with structured template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Fallback to truncation summarizer for text-only or on LLM error. Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
+- **BudgetEnforcer** — Three-status budget monitoring (Cline-inspired single compression threshold): OK (<80%), COMPRESS (80-97%), TERMINATE (>97%). COMPRESS fires once per crossing (re-arms when utilization drops back below 80%).
 - **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
 - **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
 - **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
-- **CompletionGatekeeper** — Orchestrates 4 completion gates before accepting task completion: PostCompression (blocks if context was recently compressed), Plan (blocks if plan has incomplete steps, escalates after 3 blocks without progress), SelfCorrectionGate (existing, blocks if unverified edits), LoopGuard (existing, blocks if unverified files). Force-accepts after 5 total blocked attempts. `attempt_completion` tool delegates to this.
+- **CompletionGatekeeper** — Orchestrates 3 completion gates before accepting task completion: Plan (blocks if plan has incomplete steps, escalates after 3 blocks without progress), SelfCorrectionGate (blocks if unverified edits), LoopGuard (blocks if unverified files). Force-accepts after 5 total blocked attempts. `attempt_completion` tool delegates to this.
 - **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. Responses without tool calls trigger a nudge then implicit gating. Not available to WorkerSession (subagents use "no tool calls = done").
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
@@ -79,7 +79,7 @@ Three layers:
 - **Phase 2 (summarization)**: Structured LLM summary (Goal/Discoveries/Accomplished/Files template) with [APPROX] markers. Fallback summarizer preserves first 10 lines of tool results (8K char cap).
 - **Compression boundary**: After any compression, a `[CONTEXT COMPRESSED]` marker warns LLM earlier content is approximate.
 - **Compression trigger**: 85% of effective budget (auto-compress in addMessage)
-- **Budget thresholds**: OK (<80%), COMPRESS (80-88%), NUDGE (88-93%), STRONG_NUDGE (93-97%), TERMINATE (>97%)
+- **Budget thresholds**: OK (<80%), COMPRESS (80-97%), TERMINATE (>97%)
 - **Middle-truncation**: Command and git output keeps first 60% + last 40%, truncating verbose middle.
 - **System messages**: Old LoopGuard/budget warnings compressible, capped at 2 active warnings
 - **Orphan protection**: When compression drops an assistant tool_call, its tool result is also dropped

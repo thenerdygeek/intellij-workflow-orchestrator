@@ -397,7 +397,14 @@ class ContextManagerTest {
             tRetainedRatio = 0.40
         )
 
-        // Add a tool result with recognizable content
+        // Realistic message structure: system prompt, user-assistant exchange, then tool result
+        cm.addMessage(ChatMessage(role = "system", content = "You are an assistant."))
+        cm.addMessage(ChatMessage(role = "user", content = "Fix the build"))
+        cm.addMessage(ChatMessage(role = "assistant", content = "Let me check."))
+        // Tool result with recognizable content (after the protected first exchange)
+        cm.addMessage(ChatMessage(role = "assistant", content = "Running build...", toolCalls = listOf(
+            ToolCall(id = "tc-1", function = FunctionCall(name = "run_command", arguments = """{"command":"./build"}"""))
+        )))
         cm.addMessage(ChatMessage(role = "tool", content = "<external_data>Build FAILED: src/Main.kt:42 NullPointerException\nStack trace line 1\nStack trace line 2</external_data>", toolCallId = "tc-1"))
 
         // Fill to trigger compression
@@ -422,8 +429,15 @@ class ContextManagerTest {
             tRetainedRatio = 0.40
         )
 
-        // Add messages with file paths
+        // Realistic message structure: system prompt, user-assistant exchange, then file references
+        cm.addMessage(ChatMessage(role = "system", content = "You are an assistant."))
+        cm.addMessage(ChatMessage(role = "user", content = "Fix it"))
+        cm.addMessage(ChatMessage(role = "assistant", content = "Sure."))
+        // File path messages (after the protected first exchange)
         cm.addMessage(ChatMessage(role = "user", content = "Please fix the error in src/main/kotlin/Auth.kt"))
+        cm.addMessage(ChatMessage(role = "assistant", content = "Looking...", toolCalls = listOf(
+            ToolCall(id = "tc-1", function = FunctionCall(name = "read_file", arguments = """{"path":"src/main/kotlin/Auth.kt"}"""))
+        )))
         cm.addMessage(ChatMessage(role = "tool", content = "<external_data>Found issue at com/example/Service.kt line 42</external_data>", toolCallId = "tc-1"))
 
         // Fill to trigger compression

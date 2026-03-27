@@ -36,54 +36,36 @@ class BudgetEnforcerTest {
     }
 
     @Test
-    fun `returns COMPRESS when between compression and nudge thresholds`() {
+    fun `returns COMPRESS when between compression and terminate thresholds`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 125_000 // ~83% — between 80% and 88%
+        every { contextManager.currentTokens } returns 140_000 // ~93%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
     }
 
     @Test
-    fun `returns NUDGE when token usage reaches nudge threshold`() {
+    fun `returns COMPRESS at 90 percent`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 132_000 // 88% — at nudge threshold
+        every { contextManager.currentTokens } returns 135_000 // 90%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
+        assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
     }
 
     @Test
-    fun `returns NUDGE when between nudge and strong nudge thresholds`() {
+    fun `returns COMPRESS just under terminate threshold`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 136_000 // ~91% — between 88% and 93%
+        every { contextManager.currentTokens } returns 145_499 // just under 97%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
-    }
-
-    @Test
-    fun `returns STRONG_NUDGE when token usage reaches strong nudge threshold`() {
-        val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 139_500 // 93% — at strong nudge threshold
-
-        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.STRONG_NUDGE, enforcer.check())
-    }
-
-    @Test
-    fun `returns STRONG_NUDGE when between strong nudge and terminate thresholds`() {
-        val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 143_000 // ~95% — between 93% and 97%
-
-        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.STRONG_NUDGE, enforcer.check())
+        assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
     }
 
     @Test
     fun `returns TERMINATE when token usage reaches terminate threshold`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 145_500 // 97% — at terminate threshold
+        every { contextManager.currentTokens } returns 145_500 // 97%
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 150_000)
         assertEquals(BudgetEnforcer.BudgetStatus.TERMINATE, enforcer.check())
@@ -121,7 +103,7 @@ class BudgetEnforcerTest {
         val contextManager = mockk<ContextManager>()
         every { contextManager.currentTokens } returns 6_500
 
-        // With a small budget of 8000, 6500 tokens is 81.25% → COMPRESS (between 80% and 88%)
+        // With a small budget of 8000, 6500 tokens is 81.25% → COMPRESS
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 8_000)
         assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
     }
@@ -131,16 +113,16 @@ class BudgetEnforcerTest {
         val contextManager = mockk<ContextManager>()
         every { contextManager.currentTokens } returns 50_000
 
-        // With effectiveBudget=146000 (150K - 4K reserved), 50K = ~34% → OK
+        // With effectiveBudget=146000, 50K = ~34% → OK
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 146_000)
         assertEquals(BudgetEnforcer.BudgetStatus.OK, enforcer.check())
 
-        // But with effectiveBudget=60_000, 50K = 83.3% → COMPRESS (between 80% and 88%)
+        // But with effectiveBudget=60_000, 50K = 83.3% → COMPRESS
         val smallEnforcer = BudgetEnforcer(contextManager, effectiveBudget = 60_000)
         assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, smallEnforcer.check())
     }
 
-    // --- New tests with budget=10,000 for boundary precision ---
+    // --- Small budget boundary precision tests ---
 
     @Test
     fun `small budget - OK just below compression threshold`() {
@@ -161,21 +143,12 @@ class BudgetEnforcerTest {
     }
 
     @Test
-    fun `small budget - NUDGE at exactly 88 percent`() {
+    fun `small budget - COMPRESS at 90 percent`() {
         val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 8_800 // exactly 88% of 10K
+        every { contextManager.currentTokens } returns 9_000 // 90% of 10K
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.NUDGE, enforcer.check())
-    }
-
-    @Test
-    fun `small budget - STRONG_NUDGE at exactly 93 percent`() {
-        val contextManager = mockk<ContextManager>()
-        every { contextManager.currentTokens } returns 9_300 // exactly 93% of 10K
-
-        val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
-        assertEquals(BudgetEnforcer.BudgetStatus.STRONG_NUDGE, enforcer.check())
+        assertEquals(BudgetEnforcer.BudgetStatus.COMPRESS, enforcer.check())
     }
 
     @Test
@@ -185,5 +158,14 @@ class BudgetEnforcerTest {
 
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
         assertEquals(BudgetEnforcer.BudgetStatus.TERMINATE, enforcer.check())
+    }
+
+    @Test
+    fun `only three budget statuses exist`() {
+        assertEquals(3, BudgetEnforcer.BudgetStatus.entries.size)
+        assertEquals(
+            setOf("OK", "COMPRESS", "TERMINATE"),
+            BudgetEnforcer.BudgetStatus.entries.map { it.name }.toSet()
+        )
     }
 }

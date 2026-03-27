@@ -252,7 +252,7 @@ class MultiTurnFlowTest {
 
     @Test
     fun `budget escalation follows correct status progression`() = runTest {
-        // Use a large maxInputTokens so ContextManager's own compression (at tMax = 93%)
+        // Use a large maxInputTokens so ContextManager's own compression (at tMax = 85%)
         // does NOT trigger before we can observe BudgetEnforcer thresholds.
         // BudgetEnforcer effectiveBudget is set independently to 10,000 tokens.
         // Token estimation: 1 token per 3.5 chars, so 10,000 tokens = ~35,000 chars.
@@ -268,24 +268,22 @@ class MultiTurnFlowTest {
         contextManager.addMessage(ChatMessage(role = "user", content = "x".repeat(28_700)))
 
         val afterMediumFill = enforcer.check()
-        assertTrue(
-            afterMediumFill == BudgetEnforcer.BudgetStatus.COMPRESS ||
-                afterMediumFill == BudgetEnforcer.BudgetStatus.NUDGE,
-            "Should be at COMPRESS or NUDGE after ~82% fill, got $afterMediumFill (tokens=${contextManager.currentTokens})"
+        assertEquals(
+            BudgetEnforcer.BudgetStatus.COMPRESS, afterMediumFill,
+            "Should be at COMPRESS after ~82% fill (tokens=${contextManager.currentTokens})"
         )
 
-        // Add more to reach ~90% (need ~3,150 more tokens = ~11,025 more chars)
-        // NUDGE threshold is 88% = 8,800 tokens
+        // Add more to reach ~90%
         contextManager.addMessage(ChatMessage(role = "assistant", content = "y".repeat(3_500)))
 
         val afterHeavierFill = enforcer.check()
-        assertTrue(
-            afterHeavierFill.ordinal >= BudgetEnforcer.BudgetStatus.COMPRESS.ordinal,
-            "Should be at COMPRESS or above after ~90% fill, got $afterHeavierFill (tokens=${contextManager.currentTokens})"
+        assertEquals(
+            BudgetEnforcer.BudgetStatus.COMPRESS, afterHeavierFill,
+            "Should still be COMPRESS at ~90% fill (tokens=${contextManager.currentTokens})"
         )
 
         // The progression should never go backward without compression
-        // (OK < COMPRESS < NUDGE < STRONG_NUDGE < TERMINATE)
+        // (OK < COMPRESS < TERMINATE)
         assertTrue(
             afterHeavierFill.ordinal >= afterMediumFill.ordinal,
             "Budget status should not decrease without compression: $afterMediumFill -> $afterHeavierFill"

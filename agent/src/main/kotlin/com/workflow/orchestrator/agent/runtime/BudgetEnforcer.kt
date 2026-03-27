@@ -6,13 +6,10 @@ import com.workflow.orchestrator.agent.context.ContextManager
 /**
  * Monitors token usage during the ReAct loop and signals when action is needed.
  *
- * Thresholds (relative to effectiveBudget — already accounting for reserved tokens like
- * tool definitions, system prompt overhead, and safety buffer):
+ * Three-tier budget system (Cline-inspired, single compression threshold):
  * - OK: under 80% — proceed normally
- * - COMPRESS: 80%-88% — trigger context compression
- * - NUDGE: 88%-93% — inject nudge into system prompt suggesting delegation or wrap-up
- * - STRONG_NUDGE: 93%-97% — inject strong nudge urging immediate delegation or conclusion
- * - TERMINATE: over 97% — hard stop, context is exhausted
+ * - COMPRESS: 80%-97% — trigger LLM summary + sliding window compression
+ * - TERMINATE: over 97% — hard stop, context rotation or fail
  */
 class BudgetEnforcer(
     private val contextManager: ContextManager,
@@ -20,15 +17,11 @@ class BudgetEnforcer(
 ) {
     companion object {
         private val LOG = Logger.getInstance(BudgetEnforcer::class.java)
-        private const val COMPRESSION_RATIO = 0.80   // Was 0.60 — aligned with OpenCode (~85%)
-        private const val NUDGE_RATIO = 0.88         // Was 0.75
-        private const val STRONG_NUDGE_RATIO = 0.93  // Was 0.85 — above tMaxRatio (0.85) to catch post-compression overflow
-        private const val TERMINATE_RATIO = 0.97     // Was 0.95 — leave only 3% emergency buffer
+        private const val COMPRESSION_RATIO = 0.80
+        private const val TERMINATE_RATIO = 0.97
     }
 
     private val compressionThreshold = (effectiveBudget * COMPRESSION_RATIO).toInt()
-    private val nudgeThreshold = (effectiveBudget * NUDGE_RATIO).toInt()
-    private val strongNudgeThreshold = (effectiveBudget * STRONG_NUDGE_RATIO).toInt()
     private val terminateThreshold = (effectiveBudget * TERMINATE_RATIO).toInt()
 
     /**
@@ -40,17 +33,9 @@ class BudgetEnforcer(
             used < compressionThreshold -> {
                 BudgetStatus.OK
             }
-            used < nudgeThreshold -> {
-                LOG.info("BudgetEnforcer: approaching budget limit ($used/$effectiveBudget tokens, ${(used * 100) / effectiveBudget}%). Compression recommended.")
-                BudgetStatus.COMPRESS
-            }
-            used < strongNudgeThreshold -> {
-                LOG.warn("BudgetEnforcer: budget elevated ($used/$effectiveBudget tokens, ${(used * 100) / effectiveBudget}%). Consider delegating remaining work or wrapping up.")
-                BudgetStatus.NUDGE
-            }
             used < terminateThreshold -> {
-                LOG.warn("BudgetEnforcer: budget critical ($used/$effectiveBudget tokens, ${(used * 100) / effectiveBudget}%). Strongly recommend delegating or concluding immediately.")
-                BudgetStatus.STRONG_NUDGE
+                LOG.info("BudgetEnforcer: compression needed ($used/$effectiveBudget tokens, ${(used * 100) / effectiveBudget}%).")
+                BudgetStatus.COMPRESS
             }
             else -> {
                 LOG.warn("BudgetEnforcer: budget exhausted ($used/$effectiveBudget tokens, ${(used * 100) / effectiveBudget}%). Terminating session.")
@@ -69,12 +54,8 @@ class BudgetEnforcer(
     enum class BudgetStatus {
         /** Under compression threshold — proceed normally. */
         OK,
-        /** Between compression and nudge thresholds — compress context. */
+        /** Between compression and terminate thresholds — compress context. */
         COMPRESS,
-        /** Between nudge and strong nudge thresholds — suggest delegation or wrap-up. */
-        NUDGE,
-        /** Between strong nudge and terminate thresholds — urgently recommend delegation or conclusion. */
-        STRONG_NUDGE,
         /** Over terminate threshold — hard stop, context exhausted. */
         TERMINATE
     }
