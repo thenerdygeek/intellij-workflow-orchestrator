@@ -15,8 +15,8 @@ import java.io.File
  * of closed sprints. On subsequent calls, we start from (cachedStartAt - pageSize)
  * to catch any newly closed sprints, instead of walking from 0.
  *
- * Thread-safe: all access is synchronized since multiple projects/coroutines
- * may call concurrently.
+ * Thread-safe: in-memory cache access is synchronized. File I/O runs outside
+ * the lock to avoid blocking concurrent callers on slow disk operations.
  */
 object SprintPaginationCache {
 
@@ -39,7 +39,6 @@ object SprintPaginationCache {
     )
 
     private val lock = Any()
-    @Volatile
     private var cache: CacheData? = null
 
     /**
@@ -47,8 +46,8 @@ object SprintPaginationCache {
      * Returns 0 if no cache exists (first walk).
      */
     fun getCachedStartAt(boardId: Int, pageSize: Int): Int {
+        val data = getOrLoadCache()
         synchronized(lock) {
-            val data = loadCacheLocked()
             val entry = data.boards[boardId.toString()] ?: return 0
             return (entry.lastStartAt - pageSize).coerceAtLeast(0)
         }
@@ -56,45 +55,55 @@ object SprintPaginationCache {
 
     /**
      * Save the startAt offset of the last page for a board.
+     * In-memory update is synchronized; file write happens outside the lock.
      */
     fun saveCachedStartAt(boardId: Int, lastStartAt: Int) {
+        val snapshot: CacheData
         synchronized(lock) {
-            val data = loadCacheLocked()
+            val data = getOrLoadCache()
             data.boards[boardId.toString()] = BoardCacheEntry(
                 boardId = boardId,
                 lastStartAt = lastStartAt
             )
-            saveCacheLocked(data)
+            snapshot = data
+            cache = data
+        }
+        // File write outside lock to avoid blocking concurrent readers
+        writeToDisk(snapshot)
+    }
+
+    /** Load cache from disk if not yet in memory. Thread-safe. */
+    private fun getOrLoadCache(): CacheData {
+        synchronized(lock) {
+            cache?.let { return it }
+        }
+        // Read from disk outside lock
+        val loaded = readFromDisk()
+        synchronized(lock) {
+            // Double-check: another thread may have loaded while we read
+            cache?.let { return it }
+            cache = loaded
+            return loaded
         }
     }
 
-    /** Must be called under [lock]. */
-    private fun loadCacheLocked(): CacheData {
-        cache?.let { return it }
+    private fun readFromDisk(): CacheData {
         return try {
             if (cacheFile.exists()) {
-                val loaded = json.decodeFromString<CacheData>(cacheFile.readText())
-                cache = loaded
-                loaded
+                json.decodeFromString<CacheData>(cacheFile.readText())
             } else {
-                val empty = CacheData()
-                cache = empty
-                empty
+                CacheData()
             }
         } catch (e: Exception) {
             log.warn("[SprintCache] Failed to read cache: ${e.message}")
-            val empty = CacheData()
-            cache = empty
-            empty
+            CacheData()
         }
     }
 
-    /** Must be called under [lock]. */
-    private fun saveCacheLocked(data: CacheData) {
+    private fun writeToDisk(data: CacheData) {
         try {
             cacheDir.mkdirs()
             cacheFile.writeText(json.encodeToString(CacheData.serializer(), data))
-            cache = data
         } catch (e: Exception) {
             log.warn("[SprintCache] Failed to write cache: ${e.message}")
         }

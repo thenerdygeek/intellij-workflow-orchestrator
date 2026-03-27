@@ -382,11 +382,10 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
     private class RunListCellRenderer : ListCellRenderer<RunEntry> {
 
-        // Mutable state read by custom paintComponent overrides
-        private var currentStatusColor: Color = StatusColors.LINK
-
-        // Cached top-level panel with left border accent
+        // Cached top-level panel with left border accent — owns its own statusColor
         private val panel = object : JPanel(BorderLayout()) {
+            var statusColor: Color = StatusColors.LINK
+
             init {
                 isOpaque = true
                 border = JBUI.Borders.empty(6, 8, 6, 6)
@@ -394,10 +393,9 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
-                // Stitch: left border accent colored by status
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = currentStatusColor
+                g2.color = statusColor
                 g2.fillRect(0, 0, JBUI.scale(3), height)
                 g2.dispose()
             }
@@ -411,12 +409,14 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
         }
 
-        // Stitch: outline status badge (1px border, no fill, sharp corners)
+        // Outline status badge — owns its own badgeColor
         private val statusBadge = object : JBLabel() {
+            var badgeColor: Color = StatusColors.LINK
+
             override fun paintComponent(g: Graphics) {
                 val g2 = g.create() as Graphics2D
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = currentStatusColor
+                g2.color = badgeColor
                 g2.draw(RoundRectangle2D.Float(
                     0.5f, 0.5f, width - 1f, height - 1f,
                     JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
@@ -470,7 +470,8 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 "failed" -> StatusColors.ERROR
                 else -> StatusColors.LINK
             }
-            currentStatusColor = statusColor
+            panel.statusColor = statusColor
+            statusBadge.badgeColor = statusColor
 
             // Background: selection or alternating row tonal shift
             panel.background = if (isSelected) list.selectionBackground else {

@@ -283,8 +283,7 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
             JBUI.Borders.empty(4, 8)
         )
 
-        // Main line: type + outline severity badge + message + file:line
-        // Outline-style badge: 1px border, no fill (Stitch design)
+        // Main line: type + severity label in color + message + file:line
         mainLabel.text = "<html>$typeStr " +
             "<font color='$htmlColor'><b>[${value.severity}]</b></font>" +
             "  ${value.message} \u2014 $fileName:${value.startLine}</html>"

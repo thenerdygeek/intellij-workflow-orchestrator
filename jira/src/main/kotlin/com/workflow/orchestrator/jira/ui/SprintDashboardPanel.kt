@@ -616,8 +616,6 @@ class SprintDashboardPanel(
         }
     }
 
-
-
     private fun sortIssues(issues: List<JiraIssue>, sortBy: String): List<JiraIssue> {
         return when (sortBy) {
             "Priority" -> issues.sortedBy { priorityOrder(it.fields.priority?.name) }

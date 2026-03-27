@@ -143,10 +143,9 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
             tablePanel.add(createTableRow(authorName, timeStr, dateStr, isHeader = false))
 
             // Comment sub-row (if worklog has a comment)
-            if (!worklog.comment.isNullOrBlank()) {
-                val commentText = worklog.comment.take(80).let {
-                    if (worklog.comment.length > 80) "$it..." else it
-                }
+            val comment = worklog.comment?.trim().orEmpty()
+            if (comment.isNotBlank()) {
+                val commentText = if (comment.length > 80) "${comment.take(80)}..." else comment
                 val commentRow = JPanel(BorderLayout()).apply {
                     isOpaque = false
                     alignmentX = Component.LEFT_ALIGNMENT
