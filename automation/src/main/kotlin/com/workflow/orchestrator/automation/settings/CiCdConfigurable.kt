@@ -152,6 +152,16 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
             // === 4. SonarQube ===
             collapsibleGroup("SonarQube") {
+                row {
+                    checkBox("Enable Sonar inline annotations in editor")
+                        .bindSelected(settings.state::sonarInlineAnnotationsEnabled)
+                        .comment("Show SonarQube issues as inline annotations on affected lines")
+                }
+                row {
+                    checkBox("Enable Sonar AI quick-fix intention action")
+                        .bindSelected(settings.state::sonarIntentionActionEnabled)
+                        .comment("Show an AI-powered quick-fix intention on Sonar-annotated lines")
+                }
                 row("Project Key:") {
                     val projectKeyField = textField()
                         .bindText(
