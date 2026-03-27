@@ -18,8 +18,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class SemanticDiagnosticsTool : AgentTool {
+    companion object {
+        /** Lines of buffer around the edited range to include in diagnostics. */
+        private const val EDIT_LINE_BUFFER = 5
+    }
+
     override val name = "diagnostics"
-    override val description = "Check a file for errors: syntax errors, unresolved references, missing imports, type mismatches. Use AFTER editing files to verify no errors were introduced."
+    override val description = "Check a file for errors: syntax errors, unresolved references, missing imports. When run after edit_file, only reports NEW issues near the edited lines — pre-existing issues elsewhere in the file are excluded."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "File path to check (e.g., 'src/main/kotlin/UserService.kt')")
@@ -44,6 +49,10 @@ class SemanticDiagnosticsTool : AgentTool {
             return ToolResult("Semantic diagnostics only available for .kt and .java files.", "Unsupported type", 5)
         }
 
+        // Check if there's a recent edit range for this file (set by EditFileTool)
+        val canonicalPath = try { java.io.File(path).canonicalPath } catch (_: Exception) { path }
+        val editRange = com.workflow.orchestrator.agent.tools.builtin.EditFileTool.lastEditLineRanges.remove(canonicalPath)
+
         return try {
             val result = ReadAction.nonBlocking<ToolResult?> {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path))
@@ -52,18 +61,23 @@ class SemanticDiagnosticsTool : AgentTool {
                     ?: return@nonBlocking ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
                 if (!psiFile.isValid) return@nonBlocking null
 
-                val problems = mutableListOf<String>()
-
-                // 1. WolfTheProblemSolver check
-                val wolf = WolfTheProblemSolver.getInstance(project)
-                if (wolf.isProblemFile(vf)) {
-                    problems.add("IDE flags this file as problematic")
+                // Compute the line filter: if we have an edit range, only report issues near it
+                val filterRange = editRange?.let {
+                    val start = maxOf(1, it.first - EDIT_LINE_BUFFER)
+                    val end = it.last + EDIT_LINE_BUFFER
+                    start..end
                 }
+
+                val allProblems = mutableListOf<Pair<Int, String>>() // (line, message)
+
+                // 1. WolfTheProblemSolver check (file-level, always included)
+                val wolf = WolfTheProblemSolver.getInstance(project)
+                val hasProblemFlag = wolf.isProblemFile(vf)
 
                 // 2. Syntax errors (PsiErrorElement)
                 PsiTreeUtil.collectElementsOfType(psiFile, PsiErrorElement::class.java).forEach { error ->
                     val line = psiFile.viewProvider.document?.getLineNumber(error.textOffset)?.plus(1) ?: 0
-                    problems.add("Line $line: Syntax error — ${error.errorDescription}")
+                    allProblems.add(line to "Syntax error — ${error.errorDescription}")
                 }
 
                 // 3. Unresolved references (semantic errors — missing imports, unknown types)
@@ -77,21 +91,36 @@ class SemanticDiagnosticsTool : AgentTool {
                                 if (text.isNotBlank() && text !in unresolvedSeen && !text.startsWith("kotlin.") && !text.startsWith("java.lang.")) {
                                     unresolvedSeen.add(text)
                                     val line = psiFile.viewProvider.document?.getLineNumber(element.textOffset)?.plus(1) ?: 0
-                                    problems.add("Line $line: Unresolved reference '$text'")
+                                    allProblems.add(line to "Unresolved reference '$text'")
                                 }
                             }
                         }
                     }
                 })
 
-                if (problems.isEmpty()) {
-                    ToolResult("No semantic errors in ${vf.name}.", "No errors", 5)
+                // Filter to only issues near the edited lines (if edit range is known)
+                val relevantProblems = if (filterRange != null) {
+                    allProblems.filter { (line, _) -> line in filterRange }
                 } else {
-                    // Cap at 20 problems to avoid token bloat
-                    val shown = problems.take(20)
-                    val more = if (problems.size > 20) "\n... and ${problems.size - 20} more" else ""
-                    val content = "${problems.size} issue(s) in ${vf.name}:\n${shown.joinToString("\n") { "  $it" }}$more"
-                    ToolResult(content, "${problems.size} issues", TokenEstimator.estimate(content), isError = true)
+                    allProblems
+                }
+
+                val skippedCount = allProblems.size - relevantProblems.size
+
+                if (relevantProblems.isEmpty() && !hasProblemFlag) {
+                    val suffix = if (filterRange != null && skippedCount > 0) {
+                        " ($skippedCount pre-existing issue(s) outside your edit range were excluded)"
+                    } else ""
+                    ToolResult("No errors in ${vf.name} near your changes.$suffix", "No errors", 5)
+                } else {
+                    val shown = relevantProblems.take(20)
+                    val lines = shown.map { (line, msg) -> "  Line $line: $msg" }
+                    val more = if (relevantProblems.size > 20) "\n... and ${relevantProblems.size - 20} more" else ""
+                    val scopeNote = if (filterRange != null) " (lines ${filterRange.first}-${filterRange.last})" else ""
+                    val skippedNote = if (skippedCount > 0) "\n  ($skippedCount pre-existing issue(s) outside edit range excluded)" else ""
+                    val flagNote = if (hasProblemFlag && filterRange != null) "\n  Note: IDE flags this file as problematic (may have issues outside your edit)" else ""
+                    val content = "${relevantProblems.size} issue(s) in ${vf.name}$scopeNote:\n${lines.joinToString("\n")}$more$skippedNote$flagNote"
+                    ToolResult(content, "${relevantProblems.size} issues", TokenEstimator.estimate(content), isError = true)
                 }
             }.inSmartMode(project).executeSynchronously()
             result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)

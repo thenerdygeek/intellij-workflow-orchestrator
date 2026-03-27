@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.ui
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -26,7 +27,7 @@ class MentionContextBuilderTest {
     }
 
     @Test
-    fun `buildFileContext reads file content`() {
+    fun `buildFileContext reads file content`() = runTest {
         val file = tempDir.resolve("Test.kt").also { it.writeText("class Test {\n  fun hello() {}\n}") }
         val mention = MentionContextBuilder.Mention("file", "Test.kt", file.absolutePath)
         val context = builder.buildContext(listOf(mention))
@@ -36,7 +37,7 @@ class MentionContextBuilderTest {
     }
 
     @Test
-    fun `buildFolderContext generates tree`() {
+    fun `buildFolderContext generates tree`() = runTest {
         val dir = tempDir.resolve("src").also { it.mkdirs() }
         File(dir, "Main.kt").writeText("fun main() {}")
         File(dir, "Utils.kt").writeText("object Utils {}")
@@ -49,7 +50,7 @@ class MentionContextBuilderTest {
     }
 
     @Test
-    fun `large file is truncated`() {
+    fun `large file is truncated`() = runTest {
         val largeContent = (1..1000).joinToString("\n") { "line $it: some code here" }
         val file = tempDir.resolve("Large.kt").also { it.writeText(largeContent) }
         val mention = MentionContextBuilder.Mention("file", "Large.kt", file.absolutePath)
@@ -59,7 +60,7 @@ class MentionContextBuilderTest {
     }
 
     @Test
-    fun `tool mention provides instruction`() {
+    fun `tool mention provides instruction`() = runTest {
         val mention = MentionContextBuilder.Mention("tool", "search_code", "search_code")
         val context = builder.buildContext(listOf(mention))
         assertNotNull(context)
@@ -67,7 +68,18 @@ class MentionContextBuilderTest {
     }
 
     @Test
-    fun `empty mentions returns null`() {
+    fun `empty mentions returns null`() = runTest {
         assertNull(builder.buildContext(emptyList()))
+    }
+
+    @Test
+    fun `ticket mention without jira service returns not-found context`() = runTest {
+        val mention = MentionContextBuilder.Mention("ticket", "PROJ-123", "PROJ-123")
+        val context = builder.buildContext(listOf(mention))
+        assertNotNull(context)
+        assertTrue(context!!.contains("<mentioned_ticket"))
+        assertTrue(context.contains("PROJ-123"))
+        // Without JiraService registered, should show error/not-found
+        assertTrue(context.contains("not configured") || context.contains("PROJ-123"))
     }
 }

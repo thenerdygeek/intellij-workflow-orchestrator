@@ -19,6 +19,16 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 
 class EditFileTool : AgentTool {
+
+    companion object {
+        /**
+         * Tracks the line range of the most recent edit per file (canonical path → IntRange).
+         * Used by SemanticDiagnosticsTool to filter results to only LLM-introduced issues.
+         * Cleared when diagnostics runs, so each edit→diagnostics cycle is fresh.
+         */
+        val lastEditLineRanges = java.util.concurrent.ConcurrentHashMap<String, IntRange>()
+    }
+
     override val name = "edit_file"
     override val description = "Perform an exact string replacement in a file. The old_string must match exactly once unless replace_all is true."
     override val parameters = FunctionParameters(
@@ -109,6 +119,17 @@ class EditFileTool : AgentTool {
                 isError = true
             )
         }
+
+        // Track edited line range for diff-aware diagnostics
+        try {
+            val editStart = content.indexOf(oldString)
+            if (editStart >= 0) {
+                val startLine = content.substring(0, editStart).count { it == '\n' } + 1
+                val newLines = newString.count { it == '\n' } + 1
+                val editRange = startLine..(startLine + newLines - 1)
+                lastEditLineRanges[java.io.File(resolvedPath).canonicalPath] = editRange
+            }
+        } catch (_: Exception) { /* tracking is best-effort */ }
 
         val occurrenceSuffix = if (replaceAll && occurrences > 1) " ($occurrences occurrences)" else ""
         val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath$occurrenceSuffix"
