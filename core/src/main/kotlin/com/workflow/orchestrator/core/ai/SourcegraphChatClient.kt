@@ -557,16 +557,9 @@ class SourcegraphChatClient(
 
                 messages.forEachIndexed { i, msg ->
                     appendLine("--- Message $i [role=${msg.role}] ---")
-                    val content = msg.content ?: "(null)"
-                    if (content.length > 2000) {
-                        appendLine(content.take(1000))
-                        appendLine("... [TRUNCATED ${content.length - 2000} chars] ...")
-                        appendLine(content.takeLast(1000))
-                    } else {
-                        appendLine(content)
-                    }
+                    appendLine(msg.content ?: "(null)")
                     msg.toolCalls?.forEach { tc ->
-                        appendLine("  [tool_call] ${tc.function.name}(${tc.function.arguments.take(200)})")
+                        appendLine("  [tool_call] ${tc.function.name}(${tc.function.arguments})")
                     }
                     appendLine()
                 }
@@ -594,7 +587,7 @@ class SourcegraphChatClient(
                 choice?.message?.toolCalls?.forEach { tc ->
                     appendLine()
                     appendLine("--- Tool Call: ${tc.function.name} ---")
-                    appendLine(tc.function.arguments.take(500))
+                    appendLine(tc.function.arguments)
                 }
             })
             log.info("[Agent:API] Response dumped to ${file.name} (finish=${choice?.finishReason}, tools=${choice?.message?.toolCalls?.size ?: 0})")
@@ -611,7 +604,7 @@ class SourcegraphChatClient(
             file.writeText(buildString {
                 appendLine("=== API Error #$idx === ${java.time.Instant.now()} ===")
                 appendLine("HTTP $code")
-                appendLine(body.take(2000))
+                appendLine(body)
             })
         } catch (_: Exception) {}
     }
