@@ -22,16 +22,21 @@ import java.util.concurrent.atomic.AtomicLong
 
 class RunCommandTool : AgentTool {
     override val name = "run_command"
-    override val description = "Execute a shell command in the project directory. If the process goes idle (no output), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact. Default timeout: 120s, output limit: 30000 chars. Dangerous commands are blocked."
+    override val description = "Execute a shell command in the project directory. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact. Default timeout: 120s, output limit: 30000 chars. Dangerous commands are blocked."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "command" to ParameterProperty(type = "string", description = "The shell command to execute. Examples: 'ls -la src/', 'grep -r TODO .', 'mvn test -pl core'"),
+            "command" to ParameterProperty(type = "string", description = "The shell command to execute. Use syntax matching the 'shell' parameter."),
+            "shell" to ParameterProperty(
+                type = "string",
+                description = "Shell to execute the command in. Use ONLY shells listed as available in your environment. bash = Unix/Git Bash syntax (ls, grep, cat). cmd = Windows cmd.exe syntax (dir, type, findstr). powershell = PowerShell syntax (Get-ChildItem, Select-String).",
+                enumValues = listOf("bash", "cmd", "powershell")
+            ),
             "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"),
             "description" to ParameterProperty(type = "string", description = "Brief description of what this command does (5-10 words, for logging/UI)"),
             "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600."),
             "idle_timeout" to ParameterProperty(type = "integer", description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds.")
         ),
-        required = listOf("command", "description")
+        required = listOf("command", "shell", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
 
@@ -128,7 +133,7 @@ class RunCommandTool : AgentTool {
          * Find Git Bash on Windows. Checks standard installation paths.
          * Returns the absolute path to bash.exe, or null if not found.
          */
-        private fun findGitBash(): String? {
+        fun findGitBash(): String? {
             val candidates = listOf(
                 System.getenv("PROGRAMFILES")?.let { "$it\\Git\\bin\\bash.exe" },
                 System.getenv("PROGRAMFILES(X86)")?.let { "$it\\Git\\bin\\bash.exe" },
@@ -137,6 +142,36 @@ class RunCommandTool : AgentTool {
                 "C:\\Program Files (x86)\\Git\\bin\\bash.exe"
             )
             return candidates.filterNotNull().firstOrNull { File(it).exists() }
+        }
+
+        /**
+         * Find PowerShell on Windows. Prefers pwsh (PowerShell 7+) over powershell.exe (5.1).
+         * Returns the executable path, or null if not found.
+         */
+        fun findPowerShell(): String? {
+            val candidates = listOf(
+                // PowerShell 7+ (cross-platform, preferred)
+                System.getenv("PROGRAMFILES")?.let { "$it\\PowerShell\\7\\pwsh.exe" },
+                "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+                // Windows PowerShell 5.1 (built-in on Windows 10+)
+                System.getenv("SYSTEMROOT")?.let { "$it\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
+                "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+            )
+            return candidates.filterNotNull().firstOrNull { File(it).exists() }
+        }
+
+        /**
+         * Detect available shells on the current platform.
+         * Returns a list of shell names (bash, cmd, powershell) that can be used.
+         */
+        fun detectAvailableShells(): List<String> {
+            val isWindows = System.getProperty("os.name").lowercase().contains("win")
+            if (!isWindows) return listOf("bash")
+            val shells = mutableListOf<String>()
+            if (findGitBash() != null) shells.add("bash")
+            shells.add("cmd") // always available on Windows
+            if (findPowerShell() != null) shells.add("powershell")
+            return shells
         }
 
         private val ANSI_REGEX = Regex("\u001B\\[[;\\d]*[A-Za-z]")
@@ -240,6 +275,16 @@ class RunCommandTool : AgentTool {
         val command = params["command"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
+        val shell = params["shell"]?.jsonPrimitive?.content?.lowercase() ?: "bash"
+        if (shell !in listOf("bash", "cmd", "powershell")) {
+            return ToolResult(
+                "Error: Invalid shell '$shell'. Must be one of: bash, cmd, powershell.",
+                "Error: invalid shell",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         // 5B: CommandSafetyAnalyzer — block DANGEROUS commands before any other processing
         val risk = CommandSafetyAnalyzer.classify(command)
         if (risk == CommandRisk.DANGEROUS) {
@@ -301,18 +346,61 @@ class RunCommandTool : AgentTool {
         return try {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
 
-            // Use bash on all platforms for consistent LLM command syntax.
-            // On Windows: prefer Git Bash (ships with Git for Windows), fall back to cmd.exe.
-            val commandLine = if (isWindows) {
-                val gitBash = findGitBash()
-                if (gitBash != null) {
-                    GeneralCommandLine(gitBash, "-c", command)
-                } else {
-                    LOG.warn("[Agent:RunCommand] Git Bash not found, falling back to cmd.exe")
-                    GeneralCommandLine("cmd.exe", "/c", command)
+            // Resolve the shell executable based on the LLM's requested shell type
+            val commandLine = when (shell) {
+                "bash" -> {
+                    if (isWindows) {
+                        val gitBash = findGitBash()
+                        if (gitBash != null) {
+                            GeneralCommandLine(gitBash, "-c", command)
+                        } else {
+                            return ToolResult(
+                                "Error: shell='bash' requested but Git Bash is not installed. Available shells on this system: cmd, powershell. Use one of those instead.",
+                                "Error: bash not available",
+                                ToolResult.ERROR_TOKEN_ESTIMATE,
+                                isError = true
+                            )
+                        }
+                    } else {
+                        GeneralCommandLine("sh", "-c", command)
+                    }
                 }
-            } else {
-                GeneralCommandLine("sh", "-c", command)
+                "cmd" -> {
+                    if (isWindows) {
+                        GeneralCommandLine("cmd.exe", "/c", command)
+                    } else {
+                        return ToolResult(
+                            "Error: shell='cmd' is only available on Windows. Use shell='bash' instead.",
+                            "Error: cmd not available",
+                            ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                    }
+                }
+                "powershell" -> {
+                    if (isWindows) {
+                        // Try pwsh (PowerShell 7+) first, then fall back to powershell.exe (Windows PowerShell 5.1)
+                        val pwsh = findPowerShell()
+                        if (pwsh != null) {
+                            GeneralCommandLine(pwsh, "-NoProfile", "-NonInteractive", "-Command", command)
+                        } else {
+                            return ToolResult(
+                                "Error: shell='powershell' requested but PowerShell is not found. Available shells: cmd${if (findGitBash() != null) ", bash" else ""}.",
+                                "Error: powershell not available",
+                                ToolResult.ERROR_TOKEN_ESTIMATE,
+                                isError = true
+                            )
+                        }
+                    } else {
+                        return ToolResult(
+                            "Error: shell='powershell' is only available on Windows. Use shell='bash' instead.",
+                            "Error: powershell not available",
+                            ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                    }
+                }
+                else -> GeneralCommandLine("sh", "-c", command) // unreachable due to validation above
             }
 
             val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)

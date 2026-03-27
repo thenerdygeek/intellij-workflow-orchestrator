@@ -193,6 +193,10 @@ class RunCommandToolTest {
         assertEquals("run_command", tool.name)
         assertEquals(setOf(com.workflow.orchestrator.agent.runtime.WorkerType.CODER), tool.allowedWorkers)
         assertTrue(tool.parameters.required.contains("command"))
+        assertTrue(tool.parameters.required.contains("shell"))
+        assertTrue(tool.parameters.required.contains("description"))
+        val shellProp = tool.parameters.properties["shell"]!!
+        assertEquals(listOf("bash", "cmd", "powershell"), shellProp.enumValues)
     }
 
     @Test
@@ -232,6 +236,43 @@ class RunCommandToolTest {
         assertEquals("hello world", RunCommandTool.stripAnsi("\u001B[32mhello\u001B[0m world"))
         assertEquals("plain text", RunCommandTool.stripAnsi("plain text"))
         assertEquals("bold text", RunCommandTool.stripAnsi("\u001B[1mbold text\u001B[0m"))
+    }
+
+    @Test
+    fun `execute rejects invalid shell type`() = runTest {
+        val tool = RunCommandTool()
+        val params = buildJsonObject {
+            put("command", "echo hello")
+            put("shell", "zsh")
+            put("description", "Test invalid shell")
+        }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("Invalid shell"))
+    }
+
+    @Test
+    fun `execute accepts explicit bash shell`() = runTest {
+        val tool = RunCommandTool()
+        val params = buildJsonObject {
+            put("command", "echo hello")
+            put("shell", "bash")
+            put("description", "Test bash shell")
+        }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("hello"))
+    }
+
+    @Test
+    fun `detectAvailableShells always includes bash on non-Windows`() {
+        // On macOS/Linux (where tests run), bash is always available
+        val shells = RunCommandTool.detectAvailableShells()
+        assertTrue(shells.contains("bash"))
     }
 
     @Test

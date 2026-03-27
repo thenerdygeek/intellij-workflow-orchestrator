@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.orchestrator
 
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 
 /**
  * Assembles dynamic system prompts from composable sections.
@@ -194,8 +195,10 @@ class PromptAssembler(
         name?.let { parts.add("Project: $it") }
         path?.let { parts.add("Path: $it") }
         framework?.let { parts.add("Framework: $it") }
-        parts.add("OS: ${System.getProperty("os.name")}")
+        val osName = System.getProperty("os.name")
+        parts.add("OS: $osName")
         parts.add("Java: ${System.getProperty("java.version")}")
+        parts.add("Shell: ${detectShellInfo()}")
         return parts.joinToString("\n")
     }
 
@@ -233,6 +236,20 @@ class PromptAssembler(
     }
 
     companion object {
+        /** Detect available shells and format for the system prompt. */
+        fun detectShellInfo(): String {
+            val shells = RunCommandTool.detectAvailableShells()
+            val shellDescriptions = shells.map { shell ->
+                when (shell) {
+                    "bash" -> "bash (Unix/Git Bash syntax: ls, grep, cat, find, mkdir, sed, awk)"
+                    "cmd" -> "cmd (Windows cmd.exe syntax: dir, type, findstr, copy, del, mkdir)"
+                    "powershell" -> "powershell (PowerShell syntax: Get-ChildItem, Select-String, Set-Content, New-Item)"
+                    else -> shell
+                }
+            }
+            return "run_command requires a 'shell' parameter. Available shells: ${shellDescriptions.joinToString(", ")}. Use ONLY these shells — requesting an unavailable shell will fail."
+        }
+
         val CORE_IDENTITY = """
             You are an AI coding assistant integrated into IntelliJ IDEA via the Workflow Orchestrator plugin.
             You can read/edit code, run commands, check diagnostics, access Jira/Bamboo/SonarQube/Bitbucket, spawn subagents for parallel work, and activate workflow skills for specialized tasks.
@@ -621,6 +638,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             - Be precise and minimal in edits. Don't rewrite entire files when a targeted change suffices.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - Report what you changed and verify it works before declaring the task complete.
+            - run_command requires a 'shell' parameter (bash, cmd, or powershell). Check the available shells in your environment section and ONLY use those. Match your command syntax to the shell you choose — e.g., use 'ls' in bash, 'dir' in cmd, 'Get-ChildItem' in powershell. Never mix syntax across shells.
             - Use git_* tools for ALL git operations (git_status, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list, git_blame). NEVER use run_command for git — dangerous git commands are blocked.
             - NEVER assume branch names. Check git_branches first to find the actual base branch (it may not be 'main').
             - Remote refs (origin/, upstream/) are allowed in read-only git commands (log, diff, show, rev-list, merge-base, rev-parse) but blocked in write operations.
