@@ -376,25 +376,47 @@ export const InputBar = memo(function InputBar() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Validate a manually-typed ticket key asynchronously
+  // Validate a manually-typed ticket key asynchronously with 5s timeout.
+  // On failure/timeout: strip the chip and leave raw #KEY text so LLM can self-fetch via tools.
   const validateTicket = useCallback((ticketKey: string) => {
-    // Set up a one-time callback for the validation result
     const callbackKey = `__validateTicket_${ticketKey}`;
+    let resolved = false;
+
+    // Timeout: if no response in 5s, strip the chip
+    const timeoutId = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      delete (window as any)[callbackKey];
+      richInputRef.current?.removeChipByLabel?.(ticketKey);
+    }, 5000);
+
     (window as any)[callbackKey] = (json: string) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutId);
       delete (window as any)[callbackKey];
       try {
         const result = JSON.parse(json);
         if (result.valid) {
           richInputRef.current?.updateChipStatus(ticketKey, 'valid', `${ticketKey}: ${result.summary}`);
         } else {
-          richInputRef.current?.updateChipStatus(ticketKey, 'invalid', `${ticketKey}: Ticket not found`);
+          // Invalid ticket — strip chip, leave raw text for LLM to handle
+          richInputRef.current?.removeChipByLabel?.(ticketKey);
         }
       } catch {
-        richInputRef.current?.updateChipStatus(ticketKey, 'invalid', 'Validation failed');
+        richInputRef.current?.removeChipByLabel?.(ticketKey);
       }
     };
-    // Call Kotlin bridge to validate
-    window._validateTicket?.(ticketKey, callbackKey);
+
+    // Call Kotlin bridge to validate — if bridge not available, strip chip immediately
+    if (window._validateTicket) {
+      window._validateTicket(ticketKey, callbackKey);
+    } else {
+      resolved = true;
+      clearTimeout(timeoutId);
+      delete (window as any)[callbackKey];
+      richInputRef.current?.removeChipByLabel?.(ticketKey);
+    }
   }, []);
 
   const handleMentionSelect = useCallback((result: MentionSearchResult) => {

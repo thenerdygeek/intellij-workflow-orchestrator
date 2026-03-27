@@ -29,6 +29,8 @@ export interface RichInputHandle {
   insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => void;
   /** Update the visual status of a chip by label (for async ticket validation) */
   updateChipStatus: (label: string, status: ChipStatus, tooltip?: string) => void;
+  /** Remove a chip by label, replacing it with raw #label text (for failed validation) */
+  removeChipByLabel: (label: string) => void;
   clear: () => void;
   getText: () => string;
   getMentions: () => Mention[];
@@ -79,6 +81,20 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     });
   }, []);
 
+  // ── Remove chip by label, replacing with raw #label text ──
+
+  const removeChipByLabel = useCallback((label: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    const chips = el.querySelectorAll<HTMLElement>(`[data-mention-label="${label}"]`);
+    chips.forEach(chip => {
+      const textNode = document.createTextNode(`#${label} `);
+      chip.parentNode?.replaceChild(textNode, chip);
+    });
+    // Remove from mentions ref
+    mentionsRef.current = mentionsRef.current.filter(m => m.label !== label);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
     insertTrigger: (char: string) => {
@@ -89,6 +105,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     },
     insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => insertChip(mention, triggerChar, status),
     updateChipStatus,
+    removeChipByLabel,
     clear: () => {
       if (editorRef.current) {
         editorRef.current.innerHTML = '';
