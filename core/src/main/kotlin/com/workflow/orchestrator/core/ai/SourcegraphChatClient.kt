@@ -9,7 +9,9 @@ import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -47,6 +49,18 @@ class SourcegraphChatClient(
 ) {
     private val log = Logger.getInstance(SourcegraphChatClient::class.java)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
+
+    /** Active HTTP call — cancel this to abort the in-flight LLM request instantly. */
+    private val activeCall = AtomicReference<Call?>(null)
+
+    /**
+     * Cancel the active HTTP request immediately. Aborts at the TCP level —
+     * the server stops sending and the client unblocks in milliseconds.
+     * Safe to call from any thread. No-op if no call is active.
+     */
+    fun cancelActiveRequest() {
+        activeCall.getAndSet(null)?.cancel()
+    }
 
     companion object {
         /** Sourcegraph API path for chat completions (from OpenAPI spec). */
@@ -281,16 +295,23 @@ class SourcegraphChatClient(
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
                 .build()
 
-            httpClient.newCall(httpRequest).execute().use { response ->
+            val call = httpClient.newCall(httpRequest)
+            activeCall.set(call)
+            try {
+            call.execute().use { response ->
                 if (!response.isSuccessful) {
+                    activeCall.set(null)
                     val body = response.body?.string() ?: ""
                     return@withContext mapErrorResponse(response.code, body)
                 }
 
                 val reader = response.body?.byteStream()?.bufferedReader()
-                    ?: return@withContext ApiResult.Error(
-                        ErrorType.PARSE_ERROR, "Empty response body for stream"
-                    )
+                    ?: run {
+                        activeCall.set(null)
+                        return@withContext ApiResult.Error(
+                            ErrorType.PARSE_ERROR, "Empty response body for stream"
+                        )
+                    }
 
                 val contentBuilder = StringBuilder()
                 val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
@@ -298,12 +319,19 @@ class SourcegraphChatClient(
                 var finishReason = "stop"
                 var streamUsage: UsageInfo? = null
 
-                reader.forEachLine { line ->
+                // Read SSE lines with cancellation check on every line.
+                // When cancelActiveRequest() is called, call.cancel() closes the socket,
+                // causing readLine() to throw IOException — breaking out instantly.
+                // The ensureActive() is a secondary guard for coroutine-level cancellation.
+                var line = reader.readLine()
+                while (line != null) {
+                    coroutineContext.ensureActive()
+
                     if (line.startsWith("data: ") && line != "data: [DONE]") {
                         val chunkJson = line.removePrefix("data: ")
                         try {
                             val chunk = json.decodeFromString<StreamChunk>(chunkJson)
-                            // Use runBlocking here because forEachLine is not a suspend context.
+                            // Use runBlocking here because readLine loop is not a suspend context.
                             // This is safe because we are already on Dispatchers.IO.
                             kotlinx.coroutines.runBlocking { onChunk(chunk) }
 
@@ -331,6 +359,7 @@ class SourcegraphChatClient(
                             log.debug("[Agent:API] Skipping malformed SSE chunk: ${e.message}")
                         }
                     }
+                    line = reader.readLine()
                 }
 
                 val toolCalls = if (toolCallBuilders.isNotEmpty()) {
@@ -380,16 +409,33 @@ class SourcegraphChatClient(
                     toolCalls = toolCalls
                 )
 
+                activeCall.set(null)
+
                 ApiResult.Success(ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
                     choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReason)),
                     usage = streamUsage
                 ))
             }
+            } finally {
+                activeCall.set(null)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            log.info("[Agent:API] Stream cancelled by user")
+            activeCall.getAndSet(null)?.cancel()
+            throw e // re-throw so coroutine machinery handles it
         } catch (e: IOException) {
-            log.warn("[Agent:API] Stream network error: ${e.message}", e)
-            ApiResult.Error(ErrorType.NETWORK_ERROR, "Stream error: ${e.message}", e)
+            activeCall.set(null)
+            // Distinguish cancel-induced IOException from real network errors
+            if (e.message?.contains("Canceled") == true || e.message?.contains("closed") == true) {
+                log.info("[Agent:API] Stream aborted (cancel)")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Request cancelled", e)
+            } else {
+                log.warn("[Agent:API] Stream network error: ${e.message}", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Stream error: ${e.message}", e)
+            }
         } catch (e: Exception) {
+            activeCall.set(null)
             log.error("[Agent:API] Stream unexpected error: ${e.message}", e)
             ApiResult.Error(ErrorType.PARSE_ERROR, "Stream error: ${e.message}", e)
         }

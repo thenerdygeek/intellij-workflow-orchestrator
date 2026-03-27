@@ -69,6 +69,8 @@ class OpenAiCompatBrain(
 
     override fun estimateTokens(text: String): Int = TokenEstimator.estimate(text)
 
+    override fun cancelActiveRequest() = client.cancelActiveRequest()
+
     /**
      * Set the session-scoped directory for API debug dumps.
      * Pass null to disable dumping (e.g., when no session is active).

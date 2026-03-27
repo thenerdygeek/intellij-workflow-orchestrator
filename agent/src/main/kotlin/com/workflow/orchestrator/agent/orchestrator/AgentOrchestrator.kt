@@ -334,7 +334,9 @@ class AgentOrchestrator(
      */
     fun cancelTask() {
         cancelled.set(true)
-        LOG.info("AgentOrchestrator: cancellation requested")
+        // Abort the active HTTP request immediately — breaks out of SSE stream in milliseconds
+        brain.cancelActiveRequest()
+        LOG.info("AgentOrchestrator: cancellation requested, HTTP call aborted")
     }
 
 }

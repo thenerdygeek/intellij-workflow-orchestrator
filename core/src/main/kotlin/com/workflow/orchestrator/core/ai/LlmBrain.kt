@@ -35,6 +35,9 @@ interface LlmBrain {
     /** Estimate token count for a string (for budget tracking). */
     fun estimateTokens(text: String): Int
 
+    /** Cancel the active HTTP request immediately. Aborts at the TCP level. */
+    fun cancelActiveRequest() {}
+
     /** The model identifier being used. */
     val modelId: String
 }
