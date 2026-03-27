@@ -4,7 +4,7 @@
  * Collapsible monospace output body.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Terminal as TerminalIcon, Copy, Check, ChevronDown, ChevronUp, Square } from 'lucide-react';
@@ -45,13 +45,22 @@ export function Terminal({
 }: TerminalProps) {
   const [expanded, setExpanded] = useState(false);
   const { copied, copy } = useCopyToClipboard();
+  const outputRef = useRef<HTMLPreElement>(null);
 
   const output = [stdout, stderr].filter(Boolean).join('\n');
   const lines = output.split('\n');
   const needsCollapse = lines.length > maxCollapsedLines;
+  // When collapsed, show the LAST N lines (most recent output is most relevant)
   const displayOutput = !expanded && needsCollapse
-    ? lines.slice(0, maxCollapsedLines).join('\n')
+    ? lines.slice(-maxCollapsedLines).join('\n')
     : output;
+
+  // Auto-scroll to bottom when output changes or when expanding
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [displayOutput, expanded]);
 
   const isError = exitCode != null && exitCode !== 0;
 
@@ -107,12 +116,13 @@ export function Terminal({
         )}
       </div>
 
-      {/* Output body */}
+      {/* Output body — fixed height, scrollable, shows latest output */}
       {output.length > 0 && (
         <div className="relative">
           <pre
-            className="px-3 py-2 text-[11px] leading-relaxed font-mono overflow-x-auto"
-            style={{ color: 'var(--fg)', maxHeight: expanded ? 'none' : '200px' }}
+            ref={outputRef}
+            className="px-3 py-2 text-[11px] leading-relaxed font-mono overflow-x-auto overflow-y-auto"
+            style={{ color: 'var(--fg)', height: expanded ? '300px' : '200px' }}
           >
             {displayOutput}
           </pre>
@@ -127,7 +137,7 @@ export function Terminal({
                 onClick={() => setExpanded(v => !v)}
               >
                 {expanded ? (
-                  <><ChevronUp className="h-3 w-3" /> Collapse</>
+                  <><ChevronUp className="h-3 w-3" /> Show less</>
                 ) : (
                   <><ChevronDown className="h-3 w-3" /> Show all {lines.length} lines</>
                 )}
