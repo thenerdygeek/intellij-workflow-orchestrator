@@ -29,44 +29,35 @@ const typeLabels: Record<string, string> = {
   symbol: 'Symbols',
 };
 
-const TYPE_ORDER: Record<string, number> = { file: 0, folder: 1, symbol: 2 };
 
 /**
  * Score a result against a query for relevance ranking.
- * Higher score = more relevant. Supports:
- * - Exact prefix match (highest)
- * - Word boundary match
- * - Substring match (anywhere in text)
- * - Path segment match
+ * Higher score = more relevant. Name matches always beat path-only matches.
+ * No fuzzy matching — results must contain the query as a substring.
  */
 function relevanceScore(label: string | undefined, path: string | undefined, query: string): number {
   if (!query || !label) return 0;
   const q = query.toLowerCase();
   const l = label.toLowerCase();
+  const nameNoExt = l.replace(/\.[^.]+$/, '').replace(/\/$/, '');
   const p = (path ?? '').toLowerCase();
 
-  // Exact name start → highest relevance
-  if (l.startsWith(q)) return 100;
+  // Name (without extension) starts with query → highest
+  if (nameNoExt.startsWith(q)) return 100;
 
-  // File name (last segment) starts with query
+  // File name starts with query (handles label being a path)
   const fileName = l.includes('/') ? l.split('/').pop()! : l;
-  if (fileName.startsWith(q)) return 90;
+  if (fileName.replace(/\.[^.]+$/, '').startsWith(q)) return 95;
 
-  // Word boundary match in label (e.g. "chat" matches "chatStore.ts")
-  if (new RegExp(`\\b${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(l)) return 80;
+  // Word boundary match in name (e.g. "test" in "MyServiceTest")
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (new RegExp(`(?:^|[_\\-A-Z])${escaped}`, 'i').test(nameNoExt)) return 85;
 
-  // Substring in label
-  if (l.includes(q)) return 70;
+  // Substring anywhere in label/name
+  if (l.includes(q)) return 75;
 
-  // Substring in full path
-  if (p.includes(q)) return 50;
-
-  // Fuzzy: all query chars appear in order in label
-  let qi = 0;
-  for (let i = 0; i < l.length && qi < q.length; i++) {
-    if (l[i] === q[qi]) qi++;
-  }
-  if (qi === q.length) return 30;
+  // Path-only match — name doesn't contain query but path does
+  if (p.includes(q)) return 30;
 
   return 0;
 }
@@ -84,11 +75,11 @@ export const MentionDropdown = memo(function MentionDropdown({
 }: MentionDropdownProps) {
   const mentionResults = useChatStore(s => s.mentionResults);
 
-  // Request search results from Kotlin — search files, folders, symbols
+  // Request search results from Kotlin — search files, folders, symbols together
   useEffect(() => {
     const timer = setTimeout(() => {
       if (query) {
-        window._searchMentions?.(`file:${query}`);
+        window._searchMentions?.(`all:${query}`);
       } else {
         window._searchMentions?.('categories:');
       }
@@ -96,35 +87,26 @@ export const MentionDropdown = memo(function MentionDropdown({
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Filter to only file/folder/symbol types and sort by relevance
-  const contextResults = useMemo(() => {
-    return mentionResults
+  // Filter to only file/folder/symbol types, score, and group by type
+  const maxPerGroup = query ? 5 : 2;
+
+  const groups = useMemo(() => {
+    const scored = mentionResults
       .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
-      .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }))
-      .sort((a, b) => {
-        if (query && b.score !== a.score) return b.score - a.score;
-        return (TYPE_ORDER[a.type] ?? 3) - (TYPE_ORDER[b.type] ?? 3);
-      });
-  }, [mentionResults, query]);
+      .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }));
 
-  // When there's a query, show as a flat relevance-ranked list
-  // When empty, group by type with 2 items each
-  const showGrouped = !query;
-
-  // Group by type for initial display
-  const groups = showGrouped
-    ? contextResults.reduce<Record<string, typeof contextResults>>((acc, r) => {
-        (acc[r.type] ??= []).push(r);
-        return acc;
-      }, {})
-    : {};
-
-  // Limit initial groups to 2 items each
-  if (showGrouped) {
-    for (const type in groups) {
-      groups[type] = groups[type]!.slice(0, 2);
+    // Group by type, sort each group by score, limit per group
+    const grouped: Record<string, typeof scored> = {};
+    for (const r of scored) {
+      (grouped[r.type] ??= []).push(r);
     }
-  }
+    for (const type in grouped) {
+      grouped[type] = grouped[type]!
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxPerGroup);
+    }
+    return grouped;
+  }, [mentionResults, query, maxPerGroup]);
 
   const handleSelect = useCallback((value: string) => {
     const result = mentionResults.find(r => r.label === value || r.path === value);
@@ -152,23 +134,18 @@ export const MentionDropdown = memo(function MentionDropdown({
             No results found.
           </CommandEmpty>
 
-          {showGrouped ? (
-            /* Initial state: grouped by type, 2 items each */
-            Object.entries(groups).map(([type, results]) => (
+          {/* Always grouped by type: Files, Folders, Symbols */}
+          {(['file', 'folder', 'symbol'] as const).map(type => {
+            const results = groups[type];
+            if (!results?.length) return null;
+            return (
               <CommandGroup key={type} heading={typeLabels[type] ?? type}>
                 {results.map((r) => (
                   <MentionItem key={r.path ?? r.label} result={r} onSelect={handleSelect} />
                 ))}
               </CommandGroup>
-            ))
-          ) : (
-            /* Search state: flat relevance-ranked list */
-            <CommandGroup heading="Results">
-              {contextResults.slice(0, 12).map((r) => (
-                <MentionItem key={r.path ?? r.label} result={r} onSelect={handleSelect} />
-              ))}
-            </CommandGroup>
-          )}
+            );
+          })}
         </CommandList>
       </Command>
     </div>

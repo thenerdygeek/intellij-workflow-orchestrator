@@ -19,12 +19,14 @@ class MentionSearchProvider(private val project: Project) {
     companion object {
         private val LOG = Logger.getInstance(MentionSearchProvider::class.java)
         private const val MAX_RESULTS = 15
+        private const val MAX_RESULTS_PER_TYPE = 10
+        private const val MAX_COLLECT = 100 // collect more, then rank and trim
         private val FILE_EXTENSIONS = setOf("kt", "java", "xml", "yaml", "yml", "json", "properties", "gradle", "md", "html", "css", "js", "ts", "py", "go", "rs")
     }
 
     /**
      * Search for mentions by type and query.
-     * @param type One of: "file", "symbol", "tool", "skill", "categories"
+     * @param type One of: "all", "file", "symbol", "tool", "skill", "categories"
      * @param query Search query (empty = show all/top results)
      * @return JSON string of results array
      */
@@ -32,6 +34,7 @@ class MentionSearchProvider(private val project: Project) {
         return try {
             when (type) {
                 "categories" -> buildCategoriesJson()
+                "all" -> searchAll(query)
                 "file" -> searchFiles(query)
                 "folder" -> searchFolders(query)
                 "symbol" -> searchSymbols(query)
@@ -44,6 +47,114 @@ class MentionSearchProvider(private val project: Project) {
             "[]"
         }
     }
+
+    /**
+     * Search files, folders, and symbols together with server-side ranking.
+     * Returns up to [MAX_RESULTS_PER_TYPE] per type, ranked by name relevance.
+     */
+    private fun searchAll(query: String): String {
+        val results = mutableListOf<JsonObject>()
+        val basePath = project.basePath ?: return "[]"
+        val lowerQuery = query.lowercase()
+
+        // Collect files — gather broadly, then rank
+        val fileResults = mutableListOf<ScoredResult>()
+        val folderResults = mutableListOf<ScoredResult>()
+        try {
+            val roots = ProjectRootManager.getInstance(project).contentSourceRoots
+            for (root in roots) {
+                if (fileResults.size >= MAX_COLLECT && folderResults.size >= MAX_COLLECT) break
+                collectAllRanked(root, lowerQuery, basePath, fileResults, folderResults)
+            }
+        } catch (_: Exception) {}
+
+        // Sort by relevance and take top N per type
+        fileResults.sortByDescending { it.score }
+        folderResults.sortByDescending { it.score }
+
+        for (r in fileResults.take(MAX_RESULTS_PER_TYPE)) results.add(r.json)
+        for (r in folderResults.take(MAX_RESULTS_PER_TYPE)) results.add(r.json)
+
+        // Symbols (already ranked by PSI cache lookup)
+        if (query.length >= 2) {
+            try {
+                val symbolJson = searchSymbols(query)
+                val symbols = Json.parseToJsonElement(symbolJson).jsonArray
+                for (s in symbols.take(MAX_RESULTS_PER_TYPE)) results.add(s.jsonObject)
+            } catch (_: Exception) {}
+        }
+
+        return JsonArray(results).toString()
+    }
+
+    /** Score a match: higher = more relevant. Name matches always beat path-only matches. */
+    private fun scoreMatch(name: String, relativePath: String, query: String): Int {
+        val lowerName = name.lowercase()
+        val nameNoExt = lowerName.substringBeforeLast('.')
+
+        // Name starts with query → highest
+        if (nameNoExt.startsWith(query)) return 100
+
+        // Word boundary in name (e.g., "MyServiceTest" matches "test" at word boundary)
+        if (nameNoExt.contains(query) && (nameNoExt.indexOf(query).let { idx ->
+                idx == 0 || nameNoExt[idx - 1].isUpperCase() != nameNoExt[idx].isUpperCase() ||
+                nameNoExt[idx - 1] == '_' || nameNoExt[idx - 1] == '-'
+            })) return 85
+
+        // Substring anywhere in name
+        if (lowerName.contains(query)) return 75
+
+        // Path-only match (file lives in a matching directory but name doesn't match)
+        if (relativePath.lowercase().contains(query)) return 30
+
+        return 0
+    }
+
+    /** Collect files and folders with relevance scores. */
+    private fun collectAllRanked(
+        dir: com.intellij.openapi.vfs.VirtualFile,
+        query: String,
+        basePath: String,
+        fileResults: MutableList<ScoredResult>,
+        folderResults: MutableList<ScoredResult>
+    ) {
+        if (dir.name.startsWith(".") || dir.name == "node_modules" || dir.name == "build" || dir.name == "out") return
+
+        // Score this directory as a folder result
+        if (query.isNotBlank()) {
+            val relativePath = dir.path.removePrefix("$basePath/")
+            val score = scoreMatch(dir.name, relativePath, query)
+            if (score > 0 && folderResults.size < MAX_COLLECT) {
+                folderResults.add(ScoredResult(score, buildJsonObject {
+                    put("type", JsonPrimitive("folder"))
+                    put("label", JsonPrimitive(dir.name + "/"))
+                    put("path", JsonPrimitive(relativePath))
+                    put("description", JsonPrimitive(relativePath))
+                }))
+            }
+        }
+
+        for (child in dir.children) {
+            if (child.isDirectory) {
+                collectAllRanked(child, query, basePath, fileResults, folderResults)
+            } else {
+                if (child.extension?.lowercase() !in FILE_EXTENSIONS) continue
+                if (query.isBlank()) continue // all:'' with no query returns nothing (categories handles empty)
+                val relativePath = child.path.removePrefix("$basePath/")
+                val score = scoreMatch(child.name, relativePath, query)
+                if (score > 0 && fileResults.size < MAX_COLLECT) {
+                    fileResults.add(ScoredResult(score, buildJsonObject {
+                        put("type", JsonPrimitive("file"))
+                        put("label", JsonPrimitive(child.name))
+                        put("path", JsonPrimitive(relativePath))
+                        put("description", JsonPrimitive(relativePath.substringBeforeLast('/')))
+                    }))
+                }
+            }
+        }
+    }
+
+    private data class ScoredResult(val score: Int, val json: JsonObject)
 
     private fun buildCategoriesJson(): String = buildJsonArray {
         add(buildJsonObject {
