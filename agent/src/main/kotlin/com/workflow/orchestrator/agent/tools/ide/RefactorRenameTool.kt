@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.ide
 
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -17,6 +18,8 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import com.workflow.orchestrator.agent.tools.psi.PsiToolUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -45,8 +48,10 @@ class RefactorRenameTool : AgentTool {
             return PsiToolUtils.dumbModeError()
         }
 
-        // Resolve the PsiElement to rename
-        val element = findElement(project, symbol, rawFile)
+        // Resolve the PsiElement to rename (requires read lock for PSI access)
+        val element = ReadAction.nonBlocking<com.intellij.psi.PsiElement?> {
+            findElement(project, symbol, rawFile)
+        }.inSmartMode(project).executeSynchronously()
             ?: return ToolResult(
                 "Cannot find symbol '$symbol'. Provide a class name, ClassName.methodName, or specify 'file' for disambiguation.",
                 "Not found",
@@ -57,36 +62,27 @@ class RefactorRenameTool : AgentTool {
         val oldName = (element as? PsiNamedElement)?.name ?: symbol
 
         return try {
-            var result: ToolResult? = null
-            ApplicationManager.getApplication().invokeAndWait {
+            // Phase 1: Find usages (read-only, off-EDT)
+            val usages = ReadAction.nonBlocking<Array<com.intellij.usageView.UsageInfo>> {
+                val processor = RenameProcessor(project, element, newName, false, false)
+                processor.setPreviewUsages(false)
+                processor.findUsages()
+            }.inSmartMode(project).executeSynchronously()
+
+            // Phase 2: Perform refactoring (write action on EDT)
+            withContext(Dispatchers.EDT) {
                 WriteCommandAction.runWriteCommandAction(project, "Agent: Rename $oldName → $newName", null, {
-                    try {
-                        val processor = RenameProcessor(
-                            project,
-                            element,
-                            newName,
-                            false, // searchInComments
-                            false  // searchTextOccurrences
-                        )
-                        processor.setPreviewUsages(false)
-                        val usages = processor.findUsages()
-                        processor.performRefactoring(usages)
-                        result = ToolResult(
-                            "Renamed '$oldName' → '$newName'. All references, imports, and usages updated.",
-                            "Renamed $oldName → $newName",
-                            10
-                        )
-                    } catch (e: Exception) {
-                        result = ToolResult(
-                            "Rename failed: ${e.message}",
-                            "Rename error",
-                            ToolResult.ERROR_TOKEN_ESTIMATE,
-                            isError = true
-                        )
-                    }
+                    val processor = RenameProcessor(project, element, newName, false, false)
+                    processor.setPreviewUsages(false)
+                    processor.performRefactoring(usages)
                 })
             }
-            result ?: ToolResult("Rename failed unexpectedly", "Error", 5, isError = true)
+
+            ToolResult(
+                "Renamed '$oldName' → '$newName'. All references, imports, and usages updated.",
+                "Renamed $oldName → $newName",
+                10
+            )
         } catch (e: Exception) {
             ToolResult("Error during rename: ${e.message}", "Rename error", 5, isError = true)
         }
