@@ -772,16 +772,6 @@ class SingleAgentSession(
             // No tool calls — about to return final response
             val content = message.content ?: ""
 
-            // Confused response detection: very short or multiple questions
-            if (isConfusedResponse(content) && iteration < maxIterations - 1) {
-                contextManager.addMessage(ChatMessage(
-                    role = "user",
-                    content = "What specifically are you unsure about? Describe the problem and I'll help."
-                ))
-                consecutiveNoToolResponses = 0
-                return null // continue loop
-            }
-
             // No-tool-call nudge / implicit completion tracking
             consecutiveNoToolResponses++
 
@@ -1517,13 +1507,6 @@ class SingleAgentSession(
         ) : LlmCallResult()
     }
 
-    /**
-     * Heuristic: detect confused/uncertain LLM responses (very short or multiple questions).
-     */
-    private fun isConfusedResponse(content: String): Boolean {
-        val trimmed = content.trim()
-        return trimmed.length < 100 || trimmed.count { it == '?' } >= 2
-    }
 
     /**
      * Fallback system prompt when no PromptAssembler prompt is provided.
