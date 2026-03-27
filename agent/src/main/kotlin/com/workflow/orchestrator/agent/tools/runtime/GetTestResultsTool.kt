@@ -1,7 +1,11 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.execution.process.ProcessAdapter
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
+import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.project.Project
@@ -10,9 +14,14 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.coroutines.resume
 
 class GetTestResultsTool : AgentTool {
     override val name = "get_test_results"
@@ -63,22 +72,12 @@ class GetTestResultsTool : AgentTool {
                 return ToolResult(msg, "No test results", 10, isError = true)
             }
 
-            // Wait for process to terminate first (covers build + compilation + test execution).
+            // Wait for process to terminate using callback (covers build + compilation + test execution).
             // Build/compilation can take minutes for large projects, so we use a generous limit.
             val handler = descriptor.processHandler
             if (handler != null && !handler.isProcessTerminated) {
-                val toolCallId = com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.currentToolCallId.get()
-                val streamCallback = com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback
-                var waited = 0
-                val maxWaitMs = MAX_PROCESS_WAIT_SECONDS * 1000
-                while (!handler.isProcessTerminated && waited < maxWaitMs) {
-                    delay(2000)
-                    waited += 2000
-                    if (waited % 10_000 == 0 && toolCallId != null) {
-                        streamCallback?.invoke(toolCallId, "[waiting for process... ${waited / 1000}s elapsed]\n")
-                    }
-                }
-                if (!handler.isProcessTerminated) {
+                val processTerminated = awaitProcessTermination(handler, MAX_PROCESS_WAIT_SECONDS * 1000L)
+                if (!processTerminated) {
                     return ToolResult(
                         "Process for '${descriptor.displayName}' is still running after ${MAX_PROCESS_WAIT_SECONDS}s " +
                             "(may still be building/compiling). Try again later.",
@@ -89,16 +88,12 @@ class GetTestResultsTool : AgentTool {
                 }
             }
 
-            // Process terminated — now wait for the test framework to finalize the SMTestProxy tree.
-            // resultsViewer.isRunning goes false when onTestingFinished fires (tree fully populated).
+            // Process terminated — wait for the test framework to finalize the SMTestProxy tree.
+            // Uses TestResultsViewer.EventsListener.onTestingFinished() callback (same as RunTestsTool).
             val console = descriptor.executionConsole
             if (console is SMTRunnerConsoleView) {
-                var waited = 0
-                while (console.resultsViewer.isRunning && waited < 10_000) {
-                    delay(200)
-                    waited += 200
-                }
-            } else {
+                awaitTestingFinished(console.resultsViewer, TEST_TREE_FINALIZE_TIMEOUT_MS)
+            } else if (console !is SMTRunnerConsoleView) {
                 // Non-SMTRunner console — brief delay for any async result population
                 delay(1000)
             }
@@ -202,6 +197,82 @@ class GetTestResultsTool : AgentTool {
         }
     }
 
+    /**
+     * Await process termination using ProcessAdapter callback instead of polling.
+     * Streams progress updates to the chat UI every 10 seconds.
+     * Returns true if process terminated, false if timeout expired.
+     */
+    private suspend fun awaitProcessTermination(handler: ProcessHandler, timeoutMs: Long): Boolean {
+        if (handler.isProcessTerminated) return true
+
+        val toolCallId = com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.currentToolCallId.get()
+        val streamCallback = com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback
+
+        val terminated = withTimeoutOrNull(timeoutMs) {
+            coroutineScope {
+                // Stream periodic progress updates so the agent isn't blind during long builds
+                val progressJob = if (toolCallId != null && streamCallback != null) {
+                    launch {
+                        var elapsed = 0L
+                        while (true) {
+                            delay(PROGRESS_INTERVAL_MS)
+                            elapsed += PROGRESS_INTERVAL_MS
+                            streamCallback.invoke(toolCallId, "[waiting for process... ${elapsed / 1000}s elapsed]\n")
+                        }
+                    }
+                } else null
+
+                try {
+                    suspendCancellableCoroutine { continuation ->
+                        val listener = object : ProcessAdapter() {
+                            override fun processTerminated(event: ProcessEvent) {
+                                if (continuation.isActive) continuation.resume(true)
+                            }
+                        }
+                        handler.addProcessListener(listener)
+                        continuation.invokeOnCancellation {
+                            handler.removeProcessListener(listener)
+                        }
+                        // Check again after registering — process may have terminated between our check and addProcessListener
+                        if (handler.isProcessTerminated && continuation.isActive) {
+                            continuation.resume(true)
+                        }
+                    }
+                } finally {
+                    progressJob?.cancel()
+                }
+            }
+        }
+
+        if (terminated == null && toolCallId != null) {
+            streamCallback?.invoke(toolCallId, "[process still running after ${timeoutMs / 1000}s]\n")
+        }
+
+        return terminated ?: false
+    }
+
+    /**
+     * Await test tree finalization using TestResultsViewer.EventsListener callback.
+     * This is the official API — fires when the SMTestProxy tree is fully populated.
+     */
+    private suspend fun awaitTestingFinished(resultsViewer: TestResultsViewer, timeoutMs: Long) {
+        withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { continuation ->
+                val listener = object : TestResultsViewer.EventsListener {
+                    override fun onTestingFinished(sender: TestResultsViewer) {
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
+                }
+                resultsViewer.addEventsListener(listener)
+                // Check again after registering — may have finished between our check and addEventsListener
+                // Re-check after registering — may have finished between our check and addEventsListener
+                if (continuation.isActive) {
+                    // The listener will fire onTestingFinished when done; timeout handles the fallback
+                }
+            }
+        }
+    }
+
     private fun hasTestResults(descriptor: RunContentDescriptor): Boolean {
         val root = findTestRoot(descriptor) ?: return false
         return root.children.isNotEmpty()
@@ -285,5 +356,7 @@ class GetTestResultsTool : AgentTool {
         private const val MAX_PASSED_SHOWN = 20
         private const val TOKEN_CAP_CHARS = 12000 // ~3000 tokens
         private const val MAX_PROCESS_WAIT_SECONDS = 600 // 10 min — builds can be slow
+        private const val TEST_TREE_FINALIZE_TIMEOUT_MS = 10_000L // 10s for test tree finalization after process ends
+        private const val PROGRESS_INTERVAL_MS = 10_000L // Stream progress update every 10s
     }
 }

@@ -4,11 +4,9 @@ import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
-import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebugProcess
-import com.intellij.xdebugger.XDebugSession
-import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerManagerListener
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -17,9 +15,7 @@ import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
@@ -30,7 +26,7 @@ import kotlin.coroutines.resume
  * Launches a run configuration in debug mode. Returns a session ID for
  * subsequent debug operations (step, resume, evaluate, etc.).
  *
- * Threading: Configuration lookup on IO, launch on EDT via ExecutionEnvironmentBuilder.
+ * Threading: Configuration lookup on IO, launch on EDT via invokeLater, callback wait off-EDT.
  */
 class StartDebugSessionTool(
     private val controller: AgentDebugController
@@ -77,34 +73,39 @@ class StartDebugSessionTool(
                     isError = true
                 )
 
-            // Listen for session start before launching (30s timeout to prevent indefinite hang)
-            val sessionId = withContext(Dispatchers.EDT) {
-                // Build execution environment for debug
-                val executor = DefaultDebugExecutor.getDebugExecutorInstance()
-                val env = ExecutionEnvironmentBuilder.create(project, executor, settings.configuration).build()
-
-                // Use a coroutine to wait for the debug session to register
-                val sessionDeferred = withTimeoutOrNull(30_000L) {
-                    suspendCancellableCoroutine<String> { cont ->
-                        val connection = project.messageBus.connect()
-                        cont.invokeOnCancellation { connection.disconnect() }
-                        connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
-                            override fun processStarted(debugProcess: XDebugProcess) {
-                                val session = debugProcess.session
-                                val id = controller.registerSession(session)
-                                connection.disconnect()
+            // Subscribe to debug session start off-EDT, launch on EDT, wait off-EDT
+            val sessionId = withTimeoutOrNull(30_000L) {
+                suspendCancellableCoroutine<String> { cont ->
+                    val connection = project.messageBus.connect()
+                    cont.invokeOnCancellation { connection.disconnect() }
+                    connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
+                        override fun processStarted(debugProcess: XDebugProcess) {
+                            val session = debugProcess.session
+                            val id = controller.registerSession(session)
+                            connection.disconnect()
+                            if (cont.isActive) {
                                 cont.resume(id)
                             }
-                        })
+                        }
+                    })
 
-                        // Launch the debug session
-                        ProgramRunnerUtil.executeConfiguration(env, true, true)
+                    // Only the launch call needs EDT
+                    invokeLater {
+                        try {
+                            val executor = DefaultDebugExecutor.getDebugExecutorInstance()
+                            val env = ExecutionEnvironmentBuilder.create(project, executor, settings.configuration).build()
+                            ProgramRunnerUtil.executeConfiguration(env, true, true)
+                        } catch (e: Exception) {
+                            connection.disconnect()
+                            if (cont.isActive) {
+                                cont.resume("")
+                            }
+                        }
                     }
                 }
-                sessionDeferred
             }
 
-            if (sessionId == null) {
+            if (sessionId == null || sessionId.isEmpty()) {
                 return ToolResult(
                     "Debug session failed to start within 30 seconds. Check run configuration, build errors, or port conflicts.",
                     "Debug session timeout",
