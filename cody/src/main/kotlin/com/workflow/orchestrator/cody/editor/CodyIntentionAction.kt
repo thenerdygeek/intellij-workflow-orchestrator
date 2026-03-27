@@ -4,9 +4,7 @@ import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.sonar.model.MappedIssue
 import com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator
 
@@ -18,10 +16,7 @@ class CodyIntentionAction : IntentionAction {
 
     override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
         if (editor == null || file == null) return false
-        val settings = PluginSettings.getInstance(project)
-        if (settings.connections.sourcegraphUrl.isNullOrBlank()) return false
-        if (settings.state.codyEnabled == false) return false
-        if (!CredentialStore().hasToken(ServiceType.SOURCEGRAPH)) return false
+        if (!LlmBrainFactory.isAvailable()) return false
         val caretLine = editor.caretModel.logicalPosition.line
         val hasIssue = editor.markupModel.allHighlighters.any { hl ->
             val startLine = editor.document.getLineNumber(hl.startOffset)

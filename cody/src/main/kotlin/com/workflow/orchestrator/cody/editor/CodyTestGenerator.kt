@@ -7,9 +7,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiIdentifier
 import com.intellij.psi.PsiMethod
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 import com.workflow.orchestrator.sonar.service.SonarDataService
 
@@ -25,10 +23,7 @@ class CodyTestGenerator : LineMarkerProvider {
         val file = elements.firstOrNull()?.containingFile ?: return
         val project = file.project
 
-        val settings = PluginSettings.getInstance(project)
-        if (settings.connections.sourcegraphUrl.isNullOrBlank()) return
-        if (settings.state.codyEnabled == false) return
-        if (!CredentialStore().hasToken(ServiceType.SOURCEGRAPH)) return
+        if (!LlmBrainFactory.isAvailable()) return
 
         val virtualFile = file.virtualFile ?: return
         val basePath = project.basePath ?: return

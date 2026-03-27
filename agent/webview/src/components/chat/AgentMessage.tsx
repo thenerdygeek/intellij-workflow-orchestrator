@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { Message } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
+import { CompletionCard } from '@/components/agent/CompletionCard';
 import {
   Message as PkMessage,
   MessageAvatar,
@@ -26,9 +27,12 @@ export const AgentMessage = memo(function AgentMessage({
   // System messages: thinking blocks and status lines
   if (message.role === 'system') {
     try {
-      const parsed = JSON.parse(message.content) as { type?: string; text?: string; message?: string };
+      const parsed = JSON.parse(message.content) as { type?: string; text?: string; message?: string; result?: string; verifyCommand?: string };
       if (parsed.type === 'thinking') {
         return <ThinkingView content={parsed.text ?? ''} isStreaming={false} />;
+      }
+      if (parsed.type === 'completion') {
+        return <CompletionCard result={parsed.result ?? ''} verifyCommand={parsed.verifyCommand} />;
       }
       if (parsed.type === 'status') {
         return (

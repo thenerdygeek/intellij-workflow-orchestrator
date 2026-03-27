@@ -54,6 +54,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendDiff(filePath: string, oldLines: string[], newLines: string[], accepted: boolean | null) {
     stores?.getChatStore().addDiff({ filePath, oldLines, newLines, accepted });
   },
+  appendCompletionSummary(result: string, verifyCommand?: string) {
+    stores?.getChatStore().addCompletionSummary(result, verifyCommand ?? undefined);
+  },
   appendStatus(message: string, type: string) {
     stores?.getChatStore().addStatus(message, type as StatusType);
   },

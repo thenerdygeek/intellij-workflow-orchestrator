@@ -622,6 +622,11 @@ class AgentCefPanel(
         callJs("finalizeToolChain()")
     }
 
+    fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
+        val cmdArg = if (verifyCommand != null) jsonStr(verifyCommand) else "undefined"
+        callJs("appendCompletionSummary(${jsonStr(result)},$cmdArg)")
+    }
+
     fun appendToolCall(
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING

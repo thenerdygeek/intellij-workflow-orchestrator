@@ -19,13 +19,17 @@ class AttemptCompletionTool(
     override val description = "Declare that you have finished the user's request. Call this " +
         "ONLY when the entire task is fully resolved — not when completing individual plan " +
         "steps (use update_plan_step for that). Your completion may be blocked if there is " +
-        "unfinished work."
+        "unfinished work. The result is displayed prominently to the user as a completion " +
+        "summary — make it informative and well-structured."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "result" to ParameterProperty(
                 type = "string",
-                description = "Summary of what was accomplished"
+                description = "A well-structured markdown summary of what was accomplished. " +
+                    "Use bullet points for key changes, include file paths where relevant, " +
+                    "and note any insights or caveats. This is displayed as the final " +
+                    "completion card — make it scannable and informative."
             ),
             "command" to ParameterProperty(
                 type = "string",

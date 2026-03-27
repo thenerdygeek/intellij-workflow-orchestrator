@@ -8,7 +8,7 @@ class CodyIntentionActionTest {
     @Test
     fun `getText returns expected label`() {
         val action = CodyIntentionAction()
-        assertEquals("Fix with Cody (Workflow)", action.text)
+        assertEquals("Fix with AI Agent (Workflow)", action.text)
     }
 
     @Test

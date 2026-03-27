@@ -23,8 +23,7 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":sonar"))
     compileOnly(libs.kotlinx.coroutines.core)
-    implementation(libs.lsp4j.jsonrpc)
-    implementation(libs.gson)
+
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)

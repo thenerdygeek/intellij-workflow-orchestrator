@@ -838,6 +838,13 @@ class AgentController(
                 dashboard.flushStreamBuffer()
                 return
             }
+            progress.step == "__completion__" && toolInfo != null -> {
+                // Completion event — render as a dedicated completion card, not a tool call
+                dashboard.flushStreamBuffer()
+                dashboard.finalizeToolChain()
+                dashboard.appendCompletionSummary(toolInfo.result, toolInfo.output)
+                return
+            }
             progress.step.startsWith("Calling tool:") && toolInfo != null -> {
                 // Pre-execution: show tool call as RUNNING before it executes
                 dashboard.flushStreamBuffer()

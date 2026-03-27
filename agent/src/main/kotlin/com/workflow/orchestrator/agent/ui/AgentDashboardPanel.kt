@@ -287,6 +287,11 @@ class AgentDashboardPanel(
         cefPanel?.finalizeToolChain()
     }
 
+    fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
+        cefPanel?.appendCompletionSummary(result, verifyCommand)
+            ?: fallbackPanel?.appendStatus("Task completed: $result", RichStreamingPanel.StatusType.SUCCESS)
+    }
+
     fun appendToolCall(
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING

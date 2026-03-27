@@ -1,1 +1,0 @@
-{"type":"transcript","messages":[{"speaker":"human","text":"Generate a commit message for this diff"},{"speaker":"assistant","text":"fix: handle null pointer in UserService.findUserById\n\nAdd null-safe operator to prevent NPE when user.getName() returns null."}]}

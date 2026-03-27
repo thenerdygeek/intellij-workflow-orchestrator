@@ -1036,12 +1036,25 @@ class SingleAgentSession(
                 }
             }
 
-            // Handle attempt_completion success — exit loop immediately
+            // Handle attempt_completion success — exit loop with completion event (not a tool call)
             if (toolResult.isCompletion) {
                 val sanitizedContent = if (OutputValidator.validate(toolResult.content).isNotEmpty()) {
                     hallucinationFlags++
                     CredentialRedactor.redact(toolResult.content)
                 } else toolResult.content
+
+                // Emit completion summary as streamed text, not a tool call card
+                onProgress(AgentProgress(
+                    step = "__completion__",
+                    tokensUsed = contextManager.currentTokens,
+                    toolCallInfo = ToolCallInfo(
+                        toolName = "attempt_completion",
+                        result = sanitizedContent,
+                        durationMs = 0,
+                        isError = false,
+                        output = toolResult.verifyCommand
+                    )
+                ))
 
                 LOG.info("SingleAgentSession: attempt_completion accepted after $iteration iterations")
                 eventLog?.log(AgentEventType.SESSION_COMPLETED, "attempt_completion accepted after $iteration iterations, $totalTokensUsed tokens")
@@ -1174,11 +1187,14 @@ class SingleAgentSession(
                 )
             }
 
-            onProgress(AgentProgress(
-                step = "Used tool: $toolName",
-                tokensUsed = contextManager.currentTokens,
-                toolCallInfo = editInfo
-            ))
+            // Skip UI tool call card for attempt_completion — handled as completion event
+            if (toolName != "attempt_completion") {
+                onProgress(AgentProgress(
+                    step = "Used tool: $toolName",
+                    tokensUsed = contextManager.currentTokens,
+                    toolCallInfo = editInfo
+                ))
+            }
             onDebugLog?.invoke(
                 if (toolResult.isError) "warn" else "info", "tool_call",
                 "$toolName ${if (toolResult.isError) "ERROR" else "OK"} (${toolDurationMs}ms)",
@@ -1348,16 +1364,18 @@ class SingleAgentSession(
             }
         }
 
-        // Emit pre-execution progress
-        onProgress?.invoke(AgentProgress(
-            step = "Calling tool: $toolName",
-            tokensUsed = 0, // Don't access contextManager from parallel context
-            toolCallInfo = ToolCallInfo(
-                toolName = toolName,
-                args = toolCall.function.arguments.take(1000),
-                isError = false
-            )
-        ))
+        // Emit pre-execution progress (skip for attempt_completion — handled as completion event)
+        if (toolName != "attempt_completion") {
+            onProgress?.invoke(AgentProgress(
+                step = "Calling tool: $toolName",
+                tokensUsed = 0, // Don't access contextManager from parallel context
+                toolCallInfo = ToolCallInfo(
+                    toolName = toolName,
+                    args = toolCall.function.arguments.take(1000),
+                    isError = false
+                )
+            ))
+        }
 
         val toolStartMs = System.currentTimeMillis()
         return try {

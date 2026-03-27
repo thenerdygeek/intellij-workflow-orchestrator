@@ -57,11 +57,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var jiraBoardName by string("")
         var boardFilterRegex by string("")
 
-        // Cody AI configuration
-        @Deprecated("Cody CLI deprecated. LLM calls use direct Sourcegraph HTTP API.")
-        var codyAgentPath by string("")
-        @Deprecated("Cody CLI deprecated. Availability determined by Sourcegraph URL + token.")
-        var codyEnabled by property(true)
+        // AI availability determined by LlmBrainFactory.isAvailable() (Sourcegraph URL + token)
 
         // Health check settings
         var healthCheckEnabled by property(true)

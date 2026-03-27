@@ -103,6 +103,7 @@ interface ChatState {
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
+  addCompletionSummary(result: string, verifyCommand?: string): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
   clearChat(): void;
@@ -333,6 +334,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       timestamp: Date.now(),
     };
     set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addCompletionSummary(result: string, verifyCommand?: string) {
+    const completionMessage: Message = {
+      id: nextId('completion'),
+      role: 'system',
+      content: JSON.stringify({ type: 'completion', result, verifyCommand }),
+      timestamp: Date.now(),
+    };
+    set(state => ({
+      messages: [...state.messages, completionMessage],
+      activeStream: null,
+    }));
   },
 
   addStatus(message: string, type: StatusType) {
