@@ -38,18 +38,22 @@ class PrListService(private val project: Project) : Disposable {
     private val _reviewingPrs = MutableStateFlow<List<BitbucketPrDetail>>(emptyList())
     val reviewingPrs: StateFlow<List<BitbucketPrDetail>> = _reviewingPrs.asStateFlow()
 
-    private val poller = SmartPoller(
-        name = "PR-List",
-        baseIntervalMs = 60_000,
-        maxIntervalMs = 300_000,
-        scope = scope,
-        action = {
-            val oldMySize = _myPrs.value.size
-            val oldReviewSize = _reviewingPrs.value.size
-            refresh()
-            _myPrs.value.size != oldMySize || _reviewingPrs.value.size != oldReviewSize
-        }
-    )
+    private var poller: SmartPoller? = null
+
+    private fun getOrCreatePoller(): SmartPoller {
+        return poller ?: SmartPoller(
+            name = "PR-List",
+            baseIntervalMs = 60_000,
+            maxIntervalMs = 300_000,
+            scope = scope,
+            action = {
+                val oldMySize = _myPrs.value.size
+                val oldReviewSize = _reviewingPrs.value.size
+                refresh()
+                _myPrs.value.size != oldMySize || _reviewingPrs.value.size != oldReviewSize
+            }
+        ).also { poller = it }
+    }
 
     companion object {
         fun getInstance(project: Project): PrListService {
@@ -57,11 +61,11 @@ class PrListService(private val project: Project) : Disposable {
         }
     }
 
-    fun startPolling() = poller.start()
+    fun startPolling() = getOrCreatePoller().start()
 
-    fun stopPolling() = poller.stop()
+    fun stopPolling() { poller?.stop() }
 
-    fun setVisible(visible: Boolean) = poller.setVisible(visible)
+    fun setVisible(visible: Boolean) { poller?.setVisible(visible) }
 
     /** Current PR state filter (OPEN, MERGED, DECLINED). */
     @Volatile
