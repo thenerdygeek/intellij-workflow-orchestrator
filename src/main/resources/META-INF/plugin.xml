@@ -165,8 +165,14 @@
         <externalAnnotator language="kotlin"
             implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
 
-        <!-- Cody Intention Action (Alt+Enter) — registered without language to work for all file types -->
+        <!-- Cody Intention Action (Alt+Enter) — language-filtered to Java/Kotlin only -->
         <intentionAction>
+            <language>JAVA</language>
+            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <category>Workflow Orchestrator</category>
+        </intentionAction>
+        <intentionAction>
+            <language>kotlin</language>
             <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
             <category>Workflow Orchestrator</category>
         </intentionAction>

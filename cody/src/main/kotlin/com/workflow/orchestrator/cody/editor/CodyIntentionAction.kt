@@ -2,13 +2,15 @@ package com.workflow.orchestrator.cody.editor
 
 import com.intellij.codeInsight.intention.IntentionAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.MappedIssue
 import com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator
 
-class CodyIntentionAction : IntentionAction {
+class CodyIntentionAction : IntentionAction, DumbAware {
 
     override fun getText(): String = "Fix with AI Agent (Workflow)"
 
@@ -16,13 +18,9 @@ class CodyIntentionAction : IntentionAction {
 
     override fun isAvailable(project: Project, editor: Editor?, file: PsiFile?): Boolean {
         if (editor == null || file == null) return false
+        if (!PluginSettings.getInstance(project).state.sonarIntentionActionEnabled) return false
         if (!LlmBrainFactory.isAvailable()) return false
-        val caretLine = editor.caretModel.logicalPosition.line
-        val hasIssue = editor.markupModel.allHighlighters.any { hl ->
-            val startLine = editor.document.getLineNumber(hl.startOffset)
-            startLine == caretLine && hl.errorStripeTooltip != null
-        }
-        return hasIssue
+        return findSonarIssueAtCaret(editor, editor.caretModel.offset) != null
     }
 
     override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
@@ -46,9 +44,9 @@ class CodyIntentionAction : IntentionAction {
 
     private fun findSonarIssueAtCaret(editor: Editor, offset: Int): MappedIssue? {
         return editor.markupModel.allHighlighters
-            .filter { it.startOffset <= offset && offset <= it.endOffset }
-            .mapNotNull { it.getUserData(SonarIssueAnnotator.SONAR_ISSUE_KEY) }
-            .firstOrNull()
+            .firstOrNull { it.startOffset <= offset && offset <= it.endOffset &&
+                it.getUserData(SonarIssueAnnotator.SONAR_ISSUE_KEY) != null }
+            ?.getUserData(SonarIssueAnnotator.SONAR_ISSUE_KEY)
     }
 
     override fun startInWriteAction(): Boolean = false
