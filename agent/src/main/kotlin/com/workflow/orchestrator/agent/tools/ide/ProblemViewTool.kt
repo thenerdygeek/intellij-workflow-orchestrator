@@ -63,13 +63,13 @@ class ProblemViewTool : AgentTool {
         }
     }
 
-    private fun getProblemsForFile(filePath: String, severity: String, project: Project): ToolResult {
+    private suspend fun getProblemsForFile(filePath: String, severity: String, project: Project): ToolResult {
         val (path, pathError) = PathValidator.resolveAndValidate(filePath, project.basePath)
         if (pathError != null) return pathError
 
-        return ReadAction.compute<ToolResult, Exception> {
+        return ReadAction.nonBlocking<ToolResult> {
             val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
-                ?: return@compute ToolResult(
+                ?: return@nonBlocking ToolResult(
                     "File not found: $filePath",
                     "Not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
                 )
@@ -94,14 +94,14 @@ class ProblemViewTool : AgentTool {
                 val content = formatFileProblems(relativePath, problems)
                 ToolResult(content, "${problems.size} problems in ${vf.name}", TokenEstimator.estimate(content))
             }
-        }
+        }.executeSynchronously()
     }
 
-    private fun getProblemsForAllOpenFiles(severity: String, project: Project): ToolResult {
-        return ReadAction.compute<ToolResult, Exception> {
+    private suspend fun getProblemsForAllOpenFiles(severity: String, project: Project): ToolResult {
+        return ReadAction.nonBlocking<ToolResult> {
             val openFiles = FileEditorManager.getInstance(project).openFiles
             if (openFiles.isEmpty()) {
-                return@compute ToolResult("No files are open in the editor.", "No open files", 5)
+                return@nonBlocking ToolResult("No files are open in the editor.", "No open files", 5)
             }
 
             val wolf = WolfTheProblemSolver.getInstance(project)
@@ -141,7 +141,7 @@ class ProblemViewTool : AgentTool {
                     TokenEstimator.estimate(content)
                 )
             }
-        }
+        }.executeSynchronously()
     }
 
     private fun collectHighlightProblems(
