@@ -394,7 +394,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
                 val g2 = g.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
                 g2.color = statusColor
                 g2.fillRect(0, 0, JBUI.scale(3), height)
                 g2.dispose()
@@ -415,7 +415,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
             override fun paintComponent(g: Graphics) {
                 val g2 = g.create() as Graphics2D
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                com.workflow.orchestrator.core.ui.RenderingUtils.applyDesktopHints(g2)
                 g2.color = badgeColor
                 g2.draw(RoundRectangle2D.Float(
                     0.5f, 0.5f, width - 1f, height - 1f,

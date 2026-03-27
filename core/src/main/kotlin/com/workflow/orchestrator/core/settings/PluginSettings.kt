@@ -138,7 +138,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var bambooBuildVariableName by string("dockerTagsAsJson")
 
         // Sprint dashboard view preferences
-        var sprintGroupBy by string("Assignee")
         var sprintSortBy by string("Default")
 
         // Multi-repo configuration
