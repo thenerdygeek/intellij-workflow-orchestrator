@@ -413,10 +413,12 @@ class PrBar(
     }
 
     private fun getGitRepo(): git4idea.repo.GitRepository? {
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        return com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+            val resolver = RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val repos = GitRepositoryManager.getInstance(project).repositories
+            repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        }
     }
 
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
