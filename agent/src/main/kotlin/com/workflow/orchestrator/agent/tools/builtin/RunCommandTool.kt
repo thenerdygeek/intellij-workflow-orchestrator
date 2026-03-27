@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -41,6 +42,7 @@ class RunCommandTool : AgentTool {
         private const val MAX_OUTPUT_CHARS = 30_000
         private const val DEFAULT_IDLE_THRESHOLD_MS = 15_000L
         private const val BUILD_IDLE_THRESHOLD_MS = 60_000L
+        private const val IO_DRAIN_TIMEOUT_MS = 2000L
         private val processIdCounter = AtomicLong(0)
 
         private val BUILD_COMMAND_PREFIXES = listOf(
@@ -136,6 +138,16 @@ class RunCommandTool : AgentTool {
             Regex("""(?i)secret\s*:"""),
             Regex("""(?i)credentials?\s*:"""),
             Regex("""(?i)api.?key\s*:"""),
+        )
+
+        /** Environment variables stripped before spawning processes to prevent credential leaks. */
+        private val SENSITIVE_ENV_VARS = listOf(
+            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "SOURCEGRAPH_TOKEN",
+            "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
+            "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+            "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS",
+            "NPM_TOKEN", "NUGET_API_KEY", "DOCKER_PASSWORD",
+            "SONAR_TOKEN", "JIRA_TOKEN", "BAMBOO_TOKEN", "BITBUCKET_TOKEN",
         )
 
         /**
@@ -273,20 +285,26 @@ class RunCommandTool : AgentTool {
 
         return try {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val processBuilder = if (isWindows) {
-                ProcessBuilder("cmd.exe", "/c", command)
+
+            // Use IntelliJ's GeneralCommandLine for proper cross-platform command escaping
+            val commandLine = if (isWindows) {
+                GeneralCommandLine("cmd.exe", "/c", command)
             } else {
-                ProcessBuilder("sh", "-c", command)
+                GeneralCommandLine("sh", "-c", command)
             }
 
             val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
                 .coerceIn(1, MAX_TIMEOUT_SECONDS)
             val timeoutMs = timeoutSeconds * 1000
 
-            processBuilder.directory(workDir)
-            processBuilder.redirectErrorStream(true)
+            commandLine.workDirectory = workDir
+            commandLine.withRedirectErrorStream(true)
 
-            val process = processBuilder.start()
+            // Sanitize environment: strip sensitive vars that could leak credentials
+            val env = commandLine.environment
+            SENSITIVE_ENV_VARS.forEach { env.remove(it) }
+
+            val process = commandLine.createProcess()
 
             // Determine tool call ID for ProcessRegistry and streaming
             val toolCallId = currentToolCallId.get()
@@ -330,7 +348,7 @@ class RunCommandTool : AgentTool {
 
                 // Priority 1: process exited — always check first (race condition fix)
                 if (!process.isAlive) {
-                    readerThread.join(2000)
+                    readerThread.join(IO_DRAIN_TIMEOUT_MS) // drain remaining output
                     ProcessRegistry.unregister(toolCallId)
                     return buildExitResult(managed, command, params)
                 }
@@ -338,7 +356,7 @@ class RunCommandTool : AgentTool {
                 // Priority 2: total timeout
                 if (now - managed.startedAt > timeoutMs) {
                     ProcessRegistry.kill(toolCallId)
-                    readerThread.join(1000)
+                    readerThread.join(IO_DRAIN_TIMEOUT_MS) // drain remaining output after kill
                     return buildTimeoutResult(managed, timeoutSeconds)
                 }
 

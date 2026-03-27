@@ -68,21 +68,60 @@ object ProcessRegistry {
         running.remove(toolCallId)
     }
 
+    /**
+     * Two-phase kill: SIGTERM (graceful) → wait up to 5 seconds → SIGKILL (forced).
+     * Also kills child processes via recursive PID tree (prevents orphaned children).
+     * Pattern from Codex CLI and IntelliJ's KillableProcessHandler.
+     */
     fun kill(toolCallId: String): Boolean {
         val managed = running.remove(toolCallId) ?: return false
         log.info("[ProcessRegistry] Killing process for tool call: $toolCallId")
-        managed.process.destroyForcibly()
+        gracefulKill(managed.process)
         return true
     }
 
     fun killAll() {
         log.info("[ProcessRegistry] Killing all ${running.size} running processes")
         running.forEach { (id, managed) ->
-            managed.process.destroyForcibly()
+            gracefulKill(managed.process)
             log.info("[ProcessRegistry] Killed process: $id")
         }
         running.clear()
     }
+
+    /**
+     * Two-phase graceful kill:
+     * 1. destroy() sends SIGTERM (allows Maven/Gradle/Docker to release locks and clean up)
+     * 2. Wait up to GRACEFUL_KILL_WAIT_MS for process to exit
+     * 3. destroyForcibly() sends SIGKILL if still alive
+     * Also attempts to kill child process tree via ProcessHandle API.
+     */
+    private fun gracefulKill(process: Process) {
+        // Kill child processes first (prevents orphans)
+        try {
+            process.toHandle().descendants().forEach { child ->
+                try { child.destroy() } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {
+            // ProcessHandle may not be available on all JVMs
+        }
+
+        // Phase 1: SIGTERM (graceful)
+        process.destroy()
+
+        // Phase 2: wait, then SIGKILL if needed
+        try {
+            if (!process.waitFor(GRACEFUL_KILL_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                log.info("[ProcessRegistry] Process did not exit after ${GRACEFUL_KILL_WAIT_MS}ms SIGTERM, sending SIGKILL")
+                process.destroyForcibly()
+                process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        } catch (_: InterruptedException) {
+            process.destroyForcibly()
+        }
+    }
+
+    private const val GRACEFUL_KILL_WAIT_MS = 5000L
 
     /**
      * Finds all processes where [ManagedProcess.idleSignaledAt] > 0 and
@@ -96,7 +135,7 @@ object ProcessRegistry {
         }
         for ((id, managed) in toReap) {
             running.remove(id)
-            managed.process.destroyForcibly()
+            gracefulKill(managed.process)
             log.info("[ProcessRegistry] Reaped idle process: $id (idleSignaledAt=${managed.idleSignaledAt.get()})")
         }
     }
