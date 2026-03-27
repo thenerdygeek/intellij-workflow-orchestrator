@@ -24,7 +24,6 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
     private val containerSurface = JBColor(0xEEF0F2, 0x171F33)
     private val accentColor = StatusColors.SUCCESS
     private val hoverSurface = JBColor(0xE8EBF0, 0x1C2740)
-    private val activeBorder = StatusColors.SUCCESS
 
     // -- Data labels (updated reactively via updateState) --
     private val ticketIdLabel = JBLabel("").apply {
@@ -350,7 +349,7 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
         fun setActive(active: Boolean) {
             isActive = active
             if (active) {
-                leftAccent.background = activeBorder
+                leftAccent.background = accentColor
                 background = containerSurface
                 textLabel.foreground = JBColor.foreground()
                 textLabel.font = textLabel.font.deriveFont(Font.BOLD)
@@ -388,12 +387,10 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
         ticketStatusLabel.text = "Status: ${state.currentStatusName ?: "Unknown"}"
 
         // -- Context detail panel (mirrors header ticket info) --
-        contextDetailLabels?.let { labels ->
-            labels.ticketId.text = ticketIdLabel.text
-            labels.ticketId.foreground = ticketIdLabel.foreground
-            labels.summary.text = ticketSummaryLabel.text
-            labels.status.text = ticketStatusLabel.text
-        }
+        contextIdLabel.text = ticketIdLabel.text
+        contextIdLabel.foreground = ticketIdLabel.foreground
+        contextSummaryLabel.text = ticketSummaryLabel.text
+        contextStatusLabel.text = ticketStatusLabel.text
 
         // -- PR Details --
         prStatusLabel.text = if (state.prCreated) "PR created" else "No PR yet"
@@ -496,6 +493,23 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
     // Context detail panel (wired to Context nav item)
     // =======================================================================
 
+    // -- Context detail labels (kept in sync with header labels via updateState) --
+    private val contextIdLabel = JBLabel().apply {
+        font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scale(13))
+        foreground = accentColor
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+    private val contextSummaryLabel = JBLabel().apply {
+        font = font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        foreground = StatusColors.SECONDARY_TEXT
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+    private val contextStatusLabel = JBLabel().apply {
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+        foreground = StatusColors.SECONDARY_TEXT
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+
     /**
      * Creates the detail panel for the "Context" nav item, showing ticket info
      * (ID, summary, status) and the transition controls.
@@ -505,34 +519,13 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
 
-            // Ticket ID
-            val idCopy = JBLabel().apply {
-                font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scale(13))
-                foreground = accentColor
-                alignmentX = Component.LEFT_ALIGNMENT
-            }
-            add(idCopy)
+            add(contextIdLabel)
             add(Box.createVerticalStrut(JBUI.scale(4)))
-
-            // Ticket summary
-            val summaryCopy = JBLabel().apply {
-                font = font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
-                foreground = StatusColors.SECONDARY_TEXT
-                alignmentX = Component.LEFT_ALIGNMENT
-            }
-            add(summaryCopy)
+            add(contextSummaryLabel)
             add(Box.createVerticalStrut(JBUI.scale(4)))
-
-            // Ticket status
-            val statusCopy = JBLabel().apply {
-                font = font.deriveFont(JBUI.scale(11).toFloat())
-                foreground = StatusColors.SECONDARY_TEXT
-                alignmentX = Component.LEFT_ALIGNMENT
-            }
-            add(statusCopy)
+            add(contextStatusLabel)
             add(Box.createVerticalStrut(JBUI.scale(8)))
 
-            // Transition controls
             val transitionRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
                 isOpaque = false
                 alignmentX = Component.LEFT_ALIGNMENT
@@ -541,20 +534,8 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
             transitionRow.add(transitionComboBox)
             transitionRow.add(transitionButton)
             add(transitionRow)
-
-            // Bind these labels to the shared data labels so they stay in sync
-            contextDetailLabels = ContextDetailLabels(idCopy, summaryCopy, statusCopy)
         }
     }
-
-    /** Labels inside the Context nav detail panel, kept in sync with header labels. */
-    private data class ContextDetailLabels(
-        val ticketId: JBLabel,
-        val summary: JBLabel,
-        val status: JBLabel
-    )
-
-    private var contextDetailLabels: ContextDetailLabels? = null
 
     // =======================================================================
     // Private helpers
