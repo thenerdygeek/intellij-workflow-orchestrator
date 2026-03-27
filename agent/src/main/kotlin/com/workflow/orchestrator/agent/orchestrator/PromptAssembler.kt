@@ -281,51 +281,57 @@ class PromptAssembler(
             <delegation>
             You have access to the agent tool to spawn focused subagents for specific sub-tasks.
             Each subagent runs in its own context with scoped tools — they won't see your
-            conversation history, so provide clear context in the prompt.
+            conversation history, so provide clear, detailed context in the prompt.
 
             Built-in agent types: general-purpose, explorer, coder, reviewer, tooler.
             Custom agents may also be available (see available_subagents section).
 
-            When to delegate:
-            - Simple tasks (1-2 files, quick fix): handle yourself
-            - Moderate to complex tasks (3+ files, multi-step edits): use agent with subagent_type="coder"
-            - Analysis tasks (understand codebase, find references): use agent with subagent_type="explorer"
-            - Review tasks (check quality after changes): use agent with subagent_type="reviewer"
-            - Enterprise tool tasks (Jira, Bamboo, Sonar): use agent with subagent_type="tooler"
-            - When you create a plan and a step is non-trivial, delegate it via the agent tool
-            - Always provide detailed prompts with file paths and context (subagent has no conversation history)
+            ## Decision framework: agent vs direct tools
 
-            Explorer subagent heuristic — use explorer when:
-            - The search is open-ended (you don't know which files to look at)
-            - The task requires more than 3 search queries
-            - You need to follow references, inheritance chains, or call graphs
-            - You want to protect your context from verbose search results
-            - The user asks "how does X work" or "where is Y implemented"
+            The core principle is CONFIDENCE. Ask yourself: "Am I confident I'll find what I need in 1-2 tool calls?"
+            - YES → use direct tools (read_file, search_code, find_definition)
+            - NO → use the agent tool with the appropriate subagent_type
+
+            ### explorer — use for research and codebase understanding
+            Use explorer when:
+            - You are NOT confident you'll find the right files in the first few tries
+            - The search is open-ended ("how does X work?", "where is Y implemented?", "find all places that do Z")
+            - You need to follow references, inheritance chains, call graphs, or cross-module flows
+            - The task will likely require 3+ search/read calls to answer properly
+            - You want to protect your main context from verbose search results
             Do NOT use explorer when:
-            - You know the exact file path → use read_file directly
-            - You're searching for a specific class name → use search_code or find_definition
-            - You need to search within 1-3 known files → use read_file directly
-            When using explorer, specify thoroughness in the prompt:
+            - You already know the exact file path → read_file
+            - You're searching for a specific known class/method name → search_code or find_definition
+            - You need to read 1-2 specific known files → read_file
+            Specify thoroughness in the prompt:
             - "Thoroughness: quick" — targeted lookup, 1-3 tool calls
-            - "Thoroughness: medium" — balanced search (default if omitted)
-            - "Thoroughness: very thorough" — exhaustive multi-location search
+            - "Thoroughness: medium" — balanced search, 3-6 calls (default)
+            - "Thoroughness: very thorough" — exhaustive, 6-10+ calls across multiple locations
 
-            Background execution:
-            - For independent tasks that don't block your next step, use run_in_background=true
-            - You will be notified automatically when the background agent completes
-            - Continue working on other tasks while it runs — do NOT wait or poll
-            - Use background for: research, code review, test runs, long builds
-            - Use foreground (default) for: tasks whose results you need before proceeding
+            ### coder — use for implementation tasks
+            Use coder when:
+            - The implementation touches 3+ files or requires multi-step edits
+            - A plan step is non-trivial and self-contained
+            Do NOT use coder for single-file fixes you can handle directly.
 
-            Resume:
-            - Every agent returns an agentId in its result
-            - To continue a completed agent's work: agent(resume="agentId", prompt="continue with...")
-            - The resumed agent has its full previous context preserved
-            - Use resume when: follow-up work on the same area, iterating on review feedback
+            ### reviewer — use for quality checks
+            Use after completing edits to verify quality, find issues, or review changes.
 
-            Kill:
-            - To cancel a running background agent: agent(kill="agentId")
-            - Use when: the task is no longer needed, or you want to redirect the agent
+            ### tooler — use for enterprise integrations
+            Use for Jira, Bamboo, SonarQube, Bitbucket tasks that don't need code context.
+
+            ### general-purpose — use as fallback
+            For complex multi-step tasks that don't fit a specific type.
+
+            ## Parallel and background execution
+            - Launch multiple agents concurrently for independent tasks (multiple agent calls in one response)
+            - Use run_in_background=true for tasks that don't block your next step
+            - You'll be notified automatically when background agents complete — do NOT wait or poll
+            - Use foreground (default) when you need results before proceeding
+
+            ## Resume and kill
+            - Resume a completed agent: agent(resume="agentId", prompt="continue with...")
+            - Cancel a running agent: agent(kill="agentId")
 
             If a delegated task fails, try a different approach or handle it yourself.
             </delegation>
@@ -590,10 +596,16 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             <examples>
             These examples show the expected approach for common task types.
 
-            <example name="parallel-exploration">
+            <example name="open-ended-exploration">
             User: "How does the authentication flow work?"
-            Good approach: Call search_code("AuthService"), search_code("login"), and file_structure("src/main/kotlin/auth/") in PARALLEL (3 tool calls in one response). Then read the 2-3 most relevant files found. Synthesize an answer with a flow diagram.
-            Bad approach: Search one file at a time, read every file mentioned, explore for 10+ tool calls.
+            Good approach: Use agent(subagent_type="explorer", prompt="How does the authentication flow work? Trace the flow from login entry point through middleware to session creation. Thoroughness: medium") — the explorer will search across files, follow references, and return a summary without bloating your context.
+            Bad approach: Manually searching one file at a time with search_code, reading every result — wastes your context window and takes longer than delegating.
+            </example>
+
+            <example name="targeted-lookup">
+            User: "What does the processOrder method do?"
+            Good approach: Call find_definition("processOrder") directly — you know the exact method name, so a single tool call finds it.
+            Bad approach: Spawning an explorer for a single known method lookup.
             </example>
 
             <example name="edit-with-verification">

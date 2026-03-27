@@ -95,8 +95,11 @@ class SpawnAgentTool : AgentTool {
             ),
             "subagent_type" to ParameterProperty(
                 type = "string",
-                description = "Which agent type to use. Built-in: general-purpose, explorer, coder, reviewer, tooler. " +
-                    "Or any custom agent name from .workflow/agents/. Defaults to general-purpose."
+                description = "Which agent type to use. ALWAYS specify this — do not omit. " +
+                    "Built-in types: general-purpose (complex tasks), explorer (read-only codebase search — " +
+                    "use when you're not confident you'll find what you need in 1-2 tool calls), " +
+                    "coder (editing/implementation), reviewer (code review), tooler (Jira/Bamboo/Sonar/Bitbucket). " +
+                    "Also accepts any custom agent name from .workflow/agents/."
             ),
             "model" to ParameterProperty(
                 type = "string",
