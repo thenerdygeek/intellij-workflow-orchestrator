@@ -50,39 +50,53 @@ class SpawnAgentTool : AgentTool {
         )
 
         val BUILT_IN_AGENTS = mapOf(
-            "general-purpose" to BuiltInAgent(WorkerType.ORCHESTRATOR, "Full capability agent for complex tasks"),
-            "explorer" to BuiltInAgent(WorkerType.ANALYZER, "Fast read-only codebase exploration with PSI intelligence — specify thoroughness: quick/medium/very thorough"),
-            "coder" to BuiltInAgent(WorkerType.CODER, "Code editing and implementation"),
-            "reviewer" to BuiltInAgent(WorkerType.REVIEWER, "Code review and analysis"),
-            "tooler" to BuiltInAgent(WorkerType.TOOLER, "Integration tools (Jira, Bamboo, SonarQube)")
+            "general-purpose" to BuiltInAgent(
+                WorkerType.ORCHESTRATOR,
+                "Full-capability agent for complex multi-step tasks that span research, implementation, and verification."
+            ),
+            "explorer" to BuiltInAgent(
+                WorkerType.ANALYZER,
+                "PREFERRED for codebase research. Runs parallel PSI-powered searches — faster than manual " +
+                    "search_code/read_file. Use proactively for: 'how does X work', 'where is Y', 'find all Z', " +
+                    "cross-module flows, inheritance chains, call graphs. Specify thoroughness: quick/medium/very thorough."
+            ),
+            "coder" to BuiltInAgent(
+                WorkerType.CODER,
+                "Use for implementation tasks touching 3+ files or self-contained plan steps. " +
+                    "Has full edit/test/diagnostics capabilities in isolated context."
+            ),
+            "reviewer" to BuiltInAgent(
+                WorkerType.REVIEWER,
+                "Always use after completing multi-file edits to verify quality before reporting task complete. " +
+                    "Read-only analysis with code review expertise."
+            ),
+            "tooler" to BuiltInAgent(
+                WorkerType.TOOLER,
+                "Use for Jira, Bamboo, SonarQube, Bitbucket tasks that don't need code context. " +
+                    "Handles ticket queries, build status, PR management, quality checks."
+            )
         )
     }
 
     override val name = "agent"
 
     override val description =
-        "Launch a subagent to handle a task autonomously. The subagent runs in its own context " +
-            "with its own tools and returns results.\n\n" +
-            "Available agent types:\n" +
-            "- general-purpose: Full tool access, for complex multi-step tasks\n" +
-            "- explorer: Read-only, fast codebase exploration. Specify thoroughness in prompt: " +
-            "'quick' (1-3 calls, targeted lookup), 'medium' (3-6 calls, default), " +
-            "'very thorough' (6-10 calls, exhaustive). Uses PSI tools for semantically accurate navigation. " +
-            "Prefer explorer over direct Grep/Glob when: the search is open-ended, requires >3 queries, " +
-            "or needs to follow references/inheritance/call chains.\n" +
-            "- coder: Code editing and implementation\n" +
-            "- reviewer: Code review and analysis (read-only)\n" +
-            "- tooler: Integration tools (Jira, Bamboo, SonarQube, Bitbucket)\n" +
-            "Or specify any custom agent defined in .workflow/agents/\n\n" +
-            "If subagent_type is omitted, defaults to general-purpose.\n\n" +
-            "When NOT to use explorer (use direct tools instead):\n" +
-            "- Reading a specific known file → read_file\n" +
-            "- Searching for a specific class/method → search_code or find_definition\n" +
-            "- Searching within 1-3 known files → read_file\n\n" +
-            "Lifecycle:\n" +
-            "- Resume: agent(resume='agentId', prompt='continue with...') — continues a previous agent\n" +
-            "- Background: agent(run_in_background=true, ...) — returns immediately, notifies on completion\n" +
-            "- Kill: agent(kill='agentId') — cancels a running background agent"
+        "Spawn a sub-agent for autonomous task execution. " +
+            "Each agent runs in its own context with scoped tools.\n\n" +
+            "Use the agent tool for:\n" +
+            "- Research: agent(subagent_type=\"explorer\") — faster than manual search, " +
+            "runs parallel PSI-powered searches, protects your context from verbose results. " +
+            "Use for open-ended questions, cross-module flows, or tasks needing 3+ searches.\n" +
+            "- Implementation: agent(subagent_type=\"coder\") — for multi-file edits (3+ files) " +
+            "or self-contained plan steps.\n" +
+            "- Review: agent(subagent_type=\"reviewer\") — use after multi-file changes " +
+            "before reporting complete.\n" +
+            "- Enterprise tools: agent(subagent_type=\"tooler\") — Jira/Bamboo/Sonar/Bitbucket " +
+            "tasks that don't need code context.\n" +
+            "- Complex tasks: agent(subagent_type=\"general-purpose\") — full tool access.\n\n" +
+            "Use direct tools (read_file, search_code) when you know the exact file or symbol name.\n\n" +
+            "Lifecycle: resume=agentId to continue, run_in_background=true for non-blocking, " +
+            "kill=agentId to cancel."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -96,11 +110,9 @@ class SpawnAgentTool : AgentTool {
             ),
             "subagent_type" to ParameterProperty(
                 type = "string",
-                description = "Which agent type to use. ALWAYS specify this — do not omit. " +
-                    "Built-in types: general-purpose (complex tasks), explorer (read-only codebase search — " +
-                    "use when you're not confident you'll find what you need in 1-2 tool calls), " +
-                    "coder (editing/implementation), reviewer (code review), tooler (Jira/Bamboo/Sonar/Bitbucket). " +
-                    "Also accepts any custom agent name from .workflow/agents/."
+                description = "Which agent type to use. See available_agents in your context for descriptions. " +
+                    "Built-in: general-purpose, explorer, coder, reviewer, tooler. " +
+                    "Also accepts custom agent names from .workflow/agents/."
             ),
             "model" to ParameterProperty(
                 type = "string",
