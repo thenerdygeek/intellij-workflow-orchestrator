@@ -9,6 +9,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import java.awt.*
 import javax.swing.*
 import javax.swing.event.DocumentEvent
@@ -189,7 +190,7 @@ class HistoryPanel : JPanel(BorderLayout()) {
                 else -> JBColor.foreground()
             }
 
-            val timeAgo = formatTimeAgo(value.lastMessageAt)
+            val timeAgo = TimeFormatter.relative(value.lastMessageAt)
 
             val panel = JPanel(BorderLayout()).apply {
                 border = JBUI.Borders.empty(6, 8)
@@ -244,16 +245,5 @@ class HistoryPanel : JPanel(BorderLayout()) {
             return panel
         }
 
-        private fun formatTimeAgo(timestamp: Long): String {
-            if (timestamp <= 0) return "unknown"
-            val diff = System.currentTimeMillis() - timestamp
-            return when {
-                diff < 60_000 -> "just now"
-                diff < 3_600_000 -> "${diff / 60_000}m ago"
-                diff < 86_400_000 -> "${diff / 3_600_000}h ago"
-                diff < 604_800_000 -> "${diff / 86_400_000}d ago"
-                else -> "${diff / 604_800_000}w ago"
-            }
-        }
     }
 }

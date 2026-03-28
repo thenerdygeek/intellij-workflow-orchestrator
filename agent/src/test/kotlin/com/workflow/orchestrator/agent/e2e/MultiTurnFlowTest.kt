@@ -19,6 +19,7 @@ import com.workflow.orchestrator.agent.runtime.PlanPersistence
 import com.workflow.orchestrator.agent.runtime.PlanStep
 import com.workflow.orchestrator.agent.runtime.PersistedMessage
 import com.workflow.orchestrator.agent.runtime.SessionMetadata
+import com.workflow.orchestrator.agent.runtime.SessionStatus
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -356,7 +357,7 @@ class MultiTurnFlowTest {
             createdAt = 1000L,
             lastMessageAt = 2000L,
             messageCount = 3,
-            status = "interrupted"
+            status = SessionStatus.INTERRUPTED
         ))
 
         // Load the session
@@ -365,7 +366,7 @@ class MultiTurnFlowTest {
         assertEquals(3, recovered!!.messages.size, "Should have 3 messages")
         assertNull(recovered.compressionSummary, "No compression needed for 3 messages")
         assertNotNull(recovered.metadata)
-        assertEquals("interrupted", recovered.metadata?.status)
+        assertEquals(SessionStatus.INTERRUPTED, recovered.metadata?.status)
         assertTrue(
             recovered.recoveryMessage.contains("interrupted"),
             "Recovery message should mention the status"
@@ -404,7 +405,7 @@ class MultiTurnFlowTest {
             createdAt = 1000L,
             lastMessageAt = 30000L,
             messageCount = 30,
-            status = "active"
+            status = SessionStatus.ACTIVE
         ))
 
         val recovered = ConversationStore.loadSession(sessionDir)
@@ -436,7 +437,7 @@ class MultiTurnFlowTest {
             createdAt = 1L,
             lastMessageAt = 2L,
             messageCount = 1,
-            status = "interrupted"
+            status = SessionStatus.INTERRUPTED
         ))
 
         // Save a plan with some steps done
@@ -482,7 +483,7 @@ class MultiTurnFlowTest {
                 createdAt = (idx + 1) * 1000L,
                 lastMessageAt = (idx + 1) * 1000L,
                 messageCount = 1,
-                status = "completed"
+                status = SessionStatus.COMPLETED
             ))
         }
 
@@ -495,7 +496,7 @@ class MultiTurnFlowTest {
 
         // Verify metadata is populated
         assertTrue(sessions[0].hasMessages)
-        assertEquals("completed", sessions[0].status)
+        assertEquals(SessionStatus.COMPLETED, sessions[0].status)
     }
 
     // ===== Test 10: Plan deviation detection works across turns =====

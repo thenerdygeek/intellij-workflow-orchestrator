@@ -19,6 +19,7 @@ import com.workflow.orchestrator.agent.security.SecurityViolationException
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.async
@@ -1222,8 +1223,7 @@ class SingleAgentSession(
         contextManager: ContextManager
     ) {
         val factsStore = contextManager.factsStore ?: return
-        val pathRegex = Regex(""""path"\s*:\s*"([^"]+)"""")
-        val filePath = pathRegex.find(toolArgs)?.groupValues?.get(1)
+        val filePath = AgentStringUtils.JSON_FILE_PATH_REGEX.find(toolArgs)?.groupValues?.get(1)
         when (toolName) {
             "read_file" -> if (filePath != null) {
                 val lineCount = content.lines().size

@@ -17,7 +17,24 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.DynamicToolSelector
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import java.util.UUID
+
+/**
+ * Status of a conversation session.
+ */
+@Serializable
+enum class SessionStatus(val value: String) {
+    @SerialName("active") ACTIVE("active"),
+    @SerialName("completed") COMPLETED("completed"),
+    @SerialName("interrupted") INTERRUPTED("interrupted"),
+    @SerialName("failed") FAILED("failed");
+
+    companion object {
+        fun fromString(s: String): SessionStatus = entries.firstOrNull { it.value == s } ?: ACTIVE
+    }
+}
 
 /**
  * Long-lived conversation session that persists across user messages.
@@ -44,7 +61,7 @@ class ConversationSession private constructor(
     var title: String = "",
     var lastMessageAt: Long = createdAt,
     var messageCount: Int = 0,
-    var status: String = "active", // "active", "completed", "interrupted", "failed"
+    var status: SessionStatus = SessionStatus.ACTIVE,
     val skillManager: SkillManager? = null,
     /** Tools auto-detected from project type (Maven/Spring/JPA). Detected once at session creation. */
     val projectTools: Set<String> = emptySet(),
@@ -100,9 +117,9 @@ class ConversationSession private constructor(
      * Also updates the global session index.
      */
     fun markCompleted(success: Boolean) {
-        status = if (success) "completed" else "failed"
+        status = if (success) SessionStatus.COMPLETED else SessionStatus.FAILED
         try {
-            GlobalSessionIndex.getInstance().updateSession(sessionId) { it.copy(status = status) }
+            GlobalSessionIndex.getInstance().updateSession(sessionId) { it.copy(status = status.value) }
         } catch (_: Exception) { /* best effort — index may not be available in tests */ }
     }
 
@@ -200,7 +217,7 @@ class ConversationSession private constructor(
                     title = title,
                     lastMessageAt = lastMessageAt,
                     messageCount = messageCount,
-                    status = status
+                    status = status.value
                 )
             }
         } catch (_: Exception) { /* best effort — index may not be available in tests */ }
@@ -338,7 +355,7 @@ class ConversationSession private constructor(
                     createdAt = session.createdAt,
                     lastMessageAt = session.createdAt,
                     messageCount = 0,
-                    status = "active"
+                    status = SessionStatus.ACTIVE.value
                 ))
             } catch (_: Exception) { /* best effort — index may not be available in tests */ }
 
@@ -445,7 +462,7 @@ class ConversationSession private constructor(
 
             // Load checkpoint data and inject resume context if session was interrupted
             val checkpoint = SessionCheckpoint.load(loaded.store.sessionDirectory)
-            if (checkpoint != null && (metadata.status == "interrupted" || metadata.status == "active")) {
+            if (checkpoint != null && (metadata.status == SessionStatus.INTERRUPTED || metadata.status == SessionStatus.ACTIVE)) {
                 val resumeContext = buildString {
                     appendLine("<session_resumed>")
                     appendLine("This session was interrupted and has been resumed.")
@@ -465,7 +482,7 @@ class ConversationSession private constructor(
             }
 
             // Mark as active again now that it's been resumed
-            loaded.status = "active"
+            loaded.status = SessionStatus.ACTIVE
 
             return loaded
         }

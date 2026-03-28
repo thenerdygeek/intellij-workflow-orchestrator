@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.runtime
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.context.GuardrailStore
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 
 /**
  * Guards against common agent loop failures:
@@ -105,7 +106,7 @@ class LoopGuard(
 
         // Track file reads (no blocking — re-reads are allowed)
         if (toolName == "read_file") {
-            val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(args)
+            val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(args)
             val filePath = pathMatch?.groupValues?.get(1)
             if (filePath != null) {
                 readFiles.add(filePath)

@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.WorkerStatus
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -526,7 +527,7 @@ class SpawnAgentTool : AgentTool {
 
                 // Notify parent
                 val bgWorker = agentService.backgroundWorkers[agentId]
-                bgWorker?.status = if (result.isError) "failed" else "completed"
+                bgWorker?.status = if (result.isError) WorkerStatus.FAILED else WorkerStatus.COMPLETED
                 agentService.onBackgroundWorkerCompleted?.invoke(
                     agentId,
                     "Background agent '$agentId' ($subagentType) ${if (result.isError) "failed" else "completed"}.\n" +
@@ -536,7 +537,7 @@ class SpawnAgentTool : AgentTool {
             } catch (e: CancellationException) {
                 transcriptStore?.updateStatus(agentId, "killed")
                 val bgWorker = agentService.backgroundWorkers[agentId]
-                bgWorker?.status = "killed"
+                bgWorker?.status = WorkerStatus.KILLED
             } catch (e: Exception) {
                 LOG.warn("SpawnAgentTool: background agent '$agentId' failed", e)
                 transcriptStore?.updateStatus(agentId, "failed", summary = e.message)

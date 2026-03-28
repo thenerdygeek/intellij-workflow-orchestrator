@@ -32,12 +32,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 
+enum class WorkerStatus { RUNNING, COMPLETED, FAILED, KILLED }
+
 @Service(Service.Level.PROJECT)
 class AgentService(
     private val project: Project
 ) : Disposable {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val credentialStore = CredentialStore()
 
     /** Reference to the active AgentController, used for session resume from History tab. */
     var activeController: com.workflow.orchestrator.agent.ui.AgentController? = null
@@ -81,7 +84,7 @@ class AgentService(
         val subagentType: String,
         val description: String,
         val startedAt: Long = System.currentTimeMillis(),
-        @Volatile var status: String = "running" // running, completed, failed, killed
+        @Volatile var status: WorkerStatus = WorkerStatus.RUNNING
     )
 
     val backgroundWorkers = java.util.concurrent.ConcurrentHashMap<String, BackgroundWorker>()
@@ -112,13 +115,13 @@ class AgentService(
     fun killWorker(agentId: String): Boolean {
         val worker = backgroundWorkers[agentId] ?: return false
         worker.job.cancel()
-        worker.status = "killed"
+        worker.status = WorkerStatus.KILLED
         backgroundWorkers.remove(agentId)
         activeWorkerCount.decrementAndGet()
         return true
     }
 
-    fun getWorkerStatus(agentId: String): String? {
+    fun getWorkerStatus(agentId: String): WorkerStatus? {
         return backgroundWorkers[agentId]?.status
     }
 
@@ -244,7 +247,6 @@ class AgentService(
             register(SpawnAgentTool())
             register(DelegateTaskTool())
             register(ThinkTool())
-            // SaveMemoryTool removed — deprecated in favor of three-tier memory system
             register(CoreMemoryReadTool())
             register(CoreMemoryAppendTool())
             register(CoreMemoryReplaceTool())
@@ -346,7 +348,6 @@ class AgentService(
     val brain: LlmBrain by lazy {
         val settings = AgentSettings.getInstance(project)
         val connections = ConnectionSettings.getInstance()
-        val credentialStore = CredentialStore()
         val model = settings.state.sourcegraphChatModel
             ?: ModelCache.pickBest(ModelCache.getCached())?.id
             ?: throw IllegalStateException("No model configured. Open Settings > Agent and load models.")
@@ -360,7 +361,6 @@ class AgentService(
     fun isConfigured(): Boolean {
         val agentSettings = AgentSettings.getInstance(project)
         val connections = ConnectionSettings.getInstance()
-        val credentialStore = CredentialStore()
         return agentSettings.state.agentEnabled &&
             connections.state.sourcegraphUrl.isNotBlank() &&
             !credentialStore.getToken(ServiceType.SOURCEGRAPH).isNullOrBlank()

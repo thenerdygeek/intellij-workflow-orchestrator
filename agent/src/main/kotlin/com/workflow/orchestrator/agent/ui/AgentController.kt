@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.agent.orchestrator.AgentOrchestrator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.AgentResult
@@ -862,7 +863,7 @@ class AgentController(
                 // Track files in working set
                 if (!toolInfo.isError) {
                     val filePath = toolInfo.editFilePath ?: run {
-                        val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolInfo.args)
+                        val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(toolInfo.args)
                         pathMatch?.groupValues?.get(1)
                     }
                     if (filePath != null) {
@@ -1071,7 +1072,7 @@ class AgentController(
                 // File edit — try to show diff via EditApprovalDialog
                 description.contains("edit_file") -> {
                     try {
-                        val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(description)
+                        val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(description)
                         val oldMatch = Regex(""""old_string"\s*:\s*"([^"]*?)"""").find(description)
                         val newMatch = Regex(""""new_string"\s*:\s*"([^"]*?)"""").find(description)
 

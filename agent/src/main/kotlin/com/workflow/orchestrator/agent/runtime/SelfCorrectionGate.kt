@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.runtime
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import java.io.File
 
 /**
@@ -232,7 +233,7 @@ class SelfCorrectionGate(
     fun extractFilePathFromArgs(toolName: String, args: String): String? {
         if (toolName == "compile_module") return null // Project-wide
         // diagnostics, run_inspections use "path" or "file_path"
-        val pathMatch = Regex(""""(?:path|file_path|file)"\s*:\s*"([^"]+)"""").find(args)
+        val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(args)
         return pathMatch?.groupValues?.get(1)
     }
 

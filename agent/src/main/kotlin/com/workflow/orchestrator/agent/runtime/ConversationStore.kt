@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.runtime
 
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -43,7 +44,7 @@ data class SessionMetadata(
     val createdAt: Long,
     var lastMessageAt: Long,
     var messageCount: Int,
-    var status: String, // "active", "completed", "interrupted", "failed"
+    var status: SessionStatus,
     var totalTokens: Int = 0
 )
 
@@ -234,7 +235,7 @@ class ConversationStore(
             }
 
             // Build recovery injection message
-            val statusText = metadata?.status ?: "unknown"
+            val statusText = metadata?.status?.value ?: "unknown"
             val recoveryMessage = buildString {
                 append("Session recovered from previous run. Last status: $statusText.")
                 if (plan != null) {
@@ -321,7 +322,7 @@ class ConversationStore(
             sb.appendLine()
 
             val filePaths = mutableSetOf<String>()
-            val filePathRegex = Regex("""[\w./\\-]+\.\w{1,10}""")
+            val filePathRegex = AgentStringUtils.FILE_PATH_REGEX
             val toolsUsed = mutableSetOf<String>()
 
             for (msg in messages) {
@@ -408,7 +409,7 @@ data class SessionSummary(
     val projectName: String,
     val projectPath: String,
     val model: String,
-    val status: String,
+    val status: SessionStatus,
     val createdAt: Long,
     val lastMessageAt: Long,
     val messageCount: Int,

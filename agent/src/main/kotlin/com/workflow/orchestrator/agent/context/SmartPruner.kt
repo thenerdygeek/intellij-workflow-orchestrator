@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.context
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.FunctionCall
 import com.workflow.orchestrator.agent.api.dto.ToolCall
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 
 /**
  * Stateless smart pruning strategies that eliminate genuinely redundant content
@@ -19,7 +20,7 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
  */
 object SmartPruner {
 
-    private val pathRegex = Regex(""""(?:path|file_path|file)"\s*:\s*"([^"]+)"""")
+    private val pathRegex = AgentStringUtils.JSON_FILE_PATH_REGEX
 
     private val errorPatterns = listOf(
         "ERROR",
@@ -234,10 +235,7 @@ object SmartPruner {
     /** Check if a tool result content looks like an error. */
     private fun isErrorResult(content: String?): Boolean {
         if (content == null) return false
-        val stripped = content
-            .removePrefix("<external_data>\n")
-            .removePrefix("<external_data>")
-            .trimStart()
+        val stripped = AgentStringUtils.unwrapExternalData(content).trimStart()
 
         for (pattern in errorPatterns) {
             if (stripped.startsWith(pattern)) return true

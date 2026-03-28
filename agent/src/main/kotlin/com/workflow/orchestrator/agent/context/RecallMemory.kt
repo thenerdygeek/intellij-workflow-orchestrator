@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.context
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.runtime.ConversationStore
 import com.workflow.orchestrator.agent.runtime.SessionMetadata
+import com.workflow.orchestrator.agent.runtime.SessionStatus
 import java.io.File
 
 /**
@@ -57,7 +58,7 @@ class RecallMemory {
         return try {
             val sessions = ConversationStore.listSessions(projectBasePath = projectPath)
                 .filter { s ->
-                    s.status in setOf("completed", "interrupted") &&
+                    s.status in setOf(SessionStatus.COMPLETED, SessionStatus.INTERRUPTED) &&
                     s.hasMessages
                 }
                 .take(50) // Limit scanning to last 50 sessions for performance

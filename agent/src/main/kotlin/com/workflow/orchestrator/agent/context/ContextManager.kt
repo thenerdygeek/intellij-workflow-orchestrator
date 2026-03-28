@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.context
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.brain.LlmBrain
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.core.model.ApiResult
 
 /**
@@ -34,11 +35,10 @@ class ContextManager(
         sb.appendLine("WARNING: This is a lossy summary. Details may be missing or truncated.")
         sb.appendLine()
         val filePaths = mutableSetOf<String>()
-        val filePathRegex = Regex("""[\w./\\-]+\.\w{1,10}""")
         for (msg in msgs) {
             val content = msg.content ?: continue
             // Extract file paths from all message types
-            filePathRegex.findAll(content).forEach { match ->
+            AgentStringUtils.FILE_PATH_REGEX.findAll(content).forEach { match ->
                 val path = match.value
                 if (path.contains('/') || path.contains('\\')) {
                     filePaths.add(path)
@@ -50,11 +50,7 @@ class ContextManager(
                     if (content.length > 5) sb.appendLine("- Agent: ${content.take(500)}")
                 }
                 "tool" -> {
-                    val unwrapped = content
-                        .removePrefix("<external_data>\n")
-                        .removeSuffix("\n</external_data>")
-                        .removePrefix("<external_data>")
-                        .removeSuffix("</external_data>")
+                    val unwrapped = AgentStringUtils.unwrapExternalData(content)
                     val previewLines = unwrapped.lines().take(10)
                     val preview = previewLines.joinToString("\n").take(500)
                     sb.appendLine("- Tool result:")
@@ -518,9 +514,7 @@ critical for continuing the task.
      * signatures, final output) while dropping the middle.
      */
     private fun compressToolResult(content: String?, meta: ToolCallMeta?): String {
-        val raw = (content ?: "")
-            .removePrefix("<external_data>").removePrefix("\n")
-            .removeSuffix("</external_data>").removeSuffix("\n")
+        val raw = AgentStringUtils.unwrapExternalData(content ?: "")
         val lines = raw.lines()
         if (lines.size <= 30) return raw
         val head = lines.take(20).joinToString("\n")
@@ -561,11 +555,7 @@ critical for continuing the task.
 
         // Content preview — first 5 lines of the unwrapped original content
         if (!originalContent.isNullOrBlank()) {
-            val unwrapped = originalContent
-                .removePrefix("<external_data>\n")
-                .removeSuffix("\n</external_data>")
-                .removePrefix("<external_data>")
-                .removeSuffix("</external_data>")
+            val unwrapped = AgentStringUtils.unwrapExternalData(originalContent)
             val previewLines = unwrapped.lines().take(5)
             if (previewLines.isNotEmpty()) {
                 sb.appendLine("Preview:")
@@ -598,7 +588,7 @@ critical for continuing the task.
     private fun buildRecoveryHint(toolName: String, arguments: String?, diskPath: String?): String? {
         // Try to extract a file path from arguments for file-related tools
         val filePath = arguments?.let {
-            val pathMatch = Regex(""""(?:path|file_path|file)"\s*:\s*"([^"]+)"""").find(it)
+            val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(it)
             pathMatch?.groupValues?.get(1)
         }
 

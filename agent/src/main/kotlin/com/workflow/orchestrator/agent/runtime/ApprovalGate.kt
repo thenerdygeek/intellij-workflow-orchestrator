@@ -61,7 +61,7 @@ class ApprovalGate(
     val auditLog: MutableList<AuditEntry> = java.util.Collections.synchronizedList(mutableListOf())
 
     /** Tools that the user has approved for the rest of this session. */
-    private val sessionAllowedTools = mutableSetOf<String>()
+    private val sessionAllowedTools: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /**
      * The pending deferred for the current approval request.
@@ -380,6 +380,5 @@ class ApprovalGate(
             return RiskLevel.HIGH
         }
 
-        // classifyCommandRisk removed — now delegates to CommandSafetyAnalyzer (5D)
     }
 }

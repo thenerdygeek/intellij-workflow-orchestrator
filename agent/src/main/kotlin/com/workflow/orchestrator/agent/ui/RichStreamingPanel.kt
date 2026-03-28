@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.ui
 
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import java.awt.BorderLayout
 import java.awt.Color
 import javax.swing.JEditorPane
@@ -334,7 +335,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
 
     private fun extractTarget(toolName: String, args: String): String {
         // Try to extract file path or meaningful target from args
-        val pathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(args)
+        val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(args)
         if (pathMatch != null) return pathMatch.groupValues[1].substringAfterLast('/')
 
         val queryMatch = Regex(""""query"\s*:\s*"([^"]+)"""").find(args)

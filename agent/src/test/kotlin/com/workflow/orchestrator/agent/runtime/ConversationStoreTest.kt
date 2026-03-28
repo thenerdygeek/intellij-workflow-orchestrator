@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.runtime
 
 import com.workflow.orchestrator.agent.TestModels
+import com.workflow.orchestrator.agent.runtime.SessionStatus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -116,7 +117,7 @@ class ConversationStoreTest {
             createdAt = 1000L,
             lastMessageAt = 2000L,
             messageCount = 5,
-            status = "active",
+            status = SessionStatus.ACTIVE,
             totalTokens = 12345
         )
         store.saveMetadata(metadata)
@@ -131,7 +132,7 @@ class ConversationStoreTest {
         assertEquals(1000L, loaded.createdAt)
         assertEquals(2000L, loaded.lastMessageAt)
         assertEquals(5, loaded.messageCount)
-        assertEquals("active", loaded.status)
+        assertEquals(SessionStatus.ACTIVE, loaded.status)
         assertEquals(12345, loaded.totalTokens)
     }
 
@@ -145,17 +146,17 @@ class ConversationStoreTest {
         val meta1 = SessionMetadata(
             sessionId = sessionId, projectName = "P", projectPath = "/p",
             title = "Old", model = "m", createdAt = 1, lastMessageAt = 1,
-            messageCount = 1, status = "active"
+            messageCount = 1, status = SessionStatus.ACTIVE
         )
         store.saveMetadata(meta1)
 
-        val meta2 = meta1.copy(title = "New", messageCount = 10, status = "completed")
+        val meta2 = meta1.copy(title = "New", messageCount = 10, status = SessionStatus.COMPLETED)
         store.saveMetadata(meta2)
 
         val loaded = store.loadMetadata()
         assertEquals("New", loaded!!.title)
         assertEquals(10, loaded.messageCount)
-        assertEquals("completed", loaded.status)
+        assertEquals(SessionStatus.COMPLETED, loaded.status)
     }
 
     @Test
@@ -163,12 +164,12 @@ class ConversationStoreTest {
         // Create two valid sessions
         val store1 = ConversationStore("session-a", baseDir = tempDir.toFile())
         store1.saveMetadata(SessionMetadata(
-            "session-a", "P", "/p", "Title A", "m", 1, 1, 1, "active"
+            "session-a", "P", "/p", "Title A", "m", 1, 1, 1, SessionStatus.ACTIVE
         ))
 
         val store2 = ConversationStore("session-b", baseDir = tempDir.toFile())
         store2.saveMetadata(SessionMetadata(
-            "session-b", "P", "/p", "Title B", "m", 2, 2, 2, "completed"
+            "session-b", "P", "/p", "Title B", "m", 2, 2, 2, SessionStatus.COMPLETED
         ))
 
         // Create a directory without metadata (should be excluded)
@@ -191,7 +192,7 @@ class ConversationStoreTest {
     fun `deleteSession removes directory`() {
         store.saveMessage(PersistedMessage(role = "user", content = "test"))
         store.saveMetadata(SessionMetadata(
-            sessionId, "P", "/p", "T", "m", 1, 1, 1, "active"
+            sessionId, "P", "/p", "T", "m", 1, 1, 1, SessionStatus.ACTIVE
         ))
 
         val dir = File(tempDir.toFile(), sessionId)

@@ -17,11 +17,11 @@ import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
+import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import kotlinx.coroutines.*
-import okhttp3.OkHttpClient
 import java.awt.Component
 import javax.swing.*
 
@@ -180,7 +180,7 @@ class AgentSettingsConfigurable(
                     baseUrl = url.trimEnd('/'),
                     tokenProvider = { token },
                     model = "", // Not needed for listing
-                    httpClientOverride = OkHttpClient.Builder()
+                    httpClientOverride = HttpClientFactory.sharedPool.newBuilder()
                         .addInterceptor(AuthInterceptor({ token }, AuthScheme.TOKEN))
                         .build()
                 )
