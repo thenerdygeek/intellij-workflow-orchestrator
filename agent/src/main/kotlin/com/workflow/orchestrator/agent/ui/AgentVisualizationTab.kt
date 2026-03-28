@@ -55,7 +55,6 @@ class AgentVisualizationEditor(
 ) : UserDataHolderBase(), FileEditor {
 
     private val browser = JBCefBrowser.createBuilder()
-        .setOffScreenRendering(true)
         .build()
 
     init {

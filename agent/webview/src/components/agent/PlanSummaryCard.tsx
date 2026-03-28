@@ -108,12 +108,8 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
         </Button>
         <Button
           onClick={handleApprove}
-          className="text-[12px] font-medium"
+          className="glow-btn text-[12px] font-medium"
           size="sm"
-          style={{
-            backgroundColor: 'var(--accent)',
-            color: 'var(--bg)',
-          }}
         >
           <Check size={14} />
           Approve

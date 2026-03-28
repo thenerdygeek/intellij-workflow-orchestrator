@@ -12,6 +12,7 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.ui.CefResourceSchemeHandler
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.cef.browser.CefBrowser
@@ -72,10 +73,15 @@ class AgentPlanEditor(
             null
         }
 
-        val htmlUrl = javaClass.getResource("/webview/dist/plan-editor.html")
-        if (htmlUrl != null) {
-            browser.loadURL(htmlUrl.toExternalForm())
+        try {
+            org.cef.CefApp.getInstance().registerSchemeHandlerFactory(
+                CefResourceSchemeHandler.SCHEME,
+                CefResourceSchemeHandler.AUTHORITY
+            ) { _, _, _, _ -> CefResourceSchemeHandler() }
+        } catch (_: Exception) {
+            // Already registered — OK
         }
+        browser.loadURL(CefResourceSchemeHandler.BASE_URL + "plan-editor.html")
 
         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
