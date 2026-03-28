@@ -40,6 +40,40 @@ AgentController (UI entry point)
 - **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
+## System Prompt Structure (`PromptAssembler`)
+
+Assembled dynamically per turn. Section order follows primacy/recency attention patterns:
+
+**Primacy zone** (highest compliance):
+1. `CORE_IDENTITY` — role, capabilities, persona
+2. `PERSISTENCE_AND_COMPLETION` — session durability, `attempt_completion` requirement
+3. `TOOL_POLICY` — tool usage rules, read-before-edit, verification
+
+**Context zone** (reference data, conditionally included):
+4. `<project_context>` — name, path, framework
+5. `<project_repositories>` — repo info
+6. `<repo_map>` — file structure
+7. `<core_memory>` — tier-1 memory (always if non-empty)
+8. `<agent_memory>` — legacy markdown memory
+9. Guardrails context
+10. `<available_agents>` — **always injected**: built-in agents (general-purpose, explorer, coder, reviewer, tooler) + any custom agents from `.workflow/agents/`
+11. `<available_skills>` — skill descriptions (if any)
+12. `<previous_results>` — orchestration step context
+
+**Recency zone** (highest recall):
+13. `PLANNING_RULES` (or `FORCED_PLANNING_RULES` in plan mode)
+14. `DELEGATION_RULES` — when/how to spawn subagents
+15. `MEMORY_RULES` — when to save to each memory tier
+16. `CONTEXT_MANAGEMENT_RULES` — budget awareness
+17. `RENDERING_RULES_COMPACT` — rich UI formatting (skipped in plain-text mode)
+18. `FEW_SHOT_EXAMPLES` — concrete tool call examples
+19. `RULES` — general behavioral rules
+20. `<integration_rules>` — **conditional**: niche tips for Jira/Bamboo/Sonar/Bitbucket/PSI/Debug tools, only included when those tools are active
+21. `COMMUNICATION` — response style guidelines
+22. `BOOKEND` — closing reinforcement of identity + key constraints
+
+**Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
+
 ## Tools (102 total, 11 categories)
 
 | Category | Tools |
