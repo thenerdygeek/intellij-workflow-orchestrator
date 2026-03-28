@@ -163,22 +163,6 @@ object OrchestratorPrompts {
     """.trimIndent()
 
     /**
-     * Error recovery rules — injected into the orchestrator prompt so the LLM
-     * knows how to handle tool failures, security violations, and stuck states.
-     */
-    val ERROR_RECOVERY_RULES = """
-        <error_recovery>
-        If a tool call fails:
-        1. Do not retry with identical arguments — you will get the same error.
-        2. Read the error message carefully and understand the root cause.
-        3. Try a different approach or tool (e.g., if edit_file fails on matching, re-read the file first).
-        4. If stuck after 2 failed attempts on the same goal, delegate to a specialized subagent.
-        5. If a tool is denied by the user, do not attempt to work around the denial — ask the user for guidance.
-        6. If you see "Security violation", the content you're writing contains credentials or dangerous patterns. Rewrite without sensitive data.
-        </error_recovery>
-    """.trimIndent()
-
-    /**
      * Expanded orchestrator system prompt — provides concrete guidance for the
      * top-level agent on capabilities, constraints, and completion reporting.
      */
