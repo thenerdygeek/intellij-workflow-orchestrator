@@ -39,9 +39,10 @@ class PromptAssemblerTest {
         assertTrue(prompt.contains("<core_directives>"), "Should contain core directives block")
         assertTrue(prompt.contains("Persistence"), "Should contain persistence directive")
 
-        // Tool activation note
-        assertTrue(prompt.contains("<tool_activation>"), "Should contain tool activation section")
-        assertTrue(prompt.contains("request_tools"), "Should mention request_tools for activation")
+        // Mandatory sections
+        assertTrue(prompt.contains("<tool_policy>"), "Should contain tool policy section")
+        assertTrue(prompt.contains("<persistence>"), "Should contain persistence section")
+        assertTrue(prompt.contains("<available_agents>"), "Should contain available agents section")
 
         // Project context
         assertTrue(prompt.contains("<project_context>"), "Should contain project context")
@@ -53,18 +54,18 @@ class PromptAssemblerTest {
         assertTrue(prompt.contains("<previous_results>"), "Should contain previous results")
         assertTrue(prompt.contains("Analyzed UserService.kt"), "Should contain the result summary")
 
-        // Rules
+        // Rules + bookend
         assertTrue(prompt.contains("<rules>"), "Should contain rules section")
         assertTrue(prompt.contains("old_string in edit_file"), "Should contain edit rules")
+        assertTrue(prompt.contains("<final_reminders>"), "Should contain bookend at the end")
     }
 
     @Test
-    fun `tool activation note is present`() {
+    fun `tool policy is present`() {
         val prompt = assembler.buildSingleAgentPrompt()
 
-        // Tool activation note should explain how to activate tools
-        assertTrue(prompt.contains("<tool_activation>"), "Should have tool activation section")
-        assertTrue(prompt.contains("request_tools"), "Should mention request_tools")
+        // Tool policy should explain how tools work
+        assertTrue(prompt.contains("<tool_policy>"), "Should have tool policy section")
         // Tool definitions are sent via API tools parameter, not in system prompt
         assertFalse(prompt.contains("Read a file from disk"), "Tool descriptions should not be in system prompt (sent via API)")
     }
@@ -105,8 +106,10 @@ class PromptAssemblerTest {
         assertTrue(prompt.contains("AI coding assistant"), "Should contain core identity")
         assertTrue(prompt.contains("<core_directives>"), "Should contain core directives")
 
-        // Must have tool activation note
-        assertTrue(prompt.contains("<tool_activation>"), "Should contain tool activation")
+        // Must have mandatory sections
+        assertTrue(prompt.contains("<tool_policy>"), "Should contain tool policy")
+        assertTrue(prompt.contains("<persistence>"), "Should contain persistence")
+        assertTrue(prompt.contains("<available_agents>"), "Should contain available agents (always present)")
 
         // Must have rules
         assertTrue(prompt.contains("<rules>"), "Should contain rules")
@@ -149,12 +152,12 @@ class PromptAssemblerTest {
     }
 
     @Test
-    fun `empty tool registry still has tool activation note`() {
+    fun `empty tool registry still has tool policy`() {
         val emptyRegistry = ToolRegistry()
         val emptyAssembler = PromptAssembler(emptyRegistry)
 
         val prompt = emptyAssembler.buildSingleAgentPrompt()
-        assertTrue(prompt.contains("<tool_activation>"), "Should still have tool activation section")
+        assertTrue(prompt.contains("<tool_policy>"), "Should still have tool policy section")
         assertTrue(prompt.contains("request_tools"), "Should mention request_tools")
     }
 
@@ -229,18 +232,21 @@ class PromptAssemblerTest {
         assertTrue(prompt.contains("edit-with-verification"), "Should contain edit verification example")
         assertTrue(prompt.contains("error-recovery"), "Should contain error recovery example")
         assertTrue(prompt.contains("when-to-plan"), "Should contain planning example")
+        assertTrue(prompt.contains("multi-file-implementation"), "Should contain multi-file implementation example")
+        assertTrue(prompt.contains("parallel-research"), "Should contain parallel research example")
+        assertTrue(prompt.contains("review-before-complete"), "Should contain review before complete example")
     }
 
-    // --- U-shaped critical reminders ---
+    // --- Bookend (U-shaped attention) ---
 
     @Test
-    fun `prompt has critical reminders at the end`() {
+    fun `prompt has bookend at the end`() {
         val prompt = assembler.buildSingleAgentPrompt()
-        assertTrue(prompt.contains("<critical_reminders>"), "Should contain critical reminders section")
-        // Reminders should appear AFTER rules (U-shaped attention)
+        assertTrue(prompt.contains("<final_reminders>"), "Should contain final reminders bookend")
+        // Bookend should appear AFTER rules (U-shaped attention)
         val rulesPos = prompt.indexOf("<rules>")
-        val remindersPos = prompt.indexOf("<critical_reminders>")
-        assertTrue(remindersPos > rulesPos, "Critical reminders should appear after rules")
+        val bookendPos = prompt.indexOf("<final_reminders>")
+        assertTrue(bookendPos > rulesPos, "Final reminders bookend should appear after rules")
     }
 
     // --- Anti-loop rules ---
@@ -251,6 +257,26 @@ class PromptAssemblerTest {
 
         assertTrue(prompt.contains("same tool 3 times"), "Should contain anti-loop rule")
         assertTrue(prompt.contains("different approach"), "Should mention trying different approach")
+    }
+
+    // --- Available agents ---
+
+    @Test
+    fun `prompt always contains available_agents`() {
+        val prompt = assembler.buildSingleAgentPrompt()
+
+        assertTrue(prompt.contains("<available_agents>"), "Should contain available_agents section")
+        assertTrue(prompt.contains("explorer"), "Should contain built-in explorer agent")
+        assertTrue(prompt.contains("coder"), "Should contain built-in coder agent")
+    }
+
+    // --- Persistence section ---
+
+    @Test
+    fun `prompt contains persistence section`() {
+        val prompt = assembler.buildSingleAgentPrompt()
+
+        assertTrue(prompt.contains("<persistence>"), "Should contain persistence section")
     }
 }
 
