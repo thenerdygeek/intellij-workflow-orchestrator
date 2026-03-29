@@ -712,6 +712,7 @@ class SpawnAgentTool : AgentTool {
         sb.appendLine("<persistence>")
         sb.appendLine("When your task is fully complete, call worker_complete with the COMPLETE output.")
         sb.appendLine("The orchestrator cannot see your tool calls — it ONLY receives your worker_complete result.")
+        sb.appendLine("If you don't call worker_complete, the orchestrator gets an empty or garbled response.")
         sb.appendLine("Do not end your response without either calling a tool or calling worker_complete.")
         sb.appendLine("</persistence>")
 
