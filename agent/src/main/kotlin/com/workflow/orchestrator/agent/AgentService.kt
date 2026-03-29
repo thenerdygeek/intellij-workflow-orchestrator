@@ -247,6 +247,7 @@ class AgentService(
             register(SpawnAgentTool())
             register(DelegateTaskTool())
             register(ThinkTool())
+            register(WorkerCompleteTool())
             register(CoreMemoryReadTool())
             register(CoreMemoryAppendTool())
             register(CoreMemoryReplaceTool())
