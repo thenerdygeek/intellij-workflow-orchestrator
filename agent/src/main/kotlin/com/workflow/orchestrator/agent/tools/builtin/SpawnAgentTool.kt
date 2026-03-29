@@ -336,15 +336,22 @@ class SpawnAgentTool : AgentTool {
             val formattedTokens = formatNumber(workerResult.tokensUsed.toLong())
 
             return ToolResult(
-                content = "Agent ($resolvedType) completed: $description\n" +
-                    "Summary: ${workerResult.summary}\n" +
-                    "Tokens used: $formattedTokens\n" +
-                    "Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))\n" +
-                    if (workerResult.artifacts.isNotEmpty())
-                        "Files modified: ${workerResult.artifacts}\n\n" +
-                            "Note: The above files were modified by the agent. " +
-                            "Re-read them if needed as your cached version may be stale."
-                    else "",
+                content = buildString {
+                    appendLine("Agent ($resolvedType) completed: $description")
+                    if (workerResult.artifacts.isNotEmpty()) {
+                        appendLine("Files modified: ${workerResult.artifacts}")
+                    }
+                    appendLine("Tokens used: $formattedTokens")
+                    appendLine("Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))")
+                    appendLine()
+                    appendLine("--- Agent Output ---")
+                    appendLine(workerResult.content)
+                    if (workerResult.artifacts.isNotEmpty()) {
+                        appendLine()
+                        append("Note: The above files were modified by the agent. " +
+                            "Re-read them if needed as your cached version may be stale.")
+                    }
+                },
                 summary = "Agent '$description' completed: ${workerResult.summary.take(100)}",
                 tokenEstimate = workerResult.tokensUsed,
                 artifacts = workerResult.artifacts
@@ -457,10 +464,16 @@ class SpawnAgentTool : AgentTool {
             agentService.totalSessionTokens.addAndGet(result.tokensUsed.toLong())
 
             return ToolResult(
-                content = "Resumed agent '$agentId' completed.\n\nResult: ${result.summary}\n" +
-                    "Agent ID: $agentId (can resume again)",
+                content = buildString {
+                    appendLine("Resumed agent '$agentId' completed.")
+                    appendLine("Agent ID: $agentId (can resume again)")
+                    appendLine()
+                    appendLine("--- Agent Output ---")
+                    append(result.content)
+                },
                 summary = "Resumed agent completed: ${result.summary.take(100)}",
-                tokenEstimate = result.tokensUsed
+                tokenEstimate = result.tokensUsed,
+                artifacts = result.artifacts
             )
         } catch (e: Exception) {
             transcriptStore.updateStatus(agentId, "failed", summary = e.message)
@@ -542,8 +555,13 @@ class SpawnAgentTool : AgentTool {
                 bgWorker?.status = if (result.isError) WorkerStatus.FAILED else WorkerStatus.COMPLETED
                 agentService.onBackgroundWorkerCompleted?.invoke(
                     agentId,
-                    "Background agent '$agentId' ($subagentType) ${if (result.isError) "failed" else "completed"}.\n" +
-                        "Summary: ${result.summary}\nAgent ID: $agentId (can resume)",
+                    buildString {
+                        appendLine("Background agent '$agentId' ($subagentType) ${if (result.isError) "failed" else "completed"}.")
+                        appendLine("Agent ID: $agentId (can resume)")
+                        appendLine()
+                        appendLine("--- Agent Output ---")
+                        append(result.content)
+                    },
                     result.isError
                 )
             } catch (e: CancellationException) {
