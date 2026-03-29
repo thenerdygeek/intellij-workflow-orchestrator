@@ -5,6 +5,7 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -57,7 +58,7 @@ class EnablePlanModeTool : AgentTool {
 
         // Inject FORCED_PLANNING_RULES into the live conversation context.
         // Same pattern as LoopGuard / BudgetEnforcer mid-loop system message injection.
-        agentService.currentContextManager?.addSystemMessage(FORCED_PLANNING_RULES)
+        agentService.currentContextManager?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
 
         // Notify the controller → sets planModeEnabled = true + highlights the UI button.
         agentService.onPlanModeEnabled?.invoke(true)
@@ -70,17 +71,4 @@ class EnablePlanModeTool : AgentTool {
         )
     }
 
-    companion object {
-        /** Injected mid-loop; mirrors PromptAssembler.FORCED_PLANNING_RULES exactly. */
-        private val FORCED_PLANNING_RULES = """
-            <planning mode="required">
-            - You MUST call create_plan before making any code changes or executing any write tools.
-            - First, analyze the task by reading relevant files using read_file, search_code, file_structure.
-            - Then produce a comprehensive implementation plan using create_plan.
-            - Do NOT call edit_file, run_command, or any write operations until the plan is approved by the user.
-            - After plan approval, execute step by step, calling update_plan_step to track progress.
-            - If the user requests revision, incorporate their feedback and call create_plan again.
-            </planning>
-        """.trimIndent()
-    }
 }
