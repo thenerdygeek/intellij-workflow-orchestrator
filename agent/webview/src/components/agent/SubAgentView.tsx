@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Bot, Loader2, XCircle, AlertCircle, Check, ChevronDown, Square } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
+import { useStickToBottomContext } from 'use-stick-to-bottom';
 
 // ── Helpers ──
 
@@ -90,7 +91,13 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   const agentName = extractName(subAgent.label);
   const elapsedStr = useLiveTimer(subAgent.startedAt, isRunning);
 
-  // ── Auto-scroll ──
+  // ── Outer chat scroll context ──
+  // SubAgentView has max-h-[400px] on its body, so once full the outer StickToBottom
+  // ResizeObserver sees no further height changes. We reach up and nudge it ourselves
+  // so the outer chat keeps scrolling to show the sub-agent while it is active.
+  const { scrollToBottom, isAtBottom: outerIsAtBottom } = useStickToBottomContext();
+
+  // ── Internal scroll (within the 400px body) ──
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
 
@@ -102,10 +109,16 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   }, []);
 
   useEffect(() => {
+    // Scroll the inner body to the latest content
     if (!userScrolledUp.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [subAgent.messages.length, subAgent.activeToolChain?.length]);
+    // Also nudge the outer StickToBottom — once the card's body hits max-h the outer
+    // ResizeObserver sees no resize, so we trigger the scroll manually.
+    if (outerIsAtBottom) {
+      scrollToBottom('instant');
+    }
+  }, [subAgent.messages.length, subAgent.activeToolChain?.length, outerIsAtBottom, scrollToBottom]);
 
   const handleKill = useCallback((e: React.MouseEvent) => {
     e.stopPropagation(); // Don't toggle collapse

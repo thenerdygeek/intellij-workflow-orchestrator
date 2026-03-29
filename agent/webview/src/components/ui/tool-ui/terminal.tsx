@@ -116,13 +116,13 @@ export function Terminal({
         )}
       </div>
 
-      {/* Output body — fixed height, scrollable, shows latest output */}
+      {/* Output body — max-height keeps it bounded but lets StickToBottom detect growth */}
       {output.length > 0 && (
         <div className="relative">
           <pre
             ref={outputRef}
             className="px-3 py-2 text-[11px] leading-relaxed font-mono overflow-x-auto overflow-y-auto"
-            style={{ color: 'var(--fg)', height: expanded ? '300px' : '200px' }}
+            style={{ color: 'var(--fg)', maxHeight: expanded ? '300px' : '200px' }}
           >
             {displayOutput}
           </pre>
