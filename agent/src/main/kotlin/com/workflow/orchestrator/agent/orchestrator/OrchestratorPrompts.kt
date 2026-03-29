@@ -75,6 +75,14 @@ object OrchestratorPrompts {
         - Always include file paths with line numbers in your response
         - Prefer PSI tools over regex search — they are faster and more accurate
         </rules>
+
+        <persistence>
+        When you have all findings, call worker_complete with your COMPLETE output —
+        every file path, line number, relationship, and pattern discovered.
+        The orchestrator cannot see your tool calls — it ONLY receives your worker_complete result.
+        If you don't call worker_complete, the orchestrator gets an empty or garbled response.
+        Do not end your response without either calling a tool or calling worker_complete.
+        </persistence>
     """.trimIndent()
 
     val CODER_SYSTEM_PROMPT = """
@@ -102,7 +110,13 @@ object OrchestratorPrompts {
         - Report what you changed and any issues encountered.
         </error_handling>
 
-        You are a focused worker agent. Complete your assigned task and return a clear summary of what you did, which files you modified, and any issues encountered. Report your status as: complete, partial, or failed.
+        <persistence>
+        When you have completed the task, call worker_complete with the COMPLETE output —
+        all files modified with exact changes, diagnostics results, and any issues resolved.
+        The orchestrator cannot see your tool calls — it ONLY receives your worker_complete result.
+        If you don't call worker_complete, the orchestrator gets an empty or garbled response.
+        Do not end your response without either calling a tool or calling worker_complete.
+        </persistence>
     """.trimIndent()
 
     val REVIEWER_SYSTEM_PROMPT = """
@@ -131,7 +145,13 @@ object OrchestratorPrompts {
         Each item: file path, line range, description, suggested fix (if applicable).
         </output_format>
 
-        You are a focused worker agent. Complete your assigned task and return a clear summary of what you did, which files you modified, and any issues encountered. Report your status as: complete, partial, or failed.
+        <persistence>
+        When your review is complete, call worker_complete with the FULL review —
+        all issues found, file paths, line ranges, severity, and suggested fixes.
+        The orchestrator cannot see your tool calls — it ONLY receives your worker_complete result.
+        If you don't call worker_complete, the orchestrator gets an empty or garbled response.
+        Do not end your response without either calling a tool or calling worker_complete.
+        </persistence>
     """.trimIndent()
 
     val TOOLER_SYSTEM_PROMPT = """
@@ -159,7 +179,13 @@ object OrchestratorPrompts {
         - **Next**: suggested next step if any
         </output_format>
 
-        You are a focused worker agent. Complete your assigned task and return a clear summary of what you did, which files you modified, and any issues encountered. Report your status as: complete, partial, or failed.
+        <persistence>
+        When the task is complete, call worker_complete with the FULL results —
+        every action taken, API responses received, current state of tickets/builds/PRs.
+        The orchestrator cannot see your tool calls — it ONLY receives your worker_complete result.
+        If you don't call worker_complete, the orchestrator gets an empty or garbled response.
+        Do not end your response without either calling a tool or calling worker_complete.
+        </persistence>
     """.trimIndent()
 
     /**
@@ -179,6 +205,13 @@ object OrchestratorPrompts {
 
         If you encounter errors, try a different approach rather than retrying the same action.
         If a task is too complex for your iteration budget, break it into steps and report what's left.
+
+        <persistence>
+        When your task is fully complete, call worker_complete with the COMPLETE output.
+        The orchestrator cannot see your tool calls — it ONLY receives your worker_complete result.
+        If you don't call worker_complete, the orchestrator gets an empty or garbled response.
+        Do not end your response without either calling a tool or calling worker_complete.
+        </persistence>
     """.trimIndent()
 
     /**
