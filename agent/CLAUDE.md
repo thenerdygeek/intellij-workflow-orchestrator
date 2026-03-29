@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 100 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 101 tools.
 
 ## LLM API
 
@@ -75,7 +75,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (179 total, 15 categories)
+## Tools (180 total, 15 categories)
 
 | Category | Tools |
 |----------|-------|
@@ -92,7 +92,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Pull Requests — Bitbucket | bitbucket_create_pr, bitbucket_get_pr_commits, bitbucket_add_inline_comment, bitbucket_reply_to_comment, bitbucket_set_reviewer_status, bitbucket_get_file_content, bitbucket_add_reviewer, bitbucket_update_pr_title, bitbucket_get_branches, bitbucket_create_branch, bitbucket_search_users, bitbucket_get_my_prs, bitbucket_get_reviewing_prs, bitbucket_get_pr_detail, bitbucket_get_pr_activities, bitbucket_get_pr_changes, bitbucket_get_pr_diff, bitbucket_get_build_statuses, bitbucket_approve_pr, bitbucket_merge_pr, bitbucket_decline_pr, bitbucket_update_pr_description, bitbucket_add_pr_comment, bitbucket_check_merge_status, bitbucket_remove_reviewer, bitbucket_list_repos |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
 | Skills | activate_skill, deactivate_skill |
-| Planning | create_plan, update_plan_step, ask_questions, attempt_completion |
+| Planning | enable_plan_mode, create_plan, update_plan_step, ask_questions, attempt_completion |
 
 ## Tool Selection (Hybrid)
 

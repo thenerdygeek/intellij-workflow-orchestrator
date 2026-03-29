@@ -273,6 +273,9 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
               call create_plan first with a structured plan before making any code changes.
             - For simple tasks (questions, single-file fixes, running commands, checking status):
               act directly without creating a plan.
+            - If you realize mid-task that thorough planning is required, call enable_plan_mode
+              with your reasoning before calling create_plan. This enforces mandatory planning
+              for the rest of the session and notifies the user.
             - When executing an approved plan, call update_plan_step to mark each step as
               'running' when you start it and 'done' when you complete it (or 'failed' if it fails).
             - If the user requests revision with comments, incorporate their feedback and

@@ -79,7 +79,11 @@ class AgentController(
                     dashboard.setModelName(displayName)
                 } catch (_: Exception) {}
             },
-            onTogglePlanMode = { enabled -> planModeEnabled = enabled },
+            onTogglePlanMode = { enabled ->
+                planModeEnabled = enabled
+                // Sync UI when user toggles (LLM-triggered path goes via onPlanModeEnabled below)
+                if (!enabled) dashboard.setPlanMode(false)
+            },
             onActivateSkill = { name -> executeTask("/$name") },
             onRequestFocusIde = {
                 ApplicationManager.getApplication().invokeLater {
@@ -738,8 +742,15 @@ class AgentController(
             onDismiss = { currentSession.skillManager?.deactivateSkill() }
         )
 
-        // Wire background worker completion notification
         val agentSvc = try { AgentService.getInstance(project) } catch (_: Exception) { null }
+
+        // Wire LLM-triggered plan mode: highlights the Plan button and persists planModeEnabled
+        agentSvc?.onPlanModeEnabled = { enabled ->
+            planModeEnabled = enabled
+            SwingUtilities.invokeLater { dashboard.setPlanMode(enabled) }
+        }
+
+        // Wire background worker completion notification
         agentSvc?.onBackgroundWorkerCompleted = { agentId, resultMessage, isError ->
             SwingUtilities.invokeLater {
                 if (isError) {

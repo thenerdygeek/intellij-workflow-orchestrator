@@ -105,6 +105,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setModelName(name: string) {
     stores?.getChatStore().setModelName(name);
   },
+  setPlanMode(enabled: boolean) {
+    stores?.getChatStore().setInputMode(enabled ? 'plan' : 'agent');
+  },
   updateSkillsList(skillsJson: string) {
     const skills = JSON.parse(skillsJson);
     stores?.getChatStore().updateSkillsList(skills);

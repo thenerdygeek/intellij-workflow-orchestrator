@@ -723,6 +723,10 @@ class AgentCefPanel(
         callJs("setModelName(${jsonStr(name)})")
     }
 
+    fun setPlanMode(enabled: Boolean) {
+        callJs("setPlanMode(${if (enabled) "true" else "false"})")
+    }
+
     fun updateModelList(modelsJson: String) {
         callJs("updateModelList(${jsonStr(modelsJson)})")
     }

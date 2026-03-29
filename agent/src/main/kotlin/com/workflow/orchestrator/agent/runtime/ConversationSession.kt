@@ -370,6 +370,7 @@ class ConversationSession private constructor(
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = session.store.sessionDirectory
+                agentService.currentContextManager = session.contextManager
             } catch (_: Exception) {}
 
             return session
@@ -458,6 +459,7 @@ class ConversationSession private constructor(
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = loaded.store.sessionDirectory
+                agentService.currentContextManager = loaded.contextManager
             } catch (_: Exception) {}
 
             // Load checkpoint data and inject resume context if session was interrupted
