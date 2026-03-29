@@ -43,7 +43,7 @@ export interface ToolCall {
 
 // ── Plan types ──
 
-export type PlanStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+export type PlanStepStatus = 'pending' | 'running' | 'completed' | 'done' | 'failed' | 'skipped';
 
 export interface PlanStep {
   id: string;

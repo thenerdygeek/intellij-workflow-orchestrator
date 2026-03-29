@@ -15,7 +15,8 @@ export function PlanProgressWidget({ plan }: PlanProgressWidgetProps) {
     status: step.status === 'failed' ? 'cancelled' as const
       : step.status === 'skipped' ? 'cancelled' as const
       : step.status === 'running' ? 'in_progress' as const
-      : step.status as 'pending' | 'completed',
+      : (step.status === 'done' || step.status === 'completed') ? 'completed' as const
+      : 'pending' as const,
     description: step.description,
   }));
 
