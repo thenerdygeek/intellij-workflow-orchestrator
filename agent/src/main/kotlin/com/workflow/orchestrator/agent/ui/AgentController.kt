@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.orchestrator.AgentOrchestrator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.AgentResult
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
+import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.runtime.AgentPlan
 import com.workflow.orchestrator.agent.runtime.ConversationSession
@@ -81,8 +82,17 @@ class AgentController(
             },
             onTogglePlanMode = { enabled ->
                 planModeEnabled = enabled
-                // Sync UI when user toggles (LLM-triggered path goes via onPlanModeEnabled below)
-                if (!enabled) dashboard.setPlanMode(false)
+                if (enabled) {
+                    // Inject planning constraints into any active session context so the LLM
+                    // immediately sees planning mode rules — mirrors what EnablePlanModeTool does.
+                    try {
+                        AgentService.getInstance(project).currentContextManager
+                            ?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
+                    } catch (_: Exception) {}
+                    dashboard.setPlanMode(true)
+                } else {
+                    dashboard.setPlanMode(false)
+                }
             },
             onActivateSkill = { name -> executeTask("/$name") },
             onRequestFocusIde = {
