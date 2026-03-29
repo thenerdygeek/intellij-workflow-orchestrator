@@ -116,6 +116,30 @@ class AgentService(
     /** Callback invoked when the LLM enables plan mode via enable_plan_mode tool. */
     @Volatile var onPlanModeEnabled: ((Boolean) -> Unit)? = null
 
+    /**
+     * Callbacks fired by [com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool] and
+     * [com.workflow.orchestrator.agent.runtime.WorkerSession] so the UI can render a live
+     * sub-agent task boundary card.
+     *
+     * Wired by [com.workflow.orchestrator.agent.ui.AgentController] to [AgentCefPanel] bridge methods.
+     */
+    data class SubAgentCallbacks(
+        /** Sub-agent just spawned — create the boundary card. */
+        val onSpawn: (agentId: String, label: String) -> Unit,
+        /** Worker started a new ReAct iteration. */
+        val onIteration: (agentId: String, iteration: Int) -> Unit,
+        /** Worker called a tool — add it to the active tool chain. */
+        val onToolCall: (agentId: String, toolName: String, toolArgs: String) -> Unit,
+        /** Tool finished — update the tool card with result + duration. */
+        val onToolResult: (agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) -> Unit,
+        /** Worker produced a text message (nudge response or worker_complete) — flush active tool chain into a message. */
+        val onMessage: (agentId: String, textContent: String) -> Unit,
+        /** Worker finished — mark the boundary card complete/error and store the summary. */
+        val onComplete: (agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) -> Unit
+    )
+
+    @Volatile var subAgentCallbacks: SubAgentCallbacks? = null
+
     fun getBackgroundWorker(agentId: String): BackgroundWorker? = backgroundWorkers[agentId]
 
     fun killWorker(agentId: String): Boolean {

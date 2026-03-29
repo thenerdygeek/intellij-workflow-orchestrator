@@ -350,6 +350,36 @@ class AgentDashboardPanel(
         cefPanel?.setPlanMode(enabled)
     }
 
+    // ── Sub-Agent boundary card delegation ──
+
+    fun spawnSubAgent(agentId: String, label: String) = runOnEdt {
+        cefPanel?.spawnSubAgent(agentId, label)
+    }
+
+    fun updateSubAgentIteration(agentId: String, iteration: Int) = runOnEdt {
+        cefPanel?.updateSubAgentIteration(agentId, iteration)
+    }
+
+    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) = runOnEdt {
+        cefPanel?.addSubAgentToolCall(agentId, toolName, toolArgs)
+    }
+
+    fun updateSubAgentToolCall(agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) = runOnEdt {
+        cefPanel?.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError)
+    }
+
+    fun updateSubAgentMessage(agentId: String, textContent: String) = runOnEdt {
+        cefPanel?.updateSubAgentMessage(agentId, textContent)
+    }
+
+    fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) = runOnEdt {
+        cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError)
+    }
+
+    fun setCefKillSubAgentCallback(onKill: (String) -> Unit) {
+        cefPanel?.onKillSubAgent = onKill
+    }
+
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else SwingUtilities.invokeLater(action)

@@ -767,6 +767,33 @@ class AgentController(
                 )
             }
         }
+
+        // Wire sub-agent boundary card callbacks → JCEF bridge
+        agentSvc?.subAgentCallbacks = AgentService.SubAgentCallbacks(
+            onSpawn = { agentId, label ->
+                SwingUtilities.invokeLater { dashboard.spawnSubAgent(agentId, label) }
+            },
+            onIteration = { agentId, iteration ->
+                SwingUtilities.invokeLater { dashboard.updateSubAgentIteration(agentId, iteration) }
+            },
+            onToolCall = { agentId, toolName, toolArgs ->
+                SwingUtilities.invokeLater { dashboard.addSubAgentToolCall(agentId, toolName, toolArgs) }
+            },
+            onToolResult = { agentId, toolName, result, durationMs, isError ->
+                SwingUtilities.invokeLater { dashboard.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
+            },
+            onMessage = { agentId, textContent ->
+                SwingUtilities.invokeLater { dashboard.updateSubAgentMessage(agentId, textContent) }
+            },
+            onComplete = { agentId, textContent, tokensUsed, isError ->
+                SwingUtilities.invokeLater { dashboard.completeSubAgent(agentId, textContent, tokensUsed, isError) }
+            }
+        )
+
+        // Wire kill-sub-agent button: JS → Kotlin → AgentService.killWorker
+        dashboard.setCefKillSubAgentCallback { agentId ->
+            try { agentSvc?.killWorker(agentId) } catch (_: Exception) {}
+        }
     }
 
     /**

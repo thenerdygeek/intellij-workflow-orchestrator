@@ -247,8 +247,12 @@ class SpawnAgentTool : AgentTool {
         val agentId = WorkerTranscriptStore.generateAgentId()
         val sessionDir = agentService.currentSessionDir
         val transcriptStore = if (sessionDir != null) WorkerTranscriptStore(sessionDir) else null
+        val uiCallbacks = agentService.subAgentCallbacks
 
         agentService.activeWorkerCount.incrementAndGet()
+
+        // Notify UI that a sub-agent has been spawned
+        uiCallbacks?.onSpawn?.invoke(agentId, "$description ($resolvedType)")
 
         // Create rollback checkpoint
         val rollbackManager = AgentRollbackManager(project)
@@ -281,7 +285,8 @@ class SpawnAgentTool : AgentTool {
                 maxIterations = maxIter,
                 parentJob = parentJob,
                 transcriptStore = transcriptStore,
-                agentId = agentId
+                agentId = agentId,
+                uiCallbacks = uiCallbacks
             )
             val workerResult: WorkerResult = withTimeout(WORKER_TIMEOUT_MS) {
                 workerSession.execute(
@@ -316,6 +321,7 @@ class SpawnAgentTool : AgentTool {
                 rollbackManager.rollbackToCheckpoint(checkpointId)
                 eventLog.log(AgentEventType.WORKER_FAILED, "error=${workerResult.summary}")
                 eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
+                uiCallbacks?.onComplete?.invoke(agentId, workerResult.summary, workerResult.tokensUsed, true)
 
                 return ToolResult(
                     content = "Agent ($resolvedType) failed: ${workerResult.content}\n\n" +
@@ -332,6 +338,7 @@ class SpawnAgentTool : AgentTool {
                 AgentEventType.WORKER_COMPLETED,
                 "tokens=${workerResult.tokensUsed}, artifacts=${workerResult.artifacts.size}"
             )
+            uiCallbacks?.onComplete?.invoke(agentId, workerResult.summary, workerResult.tokensUsed, false)
 
             val formattedTokens = formatNumber(workerResult.tokensUsed.toLong())
 
@@ -363,6 +370,7 @@ class SpawnAgentTool : AgentTool {
             eventLog.log(AgentEventType.WORKER_TIMED_OUT, "timeout=${WORKER_TIMEOUT_MS}ms")
             eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
             transcriptStore?.updateStatus(agentId, "failed", summary = "Timed out after ${WORKER_TIMEOUT_MS / 1000}s")
+            uiCallbacks?.onComplete?.invoke(agentId, "Timed out after ${WORKER_TIMEOUT_MS / 1000}s", 0, true)
 
             return ToolResult(
                 content = "Error: Agent ($resolvedType) timed out after ${WORKER_TIMEOUT_MS / 1000} seconds. " +
@@ -379,6 +387,7 @@ class SpawnAgentTool : AgentTool {
             eventLog.log(AgentEventType.WORKER_FAILED, "exception=${e.message}")
             eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
             transcriptStore?.updateStatus(agentId, "failed", summary = e.message)
+            uiCallbacks?.onComplete?.invoke(agentId, e.message ?: "Unknown error", 0, true)
 
             return ToolResult(
                 content = "Error: Agent ($resolvedType) failed: ${e.message}\n" +
@@ -438,12 +447,17 @@ class SpawnAgentTool : AgentTool {
         val toolMap = toolsForWorker.associateBy { it.name }
         val toolDefinitions = toolsForWorker.map { it.toToolDefinition() }
 
+        val uiCallbacks = agentService.subAgentCallbacks
+        val resumeLabel = "${metadata.description} (${ metadata.subagentType}) [resume]"
+        uiCallbacks?.onSpawn?.invoke(agentId, resumeLabel)
+
         // Resume execution
         val workerSession = WorkerSession(
             maxIterations = agentDef?.maxTurns ?: DEFAULT_MAX_ITERATIONS,
             parentJob = currentCoroutineContext()[Job],
             transcriptStore = transcriptStore,
-            agentId = agentId
+            agentId = agentId,
+            uiCallbacks = uiCallbacks
         )
 
         agentService.activeWorkerCount.incrementAndGet()
@@ -462,6 +476,7 @@ class SpawnAgentTool : AgentTool {
             transcriptStore.updateStatus(agentId, if (result.isError) "failed" else "completed",
                 summary = result.summary, tokensUsed = result.tokensUsed)
             agentService.totalSessionTokens.addAndGet(result.tokensUsed.toLong())
+            uiCallbacks?.onComplete?.invoke(agentId, result.summary, result.tokensUsed, result.isError)
 
             return ToolResult(
                 content = buildString {
@@ -477,6 +492,7 @@ class SpawnAgentTool : AgentTool {
             )
         } catch (e: Exception) {
             transcriptStore.updateStatus(agentId, "failed", summary = e.message)
+            uiCallbacks?.onComplete?.invoke(agentId, e.message ?: "Unknown error", 0, true)
             return errorResult("Resumed agent '$agentId' failed: ${e.message}")
         } finally {
             agentService.activeWorkerCount.decrementAndGet()
@@ -502,6 +518,7 @@ class SpawnAgentTool : AgentTool {
     ): ToolResult {
         val sessionDir = agentService.currentSessionDir
         val transcriptStore = if (sessionDir != null) WorkerTranscriptStore(sessionDir) else null
+        val uiCallbacks = agentService.subAgentCallbacks
 
         // Save initial metadata
         transcriptStore?.saveMetadata(WorkerTranscriptStore.WorkerMetadata(
@@ -509,6 +526,9 @@ class SpawnAgentTool : AgentTool {
             subagentType = subagentType,
             description = description
         ))
+
+        // Notify UI that the background sub-agent has been spawned
+        uiCallbacks?.onSpawn?.invoke(agentId, "$description ($subagentType)")
 
         // Launch in detached coroutine
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -528,7 +548,8 @@ class SpawnAgentTool : AgentTool {
                 val workerSession = WorkerSession(
                     maxIterations = maxIter,
                     transcriptStore = transcriptStore,
-                    agentId = agentId
+                    agentId = agentId,
+                    uiCallbacks = uiCallbacks
                 )
 
                 val result = withTimeout(WORKER_TIMEOUT_MS) {
@@ -550,6 +571,8 @@ class SpawnAgentTool : AgentTool {
                     summary = result.summary, tokensUsed = result.tokensUsed)
                 agentService.totalSessionTokens.addAndGet(result.tokensUsed.toLong())
 
+                uiCallbacks?.onComplete?.invoke(agentId, result.summary, result.tokensUsed, result.isError)
+
                 // Notify parent
                 val bgWorker = agentService.backgroundWorkers[agentId]
                 bgWorker?.status = if (result.isError) WorkerStatus.FAILED else WorkerStatus.COMPLETED
@@ -568,9 +591,11 @@ class SpawnAgentTool : AgentTool {
                 transcriptStore?.updateStatus(agentId, "killed")
                 val bgWorker = agentService.backgroundWorkers[agentId]
                 bgWorker?.status = WorkerStatus.KILLED
+                uiCallbacks?.onComplete?.invoke(agentId, "Killed", 0, true)
             } catch (e: Exception) {
                 LOG.warn("SpawnAgentTool: background agent '$agentId' failed", e)
                 transcriptStore?.updateStatus(agentId, "failed", summary = e.message)
+                uiCallbacks?.onComplete?.invoke(agentId, e.message ?: "Unknown error", 0, true)
                 agentService.onBackgroundWorkerCompleted?.invoke(
                     agentId, "Background agent '$agentId' failed: ${e.message}", true
                 )

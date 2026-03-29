@@ -81,6 +81,7 @@ class AgentCefPanel(
     private var acceptDiffHunkQuery: JBCefJSQuery? = null
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
+    private var killSubAgentQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
@@ -151,6 +152,8 @@ class AgentCefPanel(
     var onRejectDiffHunk: ((String, Int) -> Unit)? = null
     /** Callback when user clicks "Kill" on a running tool call. Param: toolCallId. */
     var onKillToolCall: ((String) -> Unit)? = null
+    /** Callback when user clicks the kill button on a running sub-agent boundary card. Param: agentId. */
+    var onKillSubAgent: ((String) -> Unit)? = null
     /** Callback when user submits process input from the ProcessInputView. Param: input string. */
     var onProcessInputResolved: ((String) -> Unit)? = null
 
@@ -415,6 +418,9 @@ class AgentCefPanel(
         killToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
         }
+        killSubAgentQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
+        }
         processInputQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
         }
@@ -571,6 +577,10 @@ class AgentCefPanel(
                         val killJs = q.inject("toolCallId")
                         js("window._killToolCall = function(toolCallId) { $killJs }")
                     }
+                    killSubAgentQuery?.let { q ->
+                        val killSaJs = q.inject("agentId")
+                        js("window._killSubAgent = function(agentId) { $killSaJs }")
+                    }
                     processInputQuery?.let { q ->
                         val inputJs = q.inject("input")
                         js("window._resolveProcessInput = function(input) { $inputJs }")
@@ -725,6 +735,59 @@ class AgentCefPanel(
 
     fun setPlanMode(enabled: Boolean) {
         callJs("setPlanMode(${if (enabled) "true" else "false"})")
+    }
+
+    // ── Sub-Agent boundary card bridge methods ──
+
+    fun spawnSubAgent(agentId: String, label: String) {
+        val payload = buildJsonObject { put("agentId", agentId); put("label", label) }.toString()
+        callJs("spawnSubAgent(${jsonStr(payload)})")
+    }
+
+    fun updateSubAgentIteration(agentId: String, iteration: Int) {
+        val payload = buildJsonObject { put("agentId", agentId); put("iteration", iteration) }.toString()
+        callJs("updateSubAgentIteration(${jsonStr(payload)})")
+    }
+
+    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("toolName", toolName)
+            put("toolArgs", toolArgs)
+        }.toString()
+        callJs("addSubAgentToolCall(${jsonStr(payload)})")
+    }
+
+    fun updateSubAgentToolCall(
+        agentId: String, toolName: String, result: String,
+        durationMs: Long, isError: Boolean
+    ) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("toolName", toolName)
+            put("toolResult", result.take(2000))   // guard against huge results in the payload
+            put("toolDurationMs", durationMs)
+            put("isError", isError)
+        }.toString()
+        callJs("updateSubAgentToolCall(${jsonStr(payload)})")
+    }
+
+    fun updateSubAgentMessage(agentId: String, textContent: String) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("textContent", textContent)
+        }.toString()
+        callJs("updateSubAgentMessage(${jsonStr(payload)})")
+    }
+
+    fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("textContent", textContent)
+            put("tokensUsed", tokensUsed)
+            put("isError", isError)
+        }.toString()
+        callJs("completeSubAgent(${jsonStr(payload)})")
     }
 
     fun updateModelList(modelsJson: String) {
@@ -1009,6 +1072,7 @@ class AgentCefPanel(
         acceptDiffHunkQuery?.dispose()
         rejectDiffHunkQuery?.dispose()
         killToolCallQuery?.dispose()
+        killSubAgentQuery?.dispose()
         processInputQuery?.dispose()
         browser?.dispose()
         undoQuery = null
@@ -1046,6 +1110,7 @@ class AgentCefPanel(
         acceptDiffHunkQuery = null
         rejectDiffHunkQuery = null
         killToolCallQuery = null
+        killSubAgentQuery = null
         processInputQuery = null
         browser = null
     }

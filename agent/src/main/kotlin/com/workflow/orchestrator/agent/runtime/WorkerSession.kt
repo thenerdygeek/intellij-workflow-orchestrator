@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.runtime
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
@@ -40,7 +41,8 @@ class WorkerSession(
     private val maxIterations: Int = 10,
     private val parentJob: kotlinx.coroutines.Job? = null,
     private val transcriptStore: WorkerTranscriptStore? = null,
-    val agentId: String = WorkerTranscriptStore.generateAgentId()
+    val agentId: String = WorkerTranscriptStore.generateAgentId(),
+    private val uiCallbacks: AgentService.SubAgentCallbacks? = null
 ) {
     companion object {
         private val LOG = Logger.getInstance(WorkerSession::class.java)
@@ -138,6 +140,7 @@ class WorkerSession(
             }
 
             LOG.info("WorkerSession: iteration $iteration/$maxIterations")
+            uiCallbacks?.onIteration?.invoke(agentId, iteration)
 
             val messages = contextManager.getMessages()
             val activeToolDefs = if (tools.isNotEmpty()) toolDefinitions else null
@@ -184,6 +187,7 @@ class WorkerSession(
                         }
                         val summary = if (content.length > 200) content.take(200) + "..." else content
                         LOG.info("WorkerSession: completed (force-accept) after $iteration iterations")
+                        uiCallbacks?.onMessage?.invoke(agentId, content)
                         return WorkerResult(
                             content = content,
                             summary = summary,
@@ -218,9 +222,15 @@ class WorkerSession(
                             continue
                         }
 
+                        uiCallbacks?.onToolCall?.invoke(agentId, toolName, toolCall.function.arguments)
+                        val toolStartMs = System.currentTimeMillis()
+
                         try {
                             val params = json.decodeFromString<JsonObject>(toolCall.function.arguments)
                             val toolResult = tool.execute(params, project)
+                            val toolDurationMs = System.currentTimeMillis() - toolStartMs
+
+                            uiCallbacks?.onToolResult?.invoke(agentId, toolName, toolResult.content, toolDurationMs, toolResult.isError)
 
                             contextManager.addToolResult(
                                 toolCallId = toolCall.id,
@@ -234,6 +244,7 @@ class WorkerSession(
                             // Exit early when worker signals completion via worker_complete
                             if (toolResult.isCompletion) {
                                 LOG.info("WorkerSession: worker_complete called at iteration $iteration — exiting loop")
+                                uiCallbacks?.onMessage?.invoke(agentId, toolResult.content)
                                 return WorkerResult(
                                     content = toolResult.content,
                                     summary = toolResult.summary,
@@ -243,8 +254,10 @@ class WorkerSession(
                                 )
                             }
                         } catch (e: Exception) {
+                            val toolDurationMs = System.currentTimeMillis() - toolStartMs
                             LOG.warn("WorkerSession: tool '$toolName' failed", e)
                             val errorContent = "Error executing tool '$toolName': ${e.message}"
+                            uiCallbacks?.onToolResult?.invoke(agentId, toolName, errorContent, toolDurationMs, true)
                             contextManager.addToolResult(
                                 toolCallId = toolCall.id,
                                 content = errorContent,
