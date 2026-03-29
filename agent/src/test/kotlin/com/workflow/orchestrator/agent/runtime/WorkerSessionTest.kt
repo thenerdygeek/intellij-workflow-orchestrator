@@ -39,7 +39,10 @@ class WorkerSessionTest {
     }
 
     @Test
-    fun `execute returns final response when no tool calls`() = runTest {
+    fun `execute returns final response when no tool calls - force-accept after nudge`() = runTest {
+        // Both calls return the same no-tool response.
+        // Iteration 1: nudge fires (consecutiveNoToolResponses==1, iteration < maxIterations-1).
+        // Iteration 2: force-accept (consecutiveNoToolResponses==2).
         coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
             ChatCompletionResponse(
                 id = "resp-1",
@@ -66,7 +69,7 @@ class WorkerSessionTest {
         )
 
         assertEquals("Analysis complete: no issues found.", result.content)
-        assertEquals(120, result.tokensUsed)
+        assertEquals(240, result.tokensUsed) // 120 per call * 2 calls
         assertTrue(result.artifacts.isEmpty())
         assertFalse(result.isError)
     }
@@ -119,8 +122,10 @@ class WorkerSessionTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 15, totalTokens = 115)
         )
 
+        // Iteration 1: tool call. Iteration 2: no-tool → nudge. Iteration 3: no-tool → force-accept.
         coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
             ApiResult.Success(toolCallResponse),
+            ApiResult.Success(finalResponse),
             ApiResult.Success(finalResponse)
         )
 
@@ -144,7 +149,7 @@ class WorkerSessionTest {
         )
 
         assertEquals("The file looks good.", result.content)
-        assertEquals(195, result.tokensUsed) // 80 + 115
+        assertEquals(310, result.tokensUsed) // 80 + 115 + 115
         assertEquals(listOf("Main.kt"), result.artifacts)
         assertFalse(result.isError)
 
@@ -191,8 +196,10 @@ class WorkerSessionTest {
             )
         )
 
+        // Iteration 1: tool call (unknown). Iteration 2: no-tool → nudge. Iteration 3: no-tool → force-accept.
         coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
             ApiResult.Success(toolCallResponse),
+            ApiResult.Success(finalResponse),
             ApiResult.Success(finalResponse)
         )
 
@@ -320,8 +327,10 @@ class WorkerSessionTest {
             )
         )
 
+        // Iteration 1: tool call (fails). Iteration 2: no-tool → nudge. Iteration 3: no-tool → force-accept.
         coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
             ApiResult.Success(toolCallResponse),
+            ApiResult.Success(finalResponse),
             ApiResult.Success(finalResponse)
         )
 
@@ -346,5 +355,205 @@ class WorkerSessionTest {
                 any()
             )
         }
+    }
+
+    // --- New tests for nudge logic and isCompletion exit ---
+
+    @Test
+    fun `nudge on first no-tool response then worker_complete on second call`() = runTest {
+        val workerCompleteTool = mockk<AgentTool>()
+        coEvery { workerCompleteTool.execute(any(), any()) } returns ToolResult(
+            content = "task done",
+            summary = "task done",
+            tokenEstimate = 3,
+            isCompletion = true
+        )
+
+        // First call: no tool calls (nudge fires)
+        val noToolResponse = ChatCompletionResponse(
+            id = "resp-1",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(role = "assistant", content = "I am done now."),
+                    finishReason = "stop"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 50, completionTokens = 10, totalTokens = 60)
+        )
+
+        // Second call: worker_complete tool call
+        val workerCompleteResponse = ChatCompletionResponse(
+            id = "resp-2",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(
+                        role = "assistant",
+                        content = null,
+                        toolCalls = listOf(
+                            ToolCall(
+                                id = "call-wc",
+                                function = FunctionCall(
+                                    name = "worker_complete",
+                                    arguments = """{"result": "task done"}"""
+                                )
+                            )
+                        )
+                    ),
+                    finishReason = "tool_calls"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 80, completionTokens = 20, totalTokens = 100)
+        )
+
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Success(noToolResponse),
+            ApiResult.Success(workerCompleteResponse)
+        )
+
+        val result = session.execute(
+            workerType = WorkerType.CODER,
+            systemPrompt = "System",
+            task = "Do a task",
+            tools = mapOf("worker_complete" to workerCompleteTool),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        assertEquals("task done", result.content)
+        assertFalse(result.isError)
+        // Nudge was injected into context
+        verify { contextManager.addMessage(match { it.role == "user" && it.content!!.contains("worker_complete") }) }
+    }
+
+    @Test
+    fun `force-accept on second consecutive no-tool response`() = runTest {
+        // Both calls return no tool calls
+        val firstResponse = ChatCompletionResponse(
+            id = "resp-1",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(role = "assistant", content = "using tools"),
+                    finishReason = "stop"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 50, completionTokens = 5, totalTokens = 55)
+        )
+        val secondResponse = ChatCompletionResponse(
+            id = "resp-2",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(role = "assistant", content = "still no tools"),
+                    finishReason = "stop"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 60, completionTokens = 5, totalTokens = 65)
+        )
+
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Success(firstResponse),
+            ApiResult.Success(secondResponse)
+        )
+
+        val result = session.execute(
+            workerType = WorkerType.ANALYZER,
+            systemPrompt = "System",
+            task = "Task",
+            tools = emptyMap(),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        assertEquals("still no tools", result.content)
+        assertFalse(result.isError)
+        assertEquals(120, result.tokensUsed) // 55 + 65
+    }
+
+    @Test
+    fun `consecutiveNoToolResponses resets after valid tool call`() = runTest {
+        val realTool = mockk<AgentTool>()
+        coEvery { realTool.execute(any(), any()) } returns ToolResult(
+            content = "tool result",
+            summary = "did something",
+            tokenEstimate = 5
+        )
+
+        // Iteration 1: tool call (counter resets to 0 after)
+        val toolCallResponse = ChatCompletionResponse(
+            id = "resp-1",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(
+                        role = "assistant",
+                        content = null,
+                        toolCalls = listOf(
+                            ToolCall(
+                                id = "call-1",
+                                function = FunctionCall(name = "real_tool", arguments = "{}")
+                            )
+                        )
+                    ),
+                    finishReason = "tool_calls"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 50, completionTokens = 20, totalTokens = 70)
+        )
+
+        // Iteration 2: no tool calls → nudge (counter=1, not force-accept because counter was reset)
+        val noToolResponse = ChatCompletionResponse(
+            id = "resp-2",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(role = "assistant", content = "No more tools"),
+                    finishReason = "stop"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 60, completionTokens = 10, totalTokens = 70)
+        )
+
+        // Iteration 3: force-accept (counter=2)
+        val finalResponse = ChatCompletionResponse(
+            id = "resp-3",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(role = "assistant", content = "Still no tools"),
+                    finishReason = "stop"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 60, completionTokens = 10, totalTokens = 70)
+        )
+
+        coEvery { brain.chat(any(), any(), any(), any()) } returnsMany listOf(
+            ApiResult.Success(toolCallResponse),
+            ApiResult.Success(noToolResponse),
+            ApiResult.Success(finalResponse)
+        )
+
+        val result = session.execute(
+            workerType = WorkerType.ANALYZER,
+            systemPrompt = "System",
+            task = "Task",
+            tools = mapOf("real_tool" to realTool),
+            toolDefinitions = emptyList(),
+            brain = brain,
+            contextManager = contextManager,
+            project = project
+        )
+
+        // The nudge was injected after iteration 2 (not force-accept), so iteration 3 is the force-accept
+        assertEquals("Still no tools", result.content)
+        assertFalse(result.isError)
+        // Verify nudge was injected after the no-tool response at iteration 2
+        verify { contextManager.addMessage(match { it.role == "user" && it.content!!.contains("worker_complete") }) }
     }
 }

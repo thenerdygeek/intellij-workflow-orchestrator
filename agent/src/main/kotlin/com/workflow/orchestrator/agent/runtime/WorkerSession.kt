@@ -123,6 +123,7 @@ class WorkerSession(
     ): WorkerResult {
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
+        var consecutiveNoToolResponses = 0
 
         for (iteration in 1..maxIterations) {
             if (parentJob?.isActive == false) {
@@ -160,17 +161,29 @@ class WorkerSession(
                     recordMessage("assistant", message.content)
 
                     if (toolCalls.isNullOrEmpty()) {
-                        // No tool calls — final response
                         val content = message.content ?: ""
+                        consecutiveNoToolResponses++
 
-                        // Validate output for sensitive data before returning
+                        // First no-tool response with iterations remaining: nudge to use worker_complete
+                        if (consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
+                            LOG.info("WorkerSession: no tool calls at iteration $iteration — nudging to use worker_complete")
+                            val nudge = "You responded without calling any tools. " +
+                                "If you have completed the task, call worker_complete with the COMPLETE output " +
+                                "of your work — the orchestrator only sees your worker_complete result, not your " +
+                                "tool call history. If you have more work to do, make your next tool call now."
+                            contextManager.addMessage(ChatMessage(role = "user", content = nudge))
+                            recordMessage("user", nudge)
+                            continue
+                        }
+
+                        // Second consecutive no-tool response (or last iteration): force-accept escape hatch
+                        LOG.warn("WorkerSession: force-accepting after $consecutiveNoToolResponses no-tool responses at iteration $iteration")
                         val securityIssues = OutputValidator.validate(content)
                         if (securityIssues.isNotEmpty()) {
                             LOG.warn("WorkerSession: output validation flagged: ${securityIssues.joinToString()}")
                         }
-
                         val summary = if (content.length > 200) content.take(200) + "..." else content
-                        LOG.info("WorkerSession: completed after $iteration iterations")
+                        LOG.info("WorkerSession: completed (force-accept) after $iteration iterations")
                         return WorkerResult(
                             content = content,
                             summary = summary,
@@ -179,6 +192,8 @@ class WorkerSession(
                             isError = false
                         )
                     }
+
+                    consecutiveNoToolResponses = 0
 
                     // Execute tool calls and add results
                     for (toolCall in toolCalls) {
@@ -215,6 +230,18 @@ class WorkerSession(
                             recordMessage("tool", toolResult.content, toolCallId = toolCall.id)
 
                             allArtifacts.addAll(toolResult.artifacts)
+
+                            // Exit early when worker signals completion via worker_complete
+                            if (toolResult.isCompletion) {
+                                LOG.info("WorkerSession: worker_complete called at iteration $iteration — exiting loop")
+                                return WorkerResult(
+                                    content = toolResult.content,
+                                    summary = toolResult.summary,
+                                    tokensUsed = totalTokensUsed,
+                                    artifacts = allArtifacts,
+                                    isError = false
+                                )
+                            }
                         } catch (e: Exception) {
                             LOG.warn("WorkerSession: tool '$toolName' failed", e)
                             val errorContent = "Error executing tool '$toolName': ${e.message}"
