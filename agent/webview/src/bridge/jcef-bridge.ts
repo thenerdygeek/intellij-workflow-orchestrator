@@ -3,6 +3,7 @@ import type {
   StatusType,
   SessionStatus,
 } from './types';
+import { preloadDiff2Html } from '../components/rich/DiffHtml';
 
 // Zustand store accessors — set by initBridge() after stores are created
 type StoreAccessors = {
@@ -41,8 +42,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToken(token: string) {
     stores?.getChatStore().appendToken(token);
   },
-  appendToolCall(toolName: string, args: string, status: string) {
-    stores?.getChatStore().addToolCall(toolName, args, status as ToolCallStatus);
+  appendToolCall(toolCallId: string, toolName: string, args: string, status: string) {
+    stores?.getChatStore().addToolCall(toolCallId, toolName, args, status as ToolCallStatus);
   },
   updateToolResult(result: string, durationMs: number, toolName: string, status?: string, output?: string | null) {
     const resolvedStatus = (status === 'ERROR' ? 'ERROR' : 'COMPLETED') as ToolCallStatus;
@@ -171,6 +172,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().addSonarBadge(badgeJson);
   },
   showApproval(toolName: string, riskLevel: string, description: string, metadataJson: string, diffContent?: string | null) {
+    // Preload diff2html immediately so the module is ready (or nearly ready) by the time
+    // ApprovalView mounts and DiffHtml's useEffect fires — eliminates the loading skeleton.
+    if (diffContent) preloadDiff2Html();
     const metadata = metadataJson ? JSON.parse(metadataJson) : [];
     stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata, diffContent ?? undefined);
   },

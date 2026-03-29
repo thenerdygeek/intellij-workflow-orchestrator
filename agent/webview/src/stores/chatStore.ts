@@ -100,7 +100,7 @@ interface ChatState {
   addMessage(role: 'user' | 'agent', content: string): void;
   appendToken(token: string): void;
   endStream(): void;
-  addToolCall(name: string, args: string, status: ToolCallStatus): void;
+  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
@@ -298,9 +298,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  addToolCall(name: string, args: string, status: ToolCallStatus) {
+  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus) {
     set(state => {
-      const id = nextId('tc');
+      // Use the LLM-assigned tool call ID so streaming output (keyed by the same ID) resolves correctly.
+      // Fall back to a generated ID for legacy callers that don't supply one.
+      const id = toolCallId || nextId('tc');
       const newMap = new Map(state.activeToolCalls);
       newMap.set(id, { id, name, args, status });
       return { activeToolCalls: newMap };

@@ -132,9 +132,7 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
   // Stream output is keyed by the Kotlin-side tool call ID, not the JS-generated ID.
   // Find any matching stream — for CMD tools there's typically one active at a time.
   const allStreams = useChatStore(s => s.toolOutputStreams);
-  const streamOutput = allStreams[toolCall.id]
-    || Object.values(allStreams).find(v => v.length > 0)
-    || '';
+  const streamOutput = allStreams[toolCall.id] ?? '';
   const isRunning = toolCall.status === 'RUNNING';
 
   const handleKill = useCallback(() => {

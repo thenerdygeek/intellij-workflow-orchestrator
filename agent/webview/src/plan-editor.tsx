@@ -31,6 +31,12 @@ let rootInstance: ReturnType<typeof createRoot> | null = null;
 let setPlanDataExternal: ((data: AgentPlanData) => void) | null = null;
 let pendingPlanData: AgentPlanData | null = null;
 
+// Called from AgentPlanEditor.kt to set IDE theme CSS variables before rendering.
+(window as any).applyTheme = (vars: Record<string, string>) => {
+  const root = document.documentElement;
+  Object.entries(vars).forEach(([k, v]) => root.style.setProperty('--' + k, v));
+};
+
 (window as any).renderPlan = (json: string) => {
   const data = JSON.parse(json) as AgentPlanData;
   if (setPlanDataExternal) {

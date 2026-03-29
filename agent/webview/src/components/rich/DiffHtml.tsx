@@ -6,6 +6,7 @@ import { RichBlock } from './RichBlock';
 type Diff2HtmlModule = typeof import('diff2html');
 
 let diff2htmlModulePromise: Promise<Diff2HtmlModule> | null = null;
+let diff2htmlResolved: Diff2HtmlModule | null = null;
 let cssLoaded = false;
 
 /** Race dynamic import against a timeout — JCEF's custom scheme can hang on chunk loads. */
@@ -24,6 +25,7 @@ function loadDiff2Html(): Promise<Diff2HtmlModule> {
     // CSS is loaded separately and non-blocking.
     diff2htmlModulePromise = withTimeout(import('diff2html'), 5000, 'diff2html import')
       .then((module) => {
+        diff2htmlResolved = module;
         if (!cssLoaded) {
           import('diff2html/bundles/css/diff2html.min.css')
             .then(() => { cssLoaded = true; })
@@ -38,6 +40,14 @@ function loadDiff2Html(): Promise<Diff2HtmlModule> {
       });
   }
   return diff2htmlModulePromise;
+}
+
+/**
+ * Call this early (e.g. from the bridge layer when a diff is known to be coming)
+ * to start the diff2html download before the component even mounts.
+ */
+export function preloadDiff2Html(): void {
+  void loadDiff2Html();
 }
 
 // ── Helpers ──
@@ -85,7 +95,10 @@ interface DiffHtmlProps {
 
 export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Start loading immediately (not just in useEffect) so JCEF has max time to fetch the chunk.
+  // If the module is already cached from a preloadDiff2Html() call, this is a no-op.
+  loadDiff2Html();
+  const [isLoading, setIsLoading] = useState(() => diff2htmlResolved === null);
   const [error, setError] = useState<Error | null>(null);
   const renderIdRef = useRef(0);
 
@@ -94,11 +107,14 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
 
   const renderDiff = useCallback(async () => {
     const currentRender = ++renderIdRef.current;
-    setIsLoading(true);
+    // Only show loading state if the module isn't already in memory.
+    if (!diff2htmlResolved) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {
-      const diff2html = await loadDiff2Html();
+      const diff2html = diff2htmlResolved ?? await loadDiff2Html();
 
       if (currentRender !== renderIdRef.current) return;
 

@@ -69,6 +69,9 @@ class PlanManager {
     /** Callback to update the anchored plan summary in context. */
     var onPlanAnchorUpdate: ((AgentPlan) -> Unit)? = null
 
+    /** Callback fired after the plan is approved — carries the approved plan for UI re-render. */
+    var onPlanApproved: ((AgentPlan) -> Unit)? = null
+
     fun submitPlan(plan: AgentPlan): CompletableFuture<PlanApprovalResult> {
         currentPlan = plan
         approvalFuture = CompletableFuture()
@@ -119,7 +122,10 @@ class PlanManager {
         // Complete the legacy CompletableFuture if using submitPlan
         approvalFuture?.complete(PlanApprovalResult.Approved)
         approvalFuture = null
-        currentPlan?.let { onPlanAnchorUpdate?.invoke(it) }
+        currentPlan?.let {
+            onPlanAnchorUpdate?.invoke(it)
+            onPlanApproved?.invoke(it)
+        }
     }
 
     fun revisePlan(comments: Map<String, String>) {

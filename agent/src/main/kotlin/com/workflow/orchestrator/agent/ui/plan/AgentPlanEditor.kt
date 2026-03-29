@@ -11,7 +11,9 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
+import com.intellij.util.ui.UIUtil
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.ui.AgentColors
 import com.workflow.orchestrator.agent.ui.CefResourceSchemeHandler
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -99,10 +101,42 @@ class AgentPlanEditor(
             .replace("'", "\\'")
             .replace("\n", "\\n")
             .replace("\r", "")
+
+        // Build IDE-derived theme vars so the standalone plan-editor.html matches the IDE theme.
+        val isDark = UIUtil.isUnderDarcula()
+        val c = AgentColors
+        val themeVars: Map<String, String> = if (isDark) mapOf(
+            "bg" to c.hex(c.panelBg), "fg" to c.hex(c.primaryText),
+            "fg-secondary" to c.hex(c.secondaryText), "fg-muted" to c.hex(c.mutedText),
+            "border" to c.hex(c.border), "code-bg" to c.hex(c.codeBg),
+            "tool-bg" to "rgba(255,255,255,0.04)",
+            "accent" to "#6366f1",
+            "accent-read" to c.hex(c.accentRead), "accent-edit" to c.hex(c.accentEdit),
+            "badge-read-bg" to c.hex(c.badgeRead), "badge-read-fg" to c.hex(c.badgeReadText),
+            "badge-edit-bg" to c.hex(c.badgeEdit), "badge-edit-fg" to c.hex(c.badgeEditText),
+            "badge-write-bg" to c.hex(c.badgeWrite), "badge-write-fg" to c.hex(c.badgeWriteText),
+            "badge-search-bg" to c.hex(c.badgeSearch), "badge-search-fg" to c.hex(c.badgeSearchText),
+            "success" to c.hex(c.success), "error" to c.hex(c.error), "warning" to c.hex(c.warning)
+        ) else mapOf(
+            "bg" to "#FFFFFF", "fg" to "#1E293B",
+            "fg-secondary" to "#475569", "fg-muted" to "#64748B",
+            "border" to "#E2E8F0", "code-bg" to "#F1F5F9",
+            "tool-bg" to "rgba(0,0,0,0.03)",
+            "accent" to "#6366f1",
+            "accent-read" to c.hex(c.accentRead), "accent-edit" to c.hex(c.accentEdit),
+            "badge-read-bg" to c.hex(c.badgeRead), "badge-read-fg" to c.hex(c.badgeReadText),
+            "badge-edit-bg" to c.hex(c.badgeEdit), "badge-edit-fg" to c.hex(c.badgeEditText),
+            "badge-write-bg" to c.hex(c.badgeWrite), "badge-write-fg" to c.hex(c.badgeWriteText),
+            "badge-search-bg" to c.hex(c.badgeSearch), "badge-search-fg" to c.hex(c.badgeSearchText),
+            "success" to c.hex(c.success), "error" to c.hex(c.error), "warning" to c.hex(c.warning)
+        )
+        val themeObj = themeVars.entries.joinToString(",") { (k, v) -> "'$k':'$v'" }
+
         val js = """
             window._approvePlan = function() { ${approveQuery.inject("'approved'")} };
             window._revisePlan = function(json) { ${reviseQuery.inject("json")} };
             window._openFile = function(path) { ${fileClickQuery.inject("path")} };
+            if (typeof applyTheme === 'function') applyTheme({$themeObj});
             renderPlan('$escaped');
         """.trimIndent()
         cefBrowser?.executeJavaScript(js, "", 0)

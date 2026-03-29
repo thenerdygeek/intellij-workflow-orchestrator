@@ -293,10 +293,11 @@ class AgentDashboardPanel(
     }
 
     fun appendToolCall(
+        toolCallId: String = "",
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
     ) {
-        cefPanel?.appendToolCall(toolName, args, status) ?: fallbackPanel?.appendToolCall(toolName, args, status)
+        cefPanel?.appendToolCall(toolCallId, toolName, args, status) ?: fallbackPanel?.appendToolCall(toolName, args, status)
     }
 
     fun updateLastToolCall(

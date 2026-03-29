@@ -1335,7 +1335,8 @@ class SingleAgentSession(
                 toolCallInfo = ToolCallInfo(
                     toolName = toolName,
                     args = toolCall.function.arguments.take(1000),
-                    isError = false
+                    isError = false,
+                    toolCallId = toolCall.id
                 )
             ))
         }

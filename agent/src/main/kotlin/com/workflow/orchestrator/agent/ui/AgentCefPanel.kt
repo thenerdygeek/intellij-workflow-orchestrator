@@ -638,10 +638,11 @@ class AgentCefPanel(
     }
 
     fun appendToolCall(
+        toolCallId: String = "",
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
     ) {
-        callJs("appendToolCall(${jsonStr(toolName)},${jsonStr(args)},'${status.name}')")
+        callJs("appendToolCall(${jsonStr(toolCallId)},${jsonStr(toolName)},${jsonStr(args)},'${status.name}')")
     }
 
     fun updateLastToolCall(

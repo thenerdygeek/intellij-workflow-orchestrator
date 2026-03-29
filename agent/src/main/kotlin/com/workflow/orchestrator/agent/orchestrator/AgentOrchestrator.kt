@@ -76,7 +76,9 @@ data class ToolCallInfo(
     /** Edit diff data for file modifications. */
     val editFilePath: String? = null,
     val editOldText: String? = null,
-    val editNewText: String? = null
+    val editNewText: String? = null,
+    /** LLM-assigned tool call ID — used to correlate streaming output with the tool card. */
+    val toolCallId: String = ""
 )
 
 /**

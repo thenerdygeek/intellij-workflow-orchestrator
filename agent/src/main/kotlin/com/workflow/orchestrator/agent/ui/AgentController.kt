@@ -145,7 +145,17 @@ class AgentController(
                 val json = kotlinx.serialization.json.Json.parseToJsonElement(payload)
                 val type = json.jsonObject["type"]?.jsonPrimitive?.content ?: "unknown"
                 val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: payload
-                AgentVisualizationEditor.openVisualization(project, type, content)
+                if (type == "plan") {
+                    // Navigate to the already-open plan editor tab rather than opening a second tab.
+                    ApplicationManager.getApplication().invokeLater {
+                        val planFile = currentPlanFile
+                        if (planFile != null) {
+                            FileEditorManager.getInstance(project).openFile(planFile, true)
+                        }
+                    }
+                } else {
+                    AgentVisualizationEditor.openVisualization(project, type, content)
+                }
             } catch (e: Exception) {
                 LOG.warn("Failed to open visualization in editor tab: ${e.message}")
             }
@@ -655,6 +665,13 @@ class AgentController(
             }
         }
 
+        // Re-render approved plan to JCEF so PlanSummaryCard transitions to PlanProgressWidget.
+        // This fires for approval from BOTH the chat card and the plan editor tab.
+        currentSession.planManager.onPlanApproved = { plan ->
+            val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
+            ApplicationManager.getApplication().invokeLater { dashboard.renderPlan(json) }
+        }
+
         // Set session directory for plan persistence
         currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
 
@@ -887,7 +904,7 @@ class AgentController(
             progress.step.startsWith("Calling tool:") && toolInfo != null -> {
                 // Pre-execution: show tool call as RUNNING before it executes
                 dashboard.flushStreamBuffer()
-                dashboard.appendToolCall(toolInfo.toolName, toolInfo.args, RichStreamingPanel.ToolCallStatus.RUNNING)
+                dashboard.appendToolCall(toolInfo.toolCallId, toolInfo.toolName, toolInfo.args, RichStreamingPanel.ToolCallStatus.RUNNING)
             }
             progress.step.startsWith("Used tool:") && toolInfo != null -> {
                 // Post-execution: update the existing RUNNING entry (don't append a new one)
@@ -914,7 +931,7 @@ class AgentController(
                 }
             }
             progress.step.startsWith("Used tool:") -> {
-                dashboard.appendToolCall(progress.step.removePrefix("Used tool:").trim(), status = RichStreamingPanel.ToolCallStatus.SUCCESS)
+                dashboard.appendToolCall(toolName = progress.step.removePrefix("Used tool:").trim(), status = RichStreamingPanel.ToolCallStatus.SUCCESS)
             }
             progress.step.contains("complex") || progress.step.contains("plan") -> {
                 dashboard.appendStatus(progress.step, RichStreamingPanel.StatusType.WARNING)
