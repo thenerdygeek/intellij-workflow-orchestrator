@@ -38,6 +38,8 @@ object DynamicToolSelector {
         "agent",
         "delegate_task",
         "think",
+        // Planning & interaction — always available so the agent can clarify, plan, and guide users
+        "ask_questions", "create_plan", "update_plan_step", "enable_plan_mode",
         // Memory tools — always available so the agent can store/retrieve knowledge at any time
         "core_memory_read", "core_memory_append", "core_memory_replace",
         "archival_memory_insert", "archival_memory_search", "conversation_search"
