@@ -9,6 +9,22 @@ export interface Message {
   timestamp: number;
   /** Completed tool call chain — present on 'system' messages with type 'toolchain' */
   toolChain?: ToolCall[];
+  /** Sub-agent state — present on 'system' messages with type 'subagent' */
+  subAgent?: SubAgentState;
+}
+
+// ── Sub-Agent types ──
+
+export interface SubAgentState {
+  agentId: string;
+  label: string;
+  status: 'RUNNING' | 'COMPLETED' | 'ERROR' | 'KILLED';
+  iteration: number;
+  tokensUsed: number;
+  messages: Message[];
+  activeToolChain: ToolCall[];
+  summary?: string;
+  startedAt: number;
 }
 
 // ── Tool call types ──

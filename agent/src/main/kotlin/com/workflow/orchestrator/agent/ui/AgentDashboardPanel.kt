@@ -344,6 +344,12 @@ class AgentDashboardPanel(
         cefPanel?.clear() ?: fallbackPanel?.clear()
     }
 
+    // ── Plan mode delegation ──
+
+    fun setPlanMode(enabled: Boolean) = runOnEdt {
+        cefPanel?.setPlanMode(enabled)
+    }
+
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else SwingUtilities.invokeLater(action)

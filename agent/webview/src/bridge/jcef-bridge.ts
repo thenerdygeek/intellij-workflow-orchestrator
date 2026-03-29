@@ -216,6 +216,26 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToolOutput(toolCallId: string, chunk: string) {
     stores?.getChatStore().appendToolOutput(toolCallId, chunk);
   },
+
+  // Sub-Agent methods from Kotlin
+  spawnSubAgent(payload: string) {
+    stores?.getChatStore().spawnSubAgent(payload);
+  },
+  updateSubAgentIteration(payload: string) {
+    stores?.getChatStore().updateSubAgentIteration(payload);
+  },
+  addSubAgentToolCall(payload: string) {
+    stores?.getChatStore().addSubAgentToolCall(payload);
+  },
+  updateSubAgentToolCall(payload: string) {
+    stores?.getChatStore().updateSubAgentToolCall(payload);
+  },
+  updateSubAgentMessage(payload: string) {
+    stores?.getChatStore().updateSubAgentMessage(payload);
+  },
+  completeSubAgent(payload: string) {
+    stores?.getChatStore().completeSubAgent(payload);
+  },
 };
 
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
@@ -261,6 +281,7 @@ export const kotlinBridge = {
   openSettings(): void { callKotlin('_openSettings'); },
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
   killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },
+  killSubAgent(agentId: string): void { callKotlin('_killSubAgent', agentId); },
   resolveProcessInput(input: string): void { callKotlin('_resolveProcessInput', input); },
   searchMentions(type: string, query: string): void { callKotlin('_searchMentions', `${type}:${query}`); },
   sendMessageWithMentions(text: string, mentionsJson: string): void {

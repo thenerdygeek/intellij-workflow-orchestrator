@@ -14,6 +14,7 @@ import type {
   EditDiff,
   Skill,
   ToastType,
+  SubAgentState,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
@@ -146,6 +147,15 @@ interface ChatState {
   clearDebugLog(): void;
   appendToolOutput(toolCallId: string, chunk: string): void;
   killToolCall(toolCallId: string): void;
+
+  // Sub-Agent Actions
+  spawnSubAgent(payload: string): void;
+  updateSubAgentIteration(payload: string): void;
+  addSubAgentToolCall(payload: string): void;
+  updateSubAgentToolCall(payload: string): void;
+  updateSubAgentMessage(payload: string): void;
+  completeSubAgent(payload: string): void;
+  killSubAgent(agentId: string): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -659,6 +669,202 @@ export const useChatStore = create<ChatState>((set, get) => ({
   killToolCall(toolCallId: string) {
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       (kotlinBridge as any).killToolCall(toolCallId);
+    });
+  },
+
+  // ── Sub-Agent Actions ──
+  spawnSubAgent(payload: string) {
+    const data = JSON.parse(payload);
+    const msgId = nextId('subagent');
+    
+    const subAgentState: SubAgentState = {
+      agentId: data.agentId,
+      label: data.label,
+      status: 'RUNNING',
+      iteration: 1,
+      tokensUsed: 0,
+      messages: [],
+      activeToolChain: [],
+      startedAt: Date.now(),
+    };
+
+    set((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id: msgId,
+          role: 'system',
+          content: 'subagent', // sentinel to trigger SubAgentView
+          timestamp: Date.now(),
+          subAgent: subAgentState
+        }
+      ]
+    }));
+  },
+
+  updateSubAgentIteration(payload: string) {
+    const data = JSON.parse(payload);
+    set((state) => {
+      const messages = [...state.messages];
+      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
+      const msg = messages[idx];
+      if (msg && msg.subAgent) {
+        messages[idx] = {
+          ...msg,
+          subAgent: {
+            ...msg.subAgent,
+            iteration: data.iteration || msg.subAgent.iteration + 1
+          }
+        };
+      }
+      return { messages };
+    });
+  },
+
+  addSubAgentToolCall(payload: string) {
+    const data = JSON.parse(payload);
+    set((state) => {
+      const messages = [...state.messages];
+      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
+      const msg = messages[idx];
+      if (msg && msg.subAgent) {
+        const subAgent = { ...msg.subAgent };
+        const toolCall: ToolCall = {
+          id: nextId('satool'),
+          name: data.toolName || 'unknown',
+          args: data.toolArgs || '{}',
+          status: 'RUNNING'
+        };
+        subAgent.activeToolChain = [...(subAgent.activeToolChain || []), toolCall];
+        messages[idx] = { ...msg, subAgent };
+      }
+      return { messages };
+    });
+  },
+
+  updateSubAgentToolCall(payload: string) {
+    const data = JSON.parse(payload);
+    set((state) => {
+      const messages = [...state.messages];
+      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
+      const msg = messages[idx];
+      if (msg && msg.subAgent) {
+        const subAgent = { ...msg.subAgent };
+        const toolChain = [...(subAgent.activeToolChain || [])];
+        // Manual reverse search (ES2022 compat — no findLastIndex)
+        let toolIdx = -1;
+        for (let i = toolChain.length - 1; i >= 0; i--) {
+          const item = toolChain[i];
+          if (item && item.status === 'RUNNING' && item.name === data.toolName) {
+            toolIdx = i;
+            break;
+          }
+        }
+        if (toolIdx !== -1) {
+          const tc = toolChain[toolIdx]!;
+          toolChain[toolIdx] = {
+            id: tc.id,
+            name: tc.name,
+            args: tc.args,
+            status: data.isError ? 'ERROR' as const : 'COMPLETED' as const,
+            durationMs: data.toolDurationMs,
+            result: data.toolResult || '',
+            output: tc.output,
+          };
+          subAgent.activeToolChain = toolChain;
+          messages[idx] = { ...msg, subAgent };
+        }
+      }
+      return { messages };
+    });
+  },
+
+  updateSubAgentMessage(payload: string) {
+    const data = JSON.parse(payload);
+    set((state) => {
+      const messages = [...state.messages];
+      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
+      const msg = messages[idx];
+      if (msg && msg.subAgent) {
+        const subAgent = { ...msg.subAgent };
+        const newMsg: Message = {
+          id: nextId('samsg'),
+          role: 'agent',
+          content: data.textContent || '',
+          timestamp: Date.now()
+        };
+        if (subAgent.activeToolChain && subAgent.activeToolChain.length > 0) {
+           newMsg.toolChain = [...subAgent.activeToolChain];
+           subAgent.activeToolChain = [];
+        }
+        subAgent.messages = [...(subAgent.messages || []), newMsg];
+        messages[idx] = { ...msg, subAgent };
+      }
+      return { messages };
+    });
+  },
+
+  completeSubAgent(payload: string) {
+    const data = JSON.parse(payload);
+    set((state) => {
+      const messages = [...state.messages];
+      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
+      const msg = messages[idx];
+      if (msg && msg.subAgent) {
+        const subAgent = { ...msg.subAgent };
+        subAgent.status = data.isError ? 'ERROR' : 'COMPLETED';
+        subAgent.tokensUsed = data.tokensUsed || subAgent.tokensUsed || 0;
+        subAgent.summary = data.textContent || '';
+        
+        if (subAgent.activeToolChain && subAgent.activeToolChain.length > 0) {
+           subAgent.messages = [
+             ...(subAgent.messages || []),
+             {
+               id: nextId('satc'),
+               role: 'system',
+               content: '',
+               timestamp: Date.now(),
+               toolChain: subAgent.activeToolChain
+             }
+           ];
+           subAgent.activeToolChain = [];
+        }
+
+        messages[idx] = { ...msg, subAgent };
+      }
+      return { messages };
+    });
+  },
+
+  killSubAgent(agentId: string) {
+    set((state) => {
+      const messages = [...state.messages];
+      const idx = messages.findIndex(m => m.subAgent?.agentId === agentId);
+      const msg = messages[idx];
+      if (msg && msg.subAgent) {
+        const subAgent = { ...msg.subAgent };
+        subAgent.status = 'KILLED';
+        // Flush any pending tool chain
+        if (subAgent.activeToolChain && subAgent.activeToolChain.length > 0) {
+          subAgent.messages = [
+            ...(subAgent.messages || []),
+            {
+              id: nextId('satc'),
+              role: 'system' as const,
+              content: '',
+              timestamp: Date.now(),
+              toolChain: subAgent.activeToolChain
+            }
+          ];
+          subAgent.activeToolChain = [];
+        }
+        messages[idx] = { ...msg, subAgent };
+      }
+      return { messages };
+    });
+    // Notify Kotlin to cancel the worker
+    import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
+      kotlinBridge.killSubAgent(agentId);
     });
   },
 }));

@@ -3,6 +3,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
+import { SubAgentView } from '@/components/agent/SubAgentView';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
@@ -179,6 +180,15 @@ export const ChatView = memo(function ChatView() {
       <ChatContainerContent className="px-4 py-3 pb-4 gap-3">
         {/* Messages — tool chains are embedded as system messages with toolChain field */}
         {messages.map((msg, i) => {
+          // Render Sub-Agents
+          if (msg.subAgent) {
+            return (
+              <ErrorBoundary key={msg.id}>
+                 <SubAgentView subAgent={msg.subAgent} />
+              </ErrorBoundary>
+            );
+          }
+
           // Render completed tool chains (system messages with toolChain)
           if (msg.toolChain) {
             return (

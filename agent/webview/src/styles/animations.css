@@ -381,6 +381,25 @@
 
 
 /* ============================================================
+   SUB-AGENT SCROLL CONTAINER
+   ============================================================ */
+
+.sub-agent-scroll-container::-webkit-scrollbar {
+  width: 6px;
+}
+.sub-agent-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sub-agent-scroll-container::-webkit-scrollbar-thumb {
+  background: var(--hover-overlay-strong, rgba(255,255,255,0.1));
+  border-radius: 3px;
+}
+.sub-agent-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted, #666);
+}
+
+
+/* ============================================================
    REDUCED MOTION
    ============================================================ */
 
