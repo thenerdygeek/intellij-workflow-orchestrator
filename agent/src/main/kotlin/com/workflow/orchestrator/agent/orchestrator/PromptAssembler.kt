@@ -264,6 +264,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             - @ mentioned content is already in context — do not re-read mentioned files.
             - Use git_* tools for ALL git operations. NEVER use run_command for git.
             - ALWAYS fill the 'description' parameter on tools that have it — the user sees it in the approval dialog.
+            - To CREATE a new file: use edit_file with old_string="" and new_string=<full content>. NEVER use run_command with cat/echo/heredoc to write files — shell-created files bypass IntelliJ's VFS and appear as untracked.
             </tool_policy>
         """.trimIndent()
 
