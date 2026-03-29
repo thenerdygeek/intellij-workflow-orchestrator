@@ -165,7 +165,7 @@ class WorkerSession(
                         consecutiveNoToolResponses++
 
                         // First no-tool response with iterations remaining: nudge to use worker_complete
-                        if (consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
+                        if (consecutiveNoToolResponses == 1 && iteration < maxIterations) {
                             LOG.info("WorkerSession: no tool calls at iteration $iteration — nudging to use worker_complete")
                             val nudge = "You responded without calling any tools. " +
                                 "If you have completed the task, call worker_complete with the COMPLETE output " +

@@ -41,7 +41,7 @@ class WorkerSessionTest {
     @Test
     fun `execute returns final response when no tool calls - force-accept after nudge`() = runTest {
         // Both calls return the same no-tool response.
-        // Iteration 1: nudge fires (consecutiveNoToolResponses==1, iteration < maxIterations-1).
+        // Iteration 1: nudge fires (consecutiveNoToolResponses==1, iteration < maxIterations).
         // Iteration 2: force-accept (consecutiveNoToolResponses==2).
         coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
             ChatCompletionResponse(

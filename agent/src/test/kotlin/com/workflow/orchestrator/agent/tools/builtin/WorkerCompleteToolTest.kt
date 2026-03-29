@@ -40,14 +40,20 @@ class WorkerCompleteToolTest {
     }
 
     @Test
-    fun `allowedWorkers contains all 5 WorkerType values`() {
+    fun `allowedWorkers contains all WorkerType values`() {
         val expected = WorkerType.values().toSet()
         assertEquals(expected, tool.allowedWorkers)
     }
 
     @Test
-    fun `allowedWorkers has exactly 5 entries`() {
-        assertEquals(5, tool.allowedWorkers.size)
+    fun `blank result returns isError=true and isCompletion=false`() = runTest {
+        val params = buildJsonObject { put("result", "   ") }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        assertFalse(result.isCompletion)
+        assertEquals(ToolResult.ERROR_TOKEN_ESTIMATE, result.tokenEstimate)
     }
 
     @Test

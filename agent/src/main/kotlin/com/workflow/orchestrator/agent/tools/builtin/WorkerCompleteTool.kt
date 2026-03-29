@@ -67,6 +67,15 @@ class WorkerCompleteTool : AgentTool {
                 isError = true
             )
 
+        if (result.isBlank()) {
+            return ToolResult(
+                content = "result parameter must not be empty — include the complete output of your task",
+                summary = "worker_complete failed: empty result",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         return ToolResult(
             content = result,
             summary = "Worker completed: ${result.take(200)}",
