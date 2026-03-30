@@ -262,6 +262,8 @@
             nonDefaultProject="true"/>
         <postStartupActivity
             implementation="com.workflow.orchestrator.agent.listeners.AgentStartupActivity"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.database.DatabaseSettings"/>
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.ui.plan.AgentPlanEditorProvider"/>
         <fileEditorProvider

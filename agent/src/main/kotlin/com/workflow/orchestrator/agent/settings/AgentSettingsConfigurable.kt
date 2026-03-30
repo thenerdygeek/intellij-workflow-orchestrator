@@ -8,11 +8,16 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
 import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.ModelInfo
+import com.workflow.orchestrator.agent.database.DatabaseCredentialHelper
+import com.workflow.orchestrator.agent.database.DatabaseProfile
+import com.workflow.orchestrator.agent.database.DatabaseSettings
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.AuthInterceptor
@@ -23,6 +28,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import kotlinx.coroutines.*
 import java.awt.Component
+import java.awt.Dimension
 import javax.swing.*
 
 class AgentSettingsConfigurable(
@@ -53,6 +59,11 @@ class AgentSettingsConfigurable(
     private var loadModelsButton: JButton? = null
     private val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var cachedModels: List<ModelInfo> = emptyList()
+
+    // ---- Database profiles state ----
+    private val dbSettings = DatabaseSettings.getInstance(project)
+    private val dbProfileModel = DefaultListModel<DatabaseProfile>()
+    private var dbProfileList: JBList<DatabaseProfile>? = null
 
     override fun getId(): String = "workflow.orchestrator.agent"
     override fun getDisplayName(): String = "Agent"
@@ -141,9 +152,70 @@ class AgentSettingsConfigurable(
                         .comment("Enables an expandable debug panel in the chat view showing tool events, context usage, and loop diagnostics")
                 }
             }
+
+            group("Database Profiles") {
+                row {
+                    comment(
+                        "Read-only database connections for the agent's db_query and db_schema tools. " +
+                            "Passwords are stored in the system keychain via PasswordSafe."
+                    )
+                }
+                row {
+                    cell(buildDatabaseProfilePanel())
+                        .align(Align.FILL)
+                        .resizableColumn()
+                }.resizableRow()
+            }
         }
         dialogPanel = innerPanel
+
+        // Populate profile list after panel is built
+        dbProfileModel.clear()
+        dbSettings.getProfiles().forEach { dbProfileModel.addElement(it) }
+
         return innerPanel
+    }
+
+    private fun buildDatabaseProfilePanel(): JComponent {
+        val list = JBList(dbProfileModel).apply {
+            cellRenderer = SimpleListCellRenderer.create("") { p ->
+                "${p.displayName}  [${p.dbType.displayName}]  ${p.jdbcUrl}"
+            }
+            preferredSize = Dimension(600, 120)
+        }
+        dbProfileList = list
+
+        return ToolbarDecorator.createDecorator(list)
+            .setAddAction {
+                val dlg = DatabaseProfileDialog()
+                if (dlg.showAndGet()) {
+                    val profile = dlg.buildProfile()
+                    // Remove any existing entry with the same id
+                    val existing = (0 until dbProfileModel.size).firstOrNull {
+                        dbProfileModel.getElementAt(it).id == profile.id
+                    }
+                    if (existing != null) dbProfileModel.set(existing, profile)
+                    else dbProfileModel.addElement(profile)
+                }
+            }
+            .setEditAction {
+                val idx = list.selectedIndex
+                if (idx >= 0) {
+                    val dlg = DatabaseProfileDialog(existing = dbProfileModel.getElementAt(idx))
+                    if (dlg.showAndGet()) {
+                        dbProfileModel.set(idx, dlg.buildProfile())
+                    }
+                }
+            }
+            .setRemoveAction {
+                val idx = list.selectedIndex
+                if (idx >= 0) {
+                    val profile = dbProfileModel.getElementAt(idx)
+                    DatabaseCredentialHelper.removePassword(profile.id)
+                    dbProfileModel.remove(idx)
+                }
+            }
+            .createPanel()
     }
 
     /**
@@ -316,6 +388,10 @@ class AgentSettingsConfigurable(
         settings.state.approvalRequiredForEdits = approvalRequiredForEdits
         settings.state.tokenBudgetWarningPercent = tokenBudgetWarningPercent
         settings.state.showDebugLog = showDebugLog
+
+        // Save database profiles
+        val profiles = (0 until dbProfileModel.size).map { dbProfileModel.getElementAt(it) }
+        dbSettings.saveProfiles(profiles)
     }
 
     override fun reset() {
@@ -328,6 +404,10 @@ class AgentSettingsConfigurable(
         tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
         showDebugLog = settings.state.showDebugLog
         dialogPanel?.reset()
+
+        // Reload database profiles from saved state
+        dbProfileModel.clear()
+        dbSettings.getProfiles().forEach { dbProfileModel.addElement(it) }
 
         // Reset combo to current value
         if (sourcegraphChatModel.isNotBlank()) {

@@ -267,6 +267,11 @@ class AgentService(
             register(BitbucketRemoveReviewerTool())
             register(BitbucketListReposTool())
 
+            // Database tools (read-only agent access to local/docker/QA/sandbox databases)
+            register(com.workflow.orchestrator.agent.tools.database.DbListProfilesTool())
+            register(com.workflow.orchestrator.agent.tools.database.DbQueryTool())
+            register(com.workflow.orchestrator.agent.tools.database.DbSchemaTool())
+
             // Planning tools
             register(EnablePlanModeTool())
             register(CreatePlanTool())

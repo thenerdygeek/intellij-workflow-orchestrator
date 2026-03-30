@@ -27,6 +27,12 @@ dependencies {
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
 
+    // JDBC drivers — bundled in the plugin so the agent can query databases
+    // without requiring an external DB tool (IntelliJ DataSources, DBeaver, etc.)
+    implementation(libs.postgresql.jdbc)
+    implementation(libs.mysql.jdbc)
+    implementation(libs.sqlite.jdbc)
+
     testImplementation(libs.junit5.api)
     testImplementation(libs.junit5.params)
     testRuntimeOnly(libs.junit5.engine)

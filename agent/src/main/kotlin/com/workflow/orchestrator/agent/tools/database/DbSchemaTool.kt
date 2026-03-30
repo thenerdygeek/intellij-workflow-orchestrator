@@ -1,0 +1,184 @@
+package com.workflow.orchestrator.agent.tools.database
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.database.DatabaseConnectionManager
+import com.workflow.orchestrator.agent.database.DatabaseSettings
+import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+/**
+ * Reads database schema metadata (tables, columns, types, PKs, FKs) via JDBC [DatabaseMetaData].
+ * No SQL required — metadata is read from the driver without executing any queries.
+ */
+class DbSchemaTool : AgentTool {
+    override val name = "db_schema"
+    override val description = """
+        Inspect the schema of a database: list tables, columns, data types, nullable flags,
+        primary keys, and foreign key relationships. Uses JDBC metadata — no SQL needed.
+        Call this before db_query to understand the structure before writing queries.
+
+        Examples:
+          db_schema(profile="qa")                          — list all tables
+          db_schema(profile="qa", table="orders")          — describe a specific table
+          db_schema(profile="qa", schema="reporting")      — tables in a specific schema
+    """.trimIndent()
+
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "profile" to ParameterProperty(
+                type = "string",
+                description = "Profile ID (from db_list_profiles)"
+            ),
+            "schema" to ParameterProperty(
+                type = "string",
+                description = "Database schema name (default: 'public' for PostgreSQL, null = all schemas)"
+            ),
+            "table" to ParameterProperty(
+                type = "string",
+                description = "If specified, describe only this table (columns, types, PKs, FKs)"
+            ),
+        ),
+        required = listOf("profile")
+    )
+
+    override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.TOOLER)
+
+    override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        val profileId = params["profile"]?.jsonPrimitive?.content?.trim()
+            ?: return error("'profile' parameter is required.")
+        val schemaFilter = params["schema"]?.jsonPrimitive?.content?.trim()
+        val tableFilter = params["table"]?.jsonPrimitive?.content?.trim()
+
+        val profile = try {
+            DatabaseSettings.getInstance(project).getProfile(profileId)
+        } catch (_: Exception) {
+            return error("DatabaseSettings service not available.")
+        } ?: return error("Profile '$profileId' not found. Call db_list_profiles first.")
+
+        val result = DatabaseConnectionManager.withConnection(profile) { conn ->
+            val meta = conn.metaData
+            val sb = StringBuilder()
+            sb.append("Schema for **${profile.displayName}** (${profile.dbType.displayName})\n\n")
+
+            if (tableFilter != null) {
+                // Describe a single table in detail
+                val effectiveSchema = schemaFilter ?: defaultSchema(profile)
+                sb.append(describeTable(meta, effectiveSchema, tableFilter))
+            } else {
+                // List all tables in the schema
+                val effectiveSchema = schemaFilter ?: defaultSchema(profile)
+                val rs = meta.getTables(null, effectiveSchema, "%", arrayOf("TABLE", "VIEW"))
+                val tables = mutableListOf<Pair<String, String>>() // name to type
+                while (rs.next()) {
+                    tables.add(rs.getString("TABLE_NAME") to rs.getString("TABLE_TYPE"))
+                }
+                rs.close()
+
+                if (tables.isEmpty()) {
+                    sb.append("No tables found in schema '${effectiveSchema ?: "default"}'.\n")
+                } else {
+                    sb.append("**Tables** (${tables.size}):\n\n")
+                    tables.forEach { (name, type) ->
+                        sb.append("- `$name` ($type)\n")
+                    }
+                    sb.append(
+                        "\nUse `db_schema(profile=\"$profileId\", table=\"<name>\")` " +
+                            "to describe a specific table."
+                    )
+                }
+            }
+            sb.toString()
+        }
+
+        return result.fold(
+            onSuccess = { content ->
+                ToolResult(
+                    content = content,
+                    summary = "db_schema on '${profile.id}'" +
+                        (if (tableFilter != null) " table '$tableFilter'" else ""),
+                    tokenEstimate = TokenEstimator.estimate(content)
+                )
+            },
+            onFailure = { e -> error("Schema inspection failed on '${profile.id}': ${e.message}") }
+        )
+    }
+
+    // ----- private helpers -----
+
+    private fun defaultSchema(profile: com.workflow.orchestrator.agent.database.DatabaseProfile): String? {
+        return when (profile.dbType) {
+            com.workflow.orchestrator.agent.database.DbType.POSTGRESQL -> "public"
+            com.workflow.orchestrator.agent.database.DbType.MYSQL -> null  // use catalog instead
+            else -> null
+        }
+    }
+
+    private fun describeTable(
+        meta: java.sql.DatabaseMetaData,
+        schema: String?,
+        table: String
+    ): String {
+        val sb = StringBuilder()
+        sb.append("### `$table`\n\n")
+
+        // Columns
+        val cols = meta.getColumns(null, schema, table, "%")
+        val columnRows = mutableListOf<List<String>>()
+        while (cols.next()) {
+            columnRows.add(listOf(
+                cols.getString("COLUMN_NAME"),
+                cols.getString("TYPE_NAME"),
+                if (cols.getString("NULLABLE") == "1") "NULL" else "NOT NULL",
+                cols.getString("COLUMN_DEF") ?: ""
+            ))
+        }
+        cols.close()
+
+        sb.append("| Column | Type | Nullable | Default |\n")
+        sb.append("| --- | --- | --- | --- |\n")
+        columnRows.forEach { row -> sb.append("| ${row.joinToString(" | ")} |\n") }
+
+        // Primary keys
+        runCatching {
+            val pks = meta.getPrimaryKeys(null, schema, table)
+            val pkCols = mutableListOf<String>()
+            while (pks.next()) pkCols.add(pks.getString("COLUMN_NAME"))
+            pks.close()
+            if (pkCols.isNotEmpty()) {
+                sb.append("\n**Primary key:** ${pkCols.joinToString(", ")}\n")
+            }
+        }
+
+        // Foreign keys
+        runCatching {
+            val fks = meta.getImportedKeys(null, schema, table)
+            val fkLines = mutableListOf<String>()
+            while (fks.next()) {
+                fkLines.add(
+                    "`${fks.getString("FKCOLUMN_NAME")}` → " +
+                        "`${fks.getString("PKTABLE_NAME")}.${fks.getString("PKCOLUMN_NAME")}`"
+                )
+            }
+            fks.close()
+            if (fkLines.isNotEmpty()) {
+                sb.append("\n**Foreign keys:**\n")
+                fkLines.forEach { sb.append("- $it\n") }
+            }
+        }
+
+        return sb.toString()
+    }
+
+    private fun error(msg: String) = ToolResult(
+        content = "Error: $msg",
+        summary = "db_schema error: $msg",
+        tokenEstimate = TokenEstimator.estimate(msg),
+        isError = true
+    )
+}
