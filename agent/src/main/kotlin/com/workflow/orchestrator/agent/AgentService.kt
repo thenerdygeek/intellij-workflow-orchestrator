@@ -197,16 +197,8 @@ class AgentService(
             // Bamboo integration — single meta-tool replacing 18 individual bamboo_* tools
             register(BambooTool())
 
-            // SonarQube integration tools
-            register(SonarIssuesTool())
-            register(SonarQualityGateTool())
-            register(SonarCoverageTool())
-            register(SonarSearchProjectsTool())
-            register(SonarAnalysisTasksTool())
-            register(SonarBranchesTool())
-            register(SonarProjectMeasuresTool())
-            register(SonarSourceLinesTool())
-            register(SonarIssuesPagedTool())
+            // SonarQube integration — single meta-tool replacing 9 individual sonar_* tools
+            register(SonarTool())
 
             // Bitbucket integration tools
             register(BitbucketPrTool())

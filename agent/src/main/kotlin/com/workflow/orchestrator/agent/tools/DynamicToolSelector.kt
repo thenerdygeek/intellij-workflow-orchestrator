@@ -51,11 +51,7 @@ object DynamicToolSelector {
 
     private val BAMBOO_TOOL_NAMES = setOf("bamboo")
 
-    private val SONAR_TOOL_NAMES = setOf(
-        "sonar_issues", "sonar_quality_gate", "sonar_coverage",
-        "sonar_search_projects", "sonar_analysis_tasks", "sonar_branches",
-        "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged"
-    )
+    private val SONAR_TOOL_NAMES = setOf("sonar")
 
     private val BITBUCKET_TOOL_NAMES = setOf(
         "bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment",
