@@ -191,22 +191,8 @@ class AgentService(
             register(SpringBootEndpointsTool())
             register(SpringBeanGraphTool())
 
-            // Jira integration tools
-            register(JiraGetTicketTool())
-            register(JiraGetTransitionsTool())
-            register(JiraTransitionTool())
-            register(JiraCommentTool())
-            register(JiraGetCommentsTool())
-            register(JiraLogWorkTool())
-            register(JiraGetWorklogsTool())
-            register(JiraGetSprintsTool())
-            register(JiraGetLinkedPrsTool())
-            register(JiraGetBoardsTool())
-            register(JiraGetSprintIssuesTool())
-            register(JiraGetBoardIssuesTool())
-            register(JiraSearchIssuesTool())
-            register(JiraGetDevBranchesTool())
-            register(JiraStartWorkTool())
+            // Jira integration — single meta-tool replacing 15 individual jira_* tools
+            register(JiraTool())
 
             // Bamboo integration tools
             register(BambooBuildTool())

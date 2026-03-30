@@ -1,0 +1,336 @@
+package com.workflow.orchestrator.agent.tools.integration
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+/**
+ * Consolidated Jira meta-tool replacing 15 individual jira_* tools.
+ *
+ * Saves ~14,400 tokens per API call by collapsing all Jira operations into
+ * a single tool definition with an `action` discriminator parameter.
+ *
+ * Actions: get_ticket, get_transitions, transition, comment, get_comments,
+ *          log_work, get_worklogs, get_sprints, get_linked_prs, get_boards,
+ *          get_sprint_issues, get_board_issues, search_issues, get_dev_branches,
+ *          start_work
+ */
+class JiraTool : AgentTool {
+
+    override val name = "jira"
+
+    override val description = """Jira integration — tickets, sprints, boards, transitions, comments, worklogs, dev branches.
+Actions: get_ticket, get_transitions, transition, comment, get_comments, log_work, get_worklogs,
+get_sprints, get_linked_prs, get_boards, get_sprint_issues, get_board_issues, search_issues,
+get_dev_branches, start_work""".trimIndent()
+
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "action" to ParameterProperty(
+                type = "string",
+                description = "Operation to perform",
+                enum = listOf(
+                    "get_ticket", "get_transitions", "transition", "comment", "get_comments",
+                    "log_work", "get_worklogs", "get_sprints", "get_linked_prs", "get_boards",
+                    "get_sprint_issues", "get_board_issues", "search_issues", "get_dev_branches",
+                    "start_work"
+                )
+            ),
+            "key" to ParameterProperty(
+                type = "string",
+                description = "Jira issue key (e.g. PROJ-123) — for get_ticket, get_transitions, transition, comment, get_comments, log_work"
+            ),
+            "issue_key" to ParameterProperty(
+                type = "string",
+                description = "Jira issue key — for get_worklogs, start_work"
+            ),
+            "issue_id" to ParameterProperty(
+                type = "string",
+                description = "Jira issue ID or key — for get_linked_prs, get_dev_branches"
+            ),
+            "transition_id" to ParameterProperty(
+                type = "string",
+                description = "Transition ID — for transition (use get_transitions first)"
+            ),
+            "body" to ParameterProperty(
+                type = "string",
+                description = "Comment body — for comment"
+            ),
+            "comment" to ParameterProperty(
+                type = "string",
+                description = "Optional comment — for transition, log_work"
+            ),
+            "time_spent" to ParameterProperty(
+                type = "string",
+                description = "Time in Jira format: '2h', '30m', '1h 30m' — for log_work"
+            ),
+            "board_id" to ParameterProperty(
+                type = "string",
+                description = "Board ID — for get_sprints, get_boards (optional filter), get_board_issues"
+            ),
+            "sprint_id" to ParameterProperty(
+                type = "string",
+                description = "Sprint ID — for get_sprint_issues"
+            ),
+            "type" to ParameterProperty(
+                type = "string",
+                description = "Board type filter: 'scrum' or 'kanban' — for get_boards"
+            ),
+            "name_filter" to ParameterProperty(
+                type = "string",
+                description = "Name filter — for get_boards"
+            ),
+            "text" to ParameterProperty(
+                type = "string",
+                description = "Search text — for search_issues"
+            ),
+            "max_results" to ParameterProperty(
+                type = "string",
+                description = "Max results (default 20) — for search_issues"
+            ),
+            "branch_name" to ParameterProperty(
+                type = "string",
+                description = "Branch name to create — for start_work"
+            ),
+            "source_branch" to ParameterProperty(
+                type = "string",
+                description = "Source branch — for start_work"
+            ),
+            "description" to ParameterProperty(
+                type = "string",
+                description = "Brief description of this action shown to user in approval dialog — recommended for transition, comment, start_work"
+            )
+        ),
+        required = listOf("action")
+    )
+
+    override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ORCHESTRATOR)
+
+    override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        val action = params["action"]?.jsonPrimitive?.content
+            ?: return ToolResult(
+                "Error: 'action' parameter required",
+                "Error: missing action",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
+        val service = ServiceLookup.jira(project)
+            ?: return ServiceLookup.notConfigured("Jira")
+
+        return when (action) {
+            "get_ticket" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                ToolValidation.validateJiraKey(key)?.let { return it }
+                service.getTicket(key).toAgentToolResult()
+            }
+
+            "get_transitions" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                ToolValidation.validateJiraKey(key)?.let { return it }
+                service.getTransitions(key).toAgentToolResult()
+            }
+
+            "transition" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                val transitionId = params["transition_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("transition_id")
+                val comment = params["comment"]?.jsonPrimitive?.content
+                ToolValidation.validateJiraKey(key)?.let { return it }
+
+                // Pre-flight: verify ticket exists and capture current status
+                val ticketResult = service.getTicket(key)
+                if (ticketResult.isError) {
+                    return ToolResult(
+                        content = "Cannot transition: ticket $key not found.\n${ticketResult.summary}",
+                        summary = "Ticket $key not found",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
+                val currentStatus = ticketResult.data.status
+
+                // Pre-flight: verify transition is available from current state
+                val transitionsResult = service.getTransitions(key)
+                if (!transitionsResult.isError) {
+                    val match = transitionsResult.data.find { it.id == transitionId }
+                    if (match == null) {
+                        val availableList = transitionsResult.data.joinToString("\n") { "  ID ${it.id}: ${it.name} → ${it.toStatus}" }
+                        val content = "Cannot transition $key: transition ID '$transitionId' is not available from current status '$currentStatus'.\n\nAvailable transitions:\n$availableList"
+                        return ToolResult(
+                            content = content,
+                            summary = "Invalid transition ID '$transitionId' from status '$currentStatus'",
+                            tokenEstimate = TokenEstimator.estimate(content),
+                            isError = true
+                        )
+                    }
+                }
+
+                val result = service.transition(key, transitionId, comment = comment)
+                if (result.isError) {
+                    result.toAgentToolResult()
+                } else {
+                    ToolResult(
+                        content = "Transitioned $key from '$currentStatus'. ${result.summary}",
+                        summary = "Transitioned $key",
+                        tokenEstimate = TokenEstimator.estimate(result.summary)
+                    )
+                }
+            }
+
+            "comment" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                val body = params["body"]?.jsonPrimitive?.content
+                    ?: return missingParam("body")
+                ToolValidation.validateJiraKey(key)?.let { return it }
+                ToolValidation.validateNotBlank(body, "body")?.let { return it }
+
+                // Pre-flight: verify ticket exists
+                val ticketResult = service.getTicket(key)
+                if (ticketResult.isError) {
+                    return ToolResult(
+                        content = "Cannot add comment: ticket $key not found.\n${ticketResult.summary}",
+                        summary = "Ticket $key not found",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
+                service.addComment(key, body).toAgentToolResult()
+            }
+
+            "get_comments" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                ToolValidation.validateJiraKey(key)?.let { return it }
+                service.getComments(key).toAgentToolResult()
+            }
+
+            "log_work" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                val timeSpent = params["time_spent"]?.jsonPrimitive?.content
+                    ?: return missingParam("time_spent")
+                val comment = params["comment"]?.jsonPrimitive?.content
+                ToolValidation.validateJiraKey(key)?.let { return it }
+                ToolValidation.validateTimeSpent(timeSpent)?.let { return it }
+
+                // Pre-flight: verify ticket exists
+                val ticketResult = service.getTicket(key)
+                if (ticketResult.isError) {
+                    return ToolResult(
+                        content = "Cannot log work: ticket $key not found.\n${ticketResult.summary}",
+                        summary = "Ticket $key not found",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
+                service.logWork(key, timeSpent, comment).toAgentToolResult()
+            }
+
+            "get_worklogs" -> {
+                val issueKey = params["issue_key"]?.jsonPrimitive?.content
+                    ?: return missingParam("issue_key")
+                ToolValidation.validateJiraKey(issueKey)?.let { return it }
+                service.getWorklogs(issueKey).toAgentToolResult()
+            }
+
+            "get_sprints" -> {
+                val boardId = params["board_id"]?.jsonPrimitive?.content?.toIntOrNull()
+                    ?: return ToolResult(
+                        "Error: 'board_id' must be a valid integer",
+                        "Error: invalid board_id",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                service.getAvailableSprints(boardId).toAgentToolResult()
+            }
+
+            "get_linked_prs" -> {
+                val issueId = params["issue_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("issue_id")
+                ToolValidation.validateNotBlank(issueId, "issue_id")?.let { return it }
+                service.getLinkedPullRequests(issueId).toAgentToolResult()
+            }
+
+            "get_boards" -> {
+                val type = params["type"]?.jsonPrimitive?.content
+                val nameFilter = params["name_filter"]?.jsonPrimitive?.content
+                service.getBoards(type, nameFilter).toAgentToolResult()
+            }
+
+            "get_sprint_issues" -> {
+                val sprintId = params["sprint_id"]?.jsonPrimitive?.content?.toIntOrNull()
+                    ?: return ToolResult(
+                        "Error: 'sprint_id' must be a valid integer",
+                        "Error: invalid sprint_id",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                service.getSprintIssues(sprintId).toAgentToolResult()
+            }
+
+            "get_board_issues" -> {
+                val boardId = params["board_id"]?.jsonPrimitive?.content?.toIntOrNull()
+                    ?: return ToolResult(
+                        "Error: 'board_id' must be a valid integer",
+                        "Error: invalid board_id",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                service.getBoardIssues(boardId).toAgentToolResult()
+            }
+
+            "search_issues" -> {
+                val text = params["text"]?.jsonPrimitive?.content
+                    ?: return missingParam("text")
+                val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
+                ToolValidation.validateNotBlank(text, "text")?.let { return it }
+                service.searchIssues(text, maxResults).toAgentToolResult()
+            }
+
+            "get_dev_branches" -> {
+                val issueId = params["issue_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("issue_id")
+                ToolValidation.validateNotBlank(issueId, "issue_id")?.let { return it }
+                service.getDevStatusBranches(issueId).toAgentToolResult()
+            }
+
+            "start_work" -> {
+                val issueKey = params["issue_key"]?.jsonPrimitive?.content
+                    ?: return missingParam("issue_key")
+                val branchName = params["branch_name"]?.jsonPrimitive?.content
+                    ?: return missingParam("branch_name")
+                val sourceBranch = params["source_branch"]?.jsonPrimitive?.content
+                    ?: return missingParam("source_branch")
+                ToolValidation.validateJiraKey(issueKey)?.let { return it }
+                ToolValidation.validateNotBlank(branchName, "branch_name")?.let { return it }
+                ToolValidation.validateNotBlank(sourceBranch, "source_branch")?.let { return it }
+                service.startWork(issueKey, branchName, sourceBranch).toAgentToolResult()
+            }
+
+            else -> ToolResult(
+                content = "Unknown action '$action'. Valid actions: get_ticket, get_transitions, transition, comment, get_comments, log_work, get_worklogs, get_sprints, get_linked_prs, get_boards, get_sprint_issues, get_board_issues, search_issues, get_dev_branches, start_work",
+                summary = "Unknown action '$action'",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+    }
+
+    private fun missingParam(name: String): ToolResult = ToolResult(
+        content = "Error: '$name' parameter required",
+        summary = "Error: missing $name",
+        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true
+    )
+}

@@ -47,12 +47,7 @@ object DynamicToolSelector {
 
     // --- Tool name sets for each integration ---
 
-    private val JIRA_TOOL_NAMES = setOf(
-        "jira_get_ticket", "jira_get_transitions", "jira_transition", "jira_comment",
-        "jira_get_comments", "jira_log_work", "jira_get_worklogs", "jira_get_sprints",
-        "jira_get_linked_prs", "jira_get_boards", "jira_get_sprint_issues",
-        "jira_get_board_issues", "jira_search_issues", "jira_get_dev_branches", "jira_start_work"
-    )
+    private val JIRA_TOOL_NAMES = setOf("jira")
 
     private val BAMBOO_TOOL_NAMES = setOf(
         "bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build",
