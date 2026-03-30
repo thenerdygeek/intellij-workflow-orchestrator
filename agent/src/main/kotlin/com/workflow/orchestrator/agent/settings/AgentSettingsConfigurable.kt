@@ -52,6 +52,7 @@ class AgentSettingsConfigurable(
     private var approvalRequiredForEdits = settings.state.approvalRequiredForEdits
     private var tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
     private var showDebugLog = settings.state.showDebugLog
+    private var powershellEnabled = settings.state.powershellEnabled
 
     // Model dropdown state
     private var modelComboBox: JComboBox<ModelItem>? = null
@@ -143,6 +144,11 @@ class AgentSettingsConfigurable(
                     spinner(0..100, 5)
                         .bindIntValue(::tokenBudgetWarningPercent)
                         .comment("Show warning when token usage exceeds this percentage")
+                }
+                row {
+                    checkBox("Allow PowerShell in run_command tool")
+                        .bindSelected(::powershellEnabled)
+                        .comment("When disabled, the agent cannot use PowerShell — only bash and cmd are available")
                 }
             }
             group("Advanced") {
@@ -388,6 +394,7 @@ class AgentSettingsConfigurable(
         settings.state.approvalRequiredForEdits = approvalRequiredForEdits
         settings.state.tokenBudgetWarningPercent = tokenBudgetWarningPercent
         settings.state.showDebugLog = showDebugLog
+        settings.state.powershellEnabled = powershellEnabled
 
         // Save database profiles
         val profiles = (0 until dbProfileModel.size).map { dbProfileModel.getElementAt(it) }
@@ -403,6 +410,7 @@ class AgentSettingsConfigurable(
         approvalRequiredForEdits = settings.state.approvalRequiredForEdits
         tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
         showDebugLog = settings.state.showDebugLog
+        powershellEnabled = settings.state.powershellEnabled
         dialogPanel?.reset()
 
         // Reload database profiles from saved state

@@ -318,7 +318,8 @@ class ConversationSession private constructor(
                 agentDescriptions = agentDescriptions.ifBlank { null },
                 guardrailsContext = guardrailsContext,
                 planMode = planMode,
-                repoContext = repoContext
+                repoContext = repoContext,
+                project = project
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
 

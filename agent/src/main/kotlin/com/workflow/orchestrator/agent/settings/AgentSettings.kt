@@ -32,6 +32,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var strictInteractiveMode by property(false)
         var maxStdinPerProcess by property(10)
         var askUserInputTimeoutMinutes by property(5)
+        var powershellEnabled by property(true)
     }
 
     companion object {

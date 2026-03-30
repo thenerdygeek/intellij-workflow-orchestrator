@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.orchestrator
 
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
@@ -49,7 +50,8 @@ class PromptAssembler(
         repoContext: String? = null,
         guardrailsContext: String? = null,
         activeTools: Collection<AgentTool> = emptyList(),
-        hasJcefUi: Boolean = true
+        hasJcefUi: Boolean = true,
+        project: Project? = null
     ): String {
         val sections = mutableListOf<String>()
 
@@ -60,7 +62,7 @@ class PromptAssembler(
 
         // === CONTEXT ZONE (reference data) ===
         if (projectName != null || frameworkInfo != null) {
-            val ctx = buildProjectContext(projectName, projectPath, frameworkInfo)
+            val ctx = buildProjectContext(projectName, projectPath, frameworkInfo, project)
             sections.add("<project_context>\n$ctx\n</project_context>")
         }
         if (!repoContext.isNullOrBlank()) {
@@ -158,7 +160,7 @@ class PromptAssembler(
         return sections.joinToString("\n\n")
     }
 
-    private fun buildProjectContext(name: String?, path: String?, framework: String?): String {
+    private fun buildProjectContext(name: String?, path: String?, framework: String?, project: Project? = null): String {
         val parts = mutableListOf<String>()
         name?.let { parts.add("Project: $it") }
         path?.let { parts.add("Path: $it") }
@@ -166,7 +168,7 @@ class PromptAssembler(
         val osName = System.getProperty("os.name")
         parts.add("OS: $osName")
         parts.add("Java: ${System.getProperty("java.version")}")
-        parts.add("Shell: ${detectShellInfo()}")
+        parts.add("Shell: ${detectShellInfo(project)}")
         return parts.joinToString("\n")
     }
 
@@ -219,8 +221,8 @@ class PromptAssembler(
 
     companion object {
         /** Detect available shells and format for the system prompt. */
-        fun detectShellInfo(): String {
-            val shells = RunCommandTool.detectAvailableShells()
+        fun detectShellInfo(project: Project? = null): String {
+            val shells = RunCommandTool.detectAvailableShells(project)
             val shellDescriptions = shells.map { shell ->
                 when (shell) {
                     "bash" -> "bash (Unix/Git Bash syntax: ls, grep, cat, find, mkdir, sed, awk)"

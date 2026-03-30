@@ -163,14 +163,18 @@ class RunCommandTool : AgentTool {
         /**
          * Detect available shells on the current platform.
          * Returns a list of shell names (bash, cmd, powershell) that can be used.
+         * Respects the powershellEnabled setting — when disabled, powershell is excluded.
          */
-        fun detectAvailableShells(): List<String> {
+        fun detectAvailableShells(project: Project? = null): List<String> {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
             if (!isWindows) return listOf("bash")
             val shells = mutableListOf<String>()
             if (findGitBash() != null) shells.add("bash")
             shells.add("cmd") // always available on Windows
-            if (findPowerShell() != null) shells.add("powershell")
+            val powershellAllowed = project?.let {
+                try { com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(it).state.powershellEnabled } catch (_: Exception) { true }
+            } ?: true
+            if (powershellAllowed && findPowerShell() != null) shells.add("powershell")
             return shells
         }
 
@@ -378,6 +382,18 @@ class RunCommandTool : AgentTool {
                     }
                 }
                 "powershell" -> {
+                    // Check if PowerShell is enabled in settings
+                    val powershellAllowed = try {
+                        com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state.powershellEnabled
+                    } catch (_: Exception) { true }
+                    if (!powershellAllowed) {
+                        return ToolResult(
+                            "Error: PowerShell is disabled in agent settings. Use shell='cmd' or shell='bash' instead.",
+                            "Error: powershell disabled",
+                            ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                    }
                     if (isWindows) {
                         // Try pwsh (PowerShell 7+) first, then fall back to powershell.exe (Windows PowerShell 5.1)
                         val pwsh = findPowerShell()

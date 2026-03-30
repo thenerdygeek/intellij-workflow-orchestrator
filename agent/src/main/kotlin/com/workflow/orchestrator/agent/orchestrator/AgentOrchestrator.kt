@@ -229,7 +229,8 @@ class AgentOrchestrator(
                 projectPath = project.basePath,
                 repoMapContext = repoMap.ifBlank { null },
                 guardrailsContext = guardrailsContext,
-                repoContext = repoContext
+                repoContext = repoContext,
+                project = project
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
             val reservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
