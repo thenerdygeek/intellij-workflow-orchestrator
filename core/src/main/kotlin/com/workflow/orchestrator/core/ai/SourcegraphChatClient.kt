@@ -362,6 +362,19 @@ class SourcegraphChatClient(
                     line = reader.readLine()
                 }
 
+                // Detect streaming drop: Sourcegraph occasionally sends finish_reason=tool_calls
+                // but omits the tool_call deltas entirely, leaving us with content-only "Using tools."
+                // and an empty toolCallBuilders map. Fall back to non-streaming to recover the tool calls.
+                if (finishReason == "tool_calls" && toolCallBuilders.isEmpty()) {
+                    log.warn("[Agent:API] Stream finished with finish_reason=tool_calls but no tool_call deltas received — falling back to non-streaming to recover tool calls")
+                    return@withContext sendMessage(
+                        messages = messages,
+                        tools = tools,
+                        maxTokens = maxTokens,
+                        temperature = temperature
+                    )
+                }
+
                 val toolCalls = if (toolCallBuilders.isNotEmpty()) {
                     toolCallBuilders.entries
                         .sortedBy { it.key }
