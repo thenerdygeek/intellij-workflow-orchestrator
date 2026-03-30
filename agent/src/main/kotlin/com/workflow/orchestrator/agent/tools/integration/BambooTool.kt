@@ -36,7 +36,7 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enum = listOf(
+                enumValues = listOf(
                     "build_status", "get_build", "trigger_build", "get_build_log", "get_test_results",
                     "stop_build", "cancel_build", "get_artifacts", "recent_builds", "get_plans",
                     "get_project_plans", "search_plans", "get_plan_branches", "get_running_builds",

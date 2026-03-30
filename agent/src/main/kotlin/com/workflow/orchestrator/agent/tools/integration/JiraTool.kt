@@ -35,7 +35,7 @@ get_dev_branches, start_work""".trimIndent()
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enum = listOf(
+                enumValues = listOf(
                     "get_ticket", "get_transitions", "transition", "comment", "get_comments",
                     "log_work", "get_worklogs", "get_sprints", "get_linked_prs", "get_boards",
                     "get_sprint_issues", "get_board_issues", "search_issues", "get_dev_branches",
