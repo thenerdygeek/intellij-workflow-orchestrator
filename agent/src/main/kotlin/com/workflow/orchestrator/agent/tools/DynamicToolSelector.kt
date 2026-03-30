@@ -49,15 +49,7 @@ object DynamicToolSelector {
 
     private val JIRA_TOOL_NAMES = setOf("jira")
 
-    private val BAMBOO_TOOL_NAMES = setOf(
-        "bamboo_build_status", "bamboo_get_build", "bamboo_trigger_build",
-        "bamboo_get_build_log", "bamboo_get_test_results", "bamboo_stop_build",
-        "bamboo_cancel_build", "bamboo_get_artifacts", "bamboo_recent_builds",
-        "bamboo_get_plans", "bamboo_get_plan_branches", "bamboo_get_running_builds",
-        "bamboo_get_build_variables", "bamboo_get_plan_variables",
-        "bamboo_get_project_plans", "bamboo_search_plans",
-        "bamboo_rerun_failed_jobs", "bamboo_trigger_stage"
-    )
+    private val BAMBOO_TOOL_NAMES = setOf("bamboo")
 
     private val SONAR_TOOL_NAMES = setOf(
         "sonar_issues", "sonar_quality_gate", "sonar_coverage",

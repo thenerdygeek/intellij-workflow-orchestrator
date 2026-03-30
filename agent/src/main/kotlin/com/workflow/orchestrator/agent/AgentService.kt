@@ -194,25 +194,8 @@ class AgentService(
             // Jira integration — single meta-tool replacing 15 individual jira_* tools
             register(JiraTool())
 
-            // Bamboo integration tools
-            register(BambooBuildTool())
-            register(BambooGetBuildTool())
-            register(BambooTriggerBuildTool())
-            register(BambooGetBuildLogTool())
-            register(BambooGetTestResultsTool())
-            register(BambooStopBuildTool())
-            register(BambooCancelBuildTool())
-            register(BambooGetArtifactsTool())
-            register(BambooRecentBuildsTool())
-            register(BambooGetPlansTool())
-            register(BambooGetProjectPlansTool())
-            register(BambooSearchPlansTool())
-            register(BambooGetPlanBranchesTool())
-            register(BambooGetRunningBuildsTool())
-            register(BambooGetBuildVariablesTool())
-            register(BambooGetPlanVariablesTool())
-            register(BambooRerunFailedJobsTool())
-            register(BambooTriggerStageTool())
+            // Bamboo integration — single meta-tool replacing 18 individual bamboo_* tools
+            register(BambooTool())
 
             // SonarQube integration tools
             register(SonarIssuesTool())
