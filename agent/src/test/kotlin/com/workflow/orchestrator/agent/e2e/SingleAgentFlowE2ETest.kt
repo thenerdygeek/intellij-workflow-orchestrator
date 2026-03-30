@@ -155,8 +155,9 @@ class SingleAgentFlowE2ETest {
         assertTrue(progressUpdates.any { it.step.contains("Used tool: read_file") })
         assertTrue(progressUpdates.any { it.step.contains("Used tool: edit_file") })
 
-        // Verify HTTP requests (3 core + nudge + gatekeeper + optional self-correction verification)
-        assertTrue(server.requestCount in 3..10, "Expected 3-10 HTTP requests, got ${server.requestCount}")
+        // Verify HTTP requests: 2 tool calls + up to 4 nudges to call attempt_completion
+        // + gatekeeper passes (with possible self-correction blocks) = 7-20 requests
+        assertTrue(server.requestCount in 3..20, "Expected 3-20 HTTP requests, got ${server.requestCount}")
     }
 
     // ===== TEST 2: Error recovery — tool fails, agent adapts =====
@@ -190,8 +191,8 @@ class SingleAgentFlowE2ETest {
         // The file should be modified despite the first edit failing
         assertEquals("val timeout = 120", testFile.readText())
 
-        // 4 core + nudge + gatekeeper + optional self-correction verification
-        assertTrue(server.requestCount in 4..10, "Expected 4-10 HTTP requests, got ${server.requestCount}")
+        // 3 tool calls + up to 4 nudges + gatekeeper passes (with possible self-correction blocks)
+        assertTrue(server.requestCount in 4..20, "Expected 4-20 HTTP requests, got ${server.requestCount}")
     }
 
     // ===== TEST 3: Approval rejection — agent handles rejected tool =====

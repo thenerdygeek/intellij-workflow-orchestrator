@@ -125,6 +125,8 @@ class SingleAgentSession(
         private const val MAX_BACKOFF_MS = 30000L
         /** Max consecutive malformed tool call retries before forcing text-only. */
         private const val MAX_MALFORMED_RETRIES = 3
+        /** Max consecutive no-tool-call nudges before switching to forceTextOnly and allowing implicit completion. */
+        private const val MAX_NO_TOOL_NUDGES = 4
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think", "attempt_completion")
@@ -742,21 +744,35 @@ class SingleAgentSession(
             // No-tool-call nudge / implicit completion tracking
             consecutiveNoToolResponses++
 
-            // When forceTextOnly is active (iteration 95%+ or malformed retries exhausted),
-            // tools are disabled — skip the nudge and go straight to gatekeeper.
-            if (!forceTextOnly && consecutiveNoToolResponses == 1 && iteration < maxIterations - 1) {
+            if (!forceTextOnly) {
+                // Normal mode: always require explicit attempt_completion.
+                // Implicit completion is NOT allowed — keep nudging with escalating urgency.
                 metrics.nudgeCount++
-                contextManager.addMessage(ChatMessage(
-                    role = "user",
-                    content = "You responded without calling any tools. If you've completed the task, " +
+                val nudgeMessage = if (consecutiveNoToolResponses == 1) {
+                    "You responded without calling any tools. If you've completed the task, " +
                         "call attempt_completion with a summary. If you have more work to do, " +
                         "make your next tool call now."
-                ))
-                onDebugLog?.invoke("warn", "nudge", "No tool calls — nudging to use attempt_completion or continue", null)
-                return null // continue loop
+                } else if (consecutiveNoToolResponses <= MAX_NO_TOOL_NUDGES) {
+                    "You MUST call attempt_completion to finish the task. Do NOT respond with only text. " +
+                        "Call attempt_completion now with your result summary, or continue working with tool calls. " +
+                        "(Reminder $consecutiveNoToolResponses/$MAX_NO_TOOL_NUDGES)"
+                } else {
+                    // After MAX_NO_TOOL_NUDGES, switch to forceTextOnly to allow implicit completion
+                    LOG.warn("SingleAgentSession: $MAX_NO_TOOL_NUDGES consecutive no-tool responses — switching to forceTextOnly")
+                    onDebugLog?.invoke("warn", "force_text", "$MAX_NO_TOOL_NUDGES no-tool responses — allowing implicit completion", null)
+                    forceTextOnly = true
+                    // Fall through to the forceTextOnly gatekeeper path below
+                    null
+                }
+                if (nudgeMessage != null) {
+                    contextManager.addMessage(ChatMessage(role = "user", content = nudgeMessage))
+                    onDebugLog?.invoke("warn", "nudge", "No tool calls (×$consecutiveNoToolResponses) — nudging to use attempt_completion", null)
+                    return null // continue loop
+                }
             }
 
-            // Second consecutive no-tool response or near max iterations: run gatekeeper
+            // forceTextOnly mode: tools are disabled (malformed retries exhausted, iteration 95%+,
+            // or MAX_NO_TOOL_NUDGES exceeded). Allow implicit completion via gatekeeper.
             val gateBlock = completionGatekeeper?.checkCompletion()
             if (gateBlock != null && iteration < maxIterations - 1) {
                 val blockedGate = completionGatekeeper?.lastBlockedGate ?: "unknown"
@@ -769,7 +785,7 @@ class SingleAgentSession(
                 metrics.forcedCompletionCount++
             }
 
-            // All gates passed (or no gatekeeper) — accept completion
+            // All gates passed (or no gatekeeper) — accept implicit completion (forceTextOnly mode only)
             // Validate output for sensitive data and redact if needed
             val securityIssues = OutputValidator.validate(content)
             val sanitizedContent = if (securityIssues.isNotEmpty()) {

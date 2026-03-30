@@ -143,47 +143,108 @@ class GetRunOutputTool : AgentTool {
      *
      * For regular consoles: executionConsole is directly a ConsoleViewImpl.
      *
-     * Uses performWhenNoDeferredOutput to ensure all buffered text is flushed before reading.
+     * Follows the delegation chain (getDelegate → getConsole) to handle IntelliJ Ultimate
+     * wrappers like JavaConsoleWithProfilerWidget.
+     *
+     * Forces component initialization via getComponent() to ensure the lazy editor is created
+     * before reading — without this, deferred text has nowhere to flush and the document is null.
      */
     private suspend fun extractConsoleText(descriptor: RunContentDescriptor): String? {
         val console = descriptor.executionConsole ?: return null
 
-        // Case 1: Direct ConsoleViewImpl (regular run configurations)
-        if (console is com.intellij.execution.impl.ConsoleViewImpl) {
-            return readConsoleViewText(console)
+        // Follow the delegation chain to find the innermost ConsoleViewImpl.
+        // IntelliJ Ultimate wraps consoles: e.g. JavaConsoleWithProfilerWidget → BaseTestsOutputConsoleView → ConsoleViewImpl.
+        val unwrapped = unwrapToConsoleView(console)
+        if (unwrapped != null) {
+            val text = readConsoleViewText(unwrapped)
+            if (!text.isNullOrBlank()) return text
         }
 
-        // Case 2: BaseTestsOutputConsoleView (test runs) — use public getConsole()
-        // SMTRunnerConsoleView extends BaseTestsOutputConsoleView which has public getConsole()
+        // Direct check if the console itself is a ConsoleViewImpl (regular run configurations)
+        if (console is com.intellij.execution.impl.ConsoleViewImpl) {
+            val text = readConsoleViewText(console)
+            if (!text.isNullOrBlank()) return text
+        }
+
+        // BaseTestsOutputConsoleView (test runs) — use public getConsole()
         if (console is com.intellij.execution.testframework.ui.BaseTestsOutputConsoleView) {
             val innerConsole = console.console
             if (innerConsole is com.intellij.execution.impl.ConsoleViewImpl) {
-                return readConsoleViewText(innerConsole)
+                val text = readConsoleViewText(innerConsole)
+                if (!text.isNullOrBlank()) return text
             }
-            // Inner console might be another ConsoleView type — try editor fallback
-            return readViaEditor(innerConsole)
+            val text = readViaEditor(innerConsole)
+            if (!text.isNullOrBlank()) return text
         }
 
-        // Case 3: Other wrapper consoles — try getConsole() via reflection
+        // Reflection fallback: try getConsole() on unknown wrapper types
         try {
             val getConsole = console.javaClass.getMethod("getConsole")
             val innerConsole = getConsole.invoke(console)
             if (innerConsole is com.intellij.execution.impl.ConsoleViewImpl) {
-                return readConsoleViewText(innerConsole)
+                val text = readConsoleViewText(innerConsole)
+                if (!text.isNullOrBlank()) return text
             }
             if (innerConsole != null) {
-                return readViaEditor(innerConsole)
+                val text = readViaEditor(innerConsole)
+                if (!text.isNullOrBlank()) return text
             }
         } catch (_: Exception) {}
 
-        // Case 4: Try editor directly on the console itself
+        // Last resort: try editor directly on the original console
         return readViaEditor(console)
     }
 
-    /** Read text from a ConsoleViewImpl, ensuring deferred text is flushed first. */
+    /**
+     * Follow the delegation chain (max 5 levels) to find the innermost ConsoleViewImpl.
+     * Handles: JavaConsoleWithProfilerWidget (getDelegate) → BaseTestsOutputConsoleView (getConsole) → ConsoleViewImpl.
+     */
+    private fun unwrapToConsoleView(console: Any): com.intellij.execution.impl.ConsoleViewImpl? {
+        var current: Any? = console
+        repeat(MAX_UNWRAP_DEPTH) {
+            if (current is com.intellij.execution.impl.ConsoleViewImpl) return current
+
+            // Try getDelegate() — ConsoleViewWithDelegate (IntelliJ Ultimate profiler wrapper)
+            val delegate = tryReflectiveCall(current, "getDelegate")
+            if (delegate is com.intellij.execution.impl.ConsoleViewImpl) return delegate
+            if (delegate != null && delegate !== current) {
+                current = delegate
+                return@repeat
+            }
+
+            // Try getConsole() — BaseTestsOutputConsoleView and similar wrappers
+            val inner = tryReflectiveCall(current, "getConsole")
+            if (inner is com.intellij.execution.impl.ConsoleViewImpl) return inner
+            if (inner != null && inner !== current) {
+                current = inner
+                return@repeat
+            }
+
+            return null // no more wrappers to unwrap
+        }
+        return current as? com.intellij.execution.impl.ConsoleViewImpl
+    }
+
+    private fun tryReflectiveCall(target: Any?, methodName: String): Any? {
+        return try {
+            target?.javaClass?.getMethod(methodName)?.invoke(target)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Read text from a ConsoleViewImpl, ensuring deferred text is flushed first.
+     * Forces component initialization to create the lazy editor — without this,
+     * the editor can be null even when text has been printed to the console.
+     */
     private suspend fun readConsoleViewText(console: com.intellij.execution.impl.ConsoleViewImpl): String? {
         return try {
             withContext(Dispatchers.EDT) {
+                // Force lazy editor creation — ConsoleViewImpl creates its editor
+                // in getComponent(). Without this, editor is null and flushDeferredText
+                // has nowhere to write, causing "empty output" even when text is visible.
+                console.component
                 console.flushDeferredText()
                 console.editor?.document?.text
             }
@@ -194,6 +255,8 @@ class GetRunOutputTool : AgentTool {
     private suspend fun readViaEditor(console: Any): String? {
         return try {
             withContext(Dispatchers.EDT) {
+                // Force component initialization if possible
+                try { console.javaClass.getMethod("getComponent").invoke(console) } catch (_: Exception) {}
                 val editorMethod = console.javaClass.getMethod("getEditor")
                 val editor = editorMethod.invoke(console) as? com.intellij.openapi.editor.Editor
                 editor?.document?.text
@@ -205,5 +268,6 @@ class GetRunOutputTool : AgentTool {
         private const val DEFAULT_LINES = 200
         private const val MAX_LINES = 1000
         private const val TOKEN_CAP_CHARS = 12000 // ~3000 tokens
+        private const val MAX_UNWRAP_DEPTH = 5
     }
 }
