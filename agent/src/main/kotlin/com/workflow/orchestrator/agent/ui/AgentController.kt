@@ -1189,10 +1189,12 @@ class AgentController(
                     LOG.info("AgentController: session trace at $tracesPath")
                     dashboard.appendStatus("Debug trace saved. View via notification or at: $tracesPath", RichStreamingPanel.StatusType.INFO)
                 }
-                // Show retry button if there was a user message to retry
+                // Show retry button with the original user message (skip internal nudges/injected messages)
                 session?.let { s ->
                     val messages = try { s.contextManager.getMessages() } catch (_: Exception) { emptyList() }
-                    val lastUserMsg = messages.lastOrNull { it.role == "user" }?.content
+                    val lastUserMsg = messages.lastOrNull { msg ->
+                        msg.role == "user" && !isInternalNudge(msg.content)
+                    }?.content
                     if (!lastUserMsg.isNullOrBlank()) {
                         dashboard.showRetryButton(lastUserMsg)
                     }
@@ -1524,6 +1526,18 @@ class AgentController(
     /**
      * Show a notification with action to view the trace file.
      */
+    /** Check if a message is an internally-injected nudge/warning (not an actual user message). */
+    private fun isInternalNudge(content: String?): Boolean {
+        if (content == null) return false
+        return content.startsWith("You responded without calling any tools") ||
+            content.startsWith("You MUST call attempt_completion") ||
+            content.startsWith("IMPORTANT: Your last") ||
+            content.startsWith("Your previous response indicated tool calls") ||
+            content.startsWith("<system_warning>") ||
+            content.startsWith("<backpressure") ||
+            content.startsWith("<self_correction")
+    }
+
     private fun showFailureNotification(error: String) {
         try {
             val group = NotificationGroupManager.getInstance().getNotificationGroup("workflow.agent")
