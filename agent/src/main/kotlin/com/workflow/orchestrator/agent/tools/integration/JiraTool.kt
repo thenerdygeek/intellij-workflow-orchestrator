@@ -159,7 +159,9 @@ get_dev_branches, start_work""".trimIndent()
                 }
                 val currentStatus = ticketResult.data.status
 
-                // Pre-flight: verify transition is available from current state
+                // Best-effort pre-flight: verify transition is available from current state.
+                // If getTransitions() itself fails (network/auth), we skip this check and let
+                // service.transition() handle the error with a better message from the API.
                 val transitionsResult = service.getTransitions(key)
                 if (!transitionsResult.isError) {
                     val match = transitionsResult.data.find { it.id == transitionId }
@@ -179,10 +181,11 @@ get_dev_branches, start_work""".trimIndent()
                 if (result.isError) {
                     result.toAgentToolResult()
                 } else {
+                    val content = "Transitioned $key from '$currentStatus'. ${result.summary}"
                     ToolResult(
-                        content = "Transitioned $key from '$currentStatus'. ${result.summary}",
+                        content = content,
                         summary = "Transitioned $key",
-                        tokenEstimate = TokenEstimator.estimate(result.summary)
+                        tokenEstimate = TokenEstimator.estimate(content)
                     )
                 }
             }
@@ -238,20 +241,18 @@ get_dev_branches, start_work""".trimIndent()
             }
 
             "get_worklogs" -> {
-                val issueKey = params["issue_key"]?.jsonPrimitive?.content
-                    ?: return missingParam("issue_key")
+                val issueKey = params["key"]?.jsonPrimitive?.content
+                    ?: params["issue_key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
                 ToolValidation.validateJiraKey(issueKey)?.let { return it }
                 service.getWorklogs(issueKey).toAgentToolResult()
             }
 
             "get_sprints" -> {
-                val boardId = params["board_id"]?.jsonPrimitive?.content?.toIntOrNull()
-                    ?: return ToolResult(
-                        "Error: 'board_id' must be a valid integer",
-                        "Error: invalid board_id",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
+                val boardIdStr = params["board_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("board_id")
+                val boardId = boardIdStr.toIntOrNull()
+                    ?: return ToolResult("Error: 'board_id' must be an integer, got '$boardIdStr'", "Error: invalid board_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 service.getAvailableSprints(boardId).toAgentToolResult()
             }
 
@@ -269,24 +270,18 @@ get_dev_branches, start_work""".trimIndent()
             }
 
             "get_sprint_issues" -> {
-                val sprintId = params["sprint_id"]?.jsonPrimitive?.content?.toIntOrNull()
-                    ?: return ToolResult(
-                        "Error: 'sprint_id' must be a valid integer",
-                        "Error: invalid sprint_id",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
+                val sprintIdStr = params["sprint_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("sprint_id")
+                val sprintId = sprintIdStr.toIntOrNull()
+                    ?: return ToolResult("Error: 'sprint_id' must be an integer, got '$sprintIdStr'", "Error: invalid sprint_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 service.getSprintIssues(sprintId).toAgentToolResult()
             }
 
             "get_board_issues" -> {
-                val boardId = params["board_id"]?.jsonPrimitive?.content?.toIntOrNull()
-                    ?: return ToolResult(
-                        "Error: 'board_id' must be a valid integer",
-                        "Error: invalid board_id",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
+                val boardIdStr = params["board_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("board_id")
+                val boardId = boardIdStr.toIntOrNull()
+                    ?: return ToolResult("Error: 'board_id' must be an integer, got '$boardIdStr'", "Error: invalid board_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 service.getBoardIssues(boardId).toAgentToolResult()
             }
 
@@ -307,6 +302,7 @@ get_dev_branches, start_work""".trimIndent()
 
             "start_work" -> {
                 val issueKey = params["issue_key"]?.jsonPrimitive?.content
+                    ?: params["key"]?.jsonPrimitive?.content
                     ?: return missingParam("issue_key")
                 val branchName = params["branch_name"]?.jsonPrimitive?.content
                     ?: return missingParam("branch_name")
@@ -319,7 +315,7 @@ get_dev_branches, start_work""".trimIndent()
             }
 
             else -> ToolResult(
-                content = "Unknown action '$action'. Valid actions: get_ticket, get_transitions, transition, comment, get_comments, log_work, get_worklogs, get_sprints, get_linked_prs, get_boards, get_sprint_issues, get_board_issues, search_issues, get_dev_branches, start_work",
+                content = "Unknown action '$action'. See tool description for valid actions.",
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
