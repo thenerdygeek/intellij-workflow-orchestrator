@@ -53,17 +53,7 @@ object DynamicToolSelector {
 
     private val SONAR_TOOL_NAMES = setOf("sonar")
 
-    private val BITBUCKET_TOOL_NAMES = setOf(
-        "bitbucket_create_pr", "bitbucket_get_pr_commits", "bitbucket_add_inline_comment",
-        "bitbucket_reply_to_comment", "bitbucket_set_reviewer_status",
-        "bitbucket_get_file_content", "bitbucket_add_reviewer", "bitbucket_update_pr_title",
-        "bitbucket_get_branches", "bitbucket_create_branch", "bitbucket_search_users",
-        "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail",
-        "bitbucket_get_pr_activities", "bitbucket_get_pr_changes", "bitbucket_get_pr_diff",
-        "bitbucket_get_build_statuses", "bitbucket_approve_pr", "bitbucket_merge_pr",
-        "bitbucket_decline_pr", "bitbucket_update_pr_description", "bitbucket_add_pr_comment",
-        "bitbucket_check_merge_status", "bitbucket_remove_reviewer", "bitbucket_list_repos"
-    )
+    private val BITBUCKET_TOOL_NAMES = setOf("bitbucket")
 
     private val DEBUG_TOOL_NAMES = setOf(
         "add_breakpoint", "method_breakpoint", "remove_breakpoint", "list_breakpoints",
