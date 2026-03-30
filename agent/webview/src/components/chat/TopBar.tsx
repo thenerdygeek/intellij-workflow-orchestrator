@@ -123,7 +123,7 @@ export const TopBar = memo(function TopBar() {
         )}
       </div>
 
-      {/* Right: Debug toggle + New chat button */}
+      {/* Right: Debug toggle + View in Editor + New chat button */}
       <div className="flex items-center gap-1">
       <button
         onClick={() => useChatStore.getState().setDebugLogVisible(!debugVisible)}
@@ -136,6 +136,20 @@ export const TopBar = memo(function TopBar() {
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
           <path d="M2 3l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           <path d="M8 13h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </button>
+      <button
+        onClick={() => kotlinBridge.viewInEditor()}
+        className="flex items-center rounded px-1 py-0.5 transition-colors hover:bg-[var(--hover-overlay)]"
+        style={{ color: 'var(--fg-muted, #6b7280)' }}
+        title="Open in editor tab for a larger view"
+        aria-label="View in editor"
+      >
+        {/* Expand/external-link SVG icon */}
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M10 2h4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M14 2L8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <path d="M7 3H3a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       </button>
       <button

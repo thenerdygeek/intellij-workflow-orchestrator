@@ -74,6 +74,7 @@ class AgentCefPanel(
     private var validateTicketQuery: JBCefJSQuery? = null
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
+    private var viewInEditorQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
     private var denyToolCallQuery: JBCefJSQuery? = null
     private var allowToolForSessionQuery: JBCefJSQuery? = null
@@ -137,6 +138,9 @@ class AgentCefPanel(
     var onOpenToolsPanel: (() -> Unit)? = null
     /** Callback when user clicks "Open in Tab" on a visualization. Params: type, content JSON payload. */
     var onOpenInEditorTab: ((String) -> Unit)? = null
+
+    /** Callback when user clicks "View in Editor" in the top toolbar to open the chat in a full editor tab. */
+    var onViewInEditor: (() -> Unit)? = null
 
     /** Callback when user approves a tool call in the approval card. */
     var onApproveToolCall: (() -> Unit)? = null
@@ -374,6 +378,9 @@ class AgentCefPanel(
         openInEditorTabQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
         }
+        viewInEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        }
 
         // Tool call approval bridges
         approveToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
@@ -547,6 +554,10 @@ class AgentCefPanel(
                     openInEditorTabQuery?.let { q ->
                         val tabJs = q.inject("payload")
                         js("window._openInEditorTab = function(payload) { $tabJs }")
+                    }
+                    viewInEditorQuery?.let { q ->
+                        val vJs = q.inject("''")
+                        js("window._viewInEditor = function() { $vJs }")
                     }
                     // Tool call approval + diff hunk + interactive HTML bridges
                     approveToolCallQuery?.let { q ->
@@ -1066,6 +1077,7 @@ class AgentCefPanel(
         validateTicketQuery?.dispose()
         sendMessageWithMentionsQuery?.dispose()
         openInEditorTabQuery?.dispose()
+        viewInEditorQuery?.dispose()
         approveToolCallQuery?.dispose()
         denyToolCallQuery?.dispose()
         allowToolForSessionQuery?.dispose()
@@ -1104,6 +1116,7 @@ class AgentCefPanel(
         validateTicketQuery = null
         sendMessageWithMentionsQuery = null
         openInEditorTabQuery = null
+        viewInEditorQuery = null
         approveToolCallQuery = null
         denyToolCallQuery = null
         allowToolForSessionQuery = null

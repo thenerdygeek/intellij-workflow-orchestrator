@@ -4,6 +4,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
@@ -13,6 +14,10 @@ import javax.swing.SwingUtilities
  * All toolbar, input bar, and token budget UI lives inside the JCEF panel
  * (React webview). This Kotlin panel just hosts the browser component
  * and delegates API calls through to [AgentCefPanel].
+ *
+ * Mirror panels can be registered via [addMirror] to receive every output call
+ * (e.g. the "View in Editor" editor tab). Mirrors are autonomous panels with
+ * their own JCEF instances; they do NOT mirror wiring/callback calls, only output.
  */
 class AgentDashboardPanel(
     private val parentDisposable: Disposable? = null
@@ -40,6 +45,12 @@ class AgentDashboardPanel(
     val usingJcef: Boolean get() = cefPanel != null
 
     var onSendMessage: ((String) -> Unit)? = null
+
+    /** Secondary panels (e.g. editor tabs) that receive all output calls. */
+    private val mirrors = CopyOnWriteArrayList<AgentDashboardPanel>()
+
+    fun addMirror(panel: AgentDashboardPanel) { mirrors.add(panel) }
+    fun removeMirror(panel: AgentDashboardPanel) { mirrors.remove(panel) }
 
     init {
         border = JBUI.Borders.empty()
@@ -73,43 +84,56 @@ class AgentDashboardPanel(
         cefPanel?.onOpenToolsPanel = onOpenToolsPanel
     }
 
+    /** Wire the "View in Editor" toolbar button. */
+    fun setOnViewInEditor(action: () -> Unit) {
+        cefPanel?.onViewInEditor = action
+    }
+
     // ═══════════════════════════════════════════════════
     //  Delegated state methods — route to JCEF
     // ═══════════════════════════════════════════════════
 
-    fun setBusy(busy: Boolean) = runOnEdt {
-        cefPanel?.setBusy(busy)
-        // No fallback needed — RichStreamingPanel has no input controls to disable
+    fun setBusy(busy: Boolean) {
+        runOnEdt { cefPanel?.setBusy(busy) }
+        mirrors.forEach { it.setBusy(busy) }
     }
 
-    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) = runOnEdt {
-        cefPanel?.updateTokenBudget(tokensUsed, maxTokens)
+    fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) {
+        runOnEdt { cefPanel?.updateTokenBudget(tokensUsed, maxTokens) }
+        mirrors.forEach { it.updateProgress(step, tokensUsed, maxTokens) }
     }
 
-    fun setModelName(name: String) = runOnEdt {
-        val shortName = name.substringAfterLast("::").ifBlank { name }
-        cefPanel?.setModelName(shortName)
+    fun setModelName(name: String) {
+        runOnEdt {
+            val shortName = name.substringAfterLast("::").ifBlank { name }
+            cefPanel?.setModelName(shortName)
+        }
+        mirrors.forEach { it.setModelName(name) }
     }
 
-    fun updateModelList(modelsJson: String) = runOnEdt {
-        cefPanel?.updateModelList(modelsJson)
+    fun updateModelList(modelsJson: String) {
+        runOnEdt { cefPanel?.updateModelList(modelsJson) }
+        mirrors.forEach { it.updateModelList(modelsJson) }
     }
 
-    fun setInputLocked(locked: Boolean) = runOnEdt {
-        cefPanel?.setInputLocked(locked)
-        // No fallback needed — RichStreamingPanel has no input controls
+    fun setInputLocked(locked: Boolean) {
+        runOnEdt { cefPanel?.setInputLocked(locked) }
+        mirrors.forEach { it.setInputLocked(locked) }
     }
 
     fun showRetryButton(lastMessage: String) {
         cefPanel?.showRetryButton(lastMessage)
+        mirrors.forEach { it.showRetryButton(lastMessage) }
     }
 
-    fun focusInput() = runOnEdt {
-        cefPanel?.focusInput()
+    fun focusInput() {
+        runOnEdt { cefPanel?.focusInput() }
+        mirrors.forEach { it.focusInput() }
     }
 
     fun updateSkillsList(skillsJson: String) {
         cefPanel?.updateSkillsList(skillsJson)
+        mirrors.forEach { it.updateSkillsList(skillsJson) }
     }
 
     // ═══════════════════════════════════════════════════
@@ -137,6 +161,7 @@ class AgentDashboardPanel(
 
     fun showToolsPanel(toolsJson: String) {
         cefPanel?.showToolsPanel(toolsJson)
+        mirrors.forEach { it.showToolsPanel(toolsJson) }
     }
 
     fun setCefToolToggleCallback(onToggle: (String, Boolean) -> Unit) {
@@ -146,38 +171,46 @@ class AgentDashboardPanel(
     fun renderPlan(planJson: String) {
         cefPanel?.renderPlan(planJson)
             ?: fallbackPanel?.appendStatus("Plan created — approve in the chat panel", RichStreamingPanel.StatusType.INFO)
+        mirrors.forEach { it.renderPlan(planJson) }
     }
 
     fun updatePlanStep(stepId: String, status: String) {
         cefPanel?.updatePlanStep(stepId, status)
+        mirrors.forEach { it.updatePlanStep(stepId, status) }
     }
 
     // ── Question wizard delegation ──
 
     fun showQuestions(questionsJson: String) {
         cefPanel?.showQuestions(questionsJson)
+        mirrors.forEach { it.showQuestions(questionsJson) }
     }
 
     fun showQuestion(index: Int) {
         cefPanel?.showQuestion(index)
+        mirrors.forEach { it.showQuestion(index) }
     }
 
     fun showQuestionSummary(summaryJson: String) {
         cefPanel?.showQuestionSummary(summaryJson)
+        mirrors.forEach { it.showQuestionSummary(summaryJson) }
     }
 
     fun enableChatInput() {
         cefPanel?.enableChatInput()
+        mirrors.forEach { it.enableChatInput() }
     }
 
     // ── Skill banner delegation ──
 
     fun showSkillBanner(name: String) {
         cefPanel?.showSkillBanner(name)
+        mirrors.forEach { it.showSkillBanner(name) }
     }
 
     fun hideSkillBanner() {
         cefPanel?.hideSkillBanner()
+        mirrors.forEach { it.hideSkillBanner() }
     }
 
     fun setCefMentionCallbacks(onSendWithMentions: (String, String) -> Unit) {
@@ -194,18 +227,22 @@ class AgentDashboardPanel(
 
     fun appendJiraCard(cardJson: String) {
         cefPanel?.appendJiraCard(cardJson)
+        mirrors.forEach { it.appendJiraCard(cardJson) }
     }
 
     fun appendSonarBadge(badgeJson: String) {
         cefPanel?.appendSonarBadge(badgeJson)
+        mirrors.forEach { it.appendSonarBadge(badgeJson) }
     }
 
     fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
         cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent)
+        mirrors.forEach { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent) }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
         cefPanel?.showProcessInput(processId, description, prompt, command)
+        mirrors.forEach { it.showProcessInput(processId, description, prompt, command) }
     }
 
     fun setCefProcessInputCallbacks(onInput: (String) -> Unit) {
@@ -261,10 +298,12 @@ class AgentDashboardPanel(
 
     fun startSession(task: String) {
         cefPanel?.startSession(task) ?: fallbackPanel?.startSession(task)
+        mirrors.forEach { it.startSession(task) }
     }
 
     fun appendUserMessage(text: String) {
         cefPanel?.appendUserMessage(text) ?: fallbackPanel?.appendUserMessage(text)
+        mirrors.forEach { it.appendUserMessage(text) }
     }
 
     fun completeSession(
@@ -273,23 +312,28 @@ class AgentDashboardPanel(
     ) {
         cefPanel?.completeSession(tokensUsed, iterations, filesModified, durationMs, status)
             ?: fallbackPanel?.completeSession(tokensUsed, iterations, filesModified, durationMs, status)
+        mirrors.forEach { it.completeSession(tokensUsed, iterations, filesModified, durationMs, status) }
     }
 
     fun appendStreamToken(token: String) {
         cefPanel?.appendStreamToken(token) ?: fallbackPanel?.appendStreamToken(token)
+        mirrors.forEach { it.appendStreamToken(token) }
     }
 
     fun flushStreamBuffer() {
         cefPanel?.flushStreamBuffer() ?: fallbackPanel?.flushStreamBuffer()
+        mirrors.forEach { it.flushStreamBuffer() }
     }
 
     fun finalizeToolChain() {
         cefPanel?.finalizeToolChain()
+        mirrors.forEach { it.finalizeToolChain() }
     }
 
     fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
         cefPanel?.appendCompletionSummary(result, verifyCommand)
             ?: fallbackPanel?.appendStatus("Task completed: $result", RichStreamingPanel.StatusType.SUCCESS)
+        mirrors.forEach { it.appendCompletionSummary(result, verifyCommand) }
     }
 
     fun appendToolCall(
@@ -298,6 +342,7 @@ class AgentDashboardPanel(
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
     ) {
         cefPanel?.appendToolCall(toolCallId, toolName, args, status) ?: fallbackPanel?.appendToolCall(toolName, args, status)
+        mirrors.forEach { it.appendToolCall(toolCallId, toolName, args, status) }
     }
 
     fun updateLastToolCall(
@@ -306,75 +351,91 @@ class AgentDashboardPanel(
     ) {
         cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
+        mirrors.forEach { it.updateLastToolCall(status, result, durationMs, toolName, output) }
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
         cefPanel?.appendToolOutput(toolCallId, chunk)
+        mirrors.forEach { it.appendToolOutput(toolCallId, chunk) }
     }
 
     fun appendEditDiff(filePath: String, oldText: String, newText: String, accepted: Boolean? = null) {
         cefPanel?.appendEditDiff(filePath, oldText, newText, accepted)
             ?: fallbackPanel?.appendEditDiff(filePath, oldText, newText, accepted)
+        mirrors.forEach { it.appendEditDiff(filePath, oldText, newText, accepted) }
     }
 
     fun appendStatus(message: String, type: RichStreamingPanel.StatusType = RichStreamingPanel.StatusType.INFO) {
         cefPanel?.appendStatus(message, type) ?: fallbackPanel?.appendStatus(message, type)
+        mirrors.forEach { it.appendStatus(message, type) }
     }
 
     fun appendError(message: String) {
         cefPanel?.appendError(message) ?: fallbackPanel?.appendError(message)
+        mirrors.forEach { it.appendError(message) }
     }
 
     /**
      * Push a debug log entry to the JCEF debug log panel.
      * No-op if JCEF is unavailable (fallback panel has no debug log).
      */
-    fun setDebugLogVisible(visible: Boolean) = runOnEdt {
-        cefPanel?.updateDebugLogVisibility(visible)
+    fun setDebugLogVisible(visible: Boolean) {
+        runOnEdt { cefPanel?.updateDebugLogVisibility(visible) }
+        mirrors.forEach { it.setDebugLogVisible(visible) }
     }
 
-    fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) = runOnEdt {
-        cefPanel?.pushDebugLogEntry(level, event, detail, meta)
+    fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
+        runOnEdt { cefPanel?.pushDebugLogEntry(level, event, detail, meta) }
+        mirrors.forEach { it.pushDebugLogEntry(level, event, detail, meta) }
     }
 
-    fun showResult(text: String) = runOnEdt {
-        cefPanel?.setText(text) ?: fallbackPanel?.setText(text)
+    fun showResult(text: String) {
+        runOnEdt { cefPanel?.setText(text) ?: fallbackPanel?.setText(text) }
+        mirrors.forEach { it.showResult(text) }
     }
 
-    fun reset() = runOnEdt {
-        cefPanel?.clear() ?: fallbackPanel?.clear()
+    fun reset() {
+        runOnEdt { cefPanel?.clear() ?: fallbackPanel?.clear() }
+        mirrors.forEach { it.reset() }
     }
 
     // ── Plan mode delegation ──
 
-    fun setPlanMode(enabled: Boolean) = runOnEdt {
-        cefPanel?.setPlanMode(enabled)
+    fun setPlanMode(enabled: Boolean) {
+        runOnEdt { cefPanel?.setPlanMode(enabled) }
+        mirrors.forEach { it.setPlanMode(enabled) }
     }
 
     // ── Sub-Agent boundary card delegation ──
 
-    fun spawnSubAgent(agentId: String, label: String) = runOnEdt {
-        cefPanel?.spawnSubAgent(agentId, label)
+    fun spawnSubAgent(agentId: String, label: String) {
+        runOnEdt { cefPanel?.spawnSubAgent(agentId, label) }
+        mirrors.forEach { it.spawnSubAgent(agentId, label) }
     }
 
-    fun updateSubAgentIteration(agentId: String, iteration: Int) = runOnEdt {
-        cefPanel?.updateSubAgentIteration(agentId, iteration)
+    fun updateSubAgentIteration(agentId: String, iteration: Int) {
+        runOnEdt { cefPanel?.updateSubAgentIteration(agentId, iteration) }
+        mirrors.forEach { it.updateSubAgentIteration(agentId, iteration) }
     }
 
-    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) = runOnEdt {
-        cefPanel?.addSubAgentToolCall(agentId, toolName, toolArgs)
+    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
+        runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolName, toolArgs) }
+        mirrors.forEach { it.addSubAgentToolCall(agentId, toolName, toolArgs) }
     }
 
-    fun updateSubAgentToolCall(agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) = runOnEdt {
-        cefPanel?.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError)
+    fun updateSubAgentToolCall(agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) {
+        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
+        mirrors.forEach { it.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
     }
 
-    fun updateSubAgentMessage(agentId: String, textContent: String) = runOnEdt {
-        cefPanel?.updateSubAgentMessage(agentId, textContent)
+    fun updateSubAgentMessage(agentId: String, textContent: String) {
+        runOnEdt { cefPanel?.updateSubAgentMessage(agentId, textContent) }
+        mirrors.forEach { it.updateSubAgentMessage(agentId, textContent) }
     }
 
-    fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) = runOnEdt {
-        cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError)
+    fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
+        runOnEdt { cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError) }
+        mirrors.forEach { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
     }
 
     fun setCefKillSubAgentCallback(onKill: (String) -> Unit) {

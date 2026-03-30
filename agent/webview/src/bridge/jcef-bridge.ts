@@ -284,6 +284,7 @@ export const kotlinBridge = {
   requestFocusIde(): void { callKotlin('_requestFocusIde'); },
   openSettings(): void { callKotlin('_openSettings'); },
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
+  viewInEditor(): void { callKotlin('_viewInEditor'); },
   killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },
   killSubAgent(agentId: string): void { callKotlin('_killSubAgent', agentId); },
   resolveProcessInput(input: string): void { callKotlin('_resolveProcessInput', input); },

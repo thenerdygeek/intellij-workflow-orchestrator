@@ -297,7 +297,211 @@ class AgentController(
 
         dashboard.setMentionSearchProvider(MentionSearchProvider(project))
 
+        dashboard.setOnViewInEditor { viewInEditor() }
+
         dashboard.focusInput()
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Mirror panel management — "View in Editor" support
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Register [panel] as a mirror of the primary dashboard.
+     * The mirror receives all output broadcasts and has its own input callbacks
+     * wired back to this controller via [wireExtraPanel].
+     */
+    fun addMirrorPanel(panel: AgentDashboardPanel) {
+        dashboard.addMirror(panel)
+        wireExtraPanel(panel)
+    }
+
+    fun removeMirrorPanel(panel: AgentDashboardPanel) {
+        dashboard.removeMirror(panel)
+    }
+
+    /**
+     * Wire all input callbacks on [panel] back to this controller.
+     * Called when a new editor-tab panel is created — mirrors the init{} wiring.
+     */
+    private fun wireExtraPanel(panel: AgentDashboardPanel) {
+        panel.setCefActionCallbacks(
+            onCancel = { cancelTask() },
+            onNewChat = { newChat() },
+            onSendMessage = { text -> executeTask(text) },
+            onChangeModel = { modelId ->
+                try {
+                    val settings = AgentSettings.getInstance(project)
+                    settings.state.sourcegraphChatModel = modelId
+                    settings.state.userManuallySelectedModel = true
+                    val displayName = com.workflow.orchestrator.agent.api.dto.ModelInfo(id = modelId).displayName
+                    dashboard.setModelName(displayName)
+                } catch (_: Exception) {}
+            },
+            onTogglePlanMode = { enabled ->
+                planModeEnabled = enabled
+                if (enabled) {
+                    try {
+                        AgentService.getInstance(project).currentContextManager
+                            ?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
+                    } catch (_: Exception) {}
+                    dashboard.setPlanMode(true)
+                } else {
+                    dashboard.setPlanMode(false)
+                }
+            },
+            onActivateSkill = { name -> executeTask("/$name") },
+            onRequestFocusIde = {
+                ApplicationManager.getApplication().invokeLater {
+                    FileEditorManager.getInstance(project).selectedTextEditor?.contentComponent?.requestFocusInWindow()
+                }
+            },
+            onOpenSettings = {
+                ApplicationManager.getApplication().invokeLater {
+                    com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                        .showSettingsDialog(project, "workflow.orchestrator.agent")
+                }
+            },
+            onOpenToolsPanel = { showToolsPanel() }
+        )
+        panel.setCefMentionCallbacks(
+            onSendWithMentions = { text, mentionsJson -> handleMessageWithMentions(text, mentionsJson) }
+        )
+        panel.setCefApprovalCallbacks(
+            onApprove = {
+                currentApprovalGate?.respondToApproval(ApprovalResult.Approved)
+                pendingApprovalDeferred?.complete(true)
+                pendingApprovalDeferred = null
+            },
+            onDeny = {
+                currentApprovalGate?.respondToApproval(ApprovalResult.Rejected("Rejected by user"))
+                pendingApprovalDeferred?.complete(false)
+                pendingApprovalDeferred = null
+            },
+            onAllowForSession = { toolName ->
+                currentApprovalGate?.allowToolForSession(toolName)
+                pendingApprovalDeferred?.complete(true)
+                pendingApprovalDeferred = null
+            }
+        )
+        panel.setCefProcessInputCallbacks(
+            onInput = { input -> com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input) }
+        )
+        panel.setCefCallbacks(
+            onUndo = { handleUndoRequest() },
+            onViewTrace = { openLatestTrace() },
+            onPromptSubmitted = { text -> executeTask(text) }
+        )
+        panel.setCefPlanCallbacks(
+            onApprove = { session?.planManager?.approvePlan() },
+            onRevise = { revisionJson ->
+                try {
+                    val json = kotlinx.serialization.json.Json.parseToJsonElement(revisionJson).jsonObject
+                    val commentsArray = json["comments"]?.jsonArray
+                    val fullMarkdown = json["fullMarkdown"]?.jsonPrimitive?.contentOrNull
+                    if (commentsArray != null) {
+                        val revisions = commentsArray.map { item ->
+                            val obj = item.jsonObject
+                            val line = obj["line"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val comment = obj["comment"]?.jsonPrimitive?.contentOrNull ?: ""
+                            PlanRevisionComment(line = line, comment = comment)
+                        }
+                        session?.planManager?.revisePlanWithContext(revisions, fullMarkdown)
+                    } else {
+                        val comments = kotlinx.serialization.json.Json.decodeFromString<Map<String, String>>(revisionJson)
+                        session?.planManager?.revisePlan(comments)
+                    }
+                } catch (e: Exception) {
+                    LOG.warn("AgentController: failed to parse plan revision from mirror panel", e)
+                }
+            }
+        )
+        panel.setCefNavigationCallbacks(
+            onNavigateToFile = { filePath, line ->
+                val basePath = project.basePath ?: return@setCefNavigationCallbacks
+                val fullPath = if (filePath.startsWith("/") || filePath.startsWith(basePath)) filePath
+                               else "$basePath/$filePath"
+                val file = java.io.File(fullPath)
+                if (file.exists()) {
+                    val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+                    if (vf != null) {
+                        ApplicationManager.getApplication().invokeLater {
+                            val editors = FileEditorManager.getInstance(project).openFile(vf, true)
+                            if (line > 0) {
+                                val textEditor = editors.filterIsInstance<com.intellij.openapi.fileEditor.TextEditor>().firstOrNull()
+                                textEditor?.let {
+                                    val lineIdx = maxOf(0, line - 1)
+                                    if (lineIdx < it.editor.document.lineCount) {
+                                        val offset = it.editor.document.getLineStartOffset(lineIdx)
+                                        it.editor.caretModel.moveToOffset(offset)
+                                        it.editor.scrollingModel.scrollToCaret(com.intellij.openapi.editor.ScrollType.CENTER)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        panel.setCefDiffHunkCallbacks(
+            onAccept = { filePath, hunkIndex, editedContent ->
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val file = File(filePath)
+                        if (editedContent != null && file.exists()) {
+                            ApplicationManager.getApplication().invokeLater {
+                                com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) {
+                                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+                                    if (vf != null) {
+                                        val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vf)
+                                        doc?.setText(editedContent)
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        LOG.warn("DiffHunk (mirror): failed to apply hunk #$hunkIndex for $filePath", e)
+                    }
+                }
+            },
+            onReject = { filePath, hunkIndex -> LOG.info("Rejected diff hunk #$hunkIndex for $filePath (mirror)") }
+        )
+        panel.setCefKillCallback { toolCallId -> ProcessRegistry.kill(toolCallId) }
+        panel.setCefKillSubAgentCallback { agentId ->
+            try { AgentService.getInstance(project).killWorker(agentId) } catch (_: Exception) {}
+        }
+        panel.setCefEditorTabCallback { payload ->
+            try {
+                val json = kotlinx.serialization.json.Json.parseToJsonElement(payload)
+                val type = json.jsonObject["type"]?.jsonPrimitive?.content ?: "unknown"
+                val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: payload
+                if (type == "plan") {
+                    ApplicationManager.getApplication().invokeLater {
+                        currentPlanFile?.let { FileEditorManager.getInstance(project).openFile(it, true) }
+                    }
+                } else {
+                    AgentVisualizationEditor.openVisualization(project, type, content)
+                }
+            } catch (e: Exception) {
+                LOG.warn("Failed to open visualization from mirror panel: ${e.message}")
+            }
+        }
+        panel.setCefToolToggleCallback { toolName, enabled ->
+            try { ToolPreferences.getInstance(project).setToolEnabled(toolName, enabled) } catch (_: Exception) {}
+        }
+        panel.setMentionSearchProvider(MentionSearchProvider(project))
+        panel.setOnViewInEditor { viewInEditor() }
+    }
+
+    private fun viewInEditor() {
+        ApplicationManager.getApplication().invokeLater {
+            // Reuse an existing open tab if one is already showing
+            val existing = FileEditorManager.getInstance(project).openFiles
+                .filterIsInstance<AgentChatVirtualFile>()
+                .firstOrNull()
+            val file = existing ?: AgentChatVirtualFile(project)
+            FileEditorManager.getInstance(project).openFile(file, true)
+        }
     }
 
     private val prettyJson = kotlinx.serialization.json.Json { prettyPrint = true }

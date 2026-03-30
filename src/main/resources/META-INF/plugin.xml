@@ -266,6 +266,8 @@
             implementation="com.workflow.orchestrator.agent.ui.plan.AgentPlanEditorProvider"/>
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.ui.AgentVisualizationEditorProvider"/>
+        <fileEditorProvider
+            implementation="com.workflow.orchestrator.agent.ui.AgentChatEditorProvider"/>
 
         <!-- Jira Ticket Reference TODO Pattern -->
         <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
