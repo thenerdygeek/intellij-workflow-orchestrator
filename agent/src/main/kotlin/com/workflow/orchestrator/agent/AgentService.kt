@@ -234,19 +234,11 @@ class AgentService(
             register(RunInspectionsTool())
             register(RefactorRenameTool())
             register(ListQuickFixesTool())
-            register(CompileModuleTool())
-            register(RunTestsTool())
 
-            // Runtime & Debug tools
-            register(GetRunConfigurationsTool())
-            register(GetRunningProcessesTool())
-            register(GetRunOutputTool())
-            register(GetTestResultsTool())
+            // Runtime integration — single meta-tool replacing 9 run config/process/test/compile tools
+            register(RuntimeTool())
             // Debug integration — single meta-tool replacing 24 individual debug tools
             register(DebugTool(debugController))
-            register(CreateRunConfigTool())
-            register(ModifyRunConfigTool())
-            register(DeleteRunConfigTool())
 
             // VCS integration — single meta-tool replacing 11 individual git/vcs tools
             register(GitTool())

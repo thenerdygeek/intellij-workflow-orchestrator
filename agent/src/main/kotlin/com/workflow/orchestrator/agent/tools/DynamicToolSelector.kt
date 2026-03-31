@@ -69,11 +69,7 @@ object DynamicToolSelector {
 
     private val GRADLE_TOOL_NAMES = setOf("build")
 
-    private val RUNTIME_TOOL_NAMES = setOf(
-        "get_run_configurations", "create_run_config", "modify_run_config",
-        "delete_run_config", "get_running_processes", "get_run_output",
-        "get_test_results", "run_tests", "compile_module"
-    )
+    private val RUNTIME_TOOL_NAMES = setOf("runtime")
 
     private val IDE_TOOL_NAMES = setOf(
         "run_inspections", "refactor_rename", "list_quickfixes",
@@ -103,7 +99,7 @@ object DynamicToolSelector {
             setOf("bamboo", "build", "ci", "pipeline", "deploy", "artifact", "stage",
                 "compile", "test results", "build log", "stop build", "cancel build",
                 "running build", "plan", "rerun", "variable"),
-            BAMBOO_TOOL_NAMES + setOf("compile_module", "semantic_diagnostics")
+            BAMBOO_TOOL_NAMES + setOf("runtime", "semantic_diagnostics")
         ),
         ToolGroup(
             "sonar",
@@ -125,7 +121,7 @@ object DynamicToolSelector {
                 "step out", "evaluate", "stack trace", "stack frame", "watch",
                 "console", "log output", "drop frame", "hot swap", "hotswap",
                 "memory leak", "heap", "attach", "remote debug"),
-            DEBUG_TOOL_NAMES + setOf("get_run_output", "get_running_processes")
+            DEBUG_TOOL_NAMES + setOf("runtime")
         ),
         ToolGroup(
             "vcs",
