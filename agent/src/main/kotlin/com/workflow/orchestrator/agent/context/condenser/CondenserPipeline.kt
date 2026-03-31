@@ -17,6 +17,9 @@ package com.workflow.orchestrator.agent.context.condenser
  */
 class CondenserPipeline(private val condensers: List<Condenser>) : Condenser {
 
+    /** Returns the ordered list of condensers in this pipeline. Useful for testing. */
+    fun getCondensers(): List<Condenser> = condensers
+
     override fun condense(context: CondenserContext): CondenserResult {
         var currentContext = context
         for (condenser in condensers) {
