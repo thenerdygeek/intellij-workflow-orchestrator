@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import './styles/animations.css';
 import { Button } from './components/ui/button';
-import { Check, RotateCcw, MessageSquare, File } from 'lucide-react';
+import { Check, RotateCcw, MessageSquare, File, Loader2 } from 'lucide-react';
+import { MarkdownRenderer } from './components/markdown/MarkdownRenderer';
 
 // ── Data model — mirrors AgentPlan / PlanStep from Kotlin ─────────────────────
 
@@ -77,6 +78,7 @@ function PlanEditor() {
   const [planData, setPlanData] = useState<AgentPlanData | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
   const [activeComment, setActiveComment] = useState<string | null>(null);
+  const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
 
   useEffect(() => {
     setPlanDataExternal = (data: AgentPlanData) => {
@@ -103,11 +105,13 @@ function PlanEditor() {
   }, []);
 
   const handleProceed = useCallback(() => {
+    setPending('approve');
     (window as any)._approvePlan?.();
   }, []);
 
   const handleRevise = useCallback(() => {
     if (!planData) return;
+    setPending('revise');
     // Send step-ID-keyed map — matches Kotlin's revisePlan(Map<String, String>)
     const payload = JSON.stringify(comments);
     (window as any)._revisePlan?.(payload);
@@ -135,12 +139,20 @@ function PlanEditor() {
         </h1>
         <div className="flex gap-2 shrink-0">
           {hasComments && (
-            <Button variant="outline" size="sm" onClick={handleRevise}>
-              <RotateCcw className="h-3 w-3 mr-1" /> Revise
+            <Button variant="outline" size="sm" onClick={handleRevise} disabled={pending !== null}>
+              {pending === 'revise' ? (
+                <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Processing…</>
+              ) : (
+                <><RotateCcw className="h-3 w-3 mr-1" /> Revise</>
+              )}
             </Button>
           )}
-          <Button size="sm" className="glow-btn" onClick={handleProceed}>
-            <Check className="h-3 w-3" /> Proceed
+          <Button size="sm" className="glow-btn" onClick={handleProceed} disabled={pending !== null}>
+            {pending === 'approve' ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Approving…</>
+            ) : (
+              <><Check className="h-3 w-3" /> Proceed</>
+            )}
           </Button>
         </div>
       </div>
@@ -150,17 +162,49 @@ function PlanEditor() {
 
         {/* Goal */}
         <Section label="Goal">
-          <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-            {planData.goal}
-          </p>
+          <div className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
+            <MarkdownRenderer content={planData.goal} />
+          </div>
+          <CommentButton
+            id="goal"
+            hasComment={!!comments['goal']}
+            isActive={activeComment === 'goal'}
+            onClick={() => setActiveComment(activeComment === 'goal' ? null : 'goal')}
+          />
+          {activeComment === 'goal' && (
+            <CommentEditor
+              value={comments['goal'] ?? ''}
+              onSave={text => saveComment('goal', text)}
+              onCancel={() => setActiveComment(null)}
+            />
+          )}
+          {comments['goal'] && activeComment !== 'goal' && (
+            <CommentBubble text={comments['goal']} onRemove={() => removeComment('goal')} />
+          )}
         </Section>
 
         {/* Approach */}
         {planData.approach && (
           <Section label="Approach">
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-              {planData.approach}
-            </p>
+            <div className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
+              <MarkdownRenderer content={planData.approach} />
+            </div>
+            <CommentButton
+              id="approach"
+              hasComment={!!comments['approach']}
+              isActive={activeComment === 'approach'}
+              onClick={() => setActiveComment(activeComment === 'approach' ? null : 'approach')}
+            />
+            {activeComment === 'approach' && (
+              <CommentEditor
+                value={comments['approach'] ?? ''}
+                onSave={text => saveComment('approach', text)}
+                onCancel={() => setActiveComment(null)}
+              />
+            )}
+            {comments['approach'] && activeComment !== 'approach' && (
+              <CommentBubble text={comments['approach']} onRemove={() => removeComment('approach')} />
+            )}
           </Section>
         )}
 
@@ -207,10 +251,10 @@ function PlanEditor() {
 
                       {/* Description */}
                       {step.description && (
-                        <p className="mt-1.5 text-[13px] leading-relaxed"
-                           style={{ color: 'var(--fg-secondary)' }}>
-                          {step.description}
-                        </p>
+                        <div className="mt-1.5 text-[13px] leading-relaxed"
+                             style={{ color: 'var(--fg-secondary)' }}>
+                          <MarkdownRenderer content={step.description} />
+                        </div>
                       )}
 
                       {/* Files */}
@@ -266,14 +310,15 @@ function PlanEditor() {
                     </div>
 
                     {/* Comment toggle button */}
-                    {!isActive && (
+                    {!isActive && !comment && (
                       <button
                         onClick={() => setActiveComment(step.id)}
-                        className="shrink-0 mt-0.5 h-6 w-6 rounded flex items-center justify-center opacity-30 hover:opacity-70 transition-opacity"
+                        className="shrink-0 mt-0.5 rounded flex items-center gap-1 px-1.5 py-0.5 text-[11px] opacity-30 hover:opacity-70 transition-opacity"
                         title="Add revision note"
                         style={{ color: 'var(--fg-muted)' }}
                       >
-                        <MessageSquare className="h-3.5 w-3.5" />
+                        <MessageSquare className="h-3 w-3" />
+                        <span>Comment</span>
                       </button>
                     )}
                   </div>
@@ -286,9 +331,9 @@ function PlanEditor() {
         {/* Testing / Verification */}
         {planData.testing && (
           <Section label="Verification">
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-              {planData.testing}
-            </p>
+            <div className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
+              <MarkdownRenderer content={planData.testing} />
+            </div>
           </Section>
         )}
 
@@ -341,6 +386,57 @@ function CommentEditor({
       <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={onCancel}>
         Cancel
       </Button>
+    </div>
+  );
+}
+
+function CommentButton({
+  hasComment,
+  isActive,
+  onClick,
+}: {
+  id: string;
+  hasComment: boolean;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  if (isActive || hasComment) return null;
+  return (
+    <button
+      onClick={onClick}
+      className="mt-2 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded opacity-50 hover:opacity-100 transition-opacity"
+      style={{ color: 'var(--fg-muted)' }}
+    >
+      <MessageSquare className="h-3 w-3" />
+      Add comment
+    </button>
+  );
+}
+
+function CommentBubble({
+  text,
+  onRemove,
+}: {
+  text: string;
+  onRemove: () => void;
+}) {
+  return (
+    <div
+      className="mt-2 text-[12px] px-3 py-1.5 rounded border-l-2 flex items-start gap-2"
+      style={{
+        color: 'var(--accent-edit)',
+        borderColor: 'var(--accent-edit)',
+        backgroundColor: 'rgba(220,220,170,0.06)',
+      }}
+    >
+      <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" />
+      <span className="flex-1">{text}</span>
+      <button
+        onClick={onRemove}
+        className="opacity-50 hover:opacity-100 transition-opacity text-[10px]"
+      >
+        x
+      </button>
     </div>
   );
 }

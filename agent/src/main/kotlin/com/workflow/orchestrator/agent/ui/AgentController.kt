@@ -858,6 +858,7 @@ class AgentController(
         currentSession.planManager.onPlanCreated = { plan ->
             val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
             dashboard.renderPlan(json)
+            dashboard.setBusy(false)  // Agent is now waiting for user input, not working
             // Open full-screen plan in editor tab (don't steal focus from chat)
             ApplicationManager.getApplication().invokeLater {
                 val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
@@ -883,7 +884,10 @@ class AgentController(
         // This fires for approval from BOTH the chat card and the plan editor tab.
         currentSession.planManager.onPlanApproved = { plan ->
             val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
-            ApplicationManager.getApplication().invokeLater { dashboard.renderPlan(json) }
+            ApplicationManager.getApplication().invokeLater {
+                dashboard.setBusy(true)  // Agent is working again after approval
+                dashboard.renderPlan(json)
+            }
         }
 
         // Set session directory for plan persistence

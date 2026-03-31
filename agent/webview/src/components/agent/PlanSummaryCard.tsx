@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { FileText, Check, RotateCcw } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { FileText, Check, RotateCcw, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { PlanCompact } from '@/components/ui/tool-ui/plan';
@@ -13,6 +13,8 @@ interface PlanSummaryCardProps {
 
 export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   if (plan.approved) return null;
+
+  const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
 
   const stepCount = plan.steps.length;
   const pendingCount = plan.steps.filter(s => s.status === 'pending').length;
@@ -30,10 +32,12 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   }, [plan]);
 
   const handleApprove = useCallback(() => {
+    setPending('approve');
     (window as any)._approvePlan?.();
   }, []);
 
   const handleRevise = useCallback(() => {
+    setPending('revise');
     (window as any)._revisePlan?.('');
   }, []);
 
@@ -110,22 +114,30 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           onClick={handleApprove}
           className="glow-btn text-[12px] font-medium"
           size="sm"
+          disabled={pending !== null}
         >
-          <Check size={14} />
-          Approve
+          {pending === 'approve' ? (
+            <><Loader2 size={14} className="animate-spin" /> Approving…</>
+          ) : (
+            <><Check size={14} /> Approve</>
+          )}
         </Button>
         <Button
           onClick={handleRevise}
           className="text-[12px] font-medium"
           size="sm"
           variant="outline"
+          disabled={pending !== null}
           style={{
             borderColor: 'var(--border)',
             color: 'var(--fg-secondary)',
           }}
         >
-          <RotateCcw size={14} />
-          Revise
+          {pending === 'revise' ? (
+            <><Loader2 size={14} className="animate-spin" /> Processing…</>
+          ) : (
+            <><RotateCcw size={14} /> Revise</>
+          )}
         </Button>
       </CardFooter>
     </Card>
