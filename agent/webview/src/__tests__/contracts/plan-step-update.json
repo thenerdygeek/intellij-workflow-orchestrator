@@ -1,0 +1,10 @@
+{
+  "description": "Contract for updatePlanStep(stepId, status) bridge function. Kotlin sends stepId + status strings, React updates step in plan state.",
+  "valid_calls": [
+    { "stepId": "step-abc123", "status": "running" },
+    { "stepId": "step-abc123", "status": "completed" },
+    { "stepId": "step-def456", "status": "failed" },
+    { "stepId": "step-ghi789", "status": "skipped" }
+  ],
+  "valid_statuses": ["pending", "running", "completed", "done", "failed", "skipped", "in_progress"]
+}

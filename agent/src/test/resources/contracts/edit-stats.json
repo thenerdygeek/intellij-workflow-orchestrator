@@ -1,0 +1,29 @@
+{
+  "description": "Contract for updateEditStats(added, removed, files) and updateCheckpoints(json) bridge functions.",
+  "edit_stats": {
+    "valid_call": { "added": 45, "removed": 12, "files": 3 },
+    "all_zeros": { "added": 0, "removed": 0, "files": 0 }
+  },
+  "checkpoints": {
+    "valid_payload": [
+      {
+        "id": "cp-a1b2c3",
+        "description": "Iteration 3: edit_file PaymentService.kt",
+        "timestamp": 1711900000000,
+        "iteration": 3,
+        "filesModified": ["PaymentService.kt"],
+        "totalLinesAdded": 12,
+        "totalLinesRemoved": 3
+      },
+      {
+        "id": "cp-d4e5f6",
+        "description": "Iteration 5: create_file PaymentServiceTest.kt",
+        "timestamp": 1711900060000,
+        "iteration": 5,
+        "filesModified": ["PaymentServiceTest.kt"],
+        "totalLinesAdded": 45,
+        "totalLinesRemoved": 0
+      }
+    ]
+  }
+}

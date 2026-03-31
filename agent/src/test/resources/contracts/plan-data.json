@@ -1,0 +1,40 @@
+{
+  "description": "Contract for renderPlan(json) bridge function. Kotlin sends this JSON, React parses it as AgentPlanData.",
+  "payload": {
+    "goal": "Fix null pointer exception in PaymentService.processRefund()",
+    "approach": "Add null guard clause at method entry before accessing customer reference",
+    "title": "Fix NPE in PaymentService",
+    "steps": [
+      {
+        "id": "step-abc123",
+        "title": "Read PaymentService.kt",
+        "description": "Understand the refund flow and identify where customer is accessed",
+        "files": ["src/main/kotlin/com/example/PaymentService.kt"],
+        "action": "read",
+        "status": "pending"
+      },
+      {
+        "id": "step-def456",
+        "title": "Add null check",
+        "description": "Add `customer ?: throw IllegalArgumentException(\"Customer required\")` guard",
+        "files": ["src/main/kotlin/com/example/PaymentService.kt"],
+        "action": "edit",
+        "status": "pending"
+      },
+      {
+        "id": "step-ghi789",
+        "title": "Run tests",
+        "description": "Execute PaymentServiceTest to verify the fix",
+        "files": ["src/test/kotlin/com/example/PaymentServiceTest.kt"],
+        "action": "verify",
+        "status": "pending"
+      }
+    ],
+    "testing": "Run `./gradlew :payment:test` and verify PaymentServiceTest.testRefundWithNullCustomer passes",
+    "approved": false
+  },
+  "required_fields": ["goal", "steps"],
+  "optional_fields": ["approach", "title", "testing", "approved"],
+  "step_required_fields": ["id", "title"],
+  "step_optional_fields": ["description", "files", "action", "status"]
+}

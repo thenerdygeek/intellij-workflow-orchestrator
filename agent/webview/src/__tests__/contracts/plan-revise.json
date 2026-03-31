@@ -1,0 +1,41 @@
+{
+  "description": "Contract for _revisePlan(comments) bridge function. React sends this JSON string, Kotlin parses it as Map<String, String>.",
+  "valid_payloads": [
+    {
+      "name": "single_comment",
+      "payload": "{\"goal\":\"Please add error handling for null inputs\"}",
+      "expected_keys": ["goal"],
+      "expected_values": ["Please add error handling for null inputs"]
+    },
+    {
+      "name": "multiple_comments",
+      "payload": "{\"goal\":\"Too broad — focus on PaymentService only\",\"step-1\":\"Use the existing UserService instead of creating new\",\"testing\":\"Add integration tests too\"}",
+      "expected_keys": ["goal", "step-1", "testing"],
+      "expected_values": ["Too broad — focus on PaymentService only", "Use the existing UserService instead of creating new", "Add integration tests too"]
+    },
+    {
+      "name": "empty_comments",
+      "payload": "{}",
+      "expected_keys": [],
+      "expected_values": []
+    },
+    {
+      "name": "step_only_comments",
+      "payload": "{\"step-0\":\"Read config file too\",\"step-2\":\"Run integration tests as well\"}",
+      "expected_keys": ["step-0", "step-2"],
+      "expected_values": ["Read config file too", "Run integration tests as well"]
+    }
+  ],
+  "invalid_payloads": [
+    {
+      "name": "empty_string",
+      "payload": "",
+      "reason": "Kotlin JSON parser throws on empty string — was the original bug"
+    },
+    {
+      "name": "plain_text",
+      "payload": "fix the plan",
+      "reason": "Not valid JSON — Kotlin parser throws"
+    }
+  ]
+}
