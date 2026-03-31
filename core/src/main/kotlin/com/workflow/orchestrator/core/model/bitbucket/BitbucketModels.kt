@@ -26,7 +26,9 @@ data class CommitData(
     val message: String,
     val author: String?,
     val timestamp: Long
-)
+) {
+    override fun toString(): String = "$displayId by ${author ?: "unknown"}: ${message.lines().first().take(80)}"
+}
 
 /**
  * Simplified branch data shared between UI panels and AI agent.
@@ -65,7 +67,17 @@ data class PullRequestDetailData(
     val createdDate: Long,
     val updatedDate: Long,
     val version: Int
-)
+) {
+    override fun toString(): String = buildString {
+        append("PR #$id [$state] $title ($fromBranch → $toBranch)")
+        if (authorName != null) append(" by $authorName")
+        if (reviewers.isNotEmpty()) append("\n  Reviewers: ${reviewers.joinToString(", ") { "${it.displayName} (${it.status})" }}")
+        if (!description.isNullOrBlank()) {
+            append("\n  ${description.take(200).replace("\n", "\n  ")}")
+            if (description.length > 200) append("...")
+        }
+    }
+}
 
 /**
  * Reviewer data with approval status.
@@ -91,7 +103,13 @@ data class PrActivityData(
     val commentId: Long?,
     val filePath: String?,
     val lineNumber: Int?
-)
+) {
+    override fun toString(): String = buildString {
+        append("[$action] ${userName ?: "unknown"}")
+        if (filePath != null) append(" on $filePath${if (lineNumber != null) ":$lineNumber" else ""}")
+        if (!commentText.isNullOrBlank()) append(": ${commentText.take(150).replace("\n", " ")}")
+    }
+}
 
 /**
  * A changed file in a pull request.

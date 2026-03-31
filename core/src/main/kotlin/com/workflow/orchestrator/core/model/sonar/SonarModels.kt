@@ -15,7 +15,13 @@ data class SonarIssueData(
     val line: Int?,
     val status: String,
     val type: String            // "BUG", "VULNERABILITY", "CODE_SMELL"
-)
+) {
+    override fun toString(): String {
+        val file = component.substringAfterLast(':').substringAfterLast('/')
+        val loc = if (line != null) "$file:$line" else file
+        return "[$severity/$type] $loc — ${message.take(120)}"
+    }
+}
 
 /**
  * Quality gate status with individual metric conditions.
@@ -24,7 +30,15 @@ data class SonarIssueData(
 data class QualityGateData(
     val status: String,         // "OK", "ERROR"
     val conditions: List<QualityCondition> = emptyList()
-)
+) {
+    override fun toString(): String = buildString {
+        append("Quality Gate: $status")
+        if (conditions.isNotEmpty()) {
+            append("\n")
+            conditions.forEach { c -> append("  ${c.metric}: ${c.value} (${c.status})\n") }
+        }
+    }.trimEnd()
+}
 
 /**
  * A single quality gate condition (metric threshold check).
@@ -120,7 +134,12 @@ data class SourceLineData(
     val coverageStatus: String?,
     val conditions: Int?,
     val coveredConditions: Int?
-)
+) {
+    override fun toString(): String {
+        val cov = coverageStatus?.let { " [$it]" } ?: ""
+        return "${line.toString().padStart(4)}$cov ${code.take(120)}"
+    }
+}
 
 /**
  * Paged issue results with total count for pagination.

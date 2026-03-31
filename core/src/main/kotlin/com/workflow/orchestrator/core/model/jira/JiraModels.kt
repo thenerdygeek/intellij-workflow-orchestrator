@@ -20,7 +20,22 @@ data class JiraTicketData(
     val attachments: List<JiraAttachmentData> = emptyList(),
     val subtasks: List<JiraSubtaskRef> = emptyList(),
     val linkedIssues: List<JiraLinkedIssueRef> = emptyList()
-)
+) {
+    override fun toString(): String = buildString {
+        append("$key [$status] $summary")
+        if (type != "Task") append(" ($type)")
+        if (priority != null) append(" | Priority: $priority")
+        if (assignee != null) append(" | Assignee: $assignee")
+        if (labels.isNotEmpty()) append(" | Labels: ${labels.joinToString(", ")}")
+        if (!description.isNullOrBlank()) {
+            append("\n  ${description.take(300).replace("\n", "\n  ")}")
+            if (description.length > 300) append("...")
+        }
+        if (transitions.isNotEmpty()) append("\n  Transitions: ${transitions.joinToString(", ") { it.name }}")
+        if (subtasks.isNotEmpty()) append("\n  Subtasks: ${subtasks.size}")
+        if (linkedIssues.isNotEmpty()) append("\n  Linked: ${linkedIssues.size}")
+    }
+}
 
 /**
  * Lightweight attachment metadata — enough for the LLM to know what's available

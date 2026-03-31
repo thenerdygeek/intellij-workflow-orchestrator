@@ -35,6 +35,12 @@ object ServiceLookup {
     )
 }
 
+/** Max chars for raw string data (build logs, diffs, file content). */
+private const val MAX_DATA_STRING_CHARS = 10_000
+
+/** Max list items to render before truncating. */
+private const val MAX_LIST_ITEMS = 50
+
 /**
  * Convert a core ToolResult<T> to an agent ToolResult.
  *
@@ -55,21 +61,42 @@ fun <T> com.workflow.orchestrator.core.services.ToolResult<T>.toAgentToolResult(
         val dataVal = data
         when {
             dataVal == null || dataVal == Unit -> { /* summary is sufficient */ }
+            dataVal is String -> {
+                // Raw string data (build logs, diffs, file content) — cap at 10K chars
+                if (dataVal.length > MAX_DATA_STRING_CHARS) {
+                    append("\n\n")
+                    append(dataVal.take(MAX_DATA_STRING_CHARS))
+                    append("\n\n[TRUNCATED — ${dataVal.length} total chars, showing first $MAX_DATA_STRING_CHARS]")
+                } else if (dataVal != summary && dataVal.isNotBlank()) {
+                    append("\n\n")
+                    append(dataVal)
+                }
+            }
             dataVal is List<*> && dataVal.isNotEmpty() -> {
                 append("\n\n")
-                dataVal.forEachIndexed { index, item ->
+                // Cap list rendering to avoid context overflow
+                val items = if (dataVal.size > MAX_LIST_ITEMS) dataVal.take(MAX_LIST_ITEMS) else dataVal
+                items.forEachIndexed { index, item ->
                     if (index > 0) append("\n")
                     append(item.toString())
+                }
+                if (dataVal.size > MAX_LIST_ITEMS) {
+                    append("\n... and ${dataVal.size - MAX_LIST_ITEMS} more (${dataVal.size} total)")
                 }
             }
             dataVal is List<*> -> { /* empty list, summary already says "0 items" */ }
             else -> {
                 val dataStr = dataVal.toString()
-                // Avoid duplicating if data.toString() equals the summary
                 if (dataStr != summary && dataStr.isNotBlank() &&
                     !dataStr.startsWith(dataVal::class.java.name)) {
                     append("\n\n")
-                    append(dataStr)
+                    // Cap non-list structured data at 10K
+                    if (dataStr.length > MAX_DATA_STRING_CHARS) {
+                        append(dataStr.take(MAX_DATA_STRING_CHARS))
+                        append("\n[TRUNCATED]")
+                    } else {
+                        append(dataStr)
+                    }
                 }
             }
         }
