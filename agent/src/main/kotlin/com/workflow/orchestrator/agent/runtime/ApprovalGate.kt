@@ -249,6 +249,7 @@ class ApprovalGate(
          */
         private val MEDIUM_RISK_TOOLS = setOf(
             "edit_file",
+            "create_file",
             "send_stdin",
             "refactor_rename",
 
@@ -335,8 +336,8 @@ class ApprovalGate(
             if (toolName in NONE_RISK_TOOLS) return RiskLevel.NONE
             if (toolName in LOW_RISK_TOOLS) return RiskLevel.LOW
 
-            // Context-aware classification for edit_file
-            if (toolName == "edit_file") {
+            // Context-aware classification for edit_file and create_file
+            if (toolName == "edit_file" || toolName == "create_file") {
                 val path = params["path"] as? String ?: return RiskLevel.MEDIUM
                 return when {
                     path.contains("/test/") || path.endsWith("Test.kt") || path.endsWith("Test.java") -> RiskLevel.LOW

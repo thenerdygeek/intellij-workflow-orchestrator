@@ -8,6 +8,8 @@ import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.runtime.AgentDefinitionRegistry
+import com.workflow.orchestrator.agent.runtime.AgentRollbackManager
+import com.workflow.orchestrator.agent.runtime.ChangeLedger
 import com.workflow.orchestrator.agent.runtime.PlanManager
 import com.workflow.orchestrator.agent.runtime.QuestionManager
 import com.workflow.orchestrator.agent.runtime.SkillManager
@@ -58,6 +60,16 @@ class AgentService(
 
     /** Skill manager for the current agent session, set by AgentController. */
     @Volatile var currentSkillManager: SkillManager? = null
+
+    /** Change ledger for the current session. Set by ConversationSession/AgentController.
+     *  COMPRESSION: Tools use this to record changes that feed the changeLedgerAnchor. */
+    @Volatile var currentChangeLedger: ChangeLedger? = null
+
+    /** Rollback manager for the current session. Set by AgentOrchestrator. */
+    @Volatile var currentRollbackManager: AgentRollbackManager? = null
+
+    /** Current iteration number in the ReAct loop. Set by SingleAgentSession. */
+    @Volatile var currentIteration: Int? = null
 
     /** Agent definition registry for custom subagents, set by ConversationSession. */
     @Volatile var agentDefinitionRegistry: AgentDefinitionRegistry? = null
@@ -163,6 +175,7 @@ class AgentService(
         ToolRegistry().apply {
             // Builtin tools
             register(ReadFileTool())
+            register(CreateFileTool())
             register(EditFileTool())
             register(SearchCodeTool())
             register(RunCommandTool())

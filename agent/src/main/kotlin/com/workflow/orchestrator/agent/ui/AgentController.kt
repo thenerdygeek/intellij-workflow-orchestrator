@@ -710,12 +710,14 @@ class AgentController(
                 val currentSession = session!!
                 currentSession.recordUserMessage(task)
 
-                // Set PlanManager and SkillManager on AgentService so tools can find it
+                // Set session managers on AgentService so tools can find them
                 try {
                     val agentSvc = AgentService.getInstance(project)
                     agentSvc.currentPlanManager = currentSession.planManager
                     agentSvc.currentQuestionManager = currentSession.questionManager
                     agentSvc.currentSkillManager = currentSession.skillManager
+                    agentSvc.currentChangeLedger = currentSession.changeLedger
+                    agentSvc.currentRollbackManager = currentSession.rollbackManager
                 } catch (_: Exception) {}
 
                 val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }

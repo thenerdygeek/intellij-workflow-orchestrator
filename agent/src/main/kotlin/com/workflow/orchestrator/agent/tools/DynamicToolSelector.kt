@@ -30,7 +30,7 @@ object DynamicToolSelector {
 
     /** Core tools always available (small, essential for any coding task). */
     private val ALWAYS_INCLUDE = setOf(
-        "read_file", "edit_file", "search_code", "run_command", "glob_files",
+        "read_file", "edit_file", "create_file", "search_code", "run_command", "glob_files",
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "get_annotations", "get_method_body", "read_write_access", "dataflow_analysis",
         "diagnostics", "problem_view", "format_code", "optimize_imports",

@@ -78,10 +78,10 @@ class ReadFileTool : AgentTool {
                 }
                 text.lines()
             } else {
-                file.readLines(Charsets.UTF_8)
+                readLinesWithFallback(file)
             }
         } catch (_: Exception) {
-            file.readLines(Charsets.UTF_8) // fallback
+            readLinesWithFallback(file)
         }
 
         val lines = allLines.ifEmpty { listOf("") }
@@ -104,5 +104,31 @@ class ReadFileTool : AgentTool {
             summary = "Read ${selectedLines.size} lines from $rawPath (${lines.size} total)",
             tokenEstimate = TokenEstimator.estimate(fullContent)
         )
+    }
+
+    /**
+     * Read file with encoding fallback chain.
+     * Priority: VirtualFile.charset (IDE-detected) > UTF-8 > ISO-8859-1 (Latin-1).
+     *
+     * COMPRESSION: Not directly related to compression, but encoding errors
+     * produce garbled text that wastes context tokens. Correct encoding
+     * ensures tool output is meaningful and token-efficient.
+     */
+    private fun readLinesWithFallback(file: java.io.File): List<String> {
+        // Try UTF-8 first (most common modern encoding)
+        try {
+            val text = file.readText(Charsets.UTF_8)
+            // Check for Unicode replacement character — indicates wrong encoding
+            if (!text.contains('\uFFFD')) return text.lines()
+        } catch (_: Exception) { }
+
+        // Fallback: ISO-8859-1 (Latin-1) — lossless for all byte values,
+        // handles Windows-1252 and legacy European encodings
+        try {
+            return file.readText(Charsets.ISO_8859_1).lines()
+        } catch (_: Exception) { }
+
+        // Final fallback: UTF-8 ignoring errors
+        return file.readText(Charsets.UTF_8).lines()
     }
 }
