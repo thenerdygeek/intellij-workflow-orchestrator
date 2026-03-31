@@ -283,10 +283,13 @@ class ApprovalGate(
                 "get_variables", "thread_dump", "memory_view")
         )
 
-        /** Low-risk write actions — non-destructive. */
+        /** Low-risk actions — non-destructive writes, verification, comments. */
         private val META_TOOL_LOW_RISK_ACTIONS = mapOf(
             "jira" to setOf("comment", "log_work", "start_work"),
-            "bitbucket" to setOf("add_inline_comment", "reply_to_comment", "add_reviewer"),
+            "bitbucket" to setOf("add_inline_comment", "reply_to_comment", "add_reviewer",
+                "add_pr_comment"),
+            "git" to setOf("shelve"),  // list/list_shelves/create/shelve/unshelve — all low risk
+            "runtime" to setOf("run_tests", "compile_module"),  // verification, doesn't modify source
             "debug" to setOf("add_breakpoint", "remove_breakpoint", "step_over",
                 "step_into", "step_out", "resume", "pause", "run_to_cursor")
         )
