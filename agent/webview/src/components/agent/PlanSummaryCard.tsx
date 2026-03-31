@@ -37,9 +37,10 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   }, []);
 
   const handleRevise = useCallback(() => {
-    setPending('revise');
-    (window as any)._revisePlan?.('');
-  }, []);
+    // Open the plan editor tab so the user can add inline comments.
+    // Previously sent empty string which broke Kotlin JSON parsing.
+    openInEditorTab('plan', JSON.stringify(plan));
+  }, [plan]);
 
   return (
     <Card
@@ -133,11 +134,7 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
             color: 'var(--fg-secondary)',
           }}
         >
-          {pending === 'revise' ? (
-            <><Loader2 size={14} className="animate-spin" /> Processing…</>
-          ) : (
-            <><RotateCcw size={14} /> Revise</>
-          )}
+          <RotateCcw size={14} /> Revise in Editor
         </Button>
       </CardFooter>
     </Card>

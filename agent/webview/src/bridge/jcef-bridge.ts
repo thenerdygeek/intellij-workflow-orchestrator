@@ -80,6 +80,10 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updatePlanStep(stepId: string, status: string) {
     stores?.getChatStore().updatePlanStep(stepId, status);
   },
+  setPlanPending(state: string) {
+    const value = (state === 'approve' || state === 'revise') ? state : null;
+    stores?.getChatStore().setPlanPending(value);
+  },
   showQuestions(questionsJson: string) {
     const questions = JSON.parse(questionsJson);
     stores?.getChatStore().showQuestions(questions);

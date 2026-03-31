@@ -97,6 +97,7 @@ interface ChatState {
   toolOutputStreams: Record<string, string>;
   editStats: EditStats | null;
   checkpoints: CheckpointInfo[];
+  planPending: 'approve' | 'revise' | null;
 
   // Actions
   startSession(task: string): void;
@@ -114,6 +115,7 @@ interface ChatState {
   clearChat(): void;
   setPlan(plan: Plan): void;
   updatePlanStep(stepId: string, status: string): void;
+  setPlanPending(state: 'approve' | 'revise' | null): void;
   showQuestions(questions: Question[]): void;
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
@@ -206,6 +208,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolOutputStreams: {},
   editStats: null,
   checkpoints: [],
+  planPending: null,
 
   // Actions
   startSession(task: string) {
@@ -430,6 +433,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       );
       return { plan: { ...state.plan, steps } };
     });
+  },
+
+  setPlanPending(state: 'approve' | 'revise' | null) {
+    set({ planPending: state });
   },
 
   showQuestions(questions: Question[]) {

@@ -1,9 +1,9 @@
-import { StrictMode, useState, useCallback, useEffect } from 'react';
+import { StrictMode, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import './styles/animations.css';
 import { Button } from './components/ui/button';
-import { Check, RotateCcw, MessageSquare, File, Loader2 } from 'lucide-react';
+import { Check, RotateCcw, MessageSquare, Loader2, Plus, X } from 'lucide-react';
 import { MarkdownRenderer } from './components/markdown/MarkdownRenderer';
 
 // ── Data model — mirrors AgentPlan / PlanStep from Kotlin ─────────────────────
@@ -26,10 +26,14 @@ interface AgentPlanData {
   approved?: boolean;
 }
 
+// Section IDs for comments
+type SectionId = 'goal' | 'approach' | 'testing' | `step-${number}`;
+
 // ── Global entry points — called by Kotlin / showcase ────────────────────────
 
 let rootInstance: ReturnType<typeof createRoot> | null = null;
 let setPlanDataExternal: ((data: AgentPlanData) => void) | null = null;
+let setPendingExternal: ((state: 'approve' | 'revise' | null) => void) | null = null;
 let pendingPlanData: AgentPlanData | null = null;
 
 // Called from AgentPlanEditor.kt to set IDE theme CSS variables before rendering.
@@ -47,29 +51,114 @@ let pendingPlanData: AgentPlanData | null = null;
   }
 };
 
-(window as any).updatePlanStep = (_stepId: string, _status: string) => {
-  // Live step status updates while the agent executes.
-  // The full plan is re-injected via renderPlan on each step change from Kotlin.
+(window as any).updatePlanStep = (stepId: string, status: string) => {
+  if (setPlanDataExternal) {
+    // Use the external setter to trigger a re-render with updated step status
+    setPlanDataExternal(null as any); // trigger re-read via internal update
+  }
+  // Direct state update via dedicated mechanism
+  updateStepStatusInternal?.(stepId, status);
+};
+
+let updateStepStatusInternal: ((stepId: string, status: string) => void) | null = null;
+
+// Synchronize pending state from chat card or Kotlin
+(window as any).setPlanPending = (state: 'approve' | 'revise' | null) => {
+  setPendingExternal?.(state);
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const ACTION_STYLES: Record<string, { bg: string; fg: string; label: string }> = {
-  read:   { bg: 'var(--badge-read-bg)',   fg: 'var(--badge-read-fg)',   label: 'read'   },
-  edit:   { bg: 'var(--badge-edit-bg)',   fg: 'var(--badge-edit-fg)',   label: 'edit'   },
-  create: { bg: 'var(--badge-write-bg)',  fg: 'var(--badge-write-fg)',  label: 'create' },
-  verify: { bg: 'var(--badge-search-bg)', fg: 'var(--badge-search-fg)', label: 'verify' },
-  code:   { bg: 'var(--badge-search-bg)', fg: 'var(--badge-search-fg)', label: 'code'   },
-};
-
-function statusIcon(status?: string): { icon: string; color: string } {
+function statusEmoji(status?: string): string {
   switch (status) {
-    case 'completed': return { icon: '✓', color: 'var(--success)' };
-    case 'running':   return { icon: '◉', color: 'var(--accent)'  };
-    case 'failed':    return { icon: '✗', color: 'var(--error)'   };
-    case 'skipped':   return { icon: '—', color: 'var(--fg-muted)' };
-    default:          return { icon: '○', color: 'var(--fg-muted)' };
+    case 'completed':
+    case 'done':
+      return '\u2705';  // green check
+    case 'running':
+    case 'in_progress':
+      return '\u23f3';  // hourglass
+    case 'failed':
+      return '\u274c';  // red x
+    case 'skipped':
+      return '\u23ed\ufe0f';  // skip
+    default:
+      return '\u2b55';  // hollow circle
   }
+}
+
+function statusLabel(status?: string): string {
+  switch (status) {
+    case 'completed':
+    case 'done':
+      return 'Completed';
+    case 'running':
+    case 'in_progress':
+      return 'Running';
+    case 'failed':
+      return 'Failed';
+    case 'skipped':
+      return 'Skipped';
+    default:
+      return 'Pending';
+  }
+}
+
+/** Convert plan data into a markdown string for rendering. */
+function planToMarkdown(plan: AgentPlanData): string {
+  const lines: string[] = [];
+
+  lines.push(`## Goal`);
+  lines.push(plan.goal);
+  lines.push('');
+
+  if (plan.approach) {
+    lines.push(`## Approach`);
+    lines.push(plan.approach);
+    lines.push('');
+  }
+
+  lines.push(`## Steps`);
+  lines.push('');
+  plan.steps.forEach((step, idx) => {
+    const emoji = statusEmoji(step.status);
+    lines.push(`### ${idx + 1}. ${step.title}`);
+    if (step.description) {
+      lines.push(step.description);
+    }
+    if (step.files && step.files.length > 0) {
+      lines.push('');
+      lines.push(`**Files:** ${step.files.map(f => `\`${f}\``).join(', ')}`);
+    }
+    lines.push(`**Status:** ${emoji} ${statusLabel(step.status)}`);
+    lines.push('');
+  });
+
+  if (plan.testing) {
+    lines.push(`## Testing & Verification`);
+    lines.push(plan.testing);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+// ── Section overlay for comments ─────────────────────────────────────────────
+
+/** Map section IDs to the plan data sections. */
+function getSectionIds(plan: AgentPlanData): SectionId[] {
+  const ids: SectionId[] = ['goal'];
+  if (plan.approach) ids.push('approach');
+  plan.steps.forEach((_, idx) => ids.push(`step-${idx}`));
+  if (plan.testing) ids.push('testing');
+  return ids;
+}
+
+function sectionLabel(id: SectionId): string {
+  if (id === 'goal') return 'Goal';
+  if (id === 'approach') return 'Approach';
+  if (id === 'testing') return 'Testing & Verification';
+  if (id.startsWith('step-')) return `Step ${parseInt(id.split('-')[1]!) + 1}`;
+  return id;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -77,31 +166,60 @@ function statusIcon(status?: string): { icon: string; color: string } {
 function PlanEditor() {
   const [planData, setPlanData] = useState<AgentPlanData | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
-  const [activeComment, setActiveComment] = useState<string | null>(null);
+  const [activeComment, setActiveComment] = useState<SectionId | null>(null);
   const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
+  // Wire external state setters
   useEffect(() => {
     setPlanDataExternal = (data: AgentPlanData) => {
       setPlanData(data);
+      // Reset pending state when new plan arrives (revision cycle complete)
+      setPending(null);
       // Restore any pre-existing step comments
       const existing: Record<string, string> = {};
-      data.steps.forEach(s => { if (s.userComment) existing[s.id] = s.userComment; });
+      data.steps.forEach((s, idx) => {
+        if (s.userComment) existing[`step-${idx}`] = s.userComment;
+      });
       setComments(existing);
     };
+
+    // Wire the step status updater
+    updateStepStatusInternal = (stepId: string, status: string) => {
+      setPlanData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          steps: prev.steps.map(s => s.id === stepId ? { ...s, status } : s)
+        };
+      });
+    };
+
+    // Wire pending state sync
+    setPendingExternal = (state) => setPending(state);
+
     if (pendingPlanData) {
       setPlanDataExternal(pendingPlanData);
       pendingPlanData = null;
     }
-    return () => { setPlanDataExternal = null; };
+    return () => {
+      setPlanDataExternal = null;
+      updateStepStatusInternal = null;
+      setPendingExternal = null;
+    };
   }, []);
 
-  const saveComment = useCallback((stepId: string, text: string) => {
-    setComments(prev => ({ ...prev, [stepId]: text }));
+  const saveComment = useCallback((sectionId: SectionId, text: string) => {
+    if (text.trim()) {
+      setComments(prev => ({ ...prev, [sectionId]: text.trim() }));
+    } else {
+      setComments(prev => { const n = { ...prev }; delete n[sectionId]; return n; });
+    }
     setActiveComment(null);
   }, []);
 
-  const removeComment = useCallback((stepId: string) => {
-    setComments(prev => { const n = { ...prev }; delete n[stepId]; return n; });
+  const removeComment = useCallback((sectionId: SectionId) => {
+    setComments(prev => { const n = { ...prev }; delete n[sectionId]; return n; });
   }, []);
 
   const handleProceed = useCallback(() => {
@@ -112,21 +230,34 @@ function PlanEditor() {
   const handleRevise = useCallback(() => {
     if (!planData) return;
     setPending('revise');
-    // Send step-ID-keyed map — matches Kotlin's revisePlan(Map<String, String>)
+    // Send section-keyed comments to Kotlin
     const payload = JSON.stringify(comments);
     (window as any)._revisePlan?.(payload);
   }, [comments, planData]);
+
+  // Generate markdown from plan
+  const markdown = useMemo(() => {
+    if (!planData) return '';
+    return planToMarkdown(planData);
+  }, [planData]);
+
+  // Compute section IDs for comment buttons
+  const sectionIds = useMemo(() => {
+    if (!planData) return [];
+    return getSectionIds(planData);
+  }, [planData]);
+
+  const hasComments = Object.keys(comments).length > 0;
+  const isApproved = planData?.approved === true;
 
   if (!planData) {
     return (
       <div className="flex h-screen items-center justify-center"
            style={{ backgroundColor: 'var(--bg)', color: 'var(--fg-muted)' }}>
-        Loading plan…
+        Loading plan...
       </div>
     );
   }
-
-  const hasComments = Object.keys(comments).length > 0;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--bg)', color: 'var(--fg)' }}>
@@ -134,209 +265,113 @@ function PlanEditor() {
       {/* ── Sticky header ── */}
       <div className="sticky top-0 z-10 flex items-center justify-between border-b px-6 py-3"
            style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
-        <h1 className="text-base font-semibold truncate pr-4">
-          {planData.goal || 'Implementation Plan'}
-        </h1>
-        <div className="flex gap-2 shrink-0">
-          {hasComments && (
-            <Button variant="outline" size="sm" onClick={handleRevise} disabled={pending !== null}>
-              {pending === 'revise' ? (
-                <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Processing…</>
+        <div className="flex items-center gap-3 min-w-0 pr-4">
+          <h1 className="text-base font-semibold truncate">
+            Implementation Plan
+          </h1>
+          {isApproved && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ backgroundColor: 'rgba(34,197,94,0.15)', color: 'var(--success, #22c55e)' }}>
+              Approved
+            </span>
+          )}
+          {!isApproved && hasComments && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: 'var(--warning, #eab308)' }}>
+              {Object.keys(comments).length} comment{Object.keys(comments).length !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        {!isApproved && (
+          <div className="flex gap-2 shrink-0">
+            {hasComments && (
+              <Button variant="outline" size="sm" onClick={handleRevise} disabled={pending !== null}>
+                {pending === 'revise' ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Processing...</>
+                ) : (
+                  <><RotateCcw className="h-3 w-3 mr-1" /> Revise ({Object.keys(comments).length})</>
+                )}
+              </Button>
+            )}
+            <Button size="sm" className="glow-btn" onClick={handleProceed} disabled={pending !== null}>
+              {pending === 'approve' ? (
+                <><Loader2 className="h-3 w-3 animate-spin" /> Approving...</>
               ) : (
-                <><RotateCcw className="h-3 w-3 mr-1" /> Revise</>
+                <><Check className="h-3 w-3" /> Proceed</>
               )}
             </Button>
-          )}
-          <Button size="sm" className="glow-btn" onClick={handleProceed} disabled={pending !== null}>
-            {pending === 'approve' ? (
-              <><Loader2 className="h-3 w-3 animate-spin" /> Approving…</>
-            ) : (
-              <><Check className="h-3 w-3" /> Proceed</>
-            )}
-          </Button>
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Body ── */}
-      <div className="px-6 pt-5 pb-16 max-w-3xl mx-auto space-y-6">
+      {/* ── Body: markdown + comment annotations ── */}
+      <div ref={bodyRef} className="px-6 pt-5 pb-16 max-w-3xl mx-auto">
 
-        {/* Goal */}
-        <Section label="Goal">
-          <div className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-            <MarkdownRenderer content={planData.goal} />
-          </div>
-          <CommentButton
-            id="goal"
-            hasComment={!!comments['goal']}
-            isActive={activeComment === 'goal'}
-            onClick={() => setActiveComment(activeComment === 'goal' ? null : 'goal')}
-          />
-          {activeComment === 'goal' && (
-            <CommentEditor
-              value={comments['goal'] ?? ''}
-              onSave={text => saveComment('goal', text)}
-              onCancel={() => setActiveComment(null)}
-            />
-          )}
-          {comments['goal'] && activeComment !== 'goal' && (
-            <CommentBubble text={comments['goal']} onRemove={() => removeComment('goal')} />
-          )}
-        </Section>
+        {/* Rendered plan as markdown */}
+        <div className="plan-markdown-body">
+          <MarkdownRenderer content={markdown} />
+        </div>
 
-        {/* Approach */}
-        {planData.approach && (
-          <Section label="Approach">
-            <div className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-              <MarkdownRenderer content={planData.approach} />
-            </div>
-            <CommentButton
-              id="approach"
-              hasComment={!!comments['approach']}
-              isActive={activeComment === 'approach'}
-              onClick={() => setActiveComment(activeComment === 'approach' ? null : 'approach')}
-            />
-            {activeComment === 'approach' && (
+        {/* ── Comment section ── */}
+        {!isApproved && (
+          <div className="mt-8 border-t pt-6" style={{ borderColor: 'var(--border)' }}>
+            <p className="text-[11px] font-semibold uppercase tracking-wider mb-3"
+               style={{ color: 'var(--fg-muted)' }}>
+              Revision Comments
+            </p>
+
+            {/* Existing comments */}
+            {Object.entries(comments).map(([id, text]) => (
+              <CommentBubble
+                key={id}
+                sectionLabel={sectionLabel(id as SectionId)}
+                text={text}
+                onEdit={() => setActiveComment(id as SectionId)}
+                onRemove={() => removeComment(id as SectionId)}
+              />
+            ))}
+
+            {/* Active comment editor */}
+            {activeComment && (
               <CommentEditor
-                value={comments['approach'] ?? ''}
-                onSave={text => saveComment('approach', text)}
+                sectionLabel={sectionLabel(activeComment)}
+                value={comments[activeComment] ?? ''}
+                onSave={text => saveComment(activeComment, text)}
                 onCancel={() => setActiveComment(null)}
               />
             )}
-            {comments['approach'] && activeComment !== 'approach' && (
-              <CommentBubble text={comments['approach']} onRemove={() => removeComment('approach')} />
-            )}
-          </Section>
-        )}
 
-        {/* Steps */}
-        <Section label={`Steps (${planData.steps.length})`}>
-          <div className="space-y-3">
-            {planData.steps.map((step, idx) => {
-              const { icon, color } = statusIcon(step.status);
-              const actionStyle = ACTION_STYLES[step.action ?? 'code'] ?? ACTION_STYLES['code']!;
-              const comment = comments[step.id];
-              const isActive = activeComment === step.id;
-
-              return (
-                <div
-                  key={step.id}
-                  className="rounded-lg border p-4"
-                  style={{ borderColor: 'var(--border)', backgroundColor: 'var(--tool-bg)' }}
-                >
-                  {/* Step header */}
-                  <div className="flex items-start gap-3">
-                    {/* Status icon */}
-                    <span className="mt-0.5 text-base font-mono shrink-0 w-4 text-center"
-                          style={{ color }}>
-                      {icon}
-                    </span>
-
-                    <div className="flex-1 min-w-0">
-                      {/* Title row */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-mono shrink-0"
-                              style={{ color: 'var(--fg-muted)' }}>
-                          {idx + 1}.
-                        </span>
-                        <span className="text-sm font-medium">{step.title}</span>
-                        {step.action && (
-                          <span
-                            className="text-[10px] px-1.5 py-0.5 rounded font-mono"
-                            style={{ backgroundColor: actionStyle.bg, color: actionStyle.fg }}
-                          >
-                            {actionStyle.label}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Description */}
-                      {step.description && (
-                        <div className="mt-1.5 text-[13px] leading-relaxed"
-                             style={{ color: 'var(--fg-secondary)' }}>
-                          <MarkdownRenderer content={step.description} />
-                        </div>
-                      )}
-
-                      {/* Files */}
-                      {step.files && step.files.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {step.files.map(f => (
-                            <button
-                              key={f}
-                              onClick={() => (window as any)._openFile?.(f)}
-                              className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded font-mono hover:opacity-80 transition-opacity"
-                              style={{
-                                backgroundColor: 'var(--code-bg)',
-                                color: 'var(--accent-read)',
-                                border: '1px solid var(--border)',
-                              }}
-                            >
-                              <File className="h-2.5 w-2.5" />
-                              {f.split('/').pop()}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Comment bubble */}
-                      {comment && !isActive && (
-                        <div
-                          className="mt-2 text-[12px] px-3 py-1.5 rounded border-l-2 flex items-start gap-2"
-                          style={{
-                            color: 'var(--accent-edit)',
-                            borderColor: 'var(--accent-edit)',
-                            backgroundColor: 'rgba(220,220,170,0.06)',
-                          }}
-                        >
-                          <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" />
-                          <span className="flex-1">{comment}</span>
-                          <button
-                            onClick={() => removeComment(step.id)}
-                            className="opacity-50 hover:opacity-100 transition-opacity text-[10px]"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Inline comment editor */}
-                      {isActive && (
-                        <CommentEditor
-                          value={comment ?? ''}
-                          onSave={text => saveComment(step.id, text)}
-                          onCancel={() => setActiveComment(null)}
-                        />
-                      )}
-                    </div>
-
-                    {/* Comment toggle button */}
-                    {!isActive && !comment && (
-                      <button
-                        onClick={() => setActiveComment(step.id)}
-                        className="shrink-0 mt-0.5 rounded flex items-center gap-1 px-1.5 py-0.5 text-[11px] opacity-30 hover:opacity-70 transition-opacity"
-                        title="Add revision note"
-                        style={{ color: 'var(--fg-muted)' }}
-                      >
-                        <MessageSquare className="h-3 w-3" />
-                        <span>Comment</span>
-                      </button>
+            {/* Add comment buttons — one per section */}
+            {!activeComment && (
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {sectionIds.map(id => (
+                  <button
+                    key={id}
+                    onClick={() => setActiveComment(id)}
+                    className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md border transition-all hover:border-[var(--accent)]"
+                    style={{
+                      borderColor: comments[id] ? 'var(--accent)' : 'var(--border)',
+                      color: comments[id] ? 'var(--accent)' : 'var(--fg-muted)',
+                      backgroundColor: comments[id] ? 'rgba(99,102,241,0.08)' : 'transparent',
+                    }}
+                  >
+                    {comments[id] ? (
+                      <><MessageSquare className="h-3 w-3" /> {sectionLabel(id)}</>
+                    ) : (
+                      <><Plus className="h-3 w-3" /> {sectionLabel(id)}</>
                     )}
-                  </div>
-                </div>
-              );
-            })}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!hasComments && !activeComment && (
+              <p className="text-[12px] mt-2" style={{ color: 'var(--fg-muted)' }}>
+                Click a section above to add revision feedback. Comments will be sent to the LLM when you click Revise.
+              </p>
+            )}
           </div>
-        </Section>
-
-        {/* Testing / Verification */}
-        {planData.testing && (
-          <Section label="Verification">
-            <div className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-              <MarkdownRenderer content={planData.testing} />
-            </div>
-          </Section>
         )}
-
       </div>
     </div>
   );
@@ -344,98 +379,80 @@ function PlanEditor() {
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wider mb-2"
-         style={{ color: 'var(--fg-muted)' }}>
-        {label}
-      </p>
-      {children}
-    </div>
-  );
-}
-
 function CommentEditor({
+  sectionLabel: label,
   value,
   onSave,
   onCancel,
 }: {
+  sectionLabel: string;
   value: string;
   onSave: (text: string) => void;
   onCancel: () => void;
 }) {
   const [text, setText] = useState(value);
   return (
-    <div className="mt-2 flex gap-1">
-      <input
+    <div className="mt-2 rounded-lg border p-3" style={{ borderColor: 'var(--accent)', backgroundColor: 'rgba(99,102,241,0.05)' }}>
+      <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--accent)' }}>
+        Comment on: {label}
+      </p>
+      <textarea
         autoFocus
         value={text}
         onChange={e => setText(e.target.value)}
         onKeyDown={e => {
-          if (e.key === 'Enter') onSave(text);
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSave(text);
           if (e.key === 'Escape') onCancel();
         }}
-        placeholder="Add revision note…"
-        className="flex-1 text-xs px-2 py-1 rounded border bg-transparent outline-none"
+        placeholder="Describe what should change..."
+        rows={3}
+        className="w-full text-xs px-2 py-1.5 rounded border bg-transparent outline-none resize-y"
         style={{ borderColor: 'var(--border)', color: 'var(--fg)' }}
       />
-      <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => onSave(text)}>
-        Save
-      </Button>
-      <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={onCancel}>
-        Cancel
-      </Button>
+      <div className="flex gap-1 mt-1.5 justify-end">
+        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" className="h-6 text-[10px]" onClick={() => onSave(text)}>
+          Save
+        </Button>
+      </div>
     </div>
   );
 }
 
-function CommentButton({
-  hasComment,
-  isActive,
-  onClick,
-}: {
-  id: string;
-  hasComment: boolean;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  if (isActive || hasComment) return null;
-  return (
-    <button
-      onClick={onClick}
-      className="mt-2 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded opacity-50 hover:opacity-100 transition-opacity"
-      style={{ color: 'var(--fg-muted)' }}
-    >
-      <MessageSquare className="h-3 w-3" />
-      Add comment
-    </button>
-  );
-}
-
 function CommentBubble({
+  sectionLabel: label,
   text,
+  onEdit,
   onRemove,
 }: {
+  sectionLabel: string;
   text: string;
+  onEdit: () => void;
   onRemove: () => void;
 }) {
   return (
     <div
-      className="mt-2 text-[12px] px-3 py-1.5 rounded border-l-2 flex items-start gap-2"
+      className="mb-2 text-[12px] px-3 py-2 rounded-lg border-l-2 flex items-start gap-2 group cursor-pointer hover:opacity-90 transition-opacity"
       style={{
-        color: 'var(--accent-edit)',
-        borderColor: 'var(--accent-edit)',
-        backgroundColor: 'rgba(220,220,170,0.06)',
+        color: 'var(--fg)',
+        borderColor: 'var(--accent)',
+        backgroundColor: 'rgba(99,102,241,0.06)',
       }}
+      onClick={onEdit}
     >
-      <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" />
-      <span className="flex-1">{text}</span>
+      <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
+      <div className="flex-1 min-w-0">
+        <span className="text-[10px] font-medium" style={{ color: 'var(--accent)' }}>{label}</span>
+        <p className="mt-0.5">{text}</p>
+      </div>
       <button
-        onClick={onRemove}
-        className="opacity-50 hover:opacity-100 transition-opacity text-[10px]"
+        onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        className="opacity-0 group-hover:opacity-70 hover:!opacity-100 transition-opacity shrink-0"
+        title="Remove comment"
       >
-        x
+        <X className="h-3 w-3" />
       </button>
     </div>
   );
