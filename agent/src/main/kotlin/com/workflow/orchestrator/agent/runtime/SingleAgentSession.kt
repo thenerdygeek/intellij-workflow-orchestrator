@@ -6,12 +6,15 @@ import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
+import com.workflow.orchestrator.agent.context.CondenserOutcome
 import com.workflow.orchestrator.agent.context.ContextManager
 import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.Fact
 import com.workflow.orchestrator.agent.context.FactType
 import com.workflow.orchestrator.agent.context.FactsStore
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.context.events.CondensationRequestAction
+import com.workflow.orchestrator.agent.context.events.EventSource
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.ToolCallInfo
 import com.workflow.orchestrator.agent.security.CredentialRedactor
@@ -310,8 +313,16 @@ class SingleAgentSession(
                 }
             } catch (e: Exception) { LOG.warn("Failed to expand pending tool activations", e) }
 
-            // Budget check before each LLM call
-            val budgetStatus = budgetEnforcer.check()
+            // Budget check before each LLM call.
+            // When the event bridge is active, use the bridge's API-reconciled token utilization
+            // as the authoritative TERMINATE signal (>0.97) so rotation triggers on accurate counts.
+            // The legacy BudgetEnforcer.TERMINATE is still used when the bridge is absent.
+            val bridgeUtilization = eventBridge?.tokenUtilization ?: -1.0
+            val budgetStatus = if (bridgeUtilization >= 0.97) {
+                BudgetEnforcer.BudgetStatus.TERMINATE
+            } else {
+                budgetEnforcer.check()
+            }
             when (budgetStatus) {
                 BudgetEnforcer.BudgetStatus.TERMINATE -> {
                     LOG.warn("SingleAgentSession: budget exhausted at iteration $iteration (${budgetEnforcer.utilizationPercent()}%)")
@@ -465,7 +476,24 @@ class SingleAgentSession(
                 }
             }
 
-            val messages = contextManager.getMessages()
+            // Phase 2: use the condenser pipeline + ConversationMemory path when the event bridge
+            // is available; otherwise fall back to the legacy ContextManager path.
+            val messages: List<ChatMessage>
+            if (eventBridge != null) {
+                when (val outcome = eventBridge.getMessagesViaCondenser()) {
+                    is CondenserOutcome.NeedsCondensation -> {
+                        // Condenser determined condensation must happen before the next LLM call.
+                        // Record the condensation action in the event store and re-step.
+                        eventBridge.eventStore.add(outcome.action, EventSource.SYSTEM)
+                        continue
+                    }
+                    is CondenserOutcome.Messages -> {
+                        messages = outcome.messages
+                    }
+                }
+            } else {
+                messages = contextManager.getMessages()
+            }
             val toolDefsForCall = if (forceTextOnly) null else if (activeTools.isNotEmpty()) activeToolDefs else null
 
             // LLM call with retry logic for rate limits and context length exceeded
@@ -480,6 +508,8 @@ class SingleAgentSession(
                 activeTools = result.reducedTools
                 eventLog?.log(AgentEventType.CONTEXT_EXCEEDED_RETRY, "Reduced to ${activeTools.size} core tools")
                 LOG.info("SingleAgentSession: context exceeded — pruning old tool results + compressing")
+                // Event-sourced path: signal condensation needed via event store
+                eventBridge?.eventStore?.add(CondensationRequestAction(), EventSource.SYSTEM)
                 // Phase 1: Prune old tool results (fast, no LLM)
                 contextManager.pruneOldToolResults()
                 // Phase 2: Full compression (LLM if brain available, otherwise truncation)
@@ -610,6 +640,8 @@ class SingleAgentSession(
             // Our character-based estimator (length/3.5) can be 20-40% off.
             // The API's prompt_tokens is authoritative — calibrate to it.
             contextManager.reconcileWithActualTokens(usage.promptTokens)
+            // Update event-sourced bridge token state so the condenser has accurate utilization.
+            eventBridge?.updateTokensFromUsage(usage.promptTokens)
         } else {
             // Streaming response returned null/zero usage — estimate heuristically
             // so budget tracking doesn't drift. Not authoritative, but better than nothing.

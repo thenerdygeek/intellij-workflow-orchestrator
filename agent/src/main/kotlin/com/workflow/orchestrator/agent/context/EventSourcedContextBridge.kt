@@ -10,6 +10,19 @@ import java.io.File
 import java.util.UUID
 
 /**
+ * Result of running the full condenser pipeline → ConversationMemory path.
+ *
+ * Either the pipeline produced ready-to-use [ChatMessage] objects, or it determined
+ * that condensation is needed before the next LLM call can proceed.
+ */
+sealed class CondenserOutcome {
+    /** The condenser pipeline produced messages ready for an LLM call. */
+    data class Messages(val messages: List<ChatMessage>) : CondenserOutcome()
+    /** The condenser pipeline determined condensation is needed first. */
+    data class NeedsCondensation(val action: CondensationAction) : CondenserOutcome()
+}
+
+/**
  * Bridge between the legacy [ContextManager]-based loop and the new event-sourced
  * context management system ([EventStore] + [CondenserPipeline] + [ConversationMemory]).
  *
@@ -41,6 +54,14 @@ class EventSourcedContextBridge(
 
     /** Count of condensation loops to detect infinite condensation. */
     private var condensationLoopCount: Int = 0
+
+    /**
+     * Token count last reported by the LLM API (via usage.promptTokens).
+     * Updated after each LLM call via [updateTokensFromUsage]. Used by [getMessagesViaCondenser]
+     * to build an accurate [CondenserContext] without relying solely on the heuristic estimate
+     * from [ContextManager.currentTokens].
+     */
+    private var lastReportedPromptTokens: Int = 0
 
     // =========================================================================
     // System prompt and initialization
@@ -277,16 +298,109 @@ class EventSourcedContextBridge(
     }
 
     // =========================================================================
-    // Condensation (Phase 2 — future: replace ContextManager compression)
+    // Condensation (Phase 2 — EventStore drives LLM calls)
     // =========================================================================
 
     /**
-     * Run the condenser pipeline on the current event history.
+     * Run the full condenser pipeline → ConversationMemory path and return
+     * [ChatMessage] objects ready for an LLM call, or a [CondenserOutcome.NeedsCondensation]
+     * if condensation must happen before the call can proceed.
+     *
+     * This is the Phase 2 method that replaces [ContextManager.getMessages] in the ReAct loop.
+     *
+     * **Algorithm:**
+     * 1. Build a [View] from all events in the [EventStore].
+     * 2. Compute token utilization using the last API-reported prompt token count
+     *    (falls back to [ContextManager.currentTokens] for the first call).
+     * 3. Run the condenser pipeline on the view.
+     * 4. If the pipeline returns [Condensation], return [CondenserOutcome.NeedsCondensation]
+     *    so the caller can add the action to the event store and re-step.
+     * 5. If the pipeline returns [CondenserView], convert events → messages via
+     *    [ConversationMemory] and return [CondenserOutcome.Messages].
+     *
+     * Infinite condensation loops are guarded by [condensationLoopCount].
+     */
+    fun getMessagesViaCondenser(): CondenserOutcome {
+        val allEvents = eventStore.all()
+        val view = View.fromEvents(allEvents)
+
+        // Use the API-authoritative token count when available; fall back to heuristic
+        val currentTokens = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
+                            else contextManager.currentTokens
+        val effectiveBudget = contextManager.effectiveMaxInputTokens
+        val tokenUtilization = if (effectiveBudget > 0) currentTokens.toDouble() / effectiveBudget.toDouble()
+                               else 0.0
+
+        val condenserContext = CondenserContext(
+            view = view,
+            tokenUtilization = tokenUtilization,
+            effectiveBudget = effectiveBudget,
+            currentTokens = currentTokens
+        )
+
+        return when (val result = condenserPipeline.condense(condenserContext)) {
+            is Condensation -> {
+                condensationLoopCount++
+                if (condensationLoopCount > config.condensationLoopThreshold) {
+                    // Condensation loop protection: fall back to ConversationMemory directly
+                    condensationLoopCount = 0
+                    val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
+                    val messages = conversationMemory.processEvents(view.events, initial, view.forgottenEventIds)
+                    CondenserOutcome.Messages(messages)
+                } else {
+                    CondenserOutcome.NeedsCondensation(result.action)
+                }
+            }
+            is CondenserView -> {
+                condensationLoopCount = 0
+                val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
+                val messages = conversationMemory.processEvents(
+                    result.view.events,
+                    initial,
+                    result.view.forgottenEventIds
+                )
+                CondenserOutcome.Messages(messages)
+            }
+        }
+    }
+
+    /**
+     * Update the bridge's token tracking state from the LLM API's reported usage.
+     *
+     * This is the token reconciliation step for the event-sourced path: after each
+     * LLM call, the caller passes `usage.promptTokens` here so that [getMessagesViaCondenser]
+     * can compute accurate token utilization in the next iteration.
+     *
+     * Also delegates to [ContextManager.reconcileWithActualTokens] for backward compatibility.
+     *
+     * @param promptTokens The `prompt_tokens` value from the LLM API's usage object
+     */
+    fun updateTokensFromUsage(promptTokens: Int) {
+        if (promptTokens > 0) {
+            lastReportedPromptTokens = promptTokens
+            contextManager.reconcileWithActualTokens(promptTokens)
+        }
+    }
+
+    /**
+     * Current token utilization as a fraction (0.0–1.0), using the last API-reported
+     * prompt token count when available, falling back to the heuristic estimate.
+     */
+    val tokenUtilization: Double
+        get() {
+            val current = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
+                          else contextManager.currentTokens
+            val budget = contextManager.effectiveMaxInputTokens
+            return if (budget > 0) current.toDouble() / budget.toDouble() else 0.0
+        }
+
+    /**
+     * Run the condenser pipeline on the current event history (legacy informational path).
      *
      * In Phase 1 (dual-write), this is informational — the result is recorded but
      * ContextManager's own compression still drives the actual context window.
      *
-     * In Phase 2, this will replace ContextManager.compress() entirely.
+     * In Phase 2, [getMessagesViaCondenser] replaces this as the active path.
      *
      * @return true if condensation occurred, false if the view was passed through
      */

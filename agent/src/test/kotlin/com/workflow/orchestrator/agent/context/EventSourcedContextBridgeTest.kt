@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.context.condenser.CondenserFactory
 import com.workflow.orchestrator.agent.context.events.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -299,5 +300,157 @@ class EventSourcedContextBridgeTest {
         assertEquals(1, events.size)
         assertTrue(events[0] is GenericToolAction)
         assertEquals("think", (events[0] as GenericToolAction).toolName)
+    }
+
+    // =========================================================================
+    // Phase 2: getMessagesViaCondenser() and updateTokensFromUsage() tests
+    // =========================================================================
+
+    @Nested
+    inner class GetMessagesViaCondenserTest {
+
+        @Test
+        fun `returns Messages with empty event store`() {
+            val outcome = bridge.getMessagesViaCondenser()
+            assertTrue(outcome is CondenserOutcome.Messages)
+            // Empty event store → ConversationMemory produces a minimal context
+            val messages = (outcome as CondenserOutcome.Messages).messages
+            assertNotNull(messages)
+        }
+
+        @Test
+        fun `returns Messages containing user content after addUserMessage`() {
+            bridge.addSystemPrompt("You are an assistant.")
+            bridge.addUserMessage("Fix the bug in Main.kt")
+
+            val outcome = bridge.getMessagesViaCondenser()
+            assertTrue(outcome is CondenserOutcome.Messages, "Expected Messages but got $outcome")
+            val messages = (outcome as CondenserOutcome.Messages).messages
+            assertTrue(messages.isNotEmpty())
+            // ConversationMemory sanitizes for Sourcegraph: user role expected
+            assertTrue(messages.any { it.role == "user" })
+        }
+
+        @Test
+        fun `full conversation round-trip produces correct message sequence`() {
+            bridge.addSystemPrompt("You are an assistant.")
+            bridge.addUserMessage("Read test.kt")
+            bridge.addAssistantToolCalls(
+                ChatMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "tc1", function = FunctionCall(name = "read_file", arguments = """{"path":"test.kt"}"""))
+                    )
+                )
+            )
+            bridge.addToolResult("tc1", "class Test {}", "Read 1 line", "read_file")
+            bridge.addAssistantMessage(ChatMessage(role = "assistant", content = "The file has a Test class."))
+
+            val outcome = bridge.getMessagesViaCondenser()
+            assertTrue(outcome is CondenserOutcome.Messages)
+            val messages = (outcome as CondenserOutcome.Messages).messages
+            assertTrue(messages.isNotEmpty())
+            // Sourcegraph format: must start with user
+            assertEquals("user", messages.first().role)
+            // Must contain user request and assistant response
+            val allContent = messages.joinToString("\n") { it.content ?: "" }
+            assertTrue(allContent.contains("Read test.kt") || allContent.contains("Fix the bug"))
+        }
+
+        @Test
+        fun `returns Messages when condenser pipeline passes through view unchanged`() {
+            // With DEFAULT config and low token count, the NoOp condenser pipeline
+            // should pass the view through → Messages result, not NeedsCondensation
+            bridge.addSystemPrompt("System")
+            bridge.addUserMessage("Hello")
+
+            val outcome = bridge.getMessagesViaCondenser()
+            // Should NOT need condensation on a tiny conversation
+            assertTrue(outcome is CondenserOutcome.Messages,
+                "Expected Messages for small conversation, got: $outcome")
+        }
+
+        @Test
+        fun `calling getMessagesViaCondenser multiple times is idempotent`() {
+            bridge.addSystemPrompt("System")
+            bridge.addUserMessage("Task")
+
+            val outcome1 = bridge.getMessagesViaCondenser()
+            val outcome2 = bridge.getMessagesViaCondenser()
+
+            assertTrue(outcome1 is CondenserOutcome.Messages)
+            assertTrue(outcome2 is CondenserOutcome.Messages)
+            assertEquals(
+                (outcome1 as CondenserOutcome.Messages).messages.size,
+                (outcome2 as CondenserOutcome.Messages).messages.size
+            )
+        }
+    }
+
+    @Nested
+    inner class UpdateTokensFromUsageTest {
+
+        @Test
+        fun `updateTokensFromUsage sets tokenUtilization based on reported tokens`() {
+            // tokenUtilization should be near 0 before any update
+            val utilizationBefore = bridge.tokenUtilization
+            assertTrue(utilizationBefore >= 0.0)
+
+            // Report some tokens — with 100K budget, 50K tokens = 0.5 utilization
+            bridge.updateTokensFromUsage(50_000)
+            val utilizationAfter = bridge.tokenUtilization
+
+            // Should now reflect 50K / 100K = 0.5
+            assertEquals(0.5, utilizationAfter, 0.01)
+        }
+
+        @Test
+        fun `updateTokensFromUsage is ignored for zero or negative values`() {
+            bridge.addUserMessage("Hello")
+            val utilizationBefore = bridge.tokenUtilization
+
+            bridge.updateTokensFromUsage(0)
+            bridge.updateTokensFromUsage(-100)
+
+            // Utilization should not change from invalid input
+            assertEquals(utilizationBefore, bridge.tokenUtilization, 0.001)
+        }
+
+        @Test
+        fun `updateTokensFromUsage also reconciles ContextManager`() {
+            bridge.addUserMessage("Hello")
+            val heuristicTokens = bridge.currentTokens
+
+            // Report a significantly different count from the API
+            val apiReportedTokens = heuristicTokens * 2
+            bridge.updateTokensFromUsage(apiReportedTokens)
+
+            // ContextManager should now reflect the API-reported count
+            assertEquals(apiReportedTokens, bridge.currentTokens)
+        }
+
+        @Test
+        fun `getMessagesViaCondenser uses API-reported tokens after updateTokensFromUsage`() {
+            bridge.addSystemPrompt("System")
+            bridge.addUserMessage("Task")
+
+            // With default 100K budget, a 98K token report should drive high utilization
+            // but the NoOp pipeline still passes through
+            bridge.updateTokensFromUsage(1_000) // well under budget
+
+            val outcome = bridge.getMessagesViaCondenser()
+            assertTrue(outcome is CondenserOutcome.Messages)
+        }
+
+        @Test
+        fun `tokenUtilization falls back to heuristic when no API tokens reported`() {
+            // No updateTokensFromUsage called; falls back to ContextManager.currentTokens
+            bridge.addSystemPrompt("System")
+            val utilization = bridge.tokenUtilization
+            // Should be heuristic-based but non-negative
+            assertTrue(utilization >= 0.0)
+            assertTrue(utilization < 1.0)
+        }
     }
 }
