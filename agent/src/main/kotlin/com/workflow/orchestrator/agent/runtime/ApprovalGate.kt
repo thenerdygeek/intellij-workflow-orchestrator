@@ -216,36 +216,8 @@ class ApprovalGate(
             "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
             "find_implementations", "diagnostics",
 
-            // Git read-only
-            "git_status", "git_diff", "git_log", "git_blame",
-            "git_branches", "git_show_file", "git_show_commit",
-            "git_stash_list", "git_merge_base", "git_file_history",
-
-            // PSI/Spring read-only
-            "spring_context", "spring_endpoints", "spring_bean_graph",
-            "spring_config", "jpa_entities", "project_modules", "module_dependency_graph",
-            "maven_dependencies", "maven_properties", "maven_plugins",
-            "maven_profiles", "spring_version_info", "spring_profiles",
-            "spring_repositories", "spring_security_config",
-            "spring_scheduled_tasks", "spring_event_listeners",
-
-            // Enterprise read-only (Jira)
-            "jira_get_ticket", "jira_get_transitions", "jira_get_comments",
-            "jira_get_worklogs", "jira_get_sprints", "jira_get_linked_prs",
-            "jira_get_boards", "jira_get_sprint_issues", "jira_get_board_issues",
-            "jira_search_issues", "jira_get_dev_branches",
-
-            // Enterprise read-only (Bamboo)
-            "bamboo_build_status", "bamboo_get_build", "bamboo_get_build_log",
-            "bamboo_get_test_results", "bamboo_recent_builds",
-            "bamboo_get_plans", "bamboo_get_project_plans", "bamboo_search_plans",
-            "bamboo_get_plan_branches", "bamboo_get_running_builds",
-            "bamboo_get_build_variables", "bamboo_get_plan_variables", "bamboo_get_artifacts",
-
-            // Enterprise read-only (Sonar)
-            "sonar_issues", "sonar_quality_gate", "sonar_coverage",
-            "sonar_search_projects", "sonar_analysis_tasks",
-            "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
+            // Read-only meta-tools (all actions within these are read-only)
+            "sonar", "spring", "build",
 
             // IDE read-only (inspections, annotations, quickfixes, method bodies)
             "get_annotations", "get_method_body", "list_quickfixes", "run_inspections",
@@ -254,27 +226,6 @@ class ApprovalGate(
             // PSI analysis read-only
             "type_inference", "structural_search", "dataflow_analysis",
             "read_write_access", "test_finder",
-
-            // Runtime & Debug read-only
-            "get_run_configurations", "get_running_processes", "get_run_output", "get_test_results",
-            "list_breakpoints", "get_debug_state", "get_stack_frames", "get_variables",
-            "thread_dump", "memory_view",
-
-            // Enterprise read-only (Bitbucket)
-            "bitbucket_get_pr_commits", "bitbucket_get_file_content",
-            "bitbucket_get_branches", "bitbucket_get_my_prs",
-            "bitbucket_get_reviewing_prs", "bitbucket_get_pr_detail",
-            "bitbucket_get_pr_activities", "bitbucket_get_pr_changes",
-            "bitbucket_get_pr_diff", "bitbucket_get_build_statuses",
-            "bitbucket_check_merge_status", "bitbucket_search_users", "bitbucket_list_repos",
-
-            // Build system read-only
-            "gradle_dependencies", "gradle_properties", "gradle_tasks",
-            "maven_dependency_tree", "maven_effective_pom",
-
-            // Spring Boot read-only
-            "spring_boot_actuator", "spring_boot_autoconfig",
-            "spring_boot_config_properties", "spring_boot_endpoints",
 
             // Process interaction (kill is safe, ask_user_input is user-driven)
             "kill_process", "ask_user_input",
@@ -288,18 +239,8 @@ class ApprovalGate(
          * These create content but don't modify existing project files.
          */
         private val LOW_RISK_TOOLS = setOf(
-            // Jira writes (non-destructive)
-            "jira_comment", "jira_log_work",
-
-            // Bitbucket comments (non-destructive)
-            "bitbucket_add_inline_comment", "bitbucket_reply_to_comment",
-            "bitbucket_add_reviewer",
-
             // IDE non-destructive
-            "format_code", "optimize_imports",
-
-            // Bamboo read-like (getting artifacts, not modifying)
-            "jira_start_work"
+            "format_code", "optimize_imports"
         )
 
         /**
@@ -310,20 +251,57 @@ class ApprovalGate(
             "edit_file",
             "send_stdin",
             "refactor_rename",
-            "bitbucket_update_pr_title", "bitbucket_update_pr_description",
-            "bitbucket_remove_reviewer",
-            "jira_transition",
 
-            // Debug tools (operate within approved session context)
-            "add_breakpoint", "remove_breakpoint",
-            "debug_step_over", "debug_step_into", "debug_step_out",
-            "debug_resume", "debug_pause", "debug_run_to_cursor",
-            "create_run_config", "modify_run_config"
+            // Meta-tools with mixed read/write actions — classified at MEDIUM
+            // (action-aware classification in classifyRisk upgrades read-only actions to NONE)
+            "jira", "bamboo", "bitbucket", "git", "runtime", "debug"
         )
 
-        // Everything else is HIGH: run_command, bitbucket_create_pr, bitbucket_merge_pr,
-        // bitbucket_approve_pr, bitbucket_decline_pr, bamboo_trigger_build,
-        // bamboo_stop_build, bamboo_cancel_build, etc.
+        // Everything else is HIGH: run_command, etc.
+
+        /** Meta-tools that contain both read-only and write actions. */
+        private val META_TOOLS_WITH_MIXED_RISK = setOf("jira", "bamboo", "bitbucket", "git", "runtime", "debug")
+
+        /** Read-only actions per meta-tool — auto-approved (NONE risk). */
+        private val META_TOOL_READ_ONLY_ACTIONS = mapOf(
+            "jira" to setOf("get_ticket", "get_transitions", "get_comments", "get_worklogs",
+                "get_sprints", "get_linked_prs", "get_boards", "get_sprint_issues",
+                "get_board_issues", "search_issues", "get_dev_branches"),
+            "bamboo" to setOf("build_status", "get_build", "get_build_log", "get_test_results",
+                "recent_builds", "get_plans", "get_project_plans", "search_plans",
+                "get_plan_branches", "get_running_builds", "get_build_variables",
+                "get_plan_variables", "get_artifacts"),
+            "bitbucket" to setOf("get_pr_commits", "get_file_content", "get_branches",
+                "get_my_prs", "get_reviewing_prs", "get_pr_detail", "get_pr_activities",
+                "get_pr_changes", "get_pr_diff", "get_build_statuses",
+                "check_merge_status", "search_users", "list_repos"),
+            "git" to setOf("status", "diff", "log", "blame", "branches",
+                "show_file", "show_commit", "stash_list", "merge_base", "file_history"),
+            "runtime" to setOf("get_run_configurations", "get_running_processes",
+                "get_run_output", "get_test_results"),
+            "debug" to setOf("list_breakpoints", "get_state", "get_stack_frames",
+                "get_variables", "thread_dump", "memory_view")
+        )
+
+        /** Low-risk write actions — non-destructive. */
+        private val META_TOOL_LOW_RISK_ACTIONS = mapOf(
+            "jira" to setOf("comment", "log_work", "start_work"),
+            "bitbucket" to setOf("add_inline_comment", "reply_to_comment", "add_reviewer"),
+            "debug" to setOf("add_breakpoint", "remove_breakpoint", "step_over",
+                "step_into", "step_out", "resume", "pause", "run_to_cursor")
+        )
+
+        /** Classify a meta-tool action based on read/write semantics. */
+        private fun classifyMetaToolAction(toolName: String, action: String): RiskLevel {
+            val readOnly = META_TOOL_READ_ONLY_ACTIONS[toolName]
+            if (readOnly != null && action in readOnly) return RiskLevel.NONE
+
+            val lowRisk = META_TOOL_LOW_RISK_ACTIONS[toolName]
+            if (lowRisk != null && action in lowRisk) return RiskLevel.LOW
+
+            // Write/destructive actions within the meta-tool
+            return RiskLevel.MEDIUM
+        }
 
         /** Determine risk level for a given tool (static classification, no params). */
         fun riskLevelFor(toolName: String): RiskLevel = when {
@@ -373,6 +351,12 @@ class ApprovalGate(
                     CommandRisk.RISKY -> RiskLevel.HIGH
                     CommandRisk.DANGEROUS -> RiskLevel.DESTRUCTIVE
                 }
+            }
+
+            // Action-aware classification for meta-tools with mixed read/write actions
+            if (toolName in META_TOOLS_WITH_MIXED_RISK) {
+                val action = params["action"] as? String ?: return RiskLevel.MEDIUM
+                return classifyMetaToolAction(toolName, action)
             }
 
             // Fall through to static classification for remaining tools

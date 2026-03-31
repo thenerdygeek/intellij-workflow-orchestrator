@@ -181,18 +181,17 @@ class PromptAssembler(
         val parts = mutableListOf<String>()
 
         val includeAll = activeToolNames == null
-        val hasJira = includeAll || activeToolNames!!.any { it.startsWith("jira_") }
-        val hasBamboo = includeAll || activeToolNames!!.any { it.startsWith("bamboo_") }
-        val hasSonar = includeAll || activeToolNames!!.any { it.startsWith("sonar_") }
-        val hasBitbucket = includeAll || activeToolNames!!.any { it.startsWith("bitbucket_") }
-
-        val hasSpringBoot = includeAll || activeToolNames!!.any { it.startsWith("spring_boot_") }
+        val hasJira = includeAll || "jira" in activeToolNames!!
+        val hasBamboo = includeAll || "bamboo" in activeToolNames!!
+        val hasSonar = includeAll || "sonar" in activeToolNames!!
+        val hasBitbucket = includeAll || "bitbucket" in activeToolNames!!
+        val hasSpring = includeAll || "spring" in activeToolNames!!
 
         if (hasJira) parts.add(JIRA_CONTEXT_RULES)
         if (hasBamboo) parts.add(BAMBOO_CONTEXT_RULES)
         if (hasSonar) parts.add(SONAR_CONTEXT_RULES)
         if (hasBitbucket) parts.add(BITBUCKET_CONTEXT_RULES)
-        if (hasSpringBoot) parts.add(SPRING_BOOT_CONTEXT_RULES)
+        if (hasSpring) parts.add(SPRING_BOOT_CONTEXT_RULES)
 
         // Multi-repo rule applies when any integration tool is active
         if (hasJira || hasBamboo || hasSonar || hasBitbucket) {
@@ -202,16 +201,12 @@ class PromptAssembler(
         // PSI tool tips — only when PSI tools are active
         val hasPsi = includeAll || activeToolNames!!.any {
             it in listOf("type_inference", "structural_search", "dataflow_analysis",
-                "read_write_access", "test_finder", "module_dependency_graph")
+                "read_write_access", "test_finder")
         }
         if (hasPsi) parts.add(PSI_TOOL_RULES)
 
-        // Debug tool tips — only when debug tools are active
-        val hasDebug = includeAll || activeToolNames!!.any {
-            it.startsWith("debug_") || it.startsWith("add_breakpoint") ||
-            it.startsWith("remove_breakpoint") || it in listOf("get_debug_state", "evaluate_expression",
-                "get_stack_frames", "get_variables", "thread_dump", "memory_view", "hotswap")
-        }
+        // Debug tool tips — only when debug meta-tool is active
+        val hasDebug = includeAll || "debug" in activeToolNames!!
         if (hasDebug) parts.add(DEBUG_TOOL_RULES)
 
         if (parts.isEmpty()) return ""
@@ -416,14 +411,14 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             1. read_file to understand the current code
             2. edit_file to add the null check
             3. diagnostics to verify no compilation errors
-            4. run_tests on the affected test class to confirm the fix
+            4. runtime(action="run_tests") on the affected test class to confirm the fix
             Then report what you changed and the test results.
             Bad approach: Edit the file and immediately say "Done! The fix has been applied." without running diagnostics or tests.
             </example>
 
             <example name="error-recovery">
             User: "Run the integration tests"
-            If run_tests fails with a compilation error:
+            If runtime(action="run_tests") fails with a compilation error:
             1. Read the error carefully — identify the file and line
             2. read_file on the failing file
             3. edit_file to fix the compilation issue
@@ -498,39 +493,39 @@ Remember: Use tools to discover information — never guess. Verify your work be
         // --- Integration-specific rules (conditionally included based on active tools) ---
 
         val JIRA_CONTEXT_RULES = """
-            - Jira: Use jira_get_ticket to read ticket details before making transitions. Verify available transitions with jira_get_transitions.
-            - When logging work, specify timeSpent in Jira format (e.g., "1h 30m"). Always confirm before logging.
+            - Jira: Use jira(action="get_ticket") to read ticket details before transitions. Verify available transitions with jira(action="get_transitions").
+            - When logging work, specify time_spent in Jira format (e.g., "1h 30m"). Always confirm before logging.
         """.trimIndent()
 
         val BAMBOO_CONTEXT_RULES = """
-            - Bamboo: Use bamboo_build_status or bamboo_get_build to check status before triggering new builds.
-            - Build logs can be large — use bamboo_get_build_log with maxLines to limit output. Check bamboo_get_test_results for test failures.
+            - Bamboo: Use bamboo(action="build_status") or bamboo(action="get_build") to check status before triggering new builds.
+            - Build logs can be large — use bamboo(action="get_build_log") with max_lines to limit output. Check bamboo(action="get_test_results") for test failures.
         """.trimIndent()
 
         val SONAR_CONTEXT_RULES = """
-            - SonarQube: Use sonar_quality_gate for pass/fail status, sonar_issues for detailed findings.
+            - SonarQube: Use sonar(action="quality_gate") for pass/fail status, sonar(action="issues") for detailed findings.
             - Filter issues by severity (BLOCKER, CRITICAL, MAJOR, MINOR, INFO) and type (BUG, VULNERABILITY, CODE_SMELL).
         """.trimIndent()
 
         val BITBUCKET_CONTEXT_RULES = """
-            - Bitbucket: Always confirm before merge or decline operations. Use bitbucket_check_merge_status before attempting merges.
-            - For code review, use bitbucket_get_pr_diff + bitbucket_get_pr_changes for context, then bitbucket_add_inline_comment for feedback.
+            - Bitbucket: Always confirm before merge or decline operations. Use bitbucket(action="check_merge_status") before attempting merges.
+            - For code review, use bitbucket(action="get_pr_diff") + bitbucket(action="get_pr_changes") for context, then bitbucket(action="add_inline_comment") for feedback.
         """.trimIndent()
 
         val MULTI_REPO_RULES = """
-            - When the project has multiple repositories, always specify repo_name on Bitbucket, Bamboo, and Sonar tools to target the correct repo. Use bitbucket_list_repos to discover available repositories and their names. Omitting repo_name defaults to the primary repository.
+            - When the project has multiple repositories, always specify repo_name on bitbucket, bamboo, and sonar tools to target the correct repo. Use bitbucket(action="list_repos") to discover available repositories and their names. Omitting repo_name defaults to the primary repository.
         """.trimIndent()
 
         val SPRING_BOOT_CONTEXT_RULES = """
-            <spring_boot_rules>
-            Spring Boot tools available — use them proactively:
-            - When user mentions endpoints/APIs/routes: use spring_boot_endpoints for full URL resolution with context-path and parameter details
-            - When debugging "bean not created" / "auto-configuration not applied": use spring_boot_autoconfig to check @Conditional* conditions
-            - When user asks about configurable properties: use spring_boot_config_properties to show @ConfigurationProperties classes
-            - When user asks about monitoring/health/metrics: use spring_boot_actuator to check actuator setup
-            - For dependency conflicts (NoSuchMethodError, ClassNotFoundException): use maven_dependency_tree to trace transitive dependencies
-            - For build configuration questions: use maven_effective_pom to show plugin configurations
-            </spring_boot_rules>
+            <spring_rules>
+            Spring tools available — use them proactively:
+            - When user mentions endpoints/APIs/routes: use spring(action="boot_endpoints") for full URL resolution with context-path and parameter details
+            - When debugging "bean not created" / "auto-configuration not applied": use spring(action="boot_autoconfig") to check @Conditional* conditions
+            - When user asks about configurable properties: use spring(action="boot_config_properties") to show @ConfigurationProperties classes
+            - When user asks about monitoring/health/metrics: use spring(action="boot_actuator") to check actuator setup
+            - For dependency conflicts (NoSuchMethodError, ClassNotFoundException): use build(action="maven_dependency_tree") to trace transitive dependencies
+            - For build configuration questions: use build(action="maven_effective_pom") to show plugin configurations
+            </spring_rules>
         """.trimIndent()
 
         val PSI_TOOL_RULES = """

@@ -132,34 +132,17 @@ class SingleAgentSession(
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think", "attempt_completion")
 
 
-        /** Read-only tools safe to execute in parallel (no side effects on project state). */
+        /** Read-only tools safe to execute in parallel (no side effects on project state).
+         *  Note: Meta-tools (sonar, spring, build) included here because ALL their actions are read-only.
+         *  Meta-tools with mixed read/write actions (jira, bamboo, bitbucket, git, runtime, debug) are
+         *  NOT included — they execute sequentially for safety. Action-level parallelism could be added
+         *  in a future optimization. */
         private val READ_ONLY_TOOLS = setOf(
             "read_file", "search_code", "glob_files", "file_structure",
             "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
-            "diagnostics", "git_status", "git_blame", "git_diff", "git_log",
-            "git_branches", "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base", "git_file_history",
-            "find_implementations",
-            "spring_context", "spring_endpoints", "spring_bean_graph",
-            // Jira read-only
-            "jira_get_ticket", "jira_get_comments", "jira_get_transitions",
-            "jira_get_worklogs", "jira_get_sprints", "jira_get_linked_prs",
-            "jira_get_boards", "jira_get_sprint_issues", "jira_get_board_issues",
-            "jira_search_issues", "jira_get_dev_branches",
-            // Bamboo read-only
-            "bamboo_build_status", "bamboo_get_build", "bamboo_get_test_results",
-            "bamboo_get_artifacts", "bamboo_recent_builds", "bamboo_get_plans",
-            "bamboo_get_project_plans", "bamboo_search_plans", "bamboo_get_plan_branches",
-            "bamboo_get_running_builds", "bamboo_get_build_variables", "bamboo_get_plan_variables",
-            // Sonar read-only
-            "sonar_issues", "sonar_quality_gate", "sonar_coverage",
-            "sonar_search_projects", "sonar_analysis_tasks",
-            "sonar_branches", "sonar_project_measures", "sonar_source_lines", "sonar_issues_paged",
-            // Bitbucket read-only
-            "bitbucket_get_pr_commits", "bitbucket_get_file_content", "bitbucket_get_branches",
-            "bitbucket_search_users", "bitbucket_get_my_prs", "bitbucket_get_reviewing_prs",
-            "bitbucket_get_pr_detail", "bitbucket_get_pr_activities", "bitbucket_get_pr_changes",
-            "bitbucket_get_pr_diff", "bitbucket_get_build_statuses", "bitbucket_check_merge_status",
-            "bitbucket_list_repos"
+            "diagnostics", "find_implementations",
+            // Read-only meta-tools (all actions are read-only)
+            "sonar", "spring", "build"
         )
     }
 
@@ -1109,7 +1092,7 @@ class SingleAgentSession(
                 }
             }
             // Backpressure error on test/build failures
-            if (toolResult.isError && toolName in setOf("run_command", "run_tests", "compile_module")) {
+            if (toolResult.isError && toolName in setOf("run_command", "runtime")) {
                 val bpError = backpressureGate.createBackpressureError(toolName, toolResult.content)
                 contextManager.addMessage(bpError)
             }
@@ -1252,7 +1235,7 @@ class SingleAgentSession(
             "search_code", "glob_files", "find_references", "find_definition" -> {
                 factsStore.record(Fact(FactType.CODE_PATTERN, filePath, summary.take(200), iteration))
             }
-            "run_command", "run_tests" -> {
+            "run_command", "runtime" -> {
                 factsStore.record(Fact(FactType.COMMAND_RESULT, null, summary.take(200), iteration))
             }
             "diagnostics", "run_inspections" -> {
@@ -1383,7 +1366,7 @@ class SingleAgentSession(
             }
 
             // Set tool call ID for streaming output + process kill support
-            if (toolName == "run_command" || toolName == "run_tests") {
+            if (toolName == "run_command" || toolName == "runtime") {
                 RunCommandTool.currentToolCallId.set(toolCall.id)
             }
             val toolResult = try {
