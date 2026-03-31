@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.runtime
 
 import com.workflow.orchestrator.agent.api.dto.FunctionCall
 import com.workflow.orchestrator.agent.api.dto.ToolCall
+import com.workflow.orchestrator.agent.context.events.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -339,6 +340,91 @@ class LoopGuardTest {
         guard.reset()
         // After reset, re-read should not warn
         assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+    }
+
+    // --- Condensation loop detection ---
+
+    @Test
+    fun `isCondensationLooping returns false for empty events`() {
+        assertFalse(LoopGuard.isCondensationLooping(emptyList()))
+    }
+
+    @Test
+    fun `isCondensationLooping returns false when no condensation events`() {
+        val events = listOf<Event>(
+            MessageAction(content = "hello", id = 1),
+            MessageAction(content = "world", id = 2, source = EventSource.AGENT)
+        )
+        assertFalse(LoopGuard.isCondensationLooping(events))
+    }
+
+    @Test
+    fun `isCondensationLooping returns true with threshold consecutive condensation events`() {
+        val events = (1..10).map { i ->
+            CondensationObservation(content = "summary $i", id = i) as Event
+        }
+        assertTrue(LoopGuard.isCondensationLooping(events, threshold = 10))
+    }
+
+    @Test
+    fun `isCondensationLooping returns false below threshold`() {
+        val events = (1..9).map { i ->
+            CondensationObservation(content = "summary $i", id = i) as Event
+        }
+        assertFalse(LoopGuard.isCondensationLooping(events, threshold = 10))
+    }
+
+    @Test
+    fun `isCondensationLooping counts mixed condensation types`() {
+        val events = listOf<Event>(
+            MessageAction(content = "real work", id = 1),
+            CondensationObservation(content = "summary", id = 2),
+            CondensationAction(forgottenEventIds = listOf(1), forgottenEventsStartId = null, forgottenEventsEndId = null, summary = null, summaryOffset = null, id = 3),
+            CondensationRequestAction(id = 4),
+            CondensationObservation(content = "summary 2", id = 5),
+            CondensationAction(forgottenEventIds = listOf(2), forgottenEventsStartId = null, forgottenEventsEndId = null, summary = null, summaryOffset = null, id = 6)
+        )
+        assertTrue(LoopGuard.isCondensationLooping(events, threshold = 5))
+    }
+
+    @Test
+    fun `isCondensationLooping resets count on real work event`() {
+        val events = listOf<Event>(
+            CondensationObservation(content = "s1", id = 1),
+            CondensationObservation(content = "s2", id = 2),
+            CondensationObservation(content = "s3", id = 3),
+            MessageAction(content = "real work", id = 4),  // resets count
+            CondensationObservation(content = "s4", id = 5),
+            CondensationObservation(content = "s5", id = 6)
+        )
+        // Max consecutive run is 3 (events 1-3) or 2 (events 5-6), neither >= 5
+        assertFalse(LoopGuard.isCondensationLooping(events, threshold = 5))
+    }
+
+    @Test
+    fun `isCondensationLooping detects loop at end of event list`() {
+        val events = listOf<Event>(
+            MessageAction(content = "real work", id = 1),
+            CondensationObservation(content = "s1", id = 2),
+            CondensationAction(forgottenEventIds = listOf(1), forgottenEventsStartId = null, forgottenEventsEndId = null, summary = null, summaryOffset = null, id = 3),
+            CondensationRequestAction(id = 4),
+            CondensationObservation(content = "s2", id = 5),
+            CondensationObservation(content = "s3", id = 6)
+        )
+        assertTrue(LoopGuard.isCondensationLooping(events, threshold = 5))
+    }
+
+    @Test
+    fun `isCondensationLooping uses default threshold of 10`() {
+        val events = (1..10).map { i ->
+            CondensationObservation(content = "summary $i", id = i) as Event
+        }
+        assertTrue(LoopGuard.isCondensationLooping(events))
+
+        val nineEvents = (1..9).map { i ->
+            CondensationObservation(content = "summary $i", id = i) as Event
+        }
+        assertFalse(LoopGuard.isCondensationLooping(nineEvents))
     }
 
     // --- Helper ---
