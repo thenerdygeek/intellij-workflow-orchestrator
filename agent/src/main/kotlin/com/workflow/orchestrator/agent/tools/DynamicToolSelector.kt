@@ -44,7 +44,9 @@ object DynamicToolSelector {
         "core_memory_read", "core_memory_append", "core_memory_replace",
         "archival_memory_insert", "archival_memory_search", "conversation_search",
         // Project awareness — always available so the agent knows branch, keys, and repo mappings
-        "project_context"
+        "project_context",
+        // Change tracking — always available so the agent can review its own changes
+        "list_changes"
     )
 
     // --- Tool name sets for each integration ---

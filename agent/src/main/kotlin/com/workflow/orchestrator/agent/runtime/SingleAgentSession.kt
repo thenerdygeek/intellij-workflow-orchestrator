@@ -265,6 +265,11 @@ class SingleAgentSession(
             LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
             val iterationStartMs = System.currentTimeMillis()
             metrics.turnCount = iteration
+
+            // Track current iteration for tools that need it (e.g. list_changes)
+            try {
+                com.workflow.orchestrator.agent.AgentService.getInstance(project).currentIteration = iteration
+            } catch (_: Exception) { /* service not available in tests */ }
             sessionTrace?.iterationStarted(iteration, contextManager.currentTokens, budgetEnforcer.utilizationPercent())
             onProgress(AgentProgress(
                 step = "Thinking... (iteration $iteration)",
@@ -1048,6 +1053,36 @@ class SingleAgentSession(
 
             allArtifacts.addAll(toolResult.artifacts)
             toolResults.add(toolCall.id to toolResult.isError)
+
+            // Per-edit checkpoints: create a LocalHistory checkpoint and record in ChangeLedger
+            if (toolResult.artifacts.isNotEmpty()) {
+                val agentService = try { com.workflow.orchestrator.agent.AgentService.getInstance(project) } catch (_: Exception) { null }
+                val ledger = agentService?.currentChangeLedger
+                val rollback = agentService?.currentRollbackManager
+
+                val checkpointId = rollback?.createCheckpoint(
+                    "Iteration $iteration: $toolName"
+                ) ?: ""
+
+                // Record checkpoint in ledger
+                val iterChanges = ledger?.changesForIteration(iteration) ?: emptyList()
+                ledger?.recordCheckpoint(CheckpointMeta(
+                    id = checkpointId,
+                    description = "Iteration $iteration: $toolName",
+                    iteration = iteration,
+                    timestamp = System.currentTimeMillis(),
+                    filesModified = toolResult.artifacts.map { it.substringAfterLast('/') },
+                    totalLinesAdded = iterChanges.sumOf { it.linesAdded },
+                    totalLinesRemoved = iterChanges.sumOf { it.linesRemoved }
+                ))
+
+                // COMPRESSION: Update anchor so LLM sees cumulative changes
+                if (ledger != null) {
+                    agentService?.currentContextManager?.updateChangeLedgerAnchor(ledger)
+                }
+
+                toolResult.artifacts.forEach { rollback?.trackFileChange(it) }
+            }
 
             // Track edited files for LoopGuard auto-verification
             if (toolName == "edit_file" && !toolResult.isError) {

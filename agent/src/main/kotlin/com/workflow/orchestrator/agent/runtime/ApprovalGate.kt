@@ -231,7 +231,10 @@ class ApprovalGate(
             "kill_process", "ask_user_input",
 
             // Subagent spawning (runs in isolated context)
-            "agent", "delegate_task"
+            "agent", "delegate_task",
+
+            // Change tracking read-only
+            "list_changes"
         )
 
         /**

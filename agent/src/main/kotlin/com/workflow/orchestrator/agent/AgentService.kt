@@ -240,6 +240,10 @@ class AgentService(
             register(ActivateSkillTool())
             register(DeactivateSkillTool())
 
+            // Change tracking tools
+            register(ListChangesTool())
+            register(RollbackChangesTool())
+
             // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
             register(SemanticDiagnosticsTool()) // name = "diagnostics"
             register(ProblemViewTool()) // name = "problem_view"
