@@ -252,23 +252,8 @@ class AgentService(
             register(GitTool())
             register(FindImplementationsTool())
 
-            // Framework tools
-            register(ProjectModulesTool())
-            register(ModuleDependencyGraphTool())
-
-            // Maven Intelligence (Phase 3)
-            register(MavenDependenciesTool())
-            register(MavenDependencyTreeTool())
-            register(MavenPropertiesTool())
-            register(MavenPluginsTool())
-            register(MavenProfilesTool())
-
-            // Gradle Intelligence (Phase 3)
-            register(GradleDependenciesTool())
-            register(GradleTasksTool())
-            register(GradlePropertiesTool())
-
-            // Spring PSI Intelligence (Phase 3) — now part of SpringTool meta-tool registered above
+            // Build system integration — single meta-tool replacing 11 Maven/Gradle/module tools
+            register(BuildTool())
         }
     }
 

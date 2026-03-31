@@ -63,18 +63,11 @@ object DynamicToolSelector {
 
     private val SPRING_BOOT_TOOL_NAMES = setOf("spring")
 
-    private val MAVEN_TOOL_NAMES = setOf(
-        "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
-        "project_modules", "module_dependency_graph"
-    )
+    private val MAVEN_TOOL_NAMES = setOf("build")
 
-    private val MAVEN_ENHANCED_TOOL_NAMES = setOf(
-        "maven_dependency_tree", "maven_effective_pom"
-    )
+    private val MAVEN_ENHANCED_TOOL_NAMES = setOf("build")
 
-    private val GRADLE_TOOL_NAMES = setOf(
-        "gradle_dependencies", "gradle_tasks", "gradle_properties"
-    )
+    private val GRADLE_TOOL_NAMES = setOf("build")
 
     private val RUNTIME_TOOL_NAMES = setOf(
         "get_run_configurations", "create_run_config", "modify_run_config",
@@ -158,7 +151,7 @@ object DynamicToolSelector {
             setOf("maven", "pom", "dependency", "dependencies", "plugin", "profile",
                 "module", "version", "version conflict", "transitive", "effective pom",
                 "dependency tree", "plugin config"),
-            MAVEN_TOOL_NAMES + MAVEN_ENHANCED_TOOL_NAMES + setOf("spring")
+            MAVEN_TOOL_NAMES + MAVEN_ENHANCED_TOOL_NAMES + setOf("spring")  // All resolve to setOf("build", "spring")
         ),
         ToolGroup(
             "gradle",
@@ -201,11 +194,7 @@ object DynamicToolSelector {
     )
 
     /** Maven tools to auto-include when project is detected as Maven. */
-    private val MAVEN_PROJECT_TOOLS = setOf(
-        "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
-        "maven_dependency_tree", "maven_effective_pom",
-        "spring", "project_modules", "module_dependency_graph"
-    )
+    private val MAVEN_PROJECT_TOOLS = setOf("build", "spring")
 
     /** Spring tools to auto-include when project is detected as Spring. */
     private val SPRING_PROJECT_TOOLS = setOf("spring")
@@ -214,9 +203,7 @@ object DynamicToolSelector {
     private val JPA_PROJECT_TOOLS = setOf("spring")
 
     /** Gradle tools to auto-include when project is detected as Gradle. */
-    private val GRADLE_PROJECT_TOOLS = setOf(
-        "gradle_dependencies", "gradle_tasks", "gradle_properties", "project_modules", "module_dependency_graph"
-    )
+    private val GRADLE_PROJECT_TOOLS = setOf("build")
 
     /**
      * Detect project type using IntelliJ APIs.
