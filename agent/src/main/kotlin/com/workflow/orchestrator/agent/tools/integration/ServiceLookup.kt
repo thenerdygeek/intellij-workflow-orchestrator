@@ -37,11 +37,42 @@ object ServiceLookup {
 
 /**
  * Convert a core ToolResult<T> to an agent ToolResult.
- * Uses the summary (LLM-optimized text) as the content.
+ *
+ * Strategy: The `summary` field is a one-liner for logs/notifications (e.g., "3 comment(s) on PROJ-123").
+ * The `data` field contains the actual structured content the LLM needs to see.
+ *
+ * - If `data` is a non-empty List, each item is rendered via toString()
+ * - If `data` is Unit or null, only the summary is used
+ * - Otherwise, data.toString() is appended after the summary
+ *
+ * This ensures the LLM sees the actual content (comment text, issue details, etc.)
+ * rather than just a count.
  */
 fun <T> com.workflow.orchestrator.core.services.ToolResult<T>.toAgentToolResult(): ToolResult {
     val content = buildString {
         append(summary)
+        // Append structured data content when available
+        val dataVal = data
+        when {
+            dataVal == null || dataVal == Unit -> { /* summary is sufficient */ }
+            dataVal is List<*> && dataVal.isNotEmpty() -> {
+                append("\n\n")
+                dataVal.forEachIndexed { index, item ->
+                    if (index > 0) append("\n")
+                    append(item.toString())
+                }
+            }
+            dataVal is List<*> -> { /* empty list, summary already says "0 items" */ }
+            else -> {
+                val dataStr = dataVal.toString()
+                // Avoid duplicating if data.toString() equals the summary
+                if (dataStr != summary && dataStr.isNotBlank() &&
+                    !dataStr.startsWith(dataVal::class.java.name)) {
+                    append("\n\n")
+                    append(dataStr)
+                }
+            }
+        }
         if (hint != null) append("\nHint: $hint")
     }
     return ToolResult(

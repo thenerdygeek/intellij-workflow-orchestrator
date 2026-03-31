@@ -53,7 +53,9 @@ data class JiraCommentData(
     val author: String,
     val body: String,
     val created: String
-)
+) {
+    override fun toString(): String = "[$created] $author: $body"
+}
 
 /**
  * Worklog entry for a Jira ticket, shared between UI panels and AI agent.
@@ -65,7 +67,9 @@ data class WorklogData(
     val timeSpentSeconds: Long,
     val comment: String?,
     val started: String
-)
+) {
+    override fun toString(): String = "[$started] $author: $timeSpent${if (!comment.isNullOrBlank()) " — $comment" else ""}"
+}
 
 /**
  * Dev-status pull request linked to a Jira ticket.
