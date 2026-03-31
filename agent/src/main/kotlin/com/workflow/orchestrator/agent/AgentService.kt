@@ -251,18 +251,8 @@ class AgentService(
             register(ModifyRunConfigTool())
             register(DeleteRunConfigTool())
 
-            // VCS / navigation tools
-            register(GitStatusTool())
-            register(GitBlameTool())
-            register(GitDiffTool())
-            register(GitLogTool())
-            register(GitBranchesTool())
-            register(GitShowFileTool())
-            register(GitShowCommitTool())
-            register(GitStashListTool())
-            register(GitMergeBaseTool())
-            register(GitFileHistoryTool())
-            register(ChangelistShelveTool())
+            // VCS integration — single meta-tool replacing 11 individual git/vcs tools
+            register(GitTool())
             register(FindImplementationsTool())
 
             // Framework tools

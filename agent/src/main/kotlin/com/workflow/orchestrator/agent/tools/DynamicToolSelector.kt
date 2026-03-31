@@ -57,11 +57,7 @@ object DynamicToolSelector {
 
     private val DEBUG_TOOL_NAMES = setOf("debug")
 
-    private val VCS_TOOL_NAMES = setOf(
-        "git_status", "git_blame", "git_diff", "git_log", "git_branches",
-        "git_show_file", "git_show_commit", "git_stash_list", "git_merge_base",
-        "git_file_history", "changelist_shelve"
-    )
+    private val VCS_TOOL_NAMES = setOf("git")
 
     private val SPRING_TOOL_NAMES = setOf(
         "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",

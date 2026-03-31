@@ -75,7 +75,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (183 total, 16 categories)
+## Tools (173 total, 16 categories)
 
 | Category | Tools |
 |----------|-------|
@@ -84,7 +84,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder, module_dependency_graph |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations |
 | Runtime & Debug | get_run_configurations, get_running_processes, get_run_output, get_test_results, add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_pause, debug_run_to_cursor, debug_stop, evaluate_expression, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame, attach_to_process, create_run_config, modify_run_config, delete_run_config |
-| VCS | git_status, git_blame, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_stash_list, git_merge_base, git_file_history, changelist_shelve |
+| VCS | git (meta-tool: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
 | Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners, spring_boot_endpoints, spring_boot_autoconfig, spring_boot_config_properties, spring_boot_actuator, gradle_dependencies, gradle_tasks, gradle_properties, maven_dependency_tree, maven_effective_pom |
 | Jira | jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work, jira_get_worklogs, jira_get_sprints, jira_get_linked_prs, jira_get_boards, jira_get_sprint_issues, jira_get_board_issues, jira_search_issues, jira_get_dev_branches, jira_start_work |
 | CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results, bamboo_stop_build, bamboo_cancel_build, bamboo_get_artifacts, bamboo_recent_builds, bamboo_get_plans, bamboo_get_project_plans, bamboo_search_plans, bamboo_get_plan_branches, bamboo_get_running_builds, bamboo_get_build_variables, bamboo_get_plan_variables, bamboo_rerun_failed_jobs, bamboo_trigger_stage |
