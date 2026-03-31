@@ -75,21 +75,22 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (173 total, 16 categories)
+## Tools (57 registered, 9 meta-tools consolidating 138 actions)
 
 | Category | Tools |
 |----------|-------|
 | Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think, request_tools |
 | Process Interaction | send_stdin, kill_process, ask_user_input |
-| PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder, module_dependency_graph |
-| IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations |
-| Runtime & Debug | get_run_configurations, get_running_processes, get_run_output, get_test_results, add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_debug_session, get_debug_state, debug_step_over, debug_step_into, debug_step_out, debug_resume, debug_pause, debug_run_to_cursor, debug_stop, evaluate_expression, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame, attach_to_process, create_run_config, modify_run_config, delete_run_config |
-| VCS | git (meta-tool: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
-| Spring & Framework | spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules, maven_dependencies, maven_properties, maven_plugins, maven_profiles, spring_version_info, spring_profiles, spring_repositories, spring_security_config, spring_scheduled_tasks, spring_event_listeners, spring_boot_endpoints, spring_boot_autoconfig, spring_boot_config_properties, spring_boot_actuator, gradle_dependencies, gradle_tasks, gradle_properties, maven_dependency_tree, maven_effective_pom |
-| Jira | jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work, jira_get_worklogs, jira_get_sprints, jira_get_linked_prs, jira_get_boards, jira_get_sprint_issues, jira_get_board_issues, jira_search_issues, jira_get_dev_branches, jira_start_work |
-| CI/CD — Bamboo | bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results, bamboo_stop_build, bamboo_cancel_build, bamboo_get_artifacts, bamboo_recent_builds, bamboo_get_plans, bamboo_get_project_plans, bamboo_search_plans, bamboo_get_plan_branches, bamboo_get_running_builds, bamboo_get_build_variables, bamboo_get_plan_variables, bamboo_rerun_failed_jobs, bamboo_trigger_stage |
-| Quality — SonarQube | sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks, sonar_branches, sonar_project_measures, sonar_source_lines, sonar_issues_paged |
-| Pull Requests — Bitbucket | bitbucket_create_pr, bitbucket_get_pr_commits, bitbucket_add_inline_comment, bitbucket_reply_to_comment, bitbucket_set_reviewer_status, bitbucket_get_file_content, bitbucket_add_reviewer, bitbucket_update_pr_title, bitbucket_get_branches, bitbucket_create_branch, bitbucket_search_users, bitbucket_get_my_prs, bitbucket_get_reviewing_prs, bitbucket_get_pr_detail, bitbucket_get_pr_activities, bitbucket_get_pr_changes, bitbucket_get_pr_diff, bitbucket_get_build_statuses, bitbucket_approve_pr, bitbucket_merge_pr, bitbucket_decline_pr, bitbucket_update_pr_description, bitbucket_add_pr_comment, bitbucket_check_merge_status, bitbucket_remove_reviewer, bitbucket_list_repos |
+| PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
+| IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |
+| Runtime & Debug | **runtime** (9 actions: get_run_configurations, create/modify/delete_run_config, get_running_processes, get_run_output, get_test_results, run_tests, compile_module), **debug** (24 actions: breakpoints, stepping, inspection, hotswap, attach) |
+| VCS | **git** (11 actions: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
+| Spring & Framework | **spring** (15 actions: context, endpoints, bean_graph, config, version_info, profiles, repositories, security_config, scheduled_tasks, event_listeners, boot_endpoints/autoconfig/config_properties/actuator, jpa_entities) |
+| Build Systems | **build** (11 actions: maven_dependencies/properties/plugins/profiles/dependency_tree/effective_pom, gradle_dependencies/tasks/properties, project_modules, module_dependency_graph) |
+| Jira | **jira** (15 actions: get_ticket, search_issues, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work) |
+| CI/CD — Bamboo | **bamboo** (18 actions: build_status, get/trigger/stop/cancel_build, get_build_log, test_results, artifacts, recent_builds, plans, running_builds, variables, rerun_failed, trigger_stage) |
+| Quality — SonarQube | **sonar** (9 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged) |
+| Pull Requests — Bitbucket | **bitbucket** (26 actions: create/approve/merge/decline_pr, comments, reviewers, branches, diff, build_statuses, repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
 | Skills | activate_skill, deactivate_skill |
 | Database | db_list_profiles, db_query, db_schema |
