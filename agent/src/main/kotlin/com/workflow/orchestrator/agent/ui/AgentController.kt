@@ -580,12 +580,13 @@ class AgentController(
             scope.launch(Dispatchers.IO) {
                 val context = mentionContextBuilder.buildContext(mentions)
                 if (context != null) {
-                    session?.contextManager?.setMentionAnchor(
-                        com.workflow.orchestrator.agent.api.dto.ChatMessage(
-                            role = "system",
-                            content = "<mentioned_context>\n$context</mentioned_context>"
-                        )
+                    val mentionMsg = com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                        role = "system",
+                        content = "<mentioned_context>\n$context</mentioned_context>"
                     )
+                    session?.contextManager?.setMentionAnchor(mentionMsg)
+                    // Record mention event in event store
+                    session?.contextBridge?.recordMention(mentions.map { it.value }, context)
                 } else {
                     session?.contextManager?.setMentionAnchor(null)
                 }
@@ -618,6 +619,7 @@ class AgentController(
                             content = "<mentioned_context>\n$context</mentioned_context>"
                         )
                     )
+                    session?.contextBridge?.recordMention(filePaths, context)
                 }
                 SwingUtilities.invokeLater { executeTask(prompt) }
             }
@@ -903,6 +905,14 @@ class AgentController(
             currentSession.contextManager.setPlanAnchor(
                 com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
             )
+            // Record plan event in event store
+            try {
+                currentSession.contextBridge?.recordPlanUpdate(
+                    kotlinx.serialization.json.Json.encodeToString(
+                        com.workflow.orchestrator.agent.runtime.AgentPlan.serializer(), plan
+                    )
+                )
+            } catch (_: Exception) {}
         }
 
         // Wire QuestionManager UI callbacks
@@ -959,10 +969,12 @@ class AgentController(
                         content = "<active_skill name=\"${skill.entry.name}\">\n${skill.content}\n</active_skill>"
                     )
                 )
+                currentSession.contextBridge?.recordSkillActivated(skill.entry.name, skill.content)
                 try { dashboard.showSkillBanner(skill.entry.name) } catch (_: Exception) {}
             }
             sm.onSkillDeactivated = {
                 currentSession.contextManager.setSkillAnchor(null)
+                currentSession.contextBridge?.recordSkillDeactivated("unknown")
                 try { dashboard.hideSkillBanner() } catch (_: Exception) {}
             }
         }
@@ -999,12 +1011,16 @@ class AgentController(
                     dashboard.appendStatus(resultMessage, RichStreamingPanel.StatusType.SUCCESS)
                 }
                 // Inject into LLM context so it knows about the completion
-                session?.contextManager?.addMessage(
-                    com.workflow.orchestrator.agent.api.dto.ChatMessage(
-                        role = "system",
-                        content = "<background_agent_completed agent_id=\"$agentId\">\n$resultMessage\n</background_agent_completed>"
-                    )
+                val bgMsg = com.workflow.orchestrator.agent.api.dto.ChatMessage(
+                    role = "system",
+                    content = "<background_agent_completed agent_id=\"$agentId\">\n$resultMessage\n</background_agent_completed>"
                 )
+                val bridge = session?.contextBridge
+                if (bridge != null) {
+                    bridge.addSystemMessage(bgMsg.content!!)
+                } else {
+                    session?.contextManager?.addMessage(bgMsg)
+                }
             }
         }
 

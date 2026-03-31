@@ -321,7 +321,8 @@ class AgentOrchestrator(
                     hasPlan = data.hasPlan,
                     lastActivity = data.lastActivity
                 )
-            }
+            },
+            eventBridge = session?.contextBridge
         )
 
         // Persist scorecard for trend analysis

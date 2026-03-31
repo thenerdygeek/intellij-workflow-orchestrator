@@ -8,10 +8,13 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.ToolOutputStore
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.context.WorkingSet
+import com.workflow.orchestrator.agent.context.condenser.LlmBrainSummarizationClient
 import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
@@ -74,6 +77,13 @@ class ConversationSession private constructor(
     var initialized: Boolean = false
         internal set
 
+    /**
+     * Event-sourced context bridge — dual-writes to both ContextManager and EventStore.
+     * Created after construction (needs store.sessionDirectory). Null only on bridge creation failure.
+     */
+    var contextBridge: EventSourcedContextBridge? = null
+        internal set
+
     /** Rollback manager for undoing agent changes. Stored here so it persists across turns. */
     var rollbackManager: AgentRollbackManager? = null
 
@@ -103,7 +113,12 @@ class ConversationSession private constructor(
      */
     fun initialize() {
         if (initialized) return
-        contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+        val bridge = contextBridge
+        if (bridge != null) {
+            bridge.addSystemPrompt(systemPrompt)
+        } else {
+            contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+        }
         initialized = true
     }
 
@@ -154,6 +169,8 @@ class ConversationSession private constructor(
             persistMessage(msg)
         }
         persistedMessageCount = allMessages.size
+        // Also flush event store to JSONL
+        contextBridge?.flushEvents()
     }
 
     /**
@@ -403,6 +420,19 @@ class ConversationSession private constructor(
             // Initialize change ledger for edit tracking (persists to changes.jsonl)
             session.changeLedger.initialize(session.store.sessionDirectory)
 
+            // Create the event-sourced context bridge (dual-write to ContextManager + EventStore)
+            try {
+                val summarizationClient = LlmBrainSummarizationClient(agentService.brain)
+                session.contextBridge = EventSourcedContextBridge.create(
+                    contextManager = contextManager,
+                    sessionDir = session.store.sessionDirectory,
+                    config = ContextManagementConfig.DEFAULT,
+                    summarizationClient = summarizationClient
+                )
+            } catch (_: Exception) {
+                // Graceful degradation — session works without bridge
+            }
+
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = session.store.sessionDirectory
@@ -490,6 +520,29 @@ class ConversationSession private constructor(
             loaded.changeLedger.loadFromDisk()
             // Rebuild the compression-proof anchor from loaded entries
             loaded.contextManager.updateChangeLedgerAnchor(loaded.changeLedger)
+
+            // Create event-sourced context bridge — try to load existing events, else create fresh
+            try {
+                val summarizationClient = LlmBrainSummarizationClient(session.brain)
+                val eventsFile = java.io.File(loaded.store.sessionDirectory, com.workflow.orchestrator.agent.context.events.EventStore.JSONL_FILENAME)
+                loaded.contextBridge = if (eventsFile.exists()) {
+                    EventSourcedContextBridge.loadFromDisk(
+                        contextManager = loaded.contextManager,
+                        sessionDir = loaded.store.sessionDirectory,
+                        config = ContextManagementConfig.DEFAULT,
+                        summarizationClient = summarizationClient
+                    )
+                } else {
+                    EventSourcedContextBridge.create(
+                        contextManager = loaded.contextManager,
+                        sessionDir = loaded.store.sessionDirectory,
+                        config = ContextManagementConfig.DEFAULT,
+                        summarizationClient = summarizationClient
+                    )
+                }
+            } catch (_: Exception) {
+                // Graceful degradation
+            }
 
             // Restore persisted plan into PlanManager so update_plan_step and checkDeviation work
             val restoredPlan = PlanPersistence.load(loaded.store.sessionDirectory)

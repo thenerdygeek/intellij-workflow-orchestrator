@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.Fact
 import com.workflow.orchestrator.agent.context.FactType
 import com.workflow.orchestrator.agent.context.FactsStore
@@ -192,7 +193,9 @@ class SingleAgentSession(
         onStreamChunk: (String) -> Unit = {},
         onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
         /** Called after each iteration to persist checkpoint + messages. */
-        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null
+        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null,
+        /** Event-sourced context bridge for dual-write. Null = legacy mode only. */
+        eventBridge: EventSourcedContextBridge? = null
     ): SingleAgentResult {
         currentTask = task
         LOG.info("SingleAgentSession: starting with ${tools.size} tools for task: ${task.take(100)}")
@@ -209,9 +212,17 @@ class SingleAgentSession(
         // Only add system prompt if explicitly provided (first message).
         // On multi-turn, systemPrompt is null — already in context from session.initialize().
         if (systemPrompt != null) {
-            contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+            if (eventBridge != null) {
+                eventBridge.addSystemPrompt(systemPrompt)
+            } else {
+                contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+            }
         }
-        contextManager.addMessage(ChatMessage(role = "user", content = task))
+        if (eventBridge != null) {
+            eventBridge.addUserMessage(task)
+        } else {
+            contextManager.addMessage(ChatMessage(role = "user", content = task))
+        }
 
         // Initialize LoopGuard for loop detection and auto-verification
         val loopGuard = LoopGuard()
@@ -505,7 +516,8 @@ class SingleAgentSession(
                     editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
                     backpressureGate, selfCorrectionGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                     onStreamChunk, eventLog, sessionTrace, maxIterations,
-                    sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint
+                    sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint,
+                    eventBridge = eventBridge
                 ) ?: continue
             }
 
@@ -516,7 +528,8 @@ class SingleAgentSession(
                         editedFiles, activeTools, contextManager, project, approvalGate, loopGuard,
                         backpressureGate, selfCorrectionGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
                         onStreamChunk, eventLog, sessionTrace, maxIterations,
-                        sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint
+                        sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint,
+                        eventBridge = eventBridge
                     )
                     if (sessionResult != null) return sessionResult
                     totalTokensUsed = result.totalTokensSoFar
@@ -583,7 +596,8 @@ class SingleAgentSession(
         sessionStartMs: Long = 0L,
         iterationStartMs: Long = 0L,
         onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
-        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null
+        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null,
+        eventBridge: EventSourcedContextBridge? = null
     ): SingleAgentResult? {
         val response = result.response
         val usage = response.usage
@@ -623,7 +637,15 @@ class SingleAgentSession(
 
         // Only add assistant message to context if it has content or valid tool calls
         if (!cleanMessage.content.isNullOrBlank() || !toolCalls.isNullOrEmpty()) {
-            contextManager.addAssistantMessage(cleanMessage)
+            if (eventBridge != null && !toolCalls.isNullOrEmpty()) {
+                // Tool calls: use bridge to create proper ToolAction events
+                eventBridge.addAssistantToolCalls(cleanMessage)
+            } else if (eventBridge != null) {
+                // Text-only response: use bridge for dual-write
+                eventBridge.addAssistantMessage(cleanMessage)
+            } else {
+                contextManager.addAssistantMessage(cleanMessage)
+            }
         } else {
             LOG.info("SingleAgentSession: skipping empty assistant message (no content, no valid tool calls)")
         }
@@ -882,11 +904,19 @@ class SingleAgentSession(
                 val toolName = tc.function.name
                 // 5C: Redact credentials before injecting tool results into LLM context
                 val redactedContent = CredentialRedactor.redact(tr.content)
-                contextManager.addToolResult(
-                    toolCallId = tc.id,
-                    content = redactedContent,
-                    summary = tr.summary
-                )
+                if (eventBridge != null) {
+                    if (tr.isError) {
+                        eventBridge.addToolError(tc.id, redactedContent, tr.summary, toolName)
+                    } else {
+                        eventBridge.addToolResult(tc.id, redactedContent, tr.summary, toolName)
+                    }
+                } else {
+                    contextManager.addToolResult(
+                        toolCallId = tc.id,
+                        content = redactedContent,
+                        summary = tr.summary
+                    )
+                }
                 recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, contextManager, project)
                 allArtifacts.addAll(tr.artifacts)
                 toolResults.add(tc.id to tr.isError)
@@ -1044,11 +1074,19 @@ class SingleAgentSession(
 
             // 5C: Redact credentials before injecting tool results into LLM context
             val redactedWriteContent = CredentialRedactor.redact(toolResult.content)
-            contextManager.addToolResult(
-                toolCallId = toolCall.id,
-                content = redactedWriteContent,
-                summary = toolResult.summary
-            )
+            if (eventBridge != null) {
+                if (toolResult.isError) {
+                    eventBridge.addToolError(toolCall.id, redactedWriteContent, toolResult.summary, toolName)
+                } else {
+                    eventBridge.addToolResult(toolCall.id, redactedWriteContent, toolResult.summary, toolName)
+                }
+            } else {
+                contextManager.addToolResult(
+                    toolCallId = toolCall.id,
+                    content = redactedWriteContent,
+                    summary = toolResult.summary
+                )
+            }
             recordFactFromToolResult(toolName, toolCall.function.arguments, redactedWriteContent, toolResult.summary, iteration, contextManager, project)
 
             allArtifacts.addAll(toolResult.artifacts)
@@ -1210,7 +1248,11 @@ class SingleAgentSession(
         // LoopGuard: check for loops, error nudges, instruction-fade reminders
         val loopGuardMessages = loopGuard.afterIteration(effectiveToolCalls, toolResults, editedFiles.toList())
         for (msg in loopGuardMessages) {
-            contextManager.addMessage(msg)
+            if (eventBridge != null) {
+                eventBridge.addMessage(msg)
+            } else {
+                contextManager.addMessage(msg)
+            }
             if (msg.content?.contains("same arguments") == true) {
                 eventLog?.log(AgentEventType.LOOP_DETECTED, msg.content ?: "")
             }
@@ -1219,14 +1261,25 @@ class SingleAgentSession(
         // Backpressure gate: nudge after N edits without verification
         val backpressureNudge = backpressureGate.checkAndGetNudge()
         if (backpressureNudge != null) {
-            contextManager.addMessage(backpressureNudge)
+            if (eventBridge != null) {
+                eventBridge.addMessage(backpressureNudge)
+            } else {
+                contextManager.addMessage(backpressureNudge)
+            }
         }
 
         // Self-correction gate: demand verification after edits
         val verificationDemand = selfCorrectionGate.getVerificationDemand()
         if (verificationDemand != null) {
-            contextManager.addMessage(verificationDemand)
+            if (eventBridge != null) {
+                eventBridge.addMessage(verificationDemand)
+            } else {
+                contextManager.addMessage(verificationDemand)
+            }
         }
+
+        // Flush event store before checkpoint (ensures events survive crashes)
+        try { eventBridge?.flushEvents() } catch (_: Exception) {}
 
         // Emit checkpoint after each iteration for durable execution
         try {
