@@ -80,6 +80,11 @@ class ConversationSession private constructor(
     /** Plan manager for Antigravity-style planning. Persists across turns within a session. */
     val planManager: PlanManager = PlanManager()
 
+    /** Change ledger tracking every file edit. Persists to changes.jsonl.
+     *  COMPRESSION: Renders to changeLedgerAnchor in ContextManager —
+     *  compression-proof summary of all changes visible to the LLM. */
+    val changeLedger: ChangeLedger = ChangeLedger()
+
     /** Question manager for ask_questions tool. Persists across turns within a session. */
     val questionManager: QuestionManager = QuestionManager()
 
@@ -395,6 +400,9 @@ class ConversationSession private constructor(
             // Wire disk spillover for full tool outputs (OpenCode pattern)
             session.contextManager.toolOutputStore = ToolOutputStore(session.store.sessionDirectory)
 
+            // Initialize change ledger for edit tracking (persists to changes.jsonl)
+            session.changeLedger.initialize(session.store.sessionDirectory)
+
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = session.store.sessionDirectory
@@ -476,6 +484,12 @@ class ConversationSession private constructor(
 
             // Wire disk spillover for full tool outputs (OpenCode pattern)
             loaded.contextManager.toolOutputStore = ToolOutputStore(loaded.store.sessionDirectory)
+
+            // Restore change ledger from disk so edit history survives session resume
+            loaded.changeLedger.initialize(loaded.store.sessionDirectory)
+            loaded.changeLedger.loadFromDisk()
+            // Rebuild the compression-proof anchor from loaded entries
+            loaded.contextManager.updateChangeLedgerAnchor(loaded.changeLedger)
 
             // Restore persisted plan into PlanManager so update_plan_step and checkDeviation work
             val restoredPlan = PlanPersistence.load(loaded.store.sessionDirectory)

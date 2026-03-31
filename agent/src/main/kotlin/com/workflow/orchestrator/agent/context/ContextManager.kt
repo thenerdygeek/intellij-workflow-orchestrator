@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.context
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.brain.LlmBrain
+import com.workflow.orchestrator.agent.runtime.ChangeLedger
 import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.core.model.ApiResult
 
@@ -105,6 +106,13 @@ class ContextManager(
     private var factsAnchor: ChatMessage? = null
     /** Dedicated guardrails anchor — compression-proof learned constraints. */
     private var guardrailsAnchor: ChatMessage? = null
+    /**
+     * COMPRESSION: Compression-proof anchor containing the change ledger summary.
+     * Survives Phase 1 (tiered pruning) and Phase 2 (LLM summarization).
+     * Updated after every edit_file/create_file call via updateChangeLedgerAnchor().
+     * Token cost: ~500-1K for typical sessions (5-10 files), max ~5K at 50 files.
+     */
+    private var changeLedgerAnchor: ChatMessage? = null
     /** Facts store for recording verified findings that survive compression. */
     var factsStore: FactsStore? = null
     private var totalTokens = 0
@@ -186,6 +194,22 @@ class ContextManager(
         totalTokens = TokenEstimator.estimate(getMessages())
     }
 
+    /**
+     * Update the change ledger anchor from the current ChangeLedger state.
+     * Called after each edit_file/create_file to keep the anchor in sync.
+     * The anchor is a compression-proof system message containing a compact
+     * summary of all file changes in the session.
+     */
+    fun updateChangeLedgerAnchor(changeLedger: ChangeLedger) {
+        val contextStr = changeLedger.toContextString()
+        // COMPRESSION: Only create anchor if there are changes to report.
+        // Empty anchor wastes no tokens. Non-empty anchor is compression-proof.
+        changeLedgerAnchor = if (contextStr.isNotEmpty()) {
+            ChatMessage(role = "system", content = "<change_ledger>\n$contextStr\n</change_ledger>")
+        } else null
+        totalTokens = TokenEstimator.estimate(getMessages())
+    }
+
     /** Get all messages including any summary prefixes. */
     fun getMessages(): List<ChatMessage> {
         val result = mutableListOf<ChatMessage>()
@@ -203,6 +227,7 @@ class ContextManager(
         mentionAnchor?.let { result.add(it) }
         factsAnchor?.let { result.add(it) }
         guardrailsAnchor?.let { result.add(it) }
+        changeLedgerAnchor?.let { result.add(it) }
 
         result.addAll(messages)
 
@@ -706,6 +731,7 @@ critical for continuing the task.
         mentionAnchor = null
         factsAnchor = null
         guardrailsAnchor = null
+        changeLedgerAnchor = null
         factsStore?.clear()
         totalTokens = 0
     }
