@@ -55,14 +55,7 @@ object DynamicToolSelector {
 
     private val BITBUCKET_TOOL_NAMES = setOf("bitbucket")
 
-    private val DEBUG_TOOL_NAMES = setOf(
-        "add_breakpoint", "method_breakpoint", "remove_breakpoint", "list_breakpoints",
-        "start_debug_session", "get_debug_state", "debug_step_over",
-        "debug_step_into", "debug_step_out", "debug_resume", "debug_pause",
-        "debug_run_to_cursor", "debug_stop", "evaluate_expression",
-        "get_stack_frames", "get_variables",
-        "drop_frame", "hotswap", "memory_view", "attach_to_process"
-    )
+    private val DEBUG_TOOL_NAMES = setOf("debug")
 
     private val VCS_TOOL_NAMES = setOf(
         "git_status", "git_blame", "git_diff", "git_log", "git_branches",
