@@ -1132,9 +1132,9 @@ class SingleAgentSession(
                         durationMs = toolDurationMs,
                         isError = toolResult.isError,
                         output = outputPreview,
-                        editFilePath = argsObj["path"]?.toString()?.removeSurrounding("\""),
-                        editOldText = argsObj["old_string"]?.toString()?.removeSurrounding("\"")?.take(500),
-                        editNewText = argsObj["new_string"]?.toString()?.removeSurrounding("\"")?.take(500)
+                        editFilePath = argsObj["path"]?.jsonPrimitive?.content,
+                        editOldText = argsObj["old_string"]?.jsonPrimitive?.content?.take(500),
+                        editNewText = argsObj["new_string"]?.jsonPrimitive?.content?.take(500)
                     )
                 } catch (_: Exception) {
                     ToolCallInfo(toolName = toolName, args = toolCall.function.arguments.take(1000), result = toolResult.summary, durationMs = toolDurationMs, isError = toolResult.isError, output = outputPreview)

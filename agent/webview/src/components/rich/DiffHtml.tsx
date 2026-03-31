@@ -344,9 +344,35 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
           {filePath}
         </div>
       )}
+      {/* Force IDE theme on diff2html — its bundled CSS uses hardcoded light colors */}
+      <style>{`
+        .diff-container .d2h-wrapper,
+        .diff-container .d2h-file-wrapper,
+        .diff-container .d2h-file-diff { background: transparent !important; border: none !important; }
+        .diff-container .d2h-file-header { display: none !important; }
+        .diff-container .d2h-code-line-ctn { font-family: var(--font-mono, 'JetBrains Mono', monospace) !important; }
+        .diff-container .d2h-code-side-line,
+        .diff-container .d2h-code-line { background: transparent !important; color: var(--fg) !important; }
+        .diff-container .d2h-del,
+        .diff-container .d2h-del .d2h-code-side-line,
+        .diff-container .d2h-del .d2h-code-line { background: var(--diff-rem-bg, rgba(244,71,71,0.12)) !important; color: var(--diff-rem-fg, #f4a5a5) !important; }
+        .diff-container .d2h-ins,
+        .diff-container .d2h-ins .d2h-code-side-line,
+        .diff-container .d2h-ins .d2h-code-line { background: var(--diff-add-bg, rgba(106,153,85,0.12)) !important; color: var(--diff-add-fg, #b5cea8) !important; }
+        .diff-container .d2h-info,
+        .diff-container .d2h-info .d2h-code-side-line { background: var(--hover-overlay, rgba(255,255,255,0.04)) !important; color: var(--fg-muted) !important; }
+        .diff-container .d2h-code-side-emptyplaceholder,
+        .diff-container .d2h-emptyplaceholder { background: var(--code-bg, #1a1a2e) !important; border-color: var(--border) !important; }
+        .diff-container .d2h-code-side-linenumber,
+        .diff-container .d2h-code-linenumber { color: var(--fg-muted, #555) !important; background: transparent !important; border-color: var(--border) !important; }
+        .diff-container .d2h-cntx .d2h-code-side-line,
+        .diff-container .d2h-cntx .d2h-code-line { background: transparent !important; color: var(--fg) !important; }
+        .diff-container td { border-color: var(--border, #333) !important; }
+        .diff-container .d2h-diff-table { border-collapse: collapse; }
+      `}</style>
       <div
         ref={containerRef}
-        className="diff-container overflow-auto text-[12px] [&_.d2h-wrapper]:bg-transparent [&_.d2h-file-wrapper]:border-none [&_.d2h-file-wrapper]:bg-transparent [&_.d2h-file-header]:hidden [&_.d2h-code-line-ctn]:font-[var(--font-mono,'JetBrains_Mono',monospace)] [&_.d2h-del]:bg-[var(--error,#ef4444)]/10 [&_.d2h-ins]:bg-[var(--success,#22c55e)]/10 [&_.d2h-code-side-line]:bg-transparent [&_.d2h-info]:bg-[var(--hover-overlay)]"
+        className="diff-container overflow-auto text-[12px]"
       />
     </RichBlock>
   );
