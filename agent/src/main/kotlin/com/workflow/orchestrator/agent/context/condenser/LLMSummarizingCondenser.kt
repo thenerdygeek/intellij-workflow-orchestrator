@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.context.condenser
 
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.context.events.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -120,8 +121,10 @@ class LLMSummarizingCondenser(
 
         val messages = listOf(ChatMessage(role = "user", content = promptContent))
 
-        // Step 10: Call LLM (blocking — condense() is not suspend)
-        val summary = runBlocking {
+        // Step 10: Call LLM (blocking — condense() is not suspend).
+        // Use Dispatchers.IO to avoid deadlock if the caller is on EDT or a
+        // single-threaded dispatcher.
+        val summary = runBlocking(Dispatchers.IO) {
             try {
                 llmClient.summarize(messages)
             } catch (_: Exception) {

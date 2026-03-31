@@ -1,6 +1,9 @@
 package com.workflow.orchestrator.agent.context
 
 import com.workflow.orchestrator.agent.context.events.*
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -487,6 +490,85 @@ class ConversationMemoryTest {
             assertTrue(msg.content!!.startsWith("F"))
             assertTrue(msg.content!!.endsWith("B"))
             assertTrue(msg.content!!.contains("truncated"))
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // JSON safety in toolActionToToolCall
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Nested
+    inner class JsonSafety {
+
+        @Test
+        fun `escapeJson escapes double quotes`() {
+            assertEquals("""say \"hello\"""", ConversationMemory.escapeJson("""say "hello""""))
+        }
+
+        @Test
+        fun `escapeJson escapes backslashes`() {
+            assertEquals("""C:\\Users\\name""", ConversationMemory.escapeJson("""C:\Users\name"""))
+        }
+
+        @Test
+        fun `escapeJson escapes backslash before quote in correct order`() {
+            // Input: \" (backslash + quote) should become \\\" (escaped backslash + escaped quote)
+            assertEquals("\\\\\\\"", ConversationMemory.escapeJson("\\\""))
+        }
+
+        @Test
+        fun `FileReadAction path with quotes produces valid JSON`() {
+            val path = """/src/files/"quoted dir"/Main.kt"""
+            val events = listOf(
+                fileRead(0, toolCallId = "tc-1", responseGroupId = "rg-1", path = path),
+                toolResult(1, toolCallId = "tc-1")
+            )
+            val result = memory.processEvents(events, userMsg(99, "read it"))
+
+            val assistantMsg = result.find { it.toolCalls != null }
+            assertNotNull(assistantMsg)
+            val argsJson = assistantMsg!!.toolCalls!!.first().function.arguments
+
+            // Must be parseable JSON — a path with unescaped " would break this
+            val parsed = Json.decodeFromString(JsonObject.serializer(), argsJson)
+            val parsedPath = parsed["path"]?.jsonPrimitive?.content
+            assertEquals(path, parsedPath, "Path must round-trip through JSON without corruption")
+        }
+
+        @Test
+        fun `FileReadAction path with backslashes produces valid JSON`() {
+            val path = """C:\Users\name\project\Main.kt"""
+            val events = listOf(
+                fileRead(0, toolCallId = "tc-1", responseGroupId = "rg-1", path = path),
+                toolResult(1, toolCallId = "tc-1")
+            )
+            val result = memory.processEvents(events, userMsg(99, "read it"))
+
+            val assistantMsg = result.find { it.toolCalls != null }
+            assertNotNull(assistantMsg)
+            val argsJson = assistantMsg!!.toolCalls!!.first().function.arguments
+
+            val parsed = Json.decodeFromString(JsonObject.serializer(), argsJson)
+            val parsedPath = parsed["path"]?.jsonPrimitive?.content
+            assertEquals(path, parsedPath)
+        }
+
+        @Test
+        fun `CommandRunAction command with quotes produces valid JSON`() {
+            val command = """echo "hello world" > /tmp/out.txt"""
+            val events = listOf(
+                commandRun(0, toolCallId = "tc-1", responseGroupId = "rg-1", command = command),
+                toolResult(1, toolCallId = "tc-1")
+            )
+            val result = memory.processEvents(events, userMsg(99, "run it"))
+
+            val assistantMsg = result.find { it.toolCalls != null }
+            assertNotNull(assistantMsg)
+            val argsJson = assistantMsg!!.toolCalls!!.first().function.arguments
+
+            val parsed = Json.decodeFromString(JsonObject.serializer(), argsJson)
+            val parsedCommand = parsed["command"]?.jsonPrimitive?.content
+            assertEquals(command, parsedCommand)
         }
     }
 

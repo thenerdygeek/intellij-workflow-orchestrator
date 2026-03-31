@@ -92,17 +92,19 @@ class EventStore(private val sessionDir: File? = null) {
      */
     fun appendToJsonl() {
         val dir = sessionDir ?: return
-        val currentSize = events.size
-        if (persistedCount >= currentSize) return
+
+        // Snapshot the slice to write under lock, then perform file I/O outside the lock
+        // to avoid holding the lock during potentially slow disk writes.
+        val toWrite = lock.withLock {
+            if (persistedCount >= events.size) return
+            val slice = events.subList(persistedCount, events.size).toList()
+            persistedCount = events.size
+            slice
+        }
 
         dir.mkdirs()
         val file = File(dir, JSONL_FILENAME)
-        file.appendText(buildString {
-            for (i in persistedCount until currentSize) {
-                appendLine(EventSerializer.serialize(events[i]))
-            }
-        })
-        persistedCount = currentSize
+        file.appendText(toWrite.joinToString("\n") { EventSerializer.serialize(it) } + "\n")
     }
 
     /**

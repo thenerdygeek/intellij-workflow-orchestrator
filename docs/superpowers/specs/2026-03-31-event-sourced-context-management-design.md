@@ -287,17 +287,17 @@ class CondenserPipeline(private val condensers: List<Condenser>) : Condenser {
 
 ```kotlin
 CondenserPipeline(listOf(
-    ConversationWindowCondenser(),
     SmartPrunerCondenser(),
     ObservationMaskingCondenser(attentionWindow = 30),
+    ConversationWindowCondenser(),
     LLMSummarizingCondenser(keepFirst = 4, maxSize = 150, tokenThreshold = 0.75)
 ))
 ```
 
 **Order matters:**
-1. ConversationWindow — emergency overflow handling first
-2. SmartPruner — zero-loss cleanup reduces noise
-3. ObservationMasking — cheap masking reduces tokens for summarizer
+1. SmartPruner — zero-loss cleanup first (deduplication, error purging, write superseding — no information lost)
+2. ObservationMasking — cheap token reduction before any lossy condensation
+3. ConversationWindow — reactive overflow fallback (triggers only on `unhandledCondensationRequest`)
 4. LLMSummarizing — most expensive, runs on already-optimized events
 
 ---

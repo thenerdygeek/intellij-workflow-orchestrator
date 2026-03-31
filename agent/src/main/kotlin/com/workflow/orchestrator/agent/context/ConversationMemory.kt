@@ -4,6 +4,7 @@ import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.FunctionCall
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.context.events.*
+import org.slf4j.LoggerFactory
 
 /**
  * Converts event-sourced [View] events into Sourcegraph-compatible [ChatMessage] objects.
@@ -20,6 +21,17 @@ import com.workflow.orchestrator.agent.context.events.*
  */
 class ConversationMemory(private val maxMessageChars: Int = 30_000) {
 
+    companion object {
+        private val log = LoggerFactory.getLogger(ConversationMemory::class.java)
+
+        /**
+         * Escape a string value for safe JSON string interpolation.
+         * Escapes backslashes first (to avoid double-escaping), then double quotes.
+         */
+        internal fun escapeJson(value: String): String =
+            value.replace("\\", "\\\\").replace("\"", "\\\"")
+    }
+
     /**
      * Convert condensed event history into a list of [ChatMessage] ready for the LLM API.
      *
@@ -33,6 +45,15 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
         initialUserAction: MessageAction,
         forgottenEventIds: Set<Int> = emptySet()
     ): List<ChatMessage> {
+        // Defensive check: the bridge always adds a SystemMessageAction as the first event.
+        // If it's missing, log a warning so the problem is visible during development.
+        if (condensedHistory.none { it is SystemMessageAction }) {
+            log.warn(
+                "ConversationMemory.processEvents: no SystemMessageAction found in event history " +
+                    "(${condensedHistory.size} events). The bridge should guarantee a system message is present."
+            )
+        }
+
         // Step 1: Ensure initial user message is present
         val events = ensureInitialUserMessage(condensedHistory, initialUserAction, forgottenEventIds)
 
@@ -249,26 +270,26 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
 
     private fun toolActionToToolCall(action: ToolAction): ToolCall {
         val (name, arguments) = when (action) {
-            is FileReadAction -> "read_file" to """{"path":"${action.path}"}"""
+            is FileReadAction -> "read_file" to """{"path":"${escapeJson(action.path)}"}"""
             is FileEditAction -> "edit_file" to buildString {
-                append("""{"path":"${action.path}"""")
-                action.oldStr?.let { append(""","old_str":"$it"""") }
-                action.newStr?.let { append(""","new_str":"$it"""") }
+                append("""{"path":"${escapeJson(action.path)}"""")
+                action.oldStr?.let { append(""","old_str":"${escapeJson(it)}"""") }
+                action.newStr?.let { append(""","new_str":"${escapeJson(it)}"""") }
                 append("}")
             }
             is CommandRunAction -> "run_command" to buildString {
-                append("""{"command":"${action.command}"""")
-                action.cwd?.let { append(""","cwd":"$it"""") }
+                append("""{"command":"${escapeJson(action.command)}"""")
+                action.cwd?.let { append(""","cwd":"${escapeJson(it)}"""") }
                 append("}")
             }
             is SearchCodeAction -> "search_code" to buildString {
-                append("""{"query":"${action.query}"""")
-                action.path?.let { append(""","path":"$it"""") }
+                append("""{"query":"${escapeJson(action.query)}"""")
+                action.path?.let { append(""","path":"${escapeJson(it)}"""") }
                 append("}")
             }
             is DiagnosticsAction -> "diagnostics" to buildString {
                 append("{")
-                action.path?.let { append(""""path":"$it"""") }
+                action.path?.let { append(""""path":"${escapeJson(it)}"""") }
                 append("}")
             }
             is GenericToolAction -> action.toolName to action.arguments
