@@ -25,17 +25,10 @@ class DynamicToolSelectorTest {
         "file_structure", "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
         "diagnostics", "format_code", "optimize_imports",
         // IDE
-        "run_inspections", "refactor_rename", "compile_module", "run_tests",
-        // VCS
-        "git_status", "git_blame", "find_implementations",
-        // Jira
-        "jira_get_ticket", "jira_transition",
-        // Bamboo
-        "bamboo_build_status", "bamboo_trigger_build",
-        // Sonar
-        "sonar_issues", "sonar_quality_gate",
-        // Bitbucket
-        "bitbucket_create_pr",
+        "run_inspections", "refactor_rename", "find_implementations",
+        // Meta-tools (consolidated)
+        "jira", "bamboo", "sonar", "bitbucket",
+        "debug", "git", "spring", "build", "runtime",
         // Meta
         "request_tools"
     ).map { stubTool(it) }
@@ -57,45 +50,40 @@ class DynamicToolSelectorTest {
     }
 
     @Test
-    fun `jira keyword triggers jira tools`() {
+    fun `jira keyword triggers jira meta-tool`() {
         val selected = DynamicToolSelector.selectTools(allTools, "check the jira ticket")
         val names = selected.map { it.name }.toSet()
-        assertTrue(names.contains("jira_get_ticket"))
-        assertTrue(names.contains("jira_transition"))
+        assertTrue(names.contains("jira"))
     }
 
     @Test
-    fun `build keyword triggers bamboo and compile tools`() {
+    fun `build keyword triggers bamboo and runtime meta-tools`() {
         val selected = DynamicToolSelector.selectTools(allTools, "trigger a build")
         val names = selected.map { it.name }.toSet()
-        assertTrue(names.contains("bamboo_build_status"))
-        assertTrue(names.contains("bamboo_trigger_build"))
-        assertTrue(names.contains("compile_module"))
+        assertTrue(names.contains("bamboo"))
+        assertTrue(names.contains("runtime"))
     }
 
     @Test
-    fun `sonar keyword triggers sonar tools`() {
+    fun `sonar keyword triggers sonar meta-tool`() {
         val selected = DynamicToolSelector.selectTools(allTools, "check sonar issues")
         val names = selected.map { it.name }.toSet()
-        assertTrue(names.contains("sonar_issues"))
-        assertTrue(names.contains("sonar_quality_gate"))
+        assertTrue(names.contains("sonar"))
     }
 
     @Test
     fun `keyword matching is case insensitive`() {
         val selected = DynamicToolSelector.selectTools(allTools, "Check the JIRA ticket")
-        assertTrue(selected.any { it.name == "jira_get_ticket" })
+        assertTrue(selected.any { it.name == "jira" })
     }
 
     @Test
     fun `disabled tools are excluded`() {
         val selected = DynamicToolSelector.selectTools(
             allTools, "check jira ticket",
-            disabledTools = setOf("jira_get_ticket")
+            disabledTools = setOf("jira")
         )
-        assertFalse(selected.any { it.name == "jira_get_ticket" })
-        // Other jira tools still present
-        assertTrue(selected.any { it.name == "jira_transition" })
+        assertFalse(selected.any { it.name == "jira" })
     }
 
     @Test
@@ -112,20 +100,20 @@ class DynamicToolSelectorTest {
     fun `activated tools are included even without keyword match`() {
         val selected = DynamicToolSelector.selectTools(
             allTools, "fix the NPE",
-            activatedTools = setOf("sonar_issues")
+            activatedTools = setOf("sonar")
         )
-        assertTrue(selected.any { it.name == "sonar_issues" })
+        assertTrue(selected.any { it.name == "sonar" })
     }
 
     @Test
     fun `no keywords yields only core tools plus request_tools`() {
         val selected = DynamicToolSelector.selectTools(allTools, "hello world")
         val names = selected.map { it.name }.toSet()
-        // Should not include integration tools
-        assertFalse(names.contains("jira_get_ticket"))
-        assertFalse(names.contains("bamboo_build_status"))
-        assertFalse(names.contains("sonar_issues"))
-        assertFalse(names.contains("bitbucket_create_pr"))
+        // Should not include integration meta-tools
+        assertFalse(names.contains("jira"))
+        assertFalse(names.contains("bamboo"))
+        assertFalse(names.contains("sonar"))
+        assertFalse(names.contains("bitbucket"))
         // Should include core + request_tools
         assertTrue(names.contains("read_file"))
         assertTrue(names.contains("request_tools"))
@@ -139,11 +127,11 @@ class DynamicToolSelectorTest {
     }
 
     @Test
-    fun `multiple keywords trigger tools from different categories`() {
+    fun `multiple keywords trigger meta-tools from different categories`() {
         val selected = DynamicToolSelector.selectTools(allTools, "check jira ticket and build status")
         val names = selected.map { it.name }.toSet()
-        assertTrue(names.contains("jira_get_ticket"))
-        assertTrue(names.contains("bamboo_build_status"))
+        assertTrue(names.contains("jira"))
+        assertTrue(names.contains("bamboo"))
     }
 
     @Test
@@ -170,8 +158,8 @@ class DynamicToolSelectorTest {
         assertFalse("request_tools" in names, "request_tools excluded to prevent whitelist bypass")
         assertFalse("edit_file" in names, "edit_file should be blocked")
         assertFalse("run_command" in names, "run_command should be blocked")
-        assertFalse("jira_get_ticket" in names, "jira tool should be blocked despite keyword match")
-        assertFalse("bamboo_build_status" in names, "bamboo tool should be blocked despite keyword match")
+        assertFalse("jira" in names, "jira meta-tool should be blocked despite keyword match")
+        assertFalse("bamboo" in names, "bamboo meta-tool should be blocked despite keyword match")
     }
 
     @Test
