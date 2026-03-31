@@ -82,7 +82,9 @@ class RunTestsTool : AgentTool {
         private const val DEFAULT_TIMEOUT_SECONDS = 300L
         private const val MAX_TIMEOUT_SECONDS = 900L
         private const val MAX_OUTPUT_CHARS = 4000
-        private const val BUILD_WATCHDOG_MS = 30_000L
+        private const val BUILD_WATCHDOG_INITIAL_MS = 10_000L
+        private const val BUILD_WATCHDOG_POLL_MS = 2_000L
+        private const val BUILD_WATCHDOG_MAX_MS = 300_000L
         private const val MAX_STACK_FRAMES = 5
         private const val MAX_PASSED_SHOWN = 20
         private const val TOKEN_CAP_CHARS = 12000
@@ -182,17 +184,29 @@ class RunTestsTool : AgentTool {
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
                         }
 
-                        // Build watchdog: if processStarted() hasn't fired within 30s,
-                        // build (Make) likely failed — resume with error instead of hanging.
+                        // Build watchdog: polls CompilerManager.isCompilationActive
+                        // until Make finishes, then checks if process was created.
                         Thread {
                             try {
-                                Thread.sleep(BUILD_WATCHDOG_MS)
+                                Thread.sleep(BUILD_WATCHDOG_INITIAL_MS)
+                                var waited = BUILD_WATCHDOG_INITIAL_MS
+                                while (processHandlerRef.get() == null && continuation.isActive && waited < BUILD_WATCHDOG_MAX_MS) {
+                                    val stillCompiling = try {
+                                        com.intellij.openapi.application.ReadAction.compute<Boolean, Exception> {
+                                            CompilerManager.getInstance(project).isCompilationActive
+                                        }
+                                    } catch (_: Exception) { false }
+                                    if (!stillCompiling) break
+                                    Thread.sleep(BUILD_WATCHDOG_POLL_MS)
+                                    waited += BUILD_WATCHDOG_POLL_MS
+                                }
                                 if (processHandlerRef.get() == null && continuation.isActive) {
                                     continuation.resume(ToolResult(
                                         content = "BUILD FAILED — test execution did not start.\n\n" +
-                                            "No test process was created within ${BUILD_WATCHDOG_MS / 1000}s. " +
-                                            "This usually means compilation failed.\n\n" +
-                                            "Fix the compilation errors and try again. Use diagnostics tool to check for errors.",
+                                            "Compilation completed but no test process was created. " +
+                                            "This means the build had errors.\n\n" +
+                                            "Fix the compilation errors and try again. " +
+                                            "Use diagnostics tool to check for errors in the test class.",
                                         summary = "Build failed before tests",
                                         tokenEstimate = 30,
                                         isError = true
