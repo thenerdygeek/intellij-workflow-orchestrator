@@ -16,14 +16,14 @@ import com.workflow.orchestrator.core.model.sonar.SourceLineData
  * Implementations registered as project-level services by :sonar module.
  */
 interface SonarService {
-    /** Get open issues for a project, optionally filtered by file. */
-    suspend fun getIssues(projectKey: String, filePath: String? = null, repoName: String? = null): ToolResult<List<SonarIssueData>>
+    /** Get open issues for a project, optionally filtered by file and/or branch. */
+    suspend fun getIssues(projectKey: String, filePath: String? = null, branch: String? = null, repoName: String? = null): ToolResult<List<SonarIssueData>>
 
-    /** Get quality gate status. */
-    suspend fun getQualityGateStatus(projectKey: String, repoName: String? = null): ToolResult<QualityGateData>
+    /** Get quality gate status, optionally for a specific branch. */
+    suspend fun getQualityGateStatus(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<QualityGateData>
 
-    /** Get coverage metrics. */
-    suspend fun getCoverage(projectKey: String, repoName: String? = null): ToolResult<CoverageData>
+    /** Get coverage metrics, optionally for a specific branch. */
+    suspend fun getCoverage(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<CoverageData>
 
     /** Search for SonarQube projects by name or key. */
     suspend fun searchProjects(query: String): ToolResult<List<SonarProjectData>>
@@ -46,6 +46,6 @@ interface SonarService {
     /** Get source lines with per-line coverage status. */
     suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null, repoName: String? = null): ToolResult<List<SourceLineData>>
 
-    /** Get issues with paging metadata for pagination support. */
-    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, repoName: String? = null): ToolResult<PagedIssuesData>
+    /** Get issues with paging metadata for pagination support, optionally for a specific branch. */
+    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null): ToolResult<PagedIssuesData>
 }

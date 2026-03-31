@@ -47,6 +47,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     override suspend fun getIssues(
         projectKey: String,
         filePath: String?,
+        branch: String?,
         repoName: String?
     ): ToolResult<List<SonarIssueData>> {
         val api = client ?: return ToolResult(
@@ -56,7 +57,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getIssues(projectKey, filePath = filePath)) {
+        return when (val result = api.getIssues(projectKey, branch = branch, filePath = filePath)) {
             is ApiResult.Success -> {
                 val issues = result.data.map { dto ->
                     SonarIssueData(
@@ -115,7 +116,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
-    override suspend fun getQualityGateStatus(projectKey: String, repoName: String?): ToolResult<QualityGateData> {
+    override suspend fun getQualityGateStatus(projectKey: String, branch: String?, repoName: String?): ToolResult<QualityGateData> {
         val api = client ?: return ToolResult(
             data = QualityGateData(status = "ERROR"),
             summary = "SonarQube not configured. Cannot fetch quality gate status.",
@@ -123,7 +124,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings."
         )
 
-        return when (val result = api.getQualityGateStatus(projectKey)) {
+        return when (val result = api.getQualityGateStatus(projectKey, branch = branch)) {
             is ApiResult.Success -> {
                 val gate = result.data
                 val conditions = gate.conditions.map { c ->
@@ -164,7 +165,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
-    override suspend fun getCoverage(projectKey: String, repoName: String?): ToolResult<CoverageData> {
+    override suspend fun getCoverage(projectKey: String, branch: String?, repoName: String?): ToolResult<CoverageData> {
         val api = client ?: return ToolResult(
             data = CoverageData(
                 lineCoverage = 0.0, branchCoverage = 0.0,
@@ -177,7 +178,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
 
         // Fetch project-level measures for coverage metrics
         val metricKeys = "coverage,branch_coverage,lines_to_cover,uncovered_lines"
-        return when (val result = api.getMeasures(projectKey, metricKeys = metricKeys)) {
+        return when (val result = api.getMeasures(projectKey, branch = branch, metricKeys = metricKeys)) {
             is ApiResult.Success -> {
                 // Aggregate measures across all components
                 var totalLinesToCover = 0
@@ -585,6 +586,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         projectKey: String,
         page: Int,
         pageSize: Int,
+        branch: String?,
         repoName: String?
     ): ToolResult<PagedIssuesData> {
         val api = client ?: return ToolResult(
@@ -594,7 +596,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getIssuesWithPaging(projectKey)) {
+        return when (val result = api.getIssuesWithPaging(projectKey, branch = branch)) {
             is ApiResult.Success -> {
                 val allIssues = result.data.issues.map { dto ->
                     SonarIssueData(

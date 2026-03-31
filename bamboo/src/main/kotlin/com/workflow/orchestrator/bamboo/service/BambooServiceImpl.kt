@@ -64,10 +64,10 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             return cachedClient
         }
 
-    override suspend fun getLatestBuild(planKey: String, repoName: String?): ToolResult<BuildResultData> {
+    override suspend fun getLatestBuild(planKey: String, branch: String?, repoName: String?): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $planKey")
 
-        return when (val result = api.getLatestResult(planKey)) {
+        return when (val result = api.getLatestResult(planKey, branch = branch)) {
             is ApiResult.Success -> mapBuildResult(result.data)
             is ApiResult.Error -> {
                 log.warn("[BambooService] Failed to fetch latest build for $planKey: ${result.message}")
@@ -452,7 +452,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
-    override suspend fun getRecentBuilds(planKey: String, maxResults: Int, repoName: String?): ToolResult<List<BuildResultData>> {
+    override suspend fun getRecentBuilds(planKey: String, maxResults: Int, branch: String?, repoName: String?): ToolResult<List<BuildResultData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Bamboo not configured. Cannot fetch recent builds for $planKey.",
@@ -460,7 +460,37 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getRecentResults(planKey, maxResults)) {
+        // If branch is specified, resolve the branch plan key first
+        val effectivePlanKey = if (branch != null) {
+            when (val branchResult = api.getBranches(planKey)) {
+                is ApiResult.Success -> {
+                    val branchDto = branchResult.data.find { it.name.equals(branch, ignoreCase = true) }
+                    if (branchDto != null) {
+                        branchDto.key
+                    } else {
+                        return ToolResult(
+                            data = emptyList(),
+                            summary = "Branch '$branch' not found in plan $planKey.",
+                            isError = true,
+                            hint = "Available branches: ${branchResult.data.joinToString { it.name }}. Check the branch name and try again."
+                        )
+                    }
+                }
+                is ApiResult.Error -> {
+                    log.warn("[BambooService] Failed to fetch branches for $planKey: ${branchResult.message}")
+                    return ToolResult(
+                        data = emptyList(),
+                        summary = "Error fetching branches for $planKey: ${branchResult.message}",
+                        isError = true,
+                        hint = "Check Bamboo connection in Settings."
+                    )
+                }
+            }
+        } else {
+            planKey
+        }
+
+        return when (val result = api.getRecentResults(effectivePlanKey, maxResults)) {
             is ApiResult.Success -> {
                 val builds = result.data.map { dto ->
                     BuildResultData(

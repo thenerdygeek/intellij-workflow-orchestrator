@@ -12,8 +12,8 @@ import com.workflow.orchestrator.core.model.bamboo.TestResultsData
  * Implementations registered as project-level services by :bamboo module.
  */
 interface BambooService {
-    /** Get latest build result for a plan. */
-    suspend fun getLatestBuild(planKey: String, repoName: String? = null): ToolResult<BuildResultData>
+    /** Get latest build result for a plan, optionally for a specific branch. */
+    suspend fun getLatestBuild(planKey: String, branch: String? = null, repoName: String? = null): ToolResult<BuildResultData>
 
     /** Get a specific build result with stages. */
     suspend fun getBuild(buildKey: String): ToolResult<BuildResultData>
@@ -51,8 +51,8 @@ interface BambooService {
     /** Download an artifact to a local file. Returns true on success. */
     suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): ToolResult<Boolean>
 
-    /** Get recent build results for a plan. */
-    suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10, repoName: String? = null): ToolResult<List<BuildResultData>>
+    /** Get recent build results for a plan, optionally filtered by branch. */
+    suspend fun getRecentBuilds(planKey: String, maxResults: Int = 10, branch: String? = null, repoName: String? = null): ToolResult<List<BuildResultData>>
 
     /** List all plans visible to the authenticated user. */
     suspend fun getPlans(): ToolResult<List<PlanData>>
