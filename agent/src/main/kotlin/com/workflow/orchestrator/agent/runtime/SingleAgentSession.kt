@@ -887,7 +887,7 @@ class SingleAgentSession(
                     content = redactedContent,
                     summary = tr.summary
                 )
-                recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, contextManager)
+                recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, contextManager, project)
                 allArtifacts.addAll(tr.artifacts)
                 toolResults.add(tc.id to tr.isError)
 
@@ -1049,7 +1049,7 @@ class SingleAgentSession(
                 content = redactedWriteContent,
                 summary = toolResult.summary
             )
-            recordFactFromToolResult(toolName, toolCall.function.arguments, redactedWriteContent, toolResult.summary, iteration, contextManager)
+            recordFactFromToolResult(toolName, toolCall.function.arguments, redactedWriteContent, toolResult.summary, iteration, contextManager, project)
 
             allArtifacts.addAll(toolResult.artifacts)
             toolResults.add(toolCall.id to toolResult.isError)
@@ -1254,7 +1254,8 @@ class SingleAgentSession(
         content: String,
         summary: String,
         iteration: Int,
-        contextManager: ContextManager
+        contextManager: ContextManager,
+        project: Project
     ) {
         val factsStore = contextManager.factsStore ?: return
         val filePath = AgentStringUtils.JSON_FILE_PATH_REGEX.find(toolArgs)?.groupValues?.get(1)
@@ -1264,8 +1265,18 @@ class SingleAgentSession(
                 val firstLine = content.lineSequence().firstOrNull()?.take(80) ?: ""
                 factsStore.record(Fact(FactType.FILE_READ, filePath, "$lineCount lines. Starts with: $firstLine", iteration))
             }
-            "edit_file" -> if (filePath != null) {
-                factsStore.record(Fact(FactType.EDIT_MADE, filePath, summary.take(200), iteration))
+            "edit_file", "create_file" -> if (filePath != null) {
+                // COMPRESSION: Enriched summary survives in factsAnchor. Format includes
+                // "+X/-Y lines" so the LLM has line-level awareness even after the full
+                // tool result is pruned from context during Phase 1 tiered pruning.
+                val ledger = try { com.workflow.orchestrator.agent.AgentService.getInstance(project).currentChangeLedger } catch (_: Exception) { null }
+                val latestChange = ledger?.changesForFile(filePath)?.lastOrNull()
+                val enrichedSummary = if (latestChange != null) {
+                    "iter ${latestChange.iteration}: +${latestChange.linesAdded}/-${latestChange.linesRemoved} lines. ${summary.take(150)}"
+                } else {
+                    summary.take(200)
+                }
+                factsStore.record(Fact(FactType.EDIT_MADE, filePath, enrichedSummary, iteration))
             }
             "search_code", "glob_files", "find_references", "find_definition" -> {
                 factsStore.record(Fact(FactType.CODE_PATTERN, filePath, summary.take(200), iteration))
