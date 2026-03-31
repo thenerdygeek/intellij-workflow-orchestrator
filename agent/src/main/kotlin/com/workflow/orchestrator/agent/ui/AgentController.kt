@@ -1085,10 +1085,14 @@ class AgentController(
         // Wire callbacks so plan/question/skill UI works on resumed session
         wireSessionCallbacks(loaded)
 
-        // Wire PlanManager and QuestionManager on AgentService so tools can find them
+        // Wire ALL session managers on AgentService so tools can find them
         try {
             agentService.currentPlanManager = loaded.planManager
             agentService.currentQuestionManager = loaded.questionManager
+            agentService.currentSkillManager = loaded.skillManager
+            agentService.currentChangeLedger = loaded.changeLedger
+            agentService.currentRollbackManager = loaded.rollbackManager
+            agentService.currentContextManager = loaded.contextManager
         } catch (_: Exception) {}
 
         // Render loaded conversation to UI
