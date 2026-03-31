@@ -59,16 +59,9 @@ object DynamicToolSelector {
 
     private val VCS_TOOL_NAMES = setOf("git")
 
-    private val SPRING_TOOL_NAMES = setOf(
-        "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
-        "spring_version_info", "spring_profiles", "spring_repositories",
-        "spring_security_config", "spring_scheduled_tasks", "spring_event_listeners"
-    )
+    private val SPRING_TOOL_NAMES = setOf("spring")
 
-    private val SPRING_BOOT_TOOL_NAMES = setOf(
-        "spring_boot_endpoints", "spring_boot_autoconfig",
-        "spring_boot_config_properties", "spring_boot_actuator"
-    )
+    private val SPRING_BOOT_TOOL_NAMES = setOf("spring")
 
     private val MAVEN_TOOL_NAMES = setOf(
         "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
@@ -101,7 +94,7 @@ object DynamicToolSelector {
 
     private val SKILL_TOOL_NAMES = setOf("activate_skill", "deactivate_skill")
 
-    private val JPA_TOOL_NAMES = setOf("jpa_entities")
+    private val JPA_TOOL_NAMES = setOf("spring")
 
     /** Semantic tool groups — each bundles related keywords with their tools. */
     internal val TOOL_GROUPS = listOf(
@@ -165,7 +158,7 @@ object DynamicToolSelector {
             setOf("maven", "pom", "dependency", "dependencies", "plugin", "profile",
                 "module", "version", "version conflict", "transitive", "effective pom",
                 "dependency tree", "plugin config"),
-            MAVEN_TOOL_NAMES + MAVEN_ENHANCED_TOOL_NAMES + setOf("spring_version_info")
+            MAVEN_TOOL_NAMES + MAVEN_ENHANCED_TOOL_NAMES + setOf("spring")
         ),
         ToolGroup(
             "gradle",
@@ -188,7 +181,7 @@ object DynamicToolSelector {
         ToolGroup(
             "jpa",
             setOf("entity", "table", "jpa", "hibernate"),
-            JPA_TOOL_NAMES + setOf("spring_repositories")
+            JPA_TOOL_NAMES
         ),
         ToolGroup(
             "memory",
@@ -211,20 +204,14 @@ object DynamicToolSelector {
     private val MAVEN_PROJECT_TOOLS = setOf(
         "maven_dependencies", "maven_properties", "maven_plugins", "maven_profiles",
         "maven_dependency_tree", "maven_effective_pom",
-        "spring_version_info", "project_modules", "module_dependency_graph"
+        "spring", "project_modules", "module_dependency_graph"
     )
 
     /** Spring tools to auto-include when project is detected as Spring. */
-    private val SPRING_PROJECT_TOOLS = setOf(
-        "spring_context", "spring_endpoints", "spring_bean_graph", "spring_config",
-        "spring_profiles", "spring_repositories", "spring_security_config",
-        "spring_scheduled_tasks", "spring_event_listeners",
-        "spring_boot_endpoints", "spring_boot_autoconfig",
-        "spring_boot_config_properties", "spring_boot_actuator"
-    )
+    private val SPRING_PROJECT_TOOLS = setOf("spring")
 
     /** JPA tools to auto-include when JPA/Hibernate is detected. */
-    private val JPA_PROJECT_TOOLS = setOf("jpa_entities", "spring_repositories")
+    private val JPA_PROJECT_TOOLS = setOf("spring")
 
     /** Gradle tools to auto-include when project is detected as Gradle. */
     private val GRADLE_PROJECT_TOOLS = setOf(

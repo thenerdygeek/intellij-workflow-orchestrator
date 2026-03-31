@@ -185,11 +185,8 @@ class AgentService(
             register(ReadWriteAccessTool())
             register(TestFinderTool())
 
-            // Spring PSI tools
-            register(SpringContextTool())
-            register(SpringEndpointsTool())
-            register(SpringBootEndpointsTool())
-            register(SpringBeanGraphTool())
+            // Spring integration — single meta-tool replacing 15 individual Spring/Boot/JPA tools
+            register(SpringTool())
 
             // Jira integration — single meta-tool replacing 15 individual jira_* tools
             register(JiraTool())
@@ -256,8 +253,6 @@ class AgentService(
             register(FindImplementationsTool())
 
             // Framework tools
-            register(SpringConfigTool())
-            register(JpaEntitiesTool())
             register(ProjectModulesTool())
             register(ModuleDependencyGraphTool())
 
@@ -267,22 +262,13 @@ class AgentService(
             register(MavenPropertiesTool())
             register(MavenPluginsTool())
             register(MavenProfilesTool())
-            register(SpringVersionTool())
 
             // Gradle Intelligence (Phase 3)
             register(GradleDependenciesTool())
             register(GradleTasksTool())
             register(GradlePropertiesTool())
 
-            // Spring PSI Intelligence (Phase 3)
-            register(SpringProfilesTool())
-            register(SpringRepositoriesTool())
-            register(SpringSecurityTool())
-            register(SpringScheduledTool())
-            register(SpringEventListenersTool())
-            register(SpringBootAutoConfigTool())
-            register(SpringBootConfigPropertiesTool())
-            register(SpringBootActuatorTool())
+            // Spring PSI Intelligence (Phase 3) — now part of SpringTool meta-tool registered above
         }
     }
 
