@@ -42,7 +42,9 @@ object DynamicToolSelector {
         "ask_questions", "create_plan", "update_plan_step", "enable_plan_mode",
         // Memory tools — always available so the agent can store/retrieve knowledge at any time
         "core_memory_read", "core_memory_append", "core_memory_replace",
-        "archival_memory_insert", "archival_memory_search", "conversation_search"
+        "archival_memory_insert", "archival_memory_search", "conversation_search",
+        // Project awareness — always available so the agent knows branch, keys, and repo mappings
+        "project_context"
     )
 
     // --- Tool name sets for each integration ---

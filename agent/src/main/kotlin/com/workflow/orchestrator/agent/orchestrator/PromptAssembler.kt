@@ -500,11 +500,13 @@ Remember: Use tools to discover information — never guess. Verify your work be
         val BAMBOO_CONTEXT_RULES = """
             - Bamboo: Use bamboo(action="build_status") or bamboo(action="get_build") to check status before triggering new builds.
             - Build logs can be large — use bamboo(action="get_build_log") with max_lines to limit output. Check bamboo(action="get_test_results") for test failures.
+            - Pass branch parameter to get builds for the current branch. Use project_context tool to discover the current branch name.
         """.trimIndent()
 
         val SONAR_CONTEXT_RULES = """
             - SonarQube: Use sonar(action="quality_gate") for pass/fail status, sonar(action="issues") for detailed findings.
             - Filter issues by severity (BLOCKER, CRITICAL, MAJOR, MINOR, INFO) and type (BUG, VULNERABILITY, CODE_SMELL).
+            - Pass branch parameter to get data for the current branch. Use project_context tool to discover the current branch name and sonar project key.
         """.trimIndent()
 
         val BITBUCKET_CONTEXT_RULES = """

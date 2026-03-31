@@ -170,6 +170,7 @@ class AgentService(
             register(KillProcessTool())
             register(AskUserInputTool())
             register(GlobFilesTool())
+            register(ProjectContextTool())
 
             // PSI tools
             register(FileStructureTool())

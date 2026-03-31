@@ -284,16 +284,42 @@ class ConversationSession private constructor(
                 DynamicToolSelector.detectProjectTools(project)
             } catch (_: Exception) { emptySet() }
 
-            // Build repo context for multi-repo awareness
+            // Build repo context with branch awareness
             val repoContext = try {
                 val pluginSettings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
                 val repos = pluginSettings.getRepos()
-                if (repos.size > 1) {
-                    buildString {
-                        appendLine("This project has ${repos.size} configured repositories:")
+                val gitRepos = try {
+                    git4idea.repo.GitRepositoryManager.getInstance(project).repositories
+                } catch (_: Exception) { emptyList() }
+                val primaryBranch = gitRepos.firstOrNull()?.currentBranch?.name
+
+                buildString {
+                    if (primaryBranch != null) {
+                        appendLine("Current branch: $primaryBranch")
+                    }
+
+                    val state = pluginSettings.state
+                    if (repos.size <= 1) {
+                        val services = buildList {
+                            if (!state.sonarProjectKey.isNullOrBlank()) add("Sonar project key: ${state.sonarProjectKey}")
+                            if (!state.bambooPlanKey.isNullOrBlank()) add("Bamboo plan key: ${state.bambooPlanKey}")
+                            if (!state.bitbucketProjectKey.isNullOrBlank() && !state.bitbucketRepoSlug.isNullOrBlank())
+                                add("Bitbucket: ${state.bitbucketProjectKey}/${state.bitbucketRepoSlug}")
+                        }
+                        if (services.isNotEmpty()) {
+                            appendLine(services.joinToString("\n"))
+                        }
+                        if (primaryBranch != null) {
+                            appendLine("\nUse branch=\"$primaryBranch\" on sonar and bamboo tools to get data for the current branch.")
+                        }
+                    } else {
+                        appendLine("\nThis project has ${repos.size} configured repositories:")
                         repos.forEach { repo ->
                             val primary = if (repo.isPrimary) " (primary)" else ""
+                            val gitRepo = gitRepos.find { it.root.path == repo.localVcsRootPath }
+                            val branch = gitRepo?.currentBranch?.name
                             val services = buildList {
+                                if (branch != null) add("Branch: $branch")
                                 if (!repo.bambooPlanKey.isNullOrBlank()) add("Bamboo: ${repo.bambooPlanKey}")
                                 if (!repo.sonarProjectKey.isNullOrBlank()) add("Sonar: ${repo.sonarProjectKey}")
                                 if (!repo.bitbucketProjectKey.isNullOrBlank() && !repo.bitbucketRepoSlug.isNullOrBlank())
@@ -301,9 +327,10 @@ class ConversationSession private constructor(
                             }.joinToString(", ")
                             appendLine("- ${repo.name}$primary — $services")
                         }
-                        appendLine("\nUse repo_name parameter on Bitbucket, Bamboo, and Sonar tools to target a specific repo.")
+                        appendLine("\nUse repo_name parameter on bitbucket, bamboo, and sonar tools to target a specific repo.")
+                        appendLine("Use branch parameter on sonar and bamboo tools to get data for a specific branch.")
                     }
-                } else null
+                }.trimEnd().ifBlank { null }
             } catch (_: Exception) { null }
 
             // Build system prompt

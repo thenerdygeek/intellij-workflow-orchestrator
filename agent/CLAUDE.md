@@ -79,7 +79,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think, request_tools |
+| Core (always active) | read_file, edit_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think, request_tools, project_context |
 | Process Interaction | send_stdin, kill_process, ask_user_input |
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |

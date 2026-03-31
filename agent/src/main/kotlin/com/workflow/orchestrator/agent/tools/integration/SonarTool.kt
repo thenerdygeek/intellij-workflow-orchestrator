@@ -55,7 +55,7 @@ class SonarTool : AgentTool {
             ),
             "branch" to ParameterProperty(
                 type = "string",
-                description = "Optional branch name — for project_measures"
+                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, issues_paged. Use project_context tool to discover current branch."
             ),
             "from" to ParameterProperty(
                 type = "string",
@@ -99,22 +99,25 @@ class SonarTool : AgentTool {
             "issues" -> {
                 val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
                 val file = params["file"]?.jsonPrimitive?.content
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getIssues(projectKey, file, repoName = repoName).toAgentToolResult()
+                service.getIssues(projectKey, file, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "quality_gate" -> {
                 val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getQualityGateStatus(projectKey, repoName = repoName).toAgentToolResult()
+                service.getQualityGateStatus(projectKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "coverage" -> {
                 val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getCoverage(projectKey, repoName = repoName).toAgentToolResult()
+                service.getCoverage(projectKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "search_projects" -> {
@@ -155,8 +158,9 @@ class SonarTool : AgentTool {
                 val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
                 val page = params["page"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
                 val pageSize = params["page_size"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getIssuesPaged(projectKey, page, pageSize, repoName = repoName).toAgentToolResult()
+                service.getIssuesPaged(projectKey, page, pageSize, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             else -> ToolResult(

@@ -79,6 +79,10 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
                 type = "string",
                 description = "Max results to return (default 10) — for recent_builds"
             ),
+            "branch" to ParameterProperty(
+                type = "string",
+                description = "Optional branch name — for build_status, recent_builds. Use project_context tool to discover current branch."
+            ),
             "repo_name" to ParameterProperty(
                 type = "string",
                 description = "Repository name for multi-repo projects — for build_status, recent_builds, get_plan_branches, get_running_builds"
@@ -109,8 +113,9 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
             "build_status" -> {
                 val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getLatestBuild(planKey, repoName = repoName).toAgentToolResult()
+                service.getLatestBuild(planKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "get_build" -> {
@@ -173,8 +178,9 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
                 val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getRecentBuilds(planKey, maxResults, repoName = repoName).toAgentToolResult()
+                service.getRecentBuilds(planKey, maxResults, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "get_plans" -> {
