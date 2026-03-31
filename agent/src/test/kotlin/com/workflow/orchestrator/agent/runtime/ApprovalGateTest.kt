@@ -77,13 +77,14 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `jira_get_ticket is NONE risk and always approved`() {
-        val riskLevel = ApprovalGate.riskLevelFor("jira_get_ticket")
-        assertEquals(RiskLevel.NONE, riskLevel)
+    fun `jira meta-tool is MEDIUM risk statically but NONE for read-only actions`() {
+        // Static classification: jira is MEDIUM (it has mixed read/write actions)
+        val riskLevel = ApprovalGate.riskLevelFor("jira")
+        assertEquals(RiskLevel.MEDIUM, riskLevel)
 
-        val gate = ApprovalGate(approvalRequired = true)
-        val result = gate.check("jira_get_ticket", "Get ticket PROJ-123", riskLevel)
-        assertSame(ApprovalResult.Approved, result)
+        // Action-aware classification: get_ticket action is NONE risk
+        val actionRisk = ApprovalGate.classifyRisk("jira", mapOf("action" to "get_ticket"))
+        assertEquals(RiskLevel.NONE, actionRisk)
     }
 
     @Test
@@ -106,7 +107,7 @@ class ApprovalGateTest {
             }
         )
 
-        gate.check("bitbucket_create_pr", "Create PR for feature/PROJ-123", RiskLevel.HIGH)
+        gate.check("bitbucket", "Create PR for feature/PROJ-123", RiskLevel.HIGH)
 
         assertEquals("Create PR for feature/PROJ-123", receivedDescription)
         assertEquals(RiskLevel.HIGH, receivedRisk)
@@ -114,7 +115,7 @@ class ApprovalGateTest {
 
     @Test
     fun `LOW risk approved without callback when approval not required`() {
-        val riskLevel = ApprovalGate.riskLevelFor("jira_comment")
+        val riskLevel = ApprovalGate.riskLevelFor("format_code")
         assertEquals(RiskLevel.LOW, riskLevel)
 
         var callbackInvoked = false
@@ -126,14 +127,14 @@ class ApprovalGateTest {
             }
         )
 
-        val result = gate.check("jira_comment", "Add comment", riskLevel)
+        val result = gate.check("format_code", "Format code", riskLevel)
         assertFalse(callbackInvoked)
         assertSame(ApprovalResult.Approved, result)
     }
 
     @Test
     fun `LOW risk triggers callback when approval required`() {
-        val riskLevel = ApprovalGate.riskLevelFor("jira_comment")
+        val riskLevel = ApprovalGate.riskLevelFor("format_code")
         assertEquals(RiskLevel.LOW, riskLevel)
 
         var callbackInvoked = false
@@ -145,7 +146,7 @@ class ApprovalGateTest {
             }
         )
 
-        val result = gate.check("jira_comment", "Add comment", riskLevel)
+        val result = gate.check("format_code", "Format code", riskLevel)
         // LOW with approvalRequired=true: not >= MEDIUM, so auto-approved
         // The condition: riskLevel >= HIGH (no) || (approvalRequired && riskLevel >= MEDIUM) (no, LOW < MEDIUM)
         // So it falls through to the final return Approved
@@ -165,8 +166,9 @@ class ApprovalGateTest {
         val readOnlyTools = listOf(
             "read_file", "search_code", "find_references", "find_definition",
             "type_hierarchy", "call_hierarchy", "file_structure",
-            "spring_context", "spring_endpoints", "spring_bean_graph",
-            "diagnostics", "jira_get_ticket", "bamboo_build_status", "sonar_issues"
+            "diagnostics",
+            // Read-only meta-tools (all actions within these are read-only)
+            "sonar", "spring", "build"
         )
 
         for (tool in readOnlyTools) {
@@ -325,8 +327,8 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `classifyRisk - jira_comment is LOW risk`() {
-        val risk = ApprovalGate.classifyRisk("jira_comment", emptyMap())
+    fun `classifyRisk - jira comment action is LOW risk`() {
+        val risk = ApprovalGate.classifyRisk("jira", mapOf("action" to "comment"))
         assertEquals(RiskLevel.LOW, risk)
     }
 
@@ -337,9 +339,9 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `classifyRisk - bitbucket_create_pr is HIGH risk`() {
-        val risk = ApprovalGate.classifyRisk("bitbucket_create_pr", emptyMap())
-        assertEquals(RiskLevel.HIGH, risk)
+    fun `classifyRisk - bitbucket create_pr action is MEDIUM risk`() {
+        val risk = ApprovalGate.classifyRisk("bitbucket", mapOf("action" to "create_pr"))
+        assertEquals(RiskLevel.MEDIUM, risk)
     }
 
     // ============================================================
@@ -441,11 +443,11 @@ class ApprovalGateTest {
             onApprovalNeeded = { _, _ -> ApprovalResult.Approved }
         )
 
-        gate.check("bitbucket_create_pr", "Create PR", RiskLevel.HIGH)
+        gate.check("bitbucket", "Create PR", RiskLevel.HIGH)
 
         assertEquals(1, gate.auditLog.size)
         val entry = gate.auditLog.first()
-        assertEquals("bitbucket_create_pr", entry.toolName)
+        assertEquals("bitbucket", entry.toolName)
         assertEquals(RiskLevel.HIGH, entry.riskLevel)
         assertSame(ApprovalResult.Approved, entry.result)
         assertNotNull(entry.timestamp)
@@ -530,12 +532,12 @@ class ApprovalGateTest {
 
         gate.check("read_file", mapOf("path" to "file1.kt"))
         gate.check("run_command", mapOf("command" to "ls"))
-        gate.check("jira_comment", emptyMap())
+        gate.check("format_code", emptyMap())
 
         assertEquals(3, gate.auditLog.size)
         assertEquals("read_file", gate.auditLog[0].toolName)
         assertEquals("run_command", gate.auditLog[1].toolName)
-        assertEquals("jira_comment", gate.auditLog[2].toolName)
+        assertEquals("format_code", gate.auditLog[2].toolName)
     }
 
     @Test

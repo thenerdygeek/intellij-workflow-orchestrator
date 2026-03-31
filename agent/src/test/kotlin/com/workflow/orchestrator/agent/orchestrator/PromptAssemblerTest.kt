@@ -218,7 +218,7 @@ class PromptAssemblerTest {
     fun `rules contain multi-repo guidance`() {
         val prompt = assembler.buildSingleAgentPrompt()
         assertTrue(prompt.contains("multiple repositories"), "Should contain multi-repo rule")
-        assertTrue(prompt.contains("bitbucket_list_repos"), "Should mention bitbucket_list_repos for discovery")
+        assertTrue(prompt.contains("bitbucket(action=\"list_repos\")"), "Should mention bitbucket(action=\"list_repos\") for discovery")
     }
 
     // --- Few-shot examples ---

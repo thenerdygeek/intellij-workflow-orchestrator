@@ -48,16 +48,15 @@ class ToolCategoryRegistryTest {
         val alwaysActive = ToolCategoryRegistry.getAlwaysActiveTools()
         assertTrue(alwaysActive.contains("read_file"))
         assertTrue(alwaysActive.contains("edit_file"))
-        // Non-core tools should not be in always-active
-        assertFalse(alwaysActive.contains("jira_get_ticket"))
-        assertFalse(alwaysActive.contains("bamboo_build_status"))
+        // Non-core meta-tools should not be in always-active
+        assertFalse(alwaysActive.contains("jira"))
+        assertFalse(alwaysActive.contains("bamboo"))
     }
 
     @Test
     fun `getToolsInCategory returns tools for valid category`() {
         val tools = ToolCategoryRegistry.getToolsInCategory("jira")
-        assertTrue(tools.contains("jira_get_ticket"))
-        assertTrue(tools.contains("jira_transition"))
+        assertTrue(tools.contains("jira"))
     }
 
     @Test

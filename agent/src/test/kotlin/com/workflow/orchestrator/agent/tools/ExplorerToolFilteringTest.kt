@@ -81,13 +81,11 @@ class ExplorerToolFilteringTest {
 
     @Test
     fun `all explorer-accessible tools are NONE risk`() {
+        // Non-meta read-only tools that explorers use
         val explorerReadOnlyTools = listOf(
             "read_file", "search_code", "glob_files", "file_structure",
             "find_definition", "find_references", "type_hierarchy",
             "call_hierarchy", "find_implementations",
-            "git_status", "git_blame", "git_diff", "git_log",
-            "git_branches", "git_show_file", "git_show_commit",
-            "list_breakpoints", "get_debug_state", "get_stack_frames", "get_variables",
             "diagnostics", "think"
         )
         for (toolName in explorerReadOnlyTools) {
@@ -96,6 +94,20 @@ class ExplorerToolFilteringTest {
                 RiskLevel.NONE, risk,
                 "Explorer tool '$toolName' should be NONE risk, but was $risk"
             )
+        }
+
+        // Meta-tool read-only actions used by explorers — verify via classifyRisk with action param
+        val metaToolReadOnlyActions = mapOf(
+            "git" to listOf("status", "blame", "diff", "log", "branches", "show_file", "show_commit")
+        )
+        for ((toolName, actions) in metaToolReadOnlyActions) {
+            for (action in actions) {
+                val risk = ApprovalGate.classifyRisk(toolName, mapOf("action" to action))
+                assertEquals(
+                    RiskLevel.NONE, risk,
+                    "Explorer meta-tool '$toolName' action '$action' should be NONE risk, but was $risk"
+                )
+            }
         }
     }
 }

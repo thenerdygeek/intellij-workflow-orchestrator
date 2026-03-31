@@ -91,7 +91,7 @@ class RequestToolsToolTest {
         assertTrue(result.content.contains("Reason: need ticket details"))
         // Tools should be queued
         assertTrue(queue.isNotEmpty())
-        assertTrue(queue.contains("jira_get_ticket"))
+        assertTrue(queue.contains("jira"))
 
         unmockkStatic(ToolPreferences::class, AgentService::class)
     }
@@ -99,11 +99,9 @@ class RequestToolsToolTest {
     @Test
     fun `filters disabled tools from activation`() = runTest {
         val prefs = mockk<ToolPreferences>()
-        // Default: enable all tools, then selectively disable specific ones
+        // Default: enable all tools, then selectively disable the runtime_debug category tools
         every { prefs.isToolEnabled(any()) } returns true
-        every { prefs.isToolEnabled("jira_get_transitions") } returns false
-        every { prefs.isToolEnabled("jira_comment") } returns false
-        every { prefs.isToolEnabled("jira_log_work") } returns false
+        every { prefs.isToolEnabled("debug") } returns false
         mockkStatic(ToolPreferences::class)
         every { ToolPreferences.getInstance(project) } returns prefs
 
@@ -113,14 +111,12 @@ class RequestToolsToolTest {
         mockkStatic(AgentService::class)
         every { AgentService.getInstance(project) } returns agentService
 
-        val params = buildJsonObject { put("category", "jira") }
+        val params = buildJsonObject { put("category", "runtime_debug") }
         val result = tool.execute(params, project)
 
         assertFalse(result.isError)
-        assertTrue(queue.contains("jira_get_ticket"))
-        assertTrue(queue.contains("jira_transition"))
-        assertFalse(queue.contains("jira_get_transitions"))
-        assertFalse(queue.contains("jira_comment"))
+        assertTrue(queue.contains("runtime"))
+        assertFalse(queue.contains("debug"))
 
         unmockkStatic(ToolPreferences::class, AgentService::class)
     }
