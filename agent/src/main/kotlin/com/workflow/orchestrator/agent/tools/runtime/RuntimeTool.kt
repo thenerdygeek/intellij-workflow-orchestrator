@@ -1216,6 +1216,54 @@ class RuntimeTool : AgentTool {
                             env.callback = callback
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
                         }
+
+                        // Build watchdog: if processStarted() hasn't fired within
+                        // BUILD_WATCHDOG_MS, the build (Make) likely failed — compilation
+                        // errors prevent the test ProcessHandler from being created.
+                        // Without this watchdog, the continuation would hang until the
+                        // full test timeout (5-15 minutes).
+                        Thread {
+                            try {
+                                Thread.sleep(BUILD_WATCHDOG_MS)
+                                if (processHandlerRef.get() == null && continuation.isActive) {
+                                    // Process never started — check IDE problem view for errors
+                                    val buildErrors = com.intellij.openapi.application.ReadAction.compute<String, Exception> {
+                                        try {
+                                            val compiler = CompilerManager.getInstance(project)
+                                            if (compiler.isCompilationActive) {
+                                                "Build is still compiling..."
+                                            } else {
+                                                // Grab errors from the Problems tool window
+                                                val wm = com.intellij.analysis.problemsView.toolWindow.ProblemsView.getToolWindow(project)
+                                                if (wm != null) {
+                                                    "Build may have failed — check Problems tool window for compilation errors."
+                                                } else {
+                                                    "Build failed — no test process was created within ${BUILD_WATCHDOG_MS / 1000}s."
+                                                }
+                                            }
+                                        } catch (_: Exception) {
+                                            "Build failed — no test process was created within ${BUILD_WATCHDOG_MS / 1000}s."
+                                        }
+                                    }
+
+                                    if (processHandlerRef.get() == null && continuation.isActive) {
+                                        continuation.resume(ToolResult(
+                                            content = "BUILD FAILED — test execution did not start.\n\n$buildErrors\n\n" +
+                                                "Fix the compilation errors and try again. Use diagnostics tool to check for errors.",
+                                            summary = "Build failed before tests",
+                                            tokenEstimate = 30,
+                                            isError = true
+                                        ))
+                                    }
+                                }
+                            } catch (_: InterruptedException) {
+                                // Continuation was resumed normally, watchdog no longer needed
+                            }
+                        }.apply {
+                            isDaemon = true
+                            name = "run_tests-build-watchdog"
+                            start()
+                        }
                     } catch (e: Exception) {
                         if (continuation.isActive) continuation.resume(null)
                     }
@@ -1748,6 +1796,9 @@ class RuntimeTool : AgentTool {
         // run_tests constants
         private const val RUN_TESTS_DEFAULT_TIMEOUT = 300L
         private const val RUN_TESTS_MAX_TIMEOUT = 900L
+        /** Watchdog timeout for build (Make) phase before test execution.
+         *  If processStarted() hasn't fired within this time, build likely failed. */
+        private const val BUILD_WATCHDOG_MS = 30_000L
         private const val RUN_TESTS_MAX_OUTPUT_CHARS = 4000
         private const val RUN_TESTS_TOKEN_CAP_CHARS = 12000
 

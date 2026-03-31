@@ -14,6 +14,7 @@ import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.compiler.CompilerManager
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -81,6 +82,7 @@ class RunTestsTool : AgentTool {
         private const val DEFAULT_TIMEOUT_SECONDS = 300L
         private const val MAX_TIMEOUT_SECONDS = 900L
         private const val MAX_OUTPUT_CHARS = 4000
+        private const val BUILD_WATCHDOG_MS = 30_000L
         private const val MAX_STACK_FRAMES = 5
         private const val MAX_PASSED_SHOWN = 20
         private const val TOKEN_CAP_CHARS = 12000
@@ -147,9 +149,7 @@ class RunTestsTool : AgentTool {
 
         // Launch the test run on EDT and wait for completion with timeout
         val result = withTimeoutOrNull(timeoutSeconds * 1000) {
-            // Use suspendCancellableCoroutine to bridge callback-based API to coroutine
             suspendCancellableCoroutine { continuation ->
-                // Launch on EDT — ProgramRunnerUtil requires it
                 com.intellij.openapi.application.invokeLater {
                     try {
                         val executor = DefaultRunExecutor.getRunExecutorInstance()
@@ -162,14 +162,12 @@ class RunTestsTool : AgentTool {
                             return@invokeLater
                         }
 
-                        // Use ProgramRunner.Callback — the official way to get the descriptor
                         val callback = object : ProgramRunner.Callback {
                             override fun processStarted(descriptor: RunContentDescriptor?) {
                                 if (descriptor == null) {
                                     if (continuation.isActive) continuation.resume(null)
                                     return
                                 }
-
                                 handleDescriptorReady(
                                     descriptor, continuation, testTarget,
                                     descriptorRef, processHandlerRef
@@ -180,9 +178,31 @@ class RunTestsTool : AgentTool {
                         try {
                             ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                         } catch (_: NoSuchMethodError) {
-                            // Fallback: set callback on env directly, then use sync call
                             env.callback = callback
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
+                        }
+
+                        // Build watchdog: if processStarted() hasn't fired within 30s,
+                        // build (Make) likely failed — resume with error instead of hanging.
+                        Thread {
+                            try {
+                                Thread.sleep(BUILD_WATCHDOG_MS)
+                                if (processHandlerRef.get() == null && continuation.isActive) {
+                                    continuation.resume(ToolResult(
+                                        content = "BUILD FAILED — test execution did not start.\n\n" +
+                                            "No test process was created within ${BUILD_WATCHDOG_MS / 1000}s. " +
+                                            "This usually means compilation failed.\n\n" +
+                                            "Fix the compilation errors and try again. Use diagnostics tool to check for errors.",
+                                        summary = "Build failed before tests",
+                                        tokenEstimate = 30,
+                                        isError = true
+                                    ))
+                                }
+                            } catch (_: InterruptedException) { }
+                        }.apply {
+                            isDaemon = true
+                            name = "run_tests-build-watchdog"
+                            start()
                         }
                     } catch (e: Exception) {
                         if (continuation.isActive) continuation.resume(null)
