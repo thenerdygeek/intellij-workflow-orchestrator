@@ -442,6 +442,22 @@ class AgentDashboardPanel(
         cefPanel?.onKillSubAgent = onKill
     }
 
+    // ── Edit stats + checkpoint delegation ──
+
+    fun updateEditStats(added: Int, removed: Int, files: Int) {
+        runOnEdt { cefPanel?.updateEditStats(added, removed, files) }
+        mirrors.forEach { it.updateEditStats(added, removed, files) }
+    }
+
+    fun updateCheckpoints(checkpointsJson: String) {
+        runOnEdt { cefPanel?.updateCheckpoints(checkpointsJson) }
+        mirrors.forEach { it.updateCheckpoints(checkpointsJson) }
+    }
+
+    fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
+        cefPanel?.onRevertCheckpoint = onRevert
+    }
+
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else SwingUtilities.invokeLater(action)

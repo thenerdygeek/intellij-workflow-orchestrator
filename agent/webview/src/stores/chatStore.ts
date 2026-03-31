@@ -15,6 +15,8 @@ import type {
   Skill,
   ToastType,
   SubAgentState,
+  EditStats,
+  CheckpointInfo,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
@@ -93,6 +95,8 @@ interface ChatState {
   debugLogVisible: boolean;
   debugLogEntries: DebugLogEntry[];
   toolOutputStreams: Record<string, string>;
+  editStats: EditStats | null;
+  checkpoints: CheckpointInfo[];
 
   // Actions
   startSession(task: string): void;
@@ -148,6 +152,10 @@ interface ChatState {
   appendToolOutput(toolCallId: string, chunk: string): void;
   killToolCall(toolCallId: string): void;
 
+  // Edit Stats + Checkpoint Actions
+  updateEditStats(stats: EditStats): void;
+  updateCheckpoints(checkpoints: CheckpointInfo[]): void;
+
   // Sub-Agent Actions
   spawnSubAgent(payload: string): void;
   updateSubAgentIteration(payload: string): void;
@@ -196,6 +204,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   debugLogVisible: false,
   debugLogEntries: [],
   toolOutputStreams: {},
+  editStats: null,
+  checkpoints: [],
 
   // Actions
   startSession(task: string) {
@@ -214,6 +224,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questionSummary: null,
       busy: true,
       retryMessage: null,
+      editStats: null,
+      checkpoints: [],
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -672,6 +684,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       (kotlinBridge as any).killToolCall(toolCallId);
     });
+  },
+
+  // ── Edit Stats + Checkpoint Actions ──
+  updateEditStats(stats: EditStats) {
+    set({ editStats: stats });
+  },
+
+  updateCheckpoints(checkpoints: CheckpointInfo[]) {
+    set({ checkpoints });
   },
 
   // ── Sub-Agent Actions ──

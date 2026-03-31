@@ -202,6 +202,24 @@ export interface EditDiff {
   accepted: boolean | null;
 }
 
+// ── Edit stats / checkpoint types ──
+
+export interface EditStats {
+  totalLinesAdded: number;
+  totalLinesRemoved: number;
+  filesModified: number;
+}
+
+export interface CheckpointInfo {
+  id: string;
+  description: string;
+  timestamp: number;
+  iteration: number;
+  filesModified: string[];
+  totalLinesAdded: number;
+  totalLinesRemoved: number;
+}
+
 // ── Visualization settings ──
 
 export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline' | 'image';

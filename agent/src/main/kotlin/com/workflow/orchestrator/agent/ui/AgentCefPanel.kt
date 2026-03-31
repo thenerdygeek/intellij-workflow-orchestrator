@@ -83,6 +83,7 @@ class AgentCefPanel(
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
     private var killSubAgentQuery: JBCefJSQuery? = null
+    private var revertCheckpointQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
@@ -160,6 +161,8 @@ class AgentCefPanel(
     var onKillSubAgent: ((String) -> Unit)? = null
     /** Callback when user submits process input from the ProcessInputView. Param: input string. */
     var onProcessInputResolved: ((String) -> Unit)? = null
+    /** Callback when user clicks "Revert" on a checkpoint in the timeline. Param: checkpointId. */
+    var onRevertCheckpoint: ((String) -> Unit)? = null
 
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
@@ -428,6 +431,9 @@ class AgentCefPanel(
         killSubAgentQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
         }
+        revertCheckpointQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { checkpointId -> onRevertCheckpoint?.invoke(checkpointId); JBCefJSQuery.Response("ok") }
+        }
         processInputQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
         }
@@ -595,6 +601,10 @@ class AgentCefPanel(
                     processInputQuery?.let { q ->
                         val inputJs = q.inject("input")
                         js("window._resolveProcessInput = function(input) { $inputJs }")
+                    }
+                    revertCheckpointQuery?.let { q ->
+                        val revertJs = q.inject("id")
+                        js("window._revertCheckpoint = function(id) { $revertJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -928,6 +938,16 @@ class AgentCefPanel(
         callJs("addDebugLogEntry(${jsonStr(json)})")
     }
 
+    // ── Edit stats + checkpoints ──
+
+    fun updateEditStats(added: Int, removed: Int, files: Int) {
+        callJs("updateEditStats($added,$removed,$files)")
+    }
+
+    fun updateCheckpoints(checkpointsJson: String) {
+        callJs("updateCheckpoints(${jsonStr(checkpointsJson)})")
+    }
+
     // Backward compat
     fun appendText(text: String) = appendStreamToken(text)
     fun setText(text: String) {
@@ -1086,6 +1106,7 @@ class AgentCefPanel(
         rejectDiffHunkQuery?.dispose()
         killToolCallQuery?.dispose()
         killSubAgentQuery?.dispose()
+        revertCheckpointQuery?.dispose()
         processInputQuery?.dispose()
         browser?.dispose()
         undoQuery = null
@@ -1125,6 +1146,7 @@ class AgentCefPanel(
         rejectDiffHunkQuery = null
         killToolCallQuery = null
         killSubAgentQuery = null
+        revertCheckpointQuery = null
         processInputQuery = null
         browser = null
     }

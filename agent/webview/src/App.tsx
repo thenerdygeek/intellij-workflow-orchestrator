@@ -10,11 +10,14 @@ import { DebugPanel } from '@/components/chat/DebugPanel'
 import { InputBar } from '@/components/input/InputBar'
 import { ErrorBoundary } from '@/components/chat/ErrorBoundary'
 import { SkillBanner } from '@/components/chat/SkillBanner'
+import { EditStatsBar } from '@/components/agent/EditStatsBar'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 
 function App() {
   useEscapeHandler();
+  const editStats = useChatStore(s => s.editStats);
+  const checkpoints = useChatStore(s => s.checkpoints);
 
   useEffect(() => {
     initBridge({
@@ -73,6 +76,7 @@ function App() {
       <SkillBanner />
       <ChatView />
       <DebugPanel />
+      <EditStatsBar stats={editStats} checkpoints={checkpoints} />
       <ErrorBoundary
         fallback={
           <div className="px-4 py-3 text-[12px]" style={{ color: 'var(--error, #ef4444)', borderTop: '1px solid var(--border)' }}>

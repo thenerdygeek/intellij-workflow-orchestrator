@@ -1031,6 +1031,30 @@ class AgentController(
         dashboard.setCefKillSubAgentCallback { agentId ->
             try { agentSvc?.killWorker(agentId) } catch (_: Exception) {}
         }
+
+        // Wire revert-checkpoint button: JS → Kotlin → RollbackManager
+        dashboard.setCefRevertCheckpointCallback { checkpointId ->
+            val manager = session?.rollbackManager
+            if (manager == null) {
+                dashboard.appendStatus("No rollback manager available.", RichStreamingPanel.StatusType.WARNING)
+                return@setCefRevertCheckpointCallback
+            }
+            SwingUtilities.invokeLater {
+                val success = manager.rollbackToCheckpoint(checkpointId)
+                if (success) {
+                    // Refresh VFS after revert
+                    try {
+                        com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                            .findFileByPath(project.basePath ?: "")?.refresh(true, true)
+                    } catch (_: Exception) { }
+                    dashboard.appendStatus("Reverted to checkpoint $checkpointId.", RichStreamingPanel.StatusType.SUCCESS)
+                    // Push updated stats after revert
+                    pushEditStatsToUi()
+                } else {
+                    dashboard.appendStatus("Failed to revert to checkpoint $checkpointId.", RichStreamingPanel.StatusType.ERROR)
+                }
+            }
+        }
     }
 
     /**
@@ -1153,6 +1177,11 @@ class AgentController(
                         }
                     }
                 }
+
+                // Push edit stats to UI after file-modifying tool calls
+                if (toolInfo.toolName.contains("edit") || toolInfo.toolName.contains("create")) {
+                    pushEditStatsToUi()
+                }
             }
             progress.step.startsWith("Used tool:") -> {
                 dashboard.appendToolCall(toolName = progress.step.removePrefix("Used tool:").trim(), status = RichStreamingPanel.ToolCallStatus.SUCCESS)
@@ -1163,6 +1192,27 @@ class AgentController(
             progress.step.contains("failed") || progress.step.contains("retry") || progress.step.contains("switching") -> {
                 dashboard.appendStatus(progress.step, RichStreamingPanel.StatusType.WARNING)
             }
+        }
+    }
+
+    /**
+     * Push current edit stats and checkpoints from the change ledger to the UI.
+     * Called after each file-modifying tool call and after checkpoint reverts.
+     */
+    private fun pushEditStatsToUi() {
+        val ledger = session?.changeLedger ?: return
+        val stats = ledger.totalStats()
+        dashboard.updateEditStats(stats.totalLinesAdded, stats.totalLinesRemoved, stats.filesModified)
+        try {
+            val checkpointsJson = kotlinx.serialization.json.Json.encodeToString(
+                kotlinx.serialization.builtins.ListSerializer(
+                    com.workflow.orchestrator.agent.runtime.CheckpointMeta.serializer()
+                ),
+                ledger.listCheckpoints()
+            )
+            dashboard.updateCheckpoints(checkpointsJson)
+        } catch (e: Exception) {
+            LOG.debug("AgentController: failed to push checkpoints to UI", e)
         }
     }
 

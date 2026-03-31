@@ -221,6 +221,17 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().appendToolOutput(toolCallId, chunk);
   },
 
+  // Edit stats + checkpoint methods from Kotlin
+  updateEditStats(added: number, removed: number, files: number) {
+    stores?.getChatStore().updateEditStats({ totalLinesAdded: added, totalLinesRemoved: removed, filesModified: files });
+  },
+  updateCheckpoints(json: string) {
+    try {
+      const checkpoints = JSON.parse(json);
+      stores?.getChatStore().updateCheckpoints(checkpoints);
+    } catch { /* ignore malformed JSON */ }
+  },
+
   // Sub-Agent methods from Kotlin
   spawnSubAgent(payload: string) {
     stores?.getChatStore().spawnSubAgent(payload);
