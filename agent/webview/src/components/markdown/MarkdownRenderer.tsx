@@ -2,7 +2,6 @@ import { memo, useMemo } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import DOMPurify from 'dompurify';
 import { visit } from 'unist-util-visit';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
 import { MermaidDiagram } from '@/components/rich/MermaidDiagram';
@@ -225,9 +224,8 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
   isStreaming = false,
 }: MarkdownRendererProps) {
-  const sanitizedContent = useMemo(() => {
-    const processedContent = isStreaming ? closeOpenFences(content) : content;
-    return DOMPurify.sanitize(processedContent);
+  const processedContent = useMemo(() => {
+    return isStreaming ? closeOpenFences(content) : content;
   }, [content, isStreaming]);
 
   const components = useMemo(() => createMarkdownComponents(isStreaming), [isStreaming]);
@@ -239,7 +237,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
         rehypePlugins={[rehypeRaw]}
         components={components}
       >
-        {sanitizedContent}
+        {processedContent}
       </Markdown>
       {isStreaming && hasOpenCodeFence(content) && (
         <div className="relative my-2 rounded-md border border-[var(--border)] bg-[var(--code-bg)] overflow-hidden p-3">

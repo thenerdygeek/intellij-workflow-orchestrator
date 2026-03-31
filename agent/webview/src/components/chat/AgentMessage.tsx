@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState, useCallback } from 'react';
 import type { Message } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
@@ -24,6 +24,14 @@ export const AgentMessage = memo(function AgentMessage({
 }: AgentMessageProps) {
   const isUser = message.role === 'user';
   const content = isStreaming ? (streamText ?? message.content) : message.content;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [content]);
 
   // System messages: thinking blocks and status lines
   if (message.role === 'system') {
@@ -77,7 +85,7 @@ export const AgentMessage = memo(function AgentMessage({
       {/* Content bubble */}
       <div
         className={cn(
-          'max-w-[85%] rounded-lg px-4 py-3 whitespace-normal [overflow-wrap:anywhere]',
+          'relative max-w-[85%] rounded-lg px-4 py-3 whitespace-normal [overflow-wrap:anywhere]',
           isUser
             ? 'bg-[var(--user-bg)] text-[var(--fg)]'
             : 'bg-transparent text-[var(--fg)]',
@@ -89,10 +97,35 @@ export const AgentMessage = memo(function AgentMessage({
           </span>
         )}
 
-        <MarkdownRenderer content={content} isStreaming={isStreaming} />
+        {isUser ? (
+          <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{content}</p>
+        ) : (
+          <MarkdownRenderer content={content} isStreaming={isStreaming} />
+        )}
 
         {isStreaming && (
           <Loader variant="terminal" size="sm" className="inline-block ml-0.5 align-text-bottom" />
+        )}
+
+        {/* Copy button for agent messages (visible on hover) */}
+        {!isUser && !isStreaming && content && (
+          <button
+            onClick={handleCopy}
+            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-[var(--fg-muted)] hover:bg-[var(--hover-bg)] hover:text-[var(--fg)]"
+            title={copied ? 'Copied!' : 'Copy message'}
+            aria-label={copied ? 'Copied' : 'Copy message'}
+          >
+            {copied ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            )}
+          </button>
         )}
 
         {/* Timestamp on hover */}
