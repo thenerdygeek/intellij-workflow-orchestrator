@@ -1,0 +1,110 @@
+import { useState, useCallback, useEffect, useRef } from 'react';
+
+interface UseDropdownKeyboardOptions<T> {
+  items: T[];
+  onSelect: (item: T) => void;
+  onDismiss: () => void;
+  isOpen: boolean;
+}
+
+/**
+ * Hook for keyboard navigation in autocomplete dropdown lists.
+ * Manages selectedIndex and a keyDown handler to wire into the parent input.
+ *
+ * Features:
+ * - ArrowUp/Down navigates with wrap-around
+ * - Enter selects highlighted item
+ * - Tab also selects (like VS Code autocomplete)
+ * - Escape dismisses without selecting
+ * - Auto-scrolls highlighted item into view
+ * - Mouse hover also updates highlight (onMouseEnter)
+ * - Resets to 0 when items change or dropdown opens
+ *
+ * Usage:
+ *   const { selectedIndex, setSelectedIndex, listRef, handleKeyDown } =
+ *     useDropdownKeyboard({ items, onSelect, onDismiss, isOpen });
+ *
+ *   // Wire into RichInput:
+ *   <RichInput onDropdownKeyDown={handleKeyDown} ... />
+ *
+ *   // Wire into dropdown list container:
+ *   <div ref={listRef}>
+ *     {items.map((item, i) => (
+ *       <div
+ *         data-highlighted={i === selectedIndex ? 'true' : undefined}
+ *         onMouseEnter={() => setSelectedIndex(i)}
+ *         onClick={() => onSelect(item)}
+ *       />
+ *     ))}
+ *   </div>
+ */
+export function useDropdownKeyboard<T>({
+  items,
+  onSelect,
+  onDismiss,
+  isOpen,
+}: UseDropdownKeyboardOptions<T>) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Reset selection when items change or dropdown opens/closes
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [items, isOpen]);
+
+  // Auto-scroll selected item into view whenever selectedIndex changes
+  useEffect(() => {
+    if (!listRef.current) return;
+    const selected = listRef.current.querySelector<HTMLElement>('[data-highlighted="true"]');
+    selected?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent | KeyboardEvent): boolean => {
+      if (!isOpen || items.length === 0) return false;
+
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          e.stopPropagation();
+          setSelectedIndex(prev => (prev + 1) % items.length);
+          return true;
+
+        case 'ArrowUp':
+          e.preventDefault();
+          e.stopPropagation();
+          setSelectedIndex(prev => (prev - 1 + items.length) % items.length);
+          return true;
+
+        case 'Enter':
+          e.preventDefault();
+          e.stopPropagation();
+          if (items[selectedIndex] !== undefined) {
+            onSelect(items[selectedIndex]!);
+          }
+          return true;
+
+        case 'Tab':
+          // Tab selects like VS Code autocomplete — prevents focus shift
+          e.preventDefault();
+          e.stopPropagation();
+          if (items[selectedIndex] !== undefined) {
+            onSelect(items[selectedIndex]!);
+          }
+          return true;
+
+        case 'Escape':
+          e.preventDefault();
+          e.stopPropagation();
+          onDismiss();
+          return true;
+
+        default:
+          return false;
+      }
+    },
+    [isOpen, items, selectedIndex, onSelect, onDismiss]
+  );
+
+  return { selectedIndex, setSelectedIndex, listRef, handleKeyDown };
+}

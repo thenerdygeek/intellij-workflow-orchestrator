@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect, useRef } from 'react';
+import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash, SquareKanban } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
@@ -16,6 +16,7 @@ import {
 import { MentionDropdown } from './MentionDropdown';
 import { SkillDropdown } from './SkillDropdown';
 import { TicketDropdown } from './TicketDropdown';
+import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
 
 // ── Types ──
 
@@ -171,6 +172,18 @@ interface InputBarContentProps {
   onTriggerInsert: (char: '@' | '/' | '#') => void;
   onRichInputChange: (text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => void;
   canSend: boolean;
+  // Keyboard navigation props (passed down from InputBar which owns the hook)
+  dropdownKeyDown: (e: React.KeyboardEvent) => boolean;
+  mentionSelectedIndex: number;
+  setMentionSelectedIndex: (i: number) => void;
+  mentionListRef: React.RefObject<HTMLDivElement>;
+  ticketSelectedIndex: number;
+  setTicketSelectedIndex: (i: number) => void;
+  ticketListRef: React.RefObject<HTMLDivElement>;
+  onTicketResultsChange: (results: MentionSearchResult[]) => void;
+  skillSelectedIndex: number;
+  setSkillSelectedIndex: (i: number) => void;
+  skillListRef: React.RefObject<HTMLDivElement>;
 }
 
 function InputBarContent({
@@ -193,6 +206,17 @@ function InputBarContent({
   onTriggerInsert,
   onRichInputChange,
   canSend,
+  dropdownKeyDown,
+  mentionSelectedIndex,
+  setMentionSelectedIndex,
+  mentionListRef,
+  ticketSelectedIndex,
+  setTicketSelectedIndex,
+  ticketListRef,
+  onTicketResultsChange,
+  skillSelectedIndex,
+  setSkillSelectedIndex,
+  skillListRef,
 }: InputBarContentProps) {
   // Focus on trigger from store
   const focusTrigger = useChatStore(s => s.focusInputTrigger);
@@ -208,6 +232,9 @@ function InputBarContent({
           query={mentionQuery}
           onSelect={onMentionSelect}
           onDismiss={onDismissMentions}
+          selectedIndex={mentionSelectedIndex}
+          setSelectedIndex={setMentionSelectedIndex}
+          listRef={mentionListRef}
         />
       )}
 
@@ -217,6 +244,9 @@ function InputBarContent({
           query={skillQuery}
           onSelect={onSkillSelect}
           onDismiss={onDismissMentions}
+          selectedIndex={skillSelectedIndex}
+          setSelectedIndex={setSkillSelectedIndex}
+          listRef={skillListRef}
         />
       )}
 
@@ -226,6 +256,10 @@ function InputBarContent({
           query={ticketQuery}
           onSelect={onTicketSelect}
           onDismiss={onDismissMentions}
+          selectedIndex={ticketSelectedIndex}
+          setSelectedIndex={setTicketSelectedIndex}
+          listRef={ticketListRef}
+          onResultsChange={onTicketResultsChange}
         />
       )}
 
@@ -238,6 +272,7 @@ function InputBarContent({
           onSubmit={onSend}
           onChange={onRichInputChange}
           onEscape={onDismissMentions}
+          onDropdownKeyDown={dropdownKeyDown}
         />
       </div>
 
@@ -337,6 +372,77 @@ export const InputBar = memo(function InputBar() {
   const [skillQuery, setSkillQuery] = useState('');
   const [ticketQuery, setTicketQuery] = useState('');
 
+  // ── Flat item lists for keyboard navigation ──
+  // MentionDropdown manages its own filtered list internally, so we keep a
+  // parallel copy here for the hook. Ticket and Skill dropdowns expose items
+  // via state/store respectively.
+  const mentionResults = useChatStore(s => s.mentionResults);
+  const skillsList = useChatStore(s => s.skillsList);
+
+  // Flat mention items in display order (file → folder → symbol, up to 5 per group)
+  const flatMentionItems = useMemo(() => {
+    const maxPerGroup = mentionQuery ? 5 : 2;
+    const scored = mentionResults
+      .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
+      .map(r => ({ ...r }));
+    const grouped: Record<string, typeof scored> = {};
+    for (const r of scored) { (grouped[r.type] ??= []).push(r); }
+    return (['file', 'folder', 'symbol'] as const).flatMap(t =>
+      (grouped[t] ?? []).slice(0, maxPerGroup)
+    );
+  }, [mentionResults, mentionQuery]);
+
+  // Flat skill items (same order as SkillDropdown renders)
+  const flatSkillItems = useMemo(() => {
+    if (!mentionQuery && !skillQuery) return skillsList;
+    return skillQuery
+      ? skillsList.filter(s =>
+          s.name.toLowerCase().includes(skillQuery.toLowerCase()) ||
+          s.description?.toLowerCase().includes(skillQuery.toLowerCase())
+        )
+      : skillsList;
+  }, [skillsList, skillQuery, mentionQuery]);
+
+  // Ticket items live inside TicketDropdown state — we sync via a ref
+  const [ticketItems, setTicketItems] = useState<MentionSearchResult[]>([]);
+
+  // ── Keyboard navigation hooks (one per dropdown) ──
+
+  const handleDismiss = useCallback(() => {
+    setShowMentions(false); setShowSkills(false); setShowTickets(false);
+    setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
+  }, []);
+
+  const mentionKbd = useDropdownKeyboard({
+    items: flatMentionItems,
+    onSelect: (result) => handleMentionSelect(result),
+    onDismiss: handleDismiss,
+    isOpen: showMentions,
+  });
+
+  const skillKbd = useDropdownKeyboard({
+    items: flatSkillItems.map(s => s.name),
+    onSelect: (skillName) => handleSkillSelect(skillName),
+    onDismiss: handleDismiss,
+    isOpen: showSkills,
+  });
+
+  const ticketKbd = useDropdownKeyboard({
+    items: ticketItems,
+    onSelect: (result) => handleTicketSelect(result),
+    onDismiss: handleDismiss,
+    isOpen: showTickets,
+  });
+
+  // Unified handler forwarded from RichInput keydown.
+  // Delegates to whichever dropdown is open.
+  const dropdownKeyDown = useCallback((e: React.KeyboardEvent): boolean => {
+    if (showMentions) return mentionKbd.handleKeyDown(e);
+    if (showSkills)   return skillKbd.handleKeyDown(e);
+    if (showTickets)  return ticketKbd.handleKeyDown(e);
+    return false;
+  }, [showMentions, showSkills, showTickets, mentionKbd, skillKbd, ticketKbd]);
+
   const prevTicketQueryRef = useRef('');
 
   // RichInput change handler — detects @, #, / triggers
@@ -426,6 +532,7 @@ export const InputBar = memo(function InputBar() {
     const mention: Mention = { type: 'ticket', label: result.label, path: result.path, icon: result.icon };
     richInputRef.current?.insertChip(mention, '#', 'valid');
     setShowTickets(false); setTicketQuery('');
+    setTicketItems([]);
   }, []);
 
   const handleSkillSelect = useCallback((skillName: string) => {
@@ -453,9 +560,10 @@ export const InputBar = memo(function InputBar() {
     richInputRef.current?.insertTrigger(char);
   }, []);
 
-  const handleDismiss = useCallback(() => {
-    setShowMentions(false); setShowSkills(false); setShowTickets(false);
-    setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
+  // Expose a ticket results setter so TicketDropdown can sync items for keyboard nav
+  // We pass this as a prop so TicketDropdown can call it after each search result
+  const handleTicketResultsChange = useCallback((results: MentionSearchResult[]) => {
+    setTicketItems(results);
   }, []);
 
   const canSend = hasText && !inputState.locked && !busy;
@@ -489,6 +597,17 @@ export const InputBar = memo(function InputBar() {
           onTriggerInsert={triggerInsert}
           onRichInputChange={handleRichInputChange}
           canSend={canSend}
+          dropdownKeyDown={dropdownKeyDown}
+          mentionSelectedIndex={mentionKbd.selectedIndex}
+          setMentionSelectedIndex={mentionKbd.setSelectedIndex}
+          mentionListRef={mentionKbd.listRef}
+          ticketSelectedIndex={ticketKbd.selectedIndex}
+          setTicketSelectedIndex={ticketKbd.setSelectedIndex}
+          ticketListRef={ticketKbd.listRef}
+          onTicketResultsChange={handleTicketResultsChange}
+          skillSelectedIndex={skillKbd.selectedIndex}
+          setSkillSelectedIndex={skillKbd.setSelectedIndex}
+          skillListRef={skillKbd.listRef}
         />
       </div>
     </div>

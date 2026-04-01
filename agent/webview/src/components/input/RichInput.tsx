@@ -43,6 +43,12 @@ interface RichInputProps {
   onSubmit?: () => void;
   onChange?: (text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => void;
   onEscape?: () => void;
+  /**
+   * Called first on every keydown event. If it returns true, the event was
+   * handled by the dropdown (navigation, selection, or dismiss) and RichInput
+   * should NOT process it further (e.g. Enter should not submit the message).
+   */
+  onDropdownKeyDown?: (e: React.KeyboardEvent) => boolean;
 }
 
 /**
@@ -51,7 +57,7 @@ interface RichInputProps {
  * Text and chips flow naturally together on the same line.
  */
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
-  { placeholder, disabled, className, onSubmit, onChange, onEscape },
+  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -295,6 +301,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   }, [fireChange, updateEmptyState]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Give the active dropdown first refusal on navigation keys.
+    // If it returns true the event is fully consumed — don't submit or escape.
+    if (onDropdownKeyDown?.(e)) return;
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onSubmit?.();
@@ -302,7 +312,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (e.key === 'Escape') {
       onEscape?.();
     }
-  }, [onSubmit, onEscape]);
+  }, [onSubmit, onEscape, onDropdownKeyDown]);
 
   useEffect(() => {
     handleFocusBlur();
