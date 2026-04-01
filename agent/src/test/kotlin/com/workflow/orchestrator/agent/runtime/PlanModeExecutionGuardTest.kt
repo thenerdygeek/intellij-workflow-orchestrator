@@ -48,4 +48,41 @@ class PlanModeExecutionGuardTest {
         assertFalse(SingleAgentSession.isPlanModeBlocked("runtime"))
         assertFalse(SingleAgentSession.isPlanModeBlocked("debug"))
     }
+
+    // ── Meta-tool action filtering tests ──
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_ACTIONS contains jira write actions`() {
+        val blocked = SingleAgentSession.PLAN_MODE_BLOCKED_ACTIONS
+        assertTrue("transition" in blocked)
+        assertTrue("comment" in blocked)
+        assertTrue("log_work" in blocked)
+        assertTrue("start_work" in blocked)
+    }
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_ACTIONS contains bamboo write actions`() {
+        val blocked = SingleAgentSession.PLAN_MODE_BLOCKED_ACTIONS
+        assertTrue("trigger_build" in blocked)
+        assertTrue("stop_build" in blocked)
+        assertTrue("cancel_build" in blocked)
+    }
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_ACTIONS contains bitbucket write actions`() {
+        val blocked = SingleAgentSession.PLAN_MODE_BLOCKED_ACTIONS
+        assertTrue("create_pr" in blocked)
+        assertTrue("merge_pr" in blocked)
+        assertTrue("approve_pr" in blocked)
+    }
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_ACTIONS does not contain read actions`() {
+        val blocked = SingleAgentSession.PLAN_MODE_BLOCKED_ACTIONS
+        assertFalse("get_ticket" in blocked)
+        assertFalse("search_issues" in blocked)
+        assertFalse("get_sprints" in blocked)
+        assertFalse("build_status" in blocked)
+        assertFalse("get_build_log" in blocked)
+    }
 }

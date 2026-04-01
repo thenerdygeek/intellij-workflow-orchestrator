@@ -171,6 +171,23 @@ class SingleAgentSession(
         fun isPlanModeBlocked(toolName: String): Boolean {
             return AgentService.planModeActive.get() && toolName in PLAN_MODE_BLOCKED_TOOLS
         }
+
+        /** Meta-tools that contain mixed read/write actions. */
+        private val META_TOOLS_WITH_WRITE_ACTIONS = setOf("jira", "bamboo", "bitbucket", "git")
+
+        /** Meta-tool actions blocked during plan mode. The meta-tool itself stays
+         *  available (so read actions work), but write actions are blocked. */
+        val PLAN_MODE_BLOCKED_ACTIONS = setOf(
+            // jira write actions
+            "transition", "comment", "log_work", "start_work",
+            // bamboo write actions
+            "trigger_build", "stop_build", "cancel_build", "rerun_failed", "trigger_stage",
+            // bitbucket write actions
+            "create_pr", "approve_pr", "merge_pr", "decline_pr", "add_comment",
+            "add_reviewer", "remove_reviewer", "update_pr",
+            // git write actions
+            "shelve"
+        )
     }
 
     /**
@@ -1380,6 +1397,25 @@ class SingleAgentSession(
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             ), 0L)
+        }
+
+        // Plan mode: block write actions within meta-tools (jira, bamboo, bitbucket, git)
+        if (AgentService.planModeActive.get() && toolName in META_TOOLS_WITH_WRITE_ACTIONS) {
+            try {
+                val metaParams = json.parseToJsonElement(toolCall.function.arguments)
+                val action = (metaParams as? kotlinx.serialization.json.JsonObject)?.get("action")
+                    ?.jsonPrimitive?.content
+                if (action != null && action in PLAN_MODE_BLOCKED_ACTIONS) {
+                    val msg = "Action '$action' on '$toolName' is blocked in plan mode. Get your plan approved first."
+                    eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName.$action: blocked by plan mode")
+                    return Triple(toolCall, ToolResult(
+                        content = msg,
+                        summary = "Blocked: $toolName.$action (plan mode)",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    ), 0L)
+                }
+            } catch (_: Exception) { /* parsing failed, allow through */ }
         }
 
         // Check approval gate before executing risky tools (skip for attempt_completion — internal orchestration)
