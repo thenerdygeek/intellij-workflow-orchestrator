@@ -118,7 +118,7 @@ export const MentionDropdown = memo(function MentionDropdown({
   const isEmpty = flatItems.length === 0;
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 w-80 z-50">
+    <div className="absolute bottom-full left-0 mb-1 min-w-[420px] max-w-[560px] w-max z-50">
       <div
         className="rounded-lg overflow-hidden"
         style={{
@@ -180,7 +180,7 @@ export const MentionDropdown = memo(function MentionDropdown({
                       <span className="truncate">{r.label}</span>
                       {r.description && (
                         <span
-                          className="ml-auto text-[10px] truncate max-w-[140px]"
+                          className="ml-auto text-[10px] truncate max-w-[280px]"
                           style={{ color: 'var(--fg-muted)' }}
                         >
                           {r.description}

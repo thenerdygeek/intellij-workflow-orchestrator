@@ -71,7 +71,7 @@ export const TicketDropdown = memo(function TicketDropdown({
   const isEmpty = results.length === 0;
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 w-96 z-50">
+    <div className="absolute bottom-full left-0 mb-1 min-w-[420px] max-w-[560px] w-max z-50">
       <div
         className="rounded-lg overflow-hidden"
         style={{
