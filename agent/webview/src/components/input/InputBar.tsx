@@ -90,13 +90,10 @@ const PlanChip = memo(function PlanChip({ active }: { active: boolean }) {
 // ── SkillsChip ──
 
 const SkillsChip = memo(function SkillsChip() {
-  const [items, setItems] = useState<DropdownItem[]>([]);
-
-  useEffect(() => {
-    (window as any).updateSkillsList = (json: string) => {
-      try { setItems(JSON.parse(json)); } catch { /* ignore */ }
-    };
-  }, []);
+  // Read skills from chatStore (populated by jcef-bridge.ts updateSkillsList)
+  // DO NOT override window.updateSkillsList here — that would break the
+  // bridge function which updates chatStore.skillsList for SkillDropdown
+  const items = useChatStore(s => s.skillsList);
 
   if (items.length === 0) return null;
 

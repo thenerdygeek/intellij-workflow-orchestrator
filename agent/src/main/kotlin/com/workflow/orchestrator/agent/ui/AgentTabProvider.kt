@@ -37,6 +37,9 @@ class AgentTabProvider : WorkflowTabProvider {
         val dashboard = AgentDashboardPanel(parentDisposable = project as? Disposable)
         val controller = AgentController(project, dashboard)
 
+        // Wire mention search provider for @mention and #ticket autocomplete
+        dashboard.setMentionSearchProvider(MentionSearchProvider(project))
+
         // Register controller in registry for cross-module access (e.g., AgentChatRedirect)
         AgentControllerRegistry.getInstance(project).controller = controller
 
