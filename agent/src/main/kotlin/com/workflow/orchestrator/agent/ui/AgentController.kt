@@ -855,6 +855,10 @@ class AgentController(
         ProcessRegistry.killAll()
         currentTaskJob?.cancel()
         currentTaskJob = null
+        // Reset plan mode on cancel
+        planModeEnabled = false
+        AgentService.planModeActive.set(false)
+        dashboard.setPlanMode(false)
         dashboard.appendStatus("Stopped.", RichStreamingPanel.StatusType.WARNING)
     }
 
@@ -882,6 +886,10 @@ class AgentController(
         session?.questionManager?.clear()
         session = null
         currentPlanFile = null
+        // Reset plan mode so it doesn't leak into the next session
+        planModeEnabled = false
+        AgentService.planModeActive.set(false)
+        dashboard.setPlanMode(false)
         dashboard.reset()
         dashboard.focusInput()
     }
