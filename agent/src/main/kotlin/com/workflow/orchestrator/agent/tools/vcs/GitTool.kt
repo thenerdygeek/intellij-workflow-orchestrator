@@ -43,9 +43,22 @@ class GitTool : AgentTool {
 
     override val name = "git"
 
-    override val description =
-        "Git version control — status, blame, diff, log, branches, show file/commit, stash, merge-base, file history, changelist/shelve operations.\n" +
-        "Actions: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve"
+    override val description = """
+Git operations — status, blame, diff, log, branches, file history, shelve.
+
+Actions and their parameters:
+- status() → Working tree status
+- blame(path, start_line?, end_line?) → Line-by-line blame
+- diff(path?, ref?, staged?) → Show diff (staged=true for staged changes)
+- log(path?, ref?, max_count?, oneline?) → Commit log (default 20, max 50)
+- branches(show_remote?, show_tags?) → List branches
+- show_file(path, ref) → File content at git ref (local refs only)
+- show_commit(commit, include_diff?) → Commit details (SHA, HEAD, HEAD~N, or local branch)
+- stash_list() → List stashes
+- merge_base(ref1, ref2) → Common ancestor
+- file_history(path, max_count?) → File commit history (default 15, max 30)
+- shelve(shelve_action, name?, comment?, shelf_index?) → Changelist shelving (shelve_action: list|list_shelves|create|shelve|unshelve)
+""".trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(

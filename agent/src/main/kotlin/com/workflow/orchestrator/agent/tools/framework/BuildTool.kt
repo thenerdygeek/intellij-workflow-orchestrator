@@ -35,9 +35,22 @@ class BuildTool : AgentTool {
 
     override val name = "build"
 
-    override val description =
-        "Build system intelligence — Maven dependencies/properties/plugins/profiles, Gradle tasks/dependencies/properties, project modules, dependency graphs.\n" +
-        "Actions: maven_dependencies, maven_properties, maven_plugins, maven_profiles, maven_dependency_tree, maven_effective_pom, gradle_dependencies, gradle_tasks, gradle_properties, project_modules, module_dependency_graph"
+    override val description = """
+Build system intelligence — Maven and Gradle dependencies, plugins, properties, modules.
+
+Actions and their parameters:
+- maven_dependencies(module?, scope?, search?) → Maven dependencies (scope: compile|test|runtime|provided)
+- maven_properties(module?, search?) → POM properties
+- maven_plugins(module?) → Build plugins
+- maven_profiles(module?) → Build profiles
+- maven_dependency_tree(module?, artifact?) → Transitive dependency tree (artifact to filter paths)
+- maven_effective_pom(module?, plugin?) → Effective POM (plugin to filter by artifactId)
+- gradle_dependencies(module?, configuration?, search?) → Gradle deps (configuration: implementation|api|testImplementation|...)
+- gradle_tasks(module?, search?) → Gradle tasks
+- gradle_properties(module?, search?) → Gradle properties
+- project_modules() → List all IntelliJ modules
+- module_dependency_graph(module?, transitive?, include_libraries?, detect_cycles?) → Module dependency graph
+""".trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(

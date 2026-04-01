@@ -25,10 +25,28 @@ class JiraTool : AgentTool {
 
     override val name = "jira"
 
-    override val description = """Jira integration — tickets, sprints, boards, transitions, comments, worklogs, dev branches.
-Actions: get_ticket, get_transitions, transition, comment, get_comments, log_work, get_worklogs,
-get_sprints, get_linked_prs, get_boards, get_sprint_issues, get_board_issues, search_issues,
-get_dev_branches, start_work""".trimIndent()
+    override val description = """
+Jira ticket management — issues, sprints, boards, transitions, comments, time logging.
+
+Actions and their parameters:
+- get_ticket(key) → Full ticket details
+- get_transitions(key) → Available status transitions
+- transition(key, transition_id, comment?) → Move ticket to new status
+- comment(key, body) → Add comment to ticket
+- get_comments(key) → List comments
+- log_work(key, time_spent, comment?) → Log time (format: '2h', '30m', '1h 30m')
+- get_worklogs(key) → List work logs (also accepts issue_key)
+- get_sprints(board_id) → List sprints for board
+- get_boards(type?, name_filter?) → List boards (type: scrum|kanban)
+- get_sprint_issues(sprint_id) → Issues in sprint
+- get_board_issues(board_id) → Issues on board
+- search_issues(text, max_results?) → JQL/text search (default 20 results)
+- get_linked_prs(issue_id) → PRs linked to issue
+- get_dev_branches(issue_id) → Dev branches for issue
+- start_work(issue_key, branch_name, source_branch) → Create branch and start work (also accepts key)
+
+description optional: for approval dialog on write actions.
+""".trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(

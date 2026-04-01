@@ -24,9 +24,24 @@ class SonarTool : AgentTool {
 
     override val name = "sonar"
 
-    override val description =
-        "SonarQube code quality integration — issues, quality gate, coverage, measures, branches, source lines, security hotspots, duplications.\n" +
-        "Actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications"
+    override val description = """
+SonarQube code quality — issues, coverage, quality gates, analysis, security hotspots.
+
+Actions and their parameters:
+- issues(project_key, file?, branch?) → Code issues (optionally filter by file path)
+- quality_gate(project_key, branch?) → Quality gate status
+- coverage(project_key, branch?) → Code coverage metrics
+- search_projects(query) → Search SonarQube projects
+- analysis_tasks(project_key) → Recent analysis task status
+- branches(project_key) → Analyzed branches
+- project_measures(project_key, branch?) → All project metrics
+- source_lines(component_key, from?, to?, branch?) → Source code with metrics (from/to are line numbers)
+- issues_paged(project_key, page?, page_size?, branch?) → Paginated issues (default page 1, 100/page, max 500)
+- security_hotspots(project_key, branch?) → Security hotspots
+- duplications(component_key, branch?) → Code duplications
+
+Common optional: repo_name for multi-repo projects.
+""".trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(

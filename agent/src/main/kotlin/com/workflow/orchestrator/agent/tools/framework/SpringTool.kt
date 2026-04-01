@@ -47,9 +47,26 @@ class SpringTool : AgentTool {
 
     override val name = "spring"
 
-    override val description =
-        "Spring Framework and Spring Boot intelligence — beans, endpoints, config, security, profiles, repositories, JPA entities, scheduled tasks, actuator.\n" +
-        "Actions: context, endpoints, bean_graph, config, version_info, profiles, repositories, security_config, scheduled_tasks, event_listeners, boot_endpoints, boot_autoconfig, boot_config_properties, boot_actuator, jpa_entities"
+    override val description = """
+Spring framework intelligence — beans, endpoints, configuration, JPA, security, actuator.
+
+Actions and their parameters:
+- context(filter?) → Spring bean context
+- endpoints(filter?, include_params?) → REST endpoint mappings
+- bean_graph(bean_name) → Bean dependency graph
+- config(property) → Configuration property value
+- version_info(module) → Framework version info
+- profiles() → Active Spring profiles
+- repositories(filter?) → Spring Data repositories
+- security_config() → Security configuration
+- scheduled_tasks() → @Scheduled methods
+- event_listeners() → @EventListener methods
+- boot_endpoints(class_name?) → Boot endpoint mappings
+- boot_autoconfig(filter?, project_only?) → Auto-configuration classes (project_only default true)
+- boot_config_properties(class_name?, prefix?) → @ConfigurationProperties bindings
+- boot_actuator() → Actuator endpoints
+- jpa_entities(entity?) → JPA entity analysis
+""".trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(
