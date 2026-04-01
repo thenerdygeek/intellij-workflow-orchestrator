@@ -88,6 +88,7 @@ class AgentController(
             },
             onTogglePlanMode = { enabled ->
                 planModeEnabled = enabled
+                AgentService.planModeActive.set(enabled)
                 if (enabled) {
                     // Inject planning constraints into any active session context so the LLM
                     // immediately sees planning mode rules — mirrors what EnablePlanModeTool does.
@@ -349,6 +350,7 @@ class AgentController(
             },
             onTogglePlanMode = { enabled ->
                 planModeEnabled = enabled
+                AgentService.planModeActive.set(enabled)
                 if (enabled) {
                     try {
                         AgentService.getInstance(project).currentContextBridge
@@ -1009,6 +1011,7 @@ class AgentController(
         // Wire LLM-triggered plan mode: highlights the Plan button and persists planModeEnabled
         agentSvc?.onPlanModeEnabled = { enabled ->
             planModeEnabled = enabled
+            AgentService.planModeActive.set(enabled)
             SwingUtilities.invokeLater { dashboard.setPlanMode(enabled) }
         }
 
