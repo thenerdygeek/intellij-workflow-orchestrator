@@ -231,6 +231,7 @@ class AgentService(
             register(DelegateTaskTool())
             register(ThinkTool())
             register(WorkerCompleteTool())
+            register(SendMessageToParentTool())
             register(CoreMemoryReadTool())
             register(CoreMemoryAppendTool())
             register(CoreMemoryReplaceTool())
