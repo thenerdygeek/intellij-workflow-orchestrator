@@ -5,7 +5,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.orchestrator.OrchestratorPrompts
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.settings.AgentSettings
@@ -180,7 +181,9 @@ class DelegateTaskTool : AgentTool {
 
         try {
             // Fresh context manager for the worker (150K budget)
-            val contextManager = ContextManager(
+            val contextManager = EventSourcedContextBridge.create(
+                sessionDir = null,
+                config = ContextManagementConfig.WORKER,
                 maxInputTokens = settings.state.maxInputTokens
             )
 
@@ -246,7 +249,7 @@ class DelegateTaskTool : AgentTool {
                     tools = toolMap,
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
-                    contextManager = contextManager,
+                    bridge = contextManager,
                     project = project
                 )
             }

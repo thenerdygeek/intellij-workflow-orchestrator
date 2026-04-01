@@ -122,8 +122,8 @@ class AgentService(
     /** Current session directory for transcript storage. Set by ConversationSession. */
     @Volatile var currentSessionDir: java.io.File? = null
 
-    /** ContextManager for the current agent session — tools use this to inject mid-loop system messages. */
-    @Volatile var currentContextManager: com.workflow.orchestrator.agent.context.ContextManager? = null
+    /** Context bridge for the current agent session — tools use this to inject mid-loop system messages. */
+    @Volatile var currentContextBridge: com.workflow.orchestrator.agent.context.EventSourcedContextBridge? = null
 
     /** Callback invoked when the LLM enables plan mode via enable_plan_mode tool. */
     @Volatile var onPlanModeEnabled: ((Boolean) -> Unit)? = null

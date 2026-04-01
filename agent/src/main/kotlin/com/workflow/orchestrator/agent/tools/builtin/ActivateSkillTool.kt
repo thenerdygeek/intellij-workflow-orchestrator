@@ -4,7 +4,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.SkillRegistry
 import com.workflow.orchestrator.agent.runtime.WorkerSession
@@ -95,7 +96,9 @@ class ActivateSkillTool : AgentTool {
 
         // Create fresh context manager for the worker
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-        val contextManager = ContextManager(
+        val contextManager = EventSourcedContextBridge.create(
+            sessionDir = null,
+            config = ContextManagementConfig.WORKER,
             maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
         )
 
@@ -111,7 +114,7 @@ class ActivateSkillTool : AgentTool {
                     tools = workerTools,
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
-                    contextManager = contextManager,
+                    bridge = contextManager,
                     project = project
                 )
             }

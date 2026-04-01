@@ -6,7 +6,8 @@ import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.AgentService
@@ -134,14 +135,14 @@ class AgentOrchestrator(
         // Resolve context, tools, and system prompt — reuse from session or create fresh
         val allTools: Map<String, com.workflow.orchestrator.agent.tools.AgentTool>
         val allToolDefs: List<ToolDefinition>
-        val contextManager: ContextManager
+        val bridge: EventSourcedContextBridge
         val effectiveSystemPrompt: String?
 
         if (session != null) {
             // Multi-turn: reuse session's context (the core fix)
             // Build context from task + recent user messages for tool selection
             val toolContext = run {
-                val recentUserMsgs = session.contextManager.getMessages()
+                val recentUserMsgs = session.bridge.getMessages()
                     .filter { it.role == "user" || it.role == "system" }
                     .takeLast(3)
                     .mapNotNull { it.content }
@@ -165,13 +166,13 @@ class AgentOrchestrator(
 
             allTools = selectedTools.associateBy { it.name }
             allToolDefs = selectedTools.map { it.toToolDefinition() }
-            contextManager = session.contextManager
+            bridge = session.bridge
 
             // Recalculate reserved tokens for the current (expanded) tool set
             val toolDefTokens = TokenEstimator.estimateToolDefinitions(allToolDefs)
             val systemPromptTokens = TokenEstimator.estimate(session.systemPrompt)
             val newReservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
-            contextManager.updateReservedTokens(newReservedTokens)
+            bridge.updateReservedTokens(newReservedTokens)
 
             // Initialize session (adds system prompt) on first use, then null to avoid re-adding
             session.initialize()
@@ -265,7 +266,9 @@ class AgentOrchestrator(
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
             val reservedTokens = toolDefTokens + systemPromptTokens + RESERVED_TOKEN_BUFFER
 
-            contextManager = ContextManager(
+            bridge = EventSourcedContextBridge.create(
+                sessionDir = null,
+                config = ContextManagementConfig.DEFAULT,
                 maxInputTokens = maxInputTokens,
                 reservedTokens = reservedTokens
             )
@@ -300,7 +303,7 @@ class AgentOrchestrator(
             tools = allTools,
             toolDefinitions = allToolDefs,
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project,
             systemPrompt = effectiveSystemPrompt,
             maxOutputTokens = maxOutputTokens,
@@ -321,8 +324,7 @@ class AgentOrchestrator(
                     hasPlan = data.hasPlan,
                     lastActivity = data.lastActivity
                 )
-            },
-            eventBridge = session?.contextBridge
+            }
         )
 
         // Persist scorecard for trend analysis

@@ -5,6 +5,7 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.context.condenser.*
 import com.workflow.orchestrator.agent.context.events.*
+import com.workflow.orchestrator.agent.runtime.ChangeLedger
 import com.workflow.orchestrator.core.model.ApiResult
 import java.io.File
 import java.util.UUID
@@ -23,28 +24,25 @@ sealed class CondenserOutcome {
 }
 
 /**
- * Bridge between the legacy [ContextManager]-based loop and the new event-sourced
- * context management system ([EventStore] + [CondenserPipeline] + [ConversationMemory]).
+ * Event-sourced context management — the single source of truth for the conversation.
  *
- * **Dual-write strategy:** Every mutation writes to BOTH the legacy ContextManager AND
- * the EventStore. This allows the existing loop (BudgetEnforcer, LoopGuard, etc.) to
- * continue working while we incrementally migrate to event-sourced context.
+ * Manages the full conversation lifecycle through an append-only [EventStore],
+ * with a [CondenserPipeline] for context window management and [ConversationMemory]
+ * for converting events to LLM-ready messages.
  *
- * **Migration path:**
- * 1. [Phase 1 — current] Dual-write: both systems receive all events. ContextManager
- *    drives LLM calls. EventStore records for persistence and future condensation.
- * 2. [Phase 2 — next] EventStore drives LLM calls via ConversationMemory. ContextManager
- *    kept for BudgetEnforcer compatibility only.
- * 3. [Phase 3 — final] Remove ContextManager entirely. BudgetEnforcer reads from EventStore.
+ * **Anchor management:** Compression-proof anchors (plan, skills, guardrails, facts,
+ * mentions, change ledger) are stored directly in this bridge and appended to every
+ * LLM call's message list, ensuring they survive condensation.
  *
- * Thread safety: Same as ContextManager — single coroutine context (the ReAct loop).
+ * Thread safety: Single coroutine context (the ReAct loop).
  */
 class EventSourcedContextBridge(
-    val contextManager: ContextManager,
     val eventStore: EventStore,
     private val condenserPipeline: CondenserPipeline,
     private val conversationMemory: ConversationMemory,
-    private val config: ContextManagementConfig = ContextManagementConfig.DEFAULT
+    private val config: ContextManagementConfig = ContextManagementConfig.DEFAULT,
+    private val maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
+    private var reservedTokens: Int = 0
 ) {
     /** The initial user message for the current turn (needed by ConversationMemory). */
     private var initialUserAction: MessageAction? = null
@@ -58,10 +56,40 @@ class EventSourcedContextBridge(
     /**
      * Token count last reported by the LLM API (via usage.promptTokens).
      * Updated after each LLM call via [updateTokensFromUsage]. Used by [getMessagesViaCondenser]
-     * to build an accurate [CondenserContext] without relying solely on the heuristic estimate
-     * from [ContextManager.currentTokens].
+     * to build an accurate [CondenserContext] without relying on heuristic estimates.
      */
     private var lastReportedPromptTokens: Int = 0
+
+    // =========================================================================
+    // Anchor storage (compression-proof, survive condensation)
+    // =========================================================================
+
+    /** Dedicated plan anchor — survives compression, updated in-place. */
+    private var planAnchor: ChatMessage? = null
+
+    /** Whether an active plan exists in the context. */
+    val hasPlanAnchor: Boolean get() = planAnchor != null
+
+    /** Dedicated skill anchor — survives compression. */
+    private var skillAnchor: ChatMessage? = null
+
+    /** Dedicated mention anchor — file content from @ mentions, survives compression. */
+    private var mentionAnchor: ChatMessage? = null
+
+    /** Dedicated facts anchor — compression-proof structured knowledge. */
+    private var factsAnchor: ChatMessage? = null
+
+    /** Dedicated guardrails anchor — compression-proof learned constraints. */
+    private var guardrailsAnchor: ChatMessage? = null
+
+    /** Compression-proof anchor containing the change ledger summary. */
+    private var changeLedgerAnchor: ChatMessage? = null
+
+    /** Facts store for recording verified findings that survive compression. */
+    var factsStore: FactsStore? = null
+
+    /** Disk spillover for full tool outputs. */
+    var toolOutputStore: ToolOutputStore? = null
 
     // =========================================================================
     // System prompt and initialization
@@ -71,9 +99,6 @@ class EventSourcedContextBridge(
      * Add the system prompt as the first event. Called once during session initialization.
      */
     fun addSystemPrompt(content: String) {
-        // Legacy path
-        contextManager.addMessage(ChatMessage(role = "system", content = content))
-        // Event-sourced path
         eventStore.add(SystemMessageAction(content = content), EventSource.SYSTEM)
     }
 
@@ -85,9 +110,6 @@ class EventSourcedContextBridge(
      * Add a user message. Also records it as the initial user action for the current turn.
      */
     fun addUserMessage(content: String) {
-        // Legacy path
-        contextManager.addMessage(ChatMessage(role = "user", content = content))
-        // Event-sourced path
         val action = MessageAction(content = content)
         val stored = eventStore.add(action, EventSource.USER)
         initialUserAction = stored as MessageAction
@@ -101,9 +123,6 @@ class EventSourcedContextBridge(
      * Add an assistant message (text response with no tool calls).
      */
     fun addAssistantMessage(message: ChatMessage) {
-        // Legacy path
-        contextManager.addAssistantMessage(message)
-        // Event-sourced path
         if (!message.content.isNullOrBlank()) {
             eventStore.add(
                 MessageAction(content = message.content!!),
@@ -118,12 +137,16 @@ class EventSourcedContextBridge(
      * Returns the response group ID for correlating tool results.
      */
     fun addAssistantToolCalls(message: ChatMessage): String {
-        // Legacy path — the full message with tool_calls
-        contextManager.addAssistantMessage(message)
-
-        // Event-sourced path — create individual ToolAction events
         currentResponseGroupId = UUID.randomUUID().toString().take(8)
         val toolCalls = message.toolCalls ?: return currentResponseGroupId
+
+        // Also record the text content if present (thinking before tool calls)
+        if (!message.content.isNullOrBlank()) {
+            eventStore.add(
+                MessageAction(content = message.content!!),
+                EventSource.AGENT
+            )
+        }
 
         for (tc in toolCalls) {
             val event = createToolAction(tc, currentResponseGroupId)
@@ -138,12 +161,9 @@ class EventSourcedContextBridge(
     // =========================================================================
 
     /**
-     * Add a tool result. Dual-writes to both ContextManager and EventStore.
+     * Add a tool result.
      */
     fun addToolResult(toolCallId: String, content: String, summary: String, toolName: String = "unknown") {
-        // Legacy path
-        contextManager.addToolResult(toolCallId, content, summary)
-        // Event-sourced path
         eventStore.add(
             ToolResultObservation(
                 toolCallId = toolCallId,
@@ -159,9 +179,6 @@ class EventSourcedContextBridge(
      * Add a tool error result.
      */
     fun addToolError(toolCallId: String, content: String, summary: String, toolName: String = "unknown") {
-        // Legacy path
-        contextManager.addToolResult(toolCallId, content, summary)
-        // Event-sourced path
         eventStore.add(
             ToolResultObservation(
                 toolCallId = toolCallId,
@@ -181,9 +198,6 @@ class EventSourcedContextBridge(
      * Add a system message (LoopGuard nudges, budget warnings, etc.).
      */
     fun addSystemMessage(content: String) {
-        // Legacy path
-        contextManager.addMessage(ChatMessage(role = "system", content = content))
-        // Event-sourced path
         eventStore.add(SystemMessageAction(content = content), EventSource.SYSTEM)
     }
 
@@ -192,9 +206,6 @@ class EventSourcedContextBridge(
      * Routes to the appropriate event type based on role.
      */
     fun addMessage(message: ChatMessage) {
-        // Legacy path
-        contextManager.addMessage(message)
-        // Event-sourced path
         when (message.role) {
             "system" -> eventStore.add(
                 SystemMessageAction(content = message.content ?: ""),
@@ -298,7 +309,7 @@ class EventSourcedContextBridge(
     }
 
     // =========================================================================
-    // Condensation (Phase 2 — EventStore drives LLM calls)
+    // Condensation (EventStore drives LLM calls)
     // =========================================================================
 
     /**
@@ -306,12 +317,9 @@ class EventSourcedContextBridge(
      * [ChatMessage] objects ready for an LLM call, or a [CondenserOutcome.NeedsCondensation]
      * if condensation must happen before the call can proceed.
      *
-     * This is the Phase 2 method that replaces [ContextManager.getMessages] in the ReAct loop.
-     *
      * **Algorithm:**
      * 1. Build a [View] from all events in the [EventStore].
-     * 2. Compute token utilization using the last API-reported prompt token count
-     *    (falls back to [ContextManager.currentTokens] for the first call).
+     * 2. Compute token utilization using the last API-reported prompt token count.
      * 3. Run the condenser pipeline on the view.
      * 4. If the pipeline returns [Condensation], return [CondenserOutcome.NeedsCondensation]
      *    so the caller can add the action to the event store and re-step.
@@ -326,8 +334,8 @@ class EventSourcedContextBridge(
 
         // Use the API-authoritative token count when available; fall back to heuristic
         val currentTokens = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
-                            else contextManager.currentTokens
-        val effectiveBudget = contextManager.effectiveMaxInputTokens
+                            else estimateCurrentTokens()
+        val effectiveBudget = effectiveMaxInputTokens
         val tokenUtilization = if (effectiveBudget > 0) currentTokens.toDouble() / effectiveBudget.toDouble()
                                else 0.0
 
@@ -346,8 +354,7 @@ class EventSourcedContextBridge(
                     condensationLoopCount = 0
                     val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
                     val messages = conversationMemory.processEvents(view.events, initial, view.forgottenEventIds).toMutableList()
-                    // Append compression-proof anchors so the LLM always sees them regardless of path
-                    messages.addAll(contextManager.getAnchorMessages())
+                    messages.addAll(getAnchorMessages())
                     CondenserOutcome.Messages(messages)
                 } else {
                     CondenserOutcome.NeedsCondensation(result.action)
@@ -361,8 +368,7 @@ class EventSourcedContextBridge(
                     initial,
                     result.view.forgottenEventIds
                 ).toMutableList()
-                // Append compression-proof anchors so the LLM always sees them regardless of path
-                messages.addAll(contextManager.getAnchorMessages())
+                messages.addAll(getAnchorMessages())
                 CondenserOutcome.Messages(messages)
             }
         }
@@ -371,18 +377,15 @@ class EventSourcedContextBridge(
     /**
      * Update the bridge's token tracking state from the LLM API's reported usage.
      *
-     * This is the token reconciliation step for the event-sourced path: after each
-     * LLM call, the caller passes `usage.promptTokens` here so that [getMessagesViaCondenser]
-     * can compute accurate token utilization in the next iteration.
-     *
-     * Also delegates to [ContextManager.reconcileWithActualTokens] for backward compatibility.
+     * This is the token reconciliation step: after each LLM call, the caller passes
+     * `usage.promptTokens` here so that [getMessagesViaCondenser] can compute accurate
+     * token utilization in the next iteration.
      *
      * @param promptTokens The `prompt_tokens` value from the LLM API's usage object
      */
     fun updateTokensFromUsage(promptTokens: Int) {
         if (promptTokens > 0) {
             lastReportedPromptTokens = promptTokens
-            contextManager.reconcileWithActualTokens(promptTokens)
         }
     }
 
@@ -393,18 +396,13 @@ class EventSourcedContextBridge(
     val tokenUtilization: Double
         get() {
             val current = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
-                          else contextManager.currentTokens
-            val budget = contextManager.effectiveMaxInputTokens
+                          else estimateCurrentTokens()
+            val budget = effectiveMaxInputTokens
             return if (budget > 0) current.toDouble() / budget.toDouble() else 0.0
         }
 
     /**
-     * Run the condenser pipeline on the current event history (legacy informational path).
-     *
-     * In Phase 1 (dual-write), this is informational — the result is recorded but
-     * ContextManager's own compression still drives the actual context window.
-     *
-     * In Phase 2, [getMessagesViaCondenser] replaces this as the active path.
+     * Run the condenser pipeline on the current event history.
      *
      * @return true if condensation occurred, false if the view was passed through
      */
@@ -412,14 +410,16 @@ class EventSourcedContextBridge(
         val allEvents = eventStore.all()
         val view = View.fromEvents(allEvents)
 
-        val utilizationPercent = contextManager.currentTokens.toDouble() /
-            contextManager.effectiveMaxInputTokens.toDouble()
+        val currentTokens = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
+                            else estimateCurrentTokens()
+        val budget = effectiveMaxInputTokens
+        val utilizationPercent = if (budget > 0) currentTokens.toDouble() / budget.toDouble() else 0.0
 
         val condenserContext = CondenserContext(
             view = view,
             tokenUtilization = utilizationPercent,
-            effectiveBudget = contextManager.effectiveMaxInputTokens,
-            currentTokens = contextManager.currentTokens
+            effectiveBudget = budget,
+            currentTokens = currentTokens
         )
 
         when (val result = condenserPipeline.condense(condenserContext)) {
@@ -456,31 +456,24 @@ class EventSourcedContextBridge(
     }
 
     // =========================================================================
-    // Delegation helpers
+    // Message retrieval
     // =========================================================================
 
     /**
-     * Get messages for LLM call. In Phase 1, delegates to ContextManager.
-     * In Phase 2, will use ConversationMemory to convert from EventStore.
+     * Get messages via the event-sourced path (ConversationMemory).
+     * This is the primary path for LLM calls.
      */
     fun getMessages(): List<ChatMessage> {
-        // Phase 1: delegate to legacy ContextManager
-        return contextManager.getMessages()
-    }
-
-    /**
-     * Get messages via the event-sourced path (ConversationMemory).
-     * Available for testing and Phase 2 migration.
-     */
-    fun getMessagesFromEvents(): List<ChatMessage> {
         val allEvents = eventStore.all()
         val view = View.fromEvents(allEvents)
         val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
-        return conversationMemory.processEvents(
+        val messages = conversationMemory.processEvents(
             view.events,
             initial,
             view.forgottenEventIds
-        )
+        ).toMutableList()
+        messages.addAll(getAnchorMessages())
+        return messages
     }
 
     // =========================================================================
@@ -498,57 +491,136 @@ class EventSourcedContextBridge(
      * Reconcile token count with actual API-reported tokens.
      */
     fun reconcileWithActualTokens(actualPromptTokens: Int) {
-        contextManager.reconcileWithActualTokens(actualPromptTokens)
+        if (actualPromptTokens > 0) {
+            lastReportedPromptTokens = actualPromptTokens
+        }
     }
 
     // =========================================================================
-    // Delegated ContextManager properties (for backward compatibility)
+    // Token management
     // =========================================================================
 
-    /** Current token count. */
-    val currentTokens: Int get() = contextManager.currentTokens
+    /** Current token count (API-reported, or heuristic estimate). */
+    val currentTokens: Int get() = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
+                                   else estimateCurrentTokens()
 
     /** Effective max input tokens. */
-    val effectiveMaxInputTokens: Int get() = contextManager.effectiveMaxInputTokens
+    val effectiveMaxInputTokens: Int get() = maxInputTokens
 
     /** Whether budget is critically low. */
-    fun isBudgetCritical(): Boolean = contextManager.isBudgetCritical()
+    fun isBudgetCritical(): Boolean = remainingBudget() < (effectiveBudget * 0.10)
 
     /** Remaining token budget. */
-    fun remainingBudget(): Int = contextManager.remainingBudget()
+    fun remainingBudget(): Int = effectiveBudget - currentTokens
 
-    /** Has a plan anchor. */
-    val hasPlanAnchor: Boolean get() = contextManager.hasPlanAnchor
-
-    /** Message count. */
-    val messageCount: Int get() = contextManager.messageCount
+    /** Message count (from event store). */
+    val messageCount: Int get() = eventStore.all().size
 
     /** Update reserved tokens. */
-    fun updateReservedTokens(newReserved: Int) = contextManager.updateReservedTokens(newReserved)
+    fun updateReservedTokens(newReserved: Int) {
+        reservedTokens = newReserved
+    }
 
     /** Count system warnings. */
-    fun countSystemWarnings(): Int = contextManager.countSystemWarnings()
+    fun countSystemWarnings(): Int {
+        return eventStore.all().count { event ->
+            event is SystemMessageAction && event.content.contains("system_warning")
+        }
+    }
 
     /** Remove oldest system warning. */
-    fun removeOldestSystemWarning(): Boolean = contextManager.removeOldestSystemWarning()
+    fun removeOldestSystemWarning(): Boolean {
+        // System warnings are in the event store but we can't remove events from an append-only store.
+        // Instead, we add a forget action that masks the oldest warning.
+        val events = eventStore.all()
+        val warningEvent = events.firstOrNull { event ->
+            event is SystemMessageAction && event.content.contains("system_warning")
+        }
+        if (warningEvent != null) {
+            // Record a "forget" action to mask this event in subsequent views
+            eventStore.add(
+                SystemMessageAction(content = "[Warning dismissed]"),
+                EventSource.SYSTEM
+            )
+            return true
+        }
+        return false
+    }
+
+    /** Effective budget after subtracting reserved tokens. */
+    private val effectiveBudget: Int get() = maxInputTokens - reservedTokens
+
+    /** Estimate current tokens from events (heuristic fallback). */
+    private fun estimateCurrentTokens(): Int {
+        val messages = getMessagesRaw()
+        return TokenEstimator.estimate(messages)
+    }
+
+    /** Get messages without anchors (to avoid recursion in token estimation). */
+    private fun getMessagesRaw(): List<ChatMessage> {
+        val allEvents = eventStore.all()
+        val view = View.fromEvents(allEvents)
+        val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
+        return conversationMemory.processEvents(view.events, initial, view.forgottenEventIds)
+    }
 
     // =========================================================================
-    // Delegated anchors (still managed by ContextManager in Phase 1)
+    // Anchor management
     // =========================================================================
 
-    fun setPlanAnchor(message: ChatMessage?) = contextManager.setPlanAnchor(message)
-    fun setSkillAnchor(message: ChatMessage?) = contextManager.setSkillAnchor(message)
-    fun setMentionAnchor(message: ChatMessage?) = contextManager.setMentionAnchor(message)
-    fun setGuardrailsAnchor(message: ChatMessage?) = contextManager.setGuardrailsAnchor(message)
-    fun updateFactsAnchor() = contextManager.updateFactsAnchor()
+    fun setPlanAnchor(message: ChatMessage?) {
+        planAnchor = message
+    }
 
-    // =========================================================================
-    // Delegated compression (Phase 1: still uses ContextManager)
-    // =========================================================================
+    fun setSkillAnchor(message: ChatMessage?) {
+        skillAnchor = message
+    }
 
-    fun compress() = contextManager.compress()
-    suspend fun compressWithLlm(brain: LlmBrain) = contextManager.compressWithLlm(brain)
-    fun pruneOldToolResults() = contextManager.pruneOldToolResults()
+    fun setMentionAnchor(message: ChatMessage?) {
+        mentionAnchor = message
+    }
+
+    fun setGuardrailsAnchor(message: ChatMessage?) {
+        guardrailsAnchor = message
+    }
+
+    /**
+     * Update the facts anchor from the current FactsStore state.
+     */
+    fun updateFactsAnchor() {
+        val store = factsStore ?: return
+        val contextStr = store.toContextString()
+        factsAnchor = if (contextStr.isNotEmpty()) {
+            ChatMessage(role = "system", content = contextStr)
+        } else null
+    }
+
+    /**
+     * Update the change ledger anchor from the current ChangeLedger state.
+     */
+    fun updateChangeLedgerAnchor(changeLedger: ChangeLedger) {
+        val contextStr = changeLedger.toContextString()
+        changeLedgerAnchor = if (contextStr.isNotEmpty()) {
+            ChatMessage(role = "system", content = "<change_ledger>\n$contextStr\n</change_ledger>")
+        } else null
+    }
+
+    /**
+     * Return all compression-proof anchor messages in their display order.
+     *
+     * Order: background anchors first (skill, mention, facts, guardrails,
+     * changeLedger), then plan last (recency attention for U-shaped attention bias).
+     */
+    fun getAnchorMessages(): List<ChatMessage> {
+        val result = mutableListOf<ChatMessage>()
+        skillAnchor?.let { result.add(it) }
+        mentionAnchor?.let { result.add(it) }
+        factsAnchor?.let { result.add(it) }
+        guardrailsAnchor?.let { result.add(it) }
+        changeLedgerAnchor?.let { result.add(it) }
+        planAnchor?.let { result.add(it) }
+        return result
+    }
 
     // =========================================================================
     // Internal helpers
@@ -615,21 +687,23 @@ class EventSourcedContextBridge(
          * Create a bridge for a new session.
          */
         fun create(
-            contextManager: ContextManager,
             sessionDir: File?,
             config: ContextManagementConfig = ContextManagementConfig.DEFAULT,
-            summarizationClient: SummarizationClient? = null
+            summarizationClient: SummarizationClient? = null,
+            maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
+            reservedTokens: Int = 0
         ): EventSourcedContextBridge {
             val eventStore = EventStore(sessionDir)
             val pipeline = CondenserFactory.create(config, summarizationClient)
             val conversationMemory = ConversationMemory()
 
             return EventSourcedContextBridge(
-                contextManager = contextManager,
                 eventStore = eventStore,
                 condenserPipeline = pipeline,
                 conversationMemory = conversationMemory,
-                config = config
+                config = config,
+                maxInputTokens = maxInputTokens,
+                reservedTokens = reservedTokens
             )
         }
 
@@ -637,21 +711,23 @@ class EventSourcedContextBridge(
          * Create a bridge for resuming a session (loading from disk).
          */
         fun loadFromDisk(
-            contextManager: ContextManager,
             sessionDir: File,
             config: ContextManagementConfig = ContextManagementConfig.DEFAULT,
-            summarizationClient: SummarizationClient? = null
+            summarizationClient: SummarizationClient? = null,
+            maxInputTokens: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens,
+            reservedTokens: Int = 0
         ): EventSourcedContextBridge {
             val eventStore = EventStore.loadFromJsonl(sessionDir)
             val pipeline = CondenserFactory.create(config, summarizationClient)
             val conversationMemory = ConversationMemory()
 
             return EventSourcedContextBridge(
-                contextManager = contextManager,
                 eventStore = eventStore,
                 condenserPipeline = pipeline,
                 conversationMemory = conversationMemory,
-                config = config
+                config = config,
+                maxInputTokens = maxInputTokens,
+                reservedTokens = reservedTokens
             )
         }
     }

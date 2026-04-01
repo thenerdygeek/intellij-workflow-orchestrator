@@ -171,7 +171,7 @@ class EditFileTool : AgentTool {
             // Update context anchor so LLM sees the change immediately
             // COMPRESSION: Re-renders changeLedgerAnchor from full ledger
             if (ledger != null) {
-                agentService.currentContextManager?.updateChangeLedgerAnchor(ledger)
+                agentService.currentContextBridge?.updateChangeLedgerAnchor(ledger)
             }
         } catch (_: Exception) { /* ledger recording is best-effort */ }
 

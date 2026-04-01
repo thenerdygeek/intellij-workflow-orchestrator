@@ -85,7 +85,7 @@ Parameters:
             // Update the change ledger anchor after rollback so LLM sees current state
             val ledger = agentService.currentChangeLedger
             if (ledger != null) {
-                agentService.currentContextManager?.updateChangeLedgerAnchor(ledger)
+                agentService.currentContextBridge?.updateChangeLedgerAnchor(ledger)
             }
 
             ToolResult(

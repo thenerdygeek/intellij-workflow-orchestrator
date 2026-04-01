@@ -86,7 +86,7 @@ class AgentController(
                     // Inject planning constraints into any active session context so the LLM
                     // immediately sees planning mode rules — mirrors what EnablePlanModeTool does.
                     try {
-                        AgentService.getInstance(project).currentContextManager
+                        AgentService.getInstance(project).currentContextBridge
                             ?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
                     } catch (_: Exception) {}
                     dashboard.setPlanMode(true)
@@ -342,7 +342,7 @@ class AgentController(
                 planModeEnabled = enabled
                 if (enabled) {
                     try {
-                        AgentService.getInstance(project).currentContextManager
+                        AgentService.getInstance(project).currentContextBridge
                             ?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
                     } catch (_: Exception) {}
                     dashboard.setPlanMode(true)
@@ -584,11 +584,11 @@ class AgentController(
                         role = "system",
                         content = "<mentioned_context>\n$context</mentioned_context>"
                     )
-                    session?.contextManager?.setMentionAnchor(mentionMsg)
+                    session?.bridge?.setMentionAnchor(mentionMsg)
                     // Record mention event in event store
-                    session?.contextBridge?.recordMention(mentions.map { it.value }, context)
+                    session?.bridge?.recordMention(mentions.map { it.value }, context)
                 } else {
-                    session?.contextManager?.setMentionAnchor(null)
+                    session?.bridge?.setMentionAnchor(null)
                 }
                 SwingUtilities.invokeLater {
                     executeTask(text)
@@ -596,7 +596,7 @@ class AgentController(
             }
         } else {
             // No mentions — clear any previous anchor and send normally
-            session?.contextManager?.setMentionAnchor(null)
+            session?.bridge?.setMentionAnchor(null)
             executeTask(text)
         }
     }
@@ -613,13 +613,13 @@ class AgentController(
             scope.launch(Dispatchers.IO) {
                 val context = mentionContextBuilder.buildContext(mentions)
                 if (context != null) {
-                    session?.contextManager?.setMentionAnchor(
+                    session?.bridge?.setMentionAnchor(
                         com.workflow.orchestrator.agent.api.dto.ChatMessage(
                             role = "system",
                             content = "<mentioned_context>\n$context</mentioned_context>"
                         )
                     )
-                    session?.contextBridge?.recordMention(filePaths, context)
+                    session?.bridge?.recordMention(filePaths, context)
                 }
                 SwingUtilities.invokeLater { executeTask(prompt) }
             }
@@ -902,12 +902,12 @@ class AgentController(
 
         // Wire anchor update: sets/updates the <active_plan> system message
         currentSession.planManager.onPlanAnchorUpdate = { plan ->
-            currentSession.contextManager.setPlanAnchor(
+            currentSession.bridge.setPlanAnchor(
                 com.workflow.orchestrator.agent.context.PlanAnchor.createPlanMessage(plan)
             )
             // Record plan event in event store
             try {
-                currentSession.contextBridge?.recordPlanUpdate(
+                currentSession.bridge.recordPlanUpdate(
                     kotlinx.serialization.json.Json.encodeToString(
                         com.workflow.orchestrator.agent.runtime.AgentPlan.serializer(), plan
                     )
@@ -963,18 +963,18 @@ class AgentController(
         // Wire SkillManager callbacks
         currentSession.skillManager?.let { sm ->
             sm.onSkillActivated = { skill ->
-                currentSession.contextManager.setSkillAnchor(
+                currentSession.bridge.setSkillAnchor(
                     com.workflow.orchestrator.agent.api.dto.ChatMessage(
                         role = "system",
                         content = "<active_skill name=\"${skill.entry.name}\">\n${skill.content}\n</active_skill>"
                     )
                 )
-                currentSession.contextBridge?.recordSkillActivated(skill.entry.name, skill.content)
+                currentSession.bridge.recordSkillActivated(skill.entry.name, skill.content)
                 try { dashboard.showSkillBanner(skill.entry.name) } catch (_: Exception) {}
             }
             sm.onSkillDeactivated = {
-                currentSession.contextManager.setSkillAnchor(null)
-                currentSession.contextBridge?.recordSkillDeactivated("unknown")
+                currentSession.bridge.setSkillAnchor(null)
+                currentSession.bridge.recordSkillDeactivated("unknown")
                 try { dashboard.hideSkillBanner() } catch (_: Exception) {}
             }
         }
@@ -1015,12 +1015,7 @@ class AgentController(
                     role = "system",
                     content = "<background_agent_completed agent_id=\"$agentId\">\n$resultMessage\n</background_agent_completed>"
                 )
-                val bridge = session?.contextBridge
-                if (bridge != null) {
-                    bridge.addSystemMessage(bgMsg.content!!)
-                } else {
-                    session?.contextManager?.addMessage(bgMsg)
-                }
+                session?.bridge?.addSystemMessage(bgMsg.content!!)
             }
         }
 
@@ -1135,7 +1130,7 @@ class AgentController(
             agentService.currentSkillManager = loaded.skillManager
             agentService.currentChangeLedger = loaded.changeLedger
             agentService.currentRollbackManager = loaded.rollbackManager
-            agentService.currentContextManager = loaded.contextManager
+            agentService.currentContextBridge = loaded.bridge
         } catch (_: Exception) {}
 
         // Render loaded conversation to UI
@@ -1270,7 +1265,7 @@ class AgentController(
                 }
                 // Show retry button with the original user message (skip internal nudges/injected messages)
                 session?.let { s ->
-                    val messages = try { s.contextManager.getMessages() } catch (_: Exception) { emptyList() }
+                    val messages = try { s.bridge.getMessages() } catch (_: Exception) { emptyList<com.workflow.orchestrator.agent.api.dto.ChatMessage>() }
                     val lastUserMsg = messages.lastOrNull { msg ->
                         msg.role == "user" && !isInternalNudge(msg.content)
                     }?.content

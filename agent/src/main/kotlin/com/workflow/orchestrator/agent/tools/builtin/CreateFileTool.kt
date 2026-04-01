@@ -132,7 +132,7 @@ class CreateFileTool : AgentTool {
 
             // Update context anchor so LLM sees the change immediately
             // COMPRESSION: This keeps the changeLedgerAnchor current.
-            agentService.currentContextManager?.updateChangeLedgerAnchor(ledger!!)
+            agentService.currentContextBridge?.updateChangeLedgerAnchor(ledger!!)
         } catch (_: Exception) { /* ledger recording is best-effort */ }
 
         val lineCount = content.lines().size

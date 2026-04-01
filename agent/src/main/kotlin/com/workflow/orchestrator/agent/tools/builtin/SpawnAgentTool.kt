@@ -7,7 +7,8 @@ import com.workflow.orchestrator.agent.WorkerStatus
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.orchestrator.OrchestratorPrompts
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.settings.AgentSettings
@@ -270,7 +271,9 @@ class SpawnAgentTool : AgentTool {
         eventLog.log(AgentEventType.WORKER_SPAWNED, "type=$resolvedType, description=$description")
 
         try {
-            val contextManager = ContextManager(
+            val contextManager = EventSourcedContextBridge.create(
+                sessionDir = null,
+                config = ContextManagementConfig.WORKER,
                 maxInputTokens = settings.state.maxInputTokens
             )
 
@@ -296,7 +299,7 @@ class SpawnAgentTool : AgentTool {
                     tools = toolMap,
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
-                    contextManager = contextManager,
+                    bridge = contextManager,
                     project = project,
                     maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
                 )
@@ -425,7 +428,9 @@ class SpawnAgentTool : AgentTool {
 
         // Reconstruct context from transcript
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-        val contextManager = ContextManager(
+        val contextManager = EventSourcedContextBridge.create(
+            sessionDir = null,
+            config = ContextManagementConfig.WORKER,
             maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
         )
 
@@ -467,7 +472,7 @@ class SpawnAgentTool : AgentTool {
                     tools = toolMap,
                     toolDefinitions = toolDefinitions,
                     brain = agentService.brain,
-                    contextManager = contextManager,
+                    bridge = contextManager,
                     project = project,
                     maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
                 )
@@ -535,7 +540,9 @@ class SpawnAgentTool : AgentTool {
         val job = scope.launch {
             agentService.activeWorkerCount.incrementAndGet()
             try {
-                val contextManager = ContextManager(
+                val contextManager = EventSourcedContextBridge.create(
+                    sessionDir = null,
+                    config = ContextManagementConfig.WORKER,
                     maxInputTokens = settings.state.maxInputTokens
                 )
 
@@ -560,7 +567,7 @@ class SpawnAgentTool : AgentTool {
                         tools = toolMap,
                         toolDefinitions = toolDefinitions,
                         brain = agentService.brain,
-                        contextManager = contextManager,
+                        bridge = contextManager,
                         project = project,
                         maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
                     )

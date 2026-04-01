@@ -58,7 +58,7 @@ class EnablePlanModeTool : AgentTool {
 
         // Inject FORCED_PLANNING_RULES into the live conversation context.
         // Same pattern as LoopGuard / BudgetEnforcer mid-loop system message injection.
-        agentService.currentContextManager?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
+        agentService.currentContextBridge?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
 
         // Notify the controller → sets planModeEnabled = true + highlights the UI button.
         agentService.onPlanModeEnabled?.invoke(true)
