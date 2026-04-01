@@ -61,11 +61,16 @@ class AgentRollbackManager(private val project: Project) {
      * Rollback ALL changes since the given checkpoint.
      * Reverts the entire project directory to the state at checkpoint time.
      */
-    fun rollbackToCheckpoint(checkpointId: String): Boolean {
+    /**
+     * Rollback ALL changes since the given checkpoint.
+     * Returns null on success, or an error message string on failure.
+     */
+    fun rollbackToCheckpoint(checkpointId: String): String? {
         val label = checkpoints[checkpointId]
         if (label == null) {
-            LOG.warn("AgentRollbackManager: checkpoint $checkpointId not found")
-            return false
+            val available = checkpoints.keys.joinToString(", ").ifEmpty { "none" }
+            LOG.warn("AgentRollbackManager: checkpoint '$checkpointId' not found. Available: $available")
+            return "Checkpoint not found. Available checkpoints: $available"
         }
 
         val baseDir = project.basePath?.let {
@@ -73,7 +78,7 @@ class AgentRollbackManager(private val project: Project) {
         }
         if (baseDir == null) {
             LOG.warn("AgentRollbackManager: project base dir not found")
-            return false
+            return "Project base directory not found"
         }
 
         return try {
@@ -81,10 +86,10 @@ class AgentRollbackManager(private val project: Project) {
                 label.revert(project, baseDir)
             }
             LOG.info("AgentRollbackManager: rolled back to checkpoint $checkpointId (${touchedFiles.size} files affected)")
-            true
+            null // success
         } catch (e: Exception) {
-            LOG.warn("AgentRollbackManager: rollback failed", e)
-            false
+            LOG.warn("AgentRollbackManager: rollback failed for checkpoint $checkpointId", e)
+            "Rollback failed: ${e.message ?: e.javaClass.simpleName}"
         }
     }
 

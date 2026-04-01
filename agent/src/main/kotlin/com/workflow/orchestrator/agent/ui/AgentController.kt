@@ -1064,8 +1064,8 @@ class AgentController(
                 return@setCefRevertCheckpointCallback
             }
             SwingUtilities.invokeLater {
-                val success = manager.rollbackToCheckpoint(checkpointId)
-                if (success) {
+                val error = manager.rollbackToCheckpoint(checkpointId)
+                if (error == null) {
                     // Refresh VFS after revert
                     try {
                         com.intellij.openapi.vfs.LocalFileSystem.getInstance()
@@ -1075,7 +1075,7 @@ class AgentController(
                     // Push updated stats after revert
                     pushEditStatsToUi()
                 } else {
-                    dashboard.appendStatus("Failed to revert to checkpoint $checkpointId.", RichStreamingPanel.StatusType.ERROR)
+                    dashboard.appendStatus("Failed to revert: $error", RichStreamingPanel.StatusType.ERROR)
                 }
             }
         }
@@ -1101,10 +1101,11 @@ class AgentController(
                 Messages.getWarningIcon()
             )
             if (answer == Messages.YES) {
-                if (manager.rollbackToCheckpoint(checkpointId)) {
+                val error = manager.rollbackToCheckpoint(checkpointId)
+                if (error == null) {
                     dashboard.appendStatus("All agent changes have been undone.", RichStreamingPanel.StatusType.SUCCESS)
                 } else {
-                    dashboard.appendError("Rollback failed. Try Edit > Undo or LocalHistory.")
+                    dashboard.appendError("Rollback failed: $error. Try Edit > Undo or LocalHistory.")
                 }
             }
         }

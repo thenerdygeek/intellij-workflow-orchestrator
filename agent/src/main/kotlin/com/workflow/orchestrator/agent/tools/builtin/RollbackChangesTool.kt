@@ -79,9 +79,9 @@ Parameters:
                 isError = true
             )
 
-        val success = rollbackManager.rollbackToCheckpoint(checkpointId)
+        val error = rollbackManager.rollbackToCheckpoint(checkpointId)
 
-        return if (success) {
+        return if (error == null) {
             // Update the change ledger anchor after rollback so LLM sees current state
             val ledger = agentService.currentChangeLedger
             if (ledger != null) {
@@ -95,8 +95,8 @@ Parameters:
             )
         } else {
             ToolResult(
-                content = "Error: Failed to rollback to checkpoint '$checkpointId'. The checkpoint may not exist or LocalHistory may have expired. Use list_changes to see available checkpoints.",
-                summary = "Rollback failed: checkpoint $checkpointId not found",
+                content = "Error: Failed to rollback to checkpoint '$checkpointId': $error. Use list_changes to see available checkpoints.",
+                summary = "Rollback failed: $error",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
