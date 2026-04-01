@@ -566,8 +566,11 @@ class AgentController(
                 val obj = el.jsonObject
                 MentionContextBuilder.Mention(
                     type = obj["type"]?.jsonPrimitive?.content ?: "file",
-                    name = obj["name"]?.jsonPrimitive?.content ?: "",
-                    value = obj["value"]?.jsonPrimitive?.content ?: ""
+                    // React sends "label" and "path"; legacy format used "name" and "value"
+                    name = obj["label"]?.jsonPrimitive?.content
+                        ?: obj["name"]?.jsonPrimitive?.content ?: "",
+                    value = obj["path"]?.jsonPrimitive?.content
+                        ?: obj["value"]?.jsonPrimitive?.content ?: ""
                 )
             }
         } catch (_: Exception) { emptyList() }

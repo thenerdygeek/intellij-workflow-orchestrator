@@ -146,11 +146,16 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         text += node.textContent ?? '';
       } else if (node instanceof HTMLElement && node.dataset.mentionLabel) {
         const status = node.dataset.chipStatus;
+        const mentionType = node.dataset.mentionType;
         if (status === 'invalid') {
           // Red chip → convert back to plain text with # prefix
           text += `#${node.dataset.mentionLabel}`;
+        } else {
+          // Valid/pending chips → include as @label or /label in text
+          // so the displayed user message is readable
+          const prefix = mentionType === 'skill' ? '/' : mentionType === 'ticket' ? '#' : '@';
+          text += `${prefix}${node.dataset.mentionLabel}`;
         }
-        // Valid/pending chips are excluded from text — they're in getMentions()
       } else {
         text += node.textContent ?? '';
       }

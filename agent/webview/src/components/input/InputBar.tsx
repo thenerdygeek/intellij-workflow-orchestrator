@@ -431,7 +431,9 @@ export const InputBar = memo(function InputBar() {
     setShowTickets(false); setTicketQuery('');
   }, []);
 
-  const handleSkillSelect = useCallback((_skillName: string) => {
+  const handleSkillSelect = useCallback((skillName: string) => {
+    const mention: Mention = { type: 'skill', label: skillName, path: skillName };
+    richInputRef.current?.insertChip(mention, '/');
     setShowSkills(false); setSkillQuery('');
   }, []);
 

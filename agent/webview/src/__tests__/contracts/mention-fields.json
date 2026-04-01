@@ -1,0 +1,47 @@
+{
+  "description": "Contract for mention field names between React and Kotlin. React sends mentions array, Kotlin parses it for context building.",
+  "valid_mentions": [
+    {
+      "name": "file_mention",
+      "payload": "{\"type\":\"file\",\"label\":\"App.tsx\",\"path\":\"src/App.tsx\"}",
+      "expected_type": "file",
+      "expected_display_name": "App.tsx",
+      "expected_value": "src/App.tsx"
+    },
+    {
+      "name": "folder_mention",
+      "payload": "{\"type\":\"folder\",\"label\":\"components\",\"path\":\"src/components\"}",
+      "expected_type": "folder",
+      "expected_display_name": "components",
+      "expected_value": "src/components"
+    },
+    {
+      "name": "symbol_mention",
+      "payload": "{\"type\":\"symbol\",\"label\":\"handleClick\",\"path\":\"src/App.tsx#handleClick\"}",
+      "expected_type": "symbol",
+      "expected_display_name": "handleClick",
+      "expected_value": "src/App.tsx#handleClick"
+    },
+    {
+      "name": "skill_mention",
+      "payload": "{\"type\":\"skill\",\"label\":\"commit\",\"path\":\"commit\"}",
+      "expected_type": "skill",
+      "expected_display_name": "commit",
+      "expected_value": "commit"
+    },
+    {
+      "name": "ticket_mention",
+      "payload": "{\"type\":\"ticket\",\"label\":\"PROJ-123\",\"path\":\"PROJ-123\"}",
+      "expected_type": "ticket",
+      "expected_display_name": "PROJ-123",
+      "expected_value": "PROJ-123"
+    }
+  ],
+  "field_mapping": {
+    "react_display_name": "label",
+    "react_value": "path",
+    "kotlin_display_name": "name",
+    "kotlin_value": "value",
+    "note": "Kotlin must read BOTH label/path (new) OR name/value (legacy) to be backward compatible"
+  }
+}
