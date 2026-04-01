@@ -15,6 +15,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import planReviseContract from './contracts/plan-revise.json';
+import planReviseV2Contract from './contracts/plan-revise-v2.json';
 import planDataContract from './contracts/plan-data.json';
 import planStepUpdateContract from './contracts/plan-step-update.json';
 import editStatsContract from './contracts/edit-stats.json';
@@ -185,5 +186,63 @@ describe('Contract: updateEditStats + updateCheckpoints (Kotlin → React)', () 
     const parsed = JSON.parse(json);
     expect(parsed.length).toBe(2);
     expect(parsed[0].id).toBe('cp-a1b2c3');
+  });
+});
+
+// ── Plan Revise V2 Contract (per-line comments) ──
+
+describe('Contract: _revisePlan v2 payload with per-line comments (React -> Kotlin)', () => {
+  it('valid payloads are parseable JSON with comments array and markdown string', () => {
+    for (const testCase of planReviseV2Contract.valid_payloads) {
+      const parsed = JSON.parse(testCase.payload);
+      expect(typeof parsed).toBe('object');
+      expect(Array.isArray(parsed.comments)).toBe(true);
+      expect(typeof parsed.markdown).toBe('string');
+      expect(parsed.comments.length).toBe(testCase.expected_comment_count);
+    }
+  });
+
+  it('each comment has line (number), content (string), and comment (string)', () => {
+    for (const testCase of planReviseV2Contract.valid_payloads) {
+      const parsed = JSON.parse(testCase.payload);
+      for (const comment of parsed.comments) {
+        expect(typeof comment.line).toBe('number');
+        expect(typeof comment.content).toBe('string');
+        expect(typeof comment.comment).toBe('string');
+      }
+    }
+  });
+
+  it('simulated PlanEditor revise produces valid v2 payload', () => {
+    // Simulate what the rewritten plan-editor.tsx handleRevise does
+    const comments = [
+      { lineNumber: 10, text: 'Handle empty string', lineContent: 'val customer = order.customer' },
+      { lineNumber: 28, text: 'Add integration tests', lineContent: '### 3. Run tests' },
+    ];
+    const markdown = '## Goal\nFix NPE in PaymentService';
+
+    const payload = JSON.stringify({
+      comments: comments.map(c => ({
+        line: c.lineNumber,
+        content: c.lineContent,
+        comment: c.text,
+      })),
+      markdown,
+    });
+
+    const parsed = JSON.parse(payload);
+    expect(Array.isArray(parsed.comments)).toBe(true);
+    expect(parsed.comments.length).toBe(2);
+    expect(parsed.comments[0].line).toBe(10);
+    expect(parsed.comments[0].content).toBe('val customer = order.customer');
+    expect(parsed.comments[0].comment).toBe('Handle empty string');
+    expect(typeof parsed.markdown).toBe('string');
+    expect(parsed.markdown).toContain('## Goal');
+  });
+
+  it('empty comments array is valid', () => {
+    const parsed = JSON.parse(planReviseV2Contract.valid_payloads[1].payload);
+    expect(parsed.comments).toEqual([]);
+    expect(parsed.markdown).toBeTruthy();
   });
 });

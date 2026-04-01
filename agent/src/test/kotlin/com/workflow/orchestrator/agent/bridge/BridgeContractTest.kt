@@ -200,5 +200,77 @@ class BridgeContractTest {
         assertEquals(2, deserialized.size)
         assertEquals("cp-a1b2c3", deserialized[0].jsonObject["id"]!!.jsonPrimitive.content)
     }
+
+    // ── Plan Revise V2 Contract (per-line comments) ──
+
+    @Test
+    fun `plan-revise-v2 valid payloads parse with comments array and markdown string`() {
+        val contract = json.parseToJsonElement(loadContract("plan-revise-v2.json")).jsonObject
+        val validPayloads = contract["valid_payloads"]!!.jsonArray
+
+        for (testCase in validPayloads) {
+            val payload = testCase.jsonObject["payload"]!!.jsonPrimitive.content
+            val expectedCount = testCase.jsonObject["expected_comment_count"]!!.jsonPrimitive.int
+
+            val parsed = json.parseToJsonElement(payload).jsonObject
+
+            // Must have "comments" array and "markdown" string
+            assertTrue(parsed.containsKey("comments"), "Missing 'comments' key")
+            assertTrue(parsed.containsKey("markdown"), "Missing 'markdown' key")
+
+            val comments = parsed["comments"]!!.jsonArray
+            assertEquals(expectedCount, comments.size,
+                "Comment count mismatch for: ${testCase.jsonObject["name"]}")
+
+            val markdown = parsed["markdown"]!!.jsonPrimitive.content
+            assertTrue(markdown.isNotEmpty(), "Markdown should not be empty")
+        }
+    }
+
+    @Test
+    fun `plan-revise-v2 comments have line number content and comment text`() {
+        val contract = json.parseToJsonElement(loadContract("plan-revise-v2.json")).jsonObject
+        val validPayloads = contract["valid_payloads"]!!.jsonArray
+
+        for (testCase in validPayloads) {
+            val payload = testCase.jsonObject["payload"]!!.jsonPrimitive.content
+            val parsed = json.parseToJsonElement(payload).jsonObject
+            val comments = parsed["comments"]!!.jsonArray
+
+            for (comment in comments) {
+                val obj = comment.jsonObject
+                assertTrue(obj.containsKey("line"), "Comment missing 'line'")
+                assertTrue(obj.containsKey("content"), "Comment missing 'content'")
+                assertTrue(obj.containsKey("comment"), "Comment missing 'comment'")
+
+                // line is a number
+                assertTrue(obj["line"]!!.jsonPrimitive.intOrNull != null,
+                    "Comment 'line' must be a number")
+                // content and comment are strings
+                assertTrue(obj["content"] is JsonPrimitive, "Comment 'content' must be a string")
+                assertTrue(obj["comment"] is JsonPrimitive, "Comment 'comment' must be a string")
+            }
+        }
+    }
+
+    @Test
+    fun `plan-revise-v2 can be roundtripped through Kotlin JSON`() {
+        val contract = json.parseToJsonElement(loadContract("plan-revise-v2.json")).jsonObject
+        val testCase = contract["valid_payloads"]!!.jsonArray[0]
+        val payload = testCase.jsonObject["payload"]!!.jsonPrimitive.content
+
+        val parsed = json.parseToJsonElement(payload)
+        val serialized = parsed.toString()
+        val reparsed = json.parseToJsonElement(serialized).jsonObject
+
+        assertEquals(
+            parsed.jsonObject["comments"]!!.jsonArray.size,
+            reparsed["comments"]!!.jsonArray.size
+        )
+        assertEquals(
+            parsed.jsonObject["markdown"]!!.jsonPrimitive.content,
+            reparsed["markdown"]!!.jsonPrimitive.content
+        )
+    }
 }
 // EOF

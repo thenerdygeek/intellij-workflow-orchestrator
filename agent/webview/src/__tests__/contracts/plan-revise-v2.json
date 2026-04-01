@@ -1,0 +1,15 @@
+{
+  "description": "Contract for _revisePlan with per-line comments (v2 format)",
+  "valid_payloads": [
+    {
+      "name": "line_comments_with_markdown",
+      "payload": "{\"comments\":[{\"line\":10,\"content\":\"val customer = order.customer\",\"comment\":\"Handle empty string too\"},{\"line\":28,\"content\":\"### 3. Run tests\",\"comment\":\"Add integration tests\"}],\"markdown\":\"## Goal\\nFix NPE in PaymentService\"}",
+      "expected_comment_count": 2
+    },
+    {
+      "name": "no_comments",
+      "payload": "{\"comments\":[],\"markdown\":\"## Goal\\nFix NPE\"}",
+      "expected_comment_count": 0
+    }
+  ]
+}

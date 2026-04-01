@@ -91,9 +91,19 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
         </Badge>
       </div>
 
-      {/* Todo preview */}
+      {/* Content preview */}
       <CardContent className="px-4 py-3">
-        <PlanCompact todos={todos} maxVisibleTodos={4} />
+        {plan.markdown ? (
+          <div
+            className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
+            style={{ color: 'var(--fg-secondary)' }}
+          >
+            {plan.markdown.slice(0, 300)}
+            {plan.markdown.length > 300 && '...'}
+          </div>
+        ) : (
+          <PlanCompact todos={todos} maxVisibleTodos={4} />
+        )}
       </CardContent>
 
       {/* Actions */}

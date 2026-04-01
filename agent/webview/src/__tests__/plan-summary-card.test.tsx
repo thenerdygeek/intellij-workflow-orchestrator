@@ -105,4 +105,21 @@ describe('PlanSummaryCard', () => {
 
     expect(openInEditorTab).toHaveBeenCalledWith('plan', JSON.stringify(mockPlan));
   });
+
+  it('shows markdown preview when plan has markdown field', () => {
+    const planWithMarkdown: Plan = {
+      ...mockPlan,
+      markdown: '## Goal\nFix the NPE in PaymentService\n\n## Steps\n### 1. Read file\nUnderstand the flow.',
+    };
+    render(<PlanSummaryCard plan={planWithMarkdown} />);
+    // Should show a preview of the markdown content, not the structured step list
+    expect(screen.getByText(/Fix the NPE/)).toBeInTheDocument();
+  });
+
+  it('falls back to step list when no markdown', () => {
+    render(<PlanSummaryCard plan={mockPlan} />);
+    // Should show structured step list (PlanCompact) — step titles visible
+    expect(screen.getByText('Fix NPE in PaymentService')).toBeInTheDocument();
+    expect(screen.getByText(/3 steps planned/)).toBeInTheDocument();
+  });
 });

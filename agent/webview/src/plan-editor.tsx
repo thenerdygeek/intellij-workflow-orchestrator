@@ -3,8 +3,9 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import './styles/animations.css';
 import { Button } from './components/ui/button';
-import { Check, RotateCcw, MessageSquare, Loader2, Plus, X } from 'lucide-react';
-import { MarkdownRenderer } from './components/markdown/MarkdownRenderer';
+import { Check, RotateCcw, Loader2 } from 'lucide-react';
+import { PlanDocumentViewer } from './components/plan/PlanDocumentViewer';
+import type { LineComment } from './components/plan/PlanDocumentViewer';
 
 // ── Data model — mirrors AgentPlan / PlanStep from Kotlin ─────────────────────
 
@@ -24,10 +25,9 @@ interface AgentPlanData {
   steps: PlanStep[];
   testing?: string;
   approved?: boolean;
+  markdown?: string;
+  title?: string;
 }
-
-// Section IDs for comments
-type SectionId = 'goal' | 'approach' | 'testing' | `step-${number}`;
 
 // ── Global entry points — called by Kotlin / showcase ────────────────────────
 
@@ -103,7 +103,7 @@ function statusLabel(status?: string): string {
   }
 }
 
-/** Convert plan data into a markdown string for rendering. */
+/** Convert plan data into a markdown string for rendering (backward compat). */
 function planToMarkdown(plan: AgentPlanData): string {
   const lines: string[] = [];
 
@@ -142,31 +142,11 @@ function planToMarkdown(plan: AgentPlanData): string {
   return lines.join('\n');
 }
 
-// ── Section overlay for comments ─────────────────────────────────────────────
-
-/** Map section IDs to the plan data sections. */
-function getSectionIds(plan: AgentPlanData): SectionId[] {
-  const ids: SectionId[] = ['goal'];
-  if (plan.approach) ids.push('approach');
-  plan.steps.forEach((_, idx) => ids.push(`step-${idx}`));
-  if (plan.testing) ids.push('testing');
-  return ids;
-}
-
-function sectionLabel(id: SectionId): string {
-  if (id === 'goal') return 'Goal';
-  if (id === 'approach') return 'Approach';
-  if (id === 'testing') return 'Testing & Verification';
-  if (id.startsWith('step-')) return `Step ${parseInt(id.split('-')[1]!) + 1}`;
-  return id;
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 function PlanEditor() {
   const [planData, setPlanData] = useState<AgentPlanData | null>(null);
-  const [comments, setComments] = useState<Record<string, string>>({});
-  const [activeComment, setActiveComment] = useState<SectionId | null>(null);
+  const [comments, setComments] = useState<LineComment[]>([]);
   const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -176,12 +156,8 @@ function PlanEditor() {
       setPlanData(data);
       // Reset pending state when new plan arrives (revision cycle complete)
       setPending(null);
-      // Restore any pre-existing step comments
-      const existing: Record<string, string> = {};
-      data.steps.forEach((s, idx) => {
-        if (s.userComment) existing[`step-${idx}`] = s.userComment;
-      });
-      setComments(existing);
+      // Clear comments on new plan
+      setComments([]);
     };
 
     // Wire the step status updater
@@ -209,17 +185,23 @@ function PlanEditor() {
     };
   }, []);
 
-  const saveComment = useCallback((sectionId: SectionId, text: string) => {
-    if (text.trim()) {
-      setComments(prev => ({ ...prev, [sectionId]: text.trim() }));
-    } else {
-      setComments(prev => { const n = { ...prev }; delete n[sectionId]; return n; });
-    }
-    setActiveComment(null);
+  // Generate markdown — use raw markdown if available, otherwise synthesize
+  const markdown = useMemo(() => {
+    if (!planData) return '';
+    if (planData.markdown) return planData.markdown;
+    return planToMarkdown(planData);
+  }, [planData]);
+
+  const handleAddComment = useCallback((lineNumber: number, text: string, lineContent: string) => {
+    setComments(prev => {
+      // Replace existing comment on same line
+      const filtered = prev.filter(c => c.lineNumber !== lineNumber);
+      return [...filtered, { lineNumber, text, lineContent }];
+    });
   }, []);
 
-  const removeComment = useCallback((sectionId: SectionId) => {
-    setComments(prev => { const n = { ...prev }; delete n[sectionId]; return n; });
+  const handleRemoveComment = useCallback((lineNumber: number) => {
+    setComments(prev => prev.filter(c => c.lineNumber !== lineNumber));
   }, []);
 
   const handleProceed = useCallback(() => {
@@ -230,24 +212,19 @@ function PlanEditor() {
   const handleRevise = useCallback(() => {
     if (!planData) return;
     setPending('revise');
-    // Send section-keyed comments to Kotlin
-    const payload = JSON.stringify(comments);
+    // Send v2 format: { comments: [...], markdown: "..." }
+    const payload = JSON.stringify({
+      comments: comments.map(c => ({
+        line: c.lineNumber,
+        content: c.lineContent,
+        comment: c.text,
+      })),
+      markdown,
+    });
     (window as any)._revisePlan?.(payload);
-  }, [comments, planData]);
+  }, [comments, planData, markdown]);
 
-  // Generate markdown from plan
-  const markdown = useMemo(() => {
-    if (!planData) return '';
-    return planToMarkdown(planData);
-  }, [planData]);
-
-  // Compute section IDs for comment buttons
-  const sectionIds = useMemo(() => {
-    if (!planData) return [];
-    return getSectionIds(planData);
-  }, [planData]);
-
-  const hasComments = Object.keys(comments).length > 0;
+  const hasComments = comments.length > 0;
   const isApproved = planData?.approved === true;
 
   if (!planData) {
@@ -267,7 +244,7 @@ function PlanEditor() {
            style={{ backgroundColor: 'var(--bg)', borderColor: 'var(--border)' }}>
         <div className="flex items-center gap-3 min-w-0 pr-4">
           <h1 className="text-base font-semibold truncate">
-            Implementation Plan
+            {planData.title || 'Implementation Plan'}
           </h1>
           {isApproved && (
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
@@ -278,7 +255,7 @@ function PlanEditor() {
           {!isApproved && hasComments && (
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
                   style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: 'var(--warning, #eab308)' }}>
-              {Object.keys(comments).length} comment{Object.keys(comments).length !== 1 ? 's' : ''}
+              {comments.length} comment{comments.length !== 1 ? 's' : ''}
             </span>
           )}
         </div>
@@ -289,7 +266,7 @@ function PlanEditor() {
                 {pending === 'revise' ? (
                   <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Processing...</>
                 ) : (
-                  <><RotateCcw className="h-3 w-3 mr-1" /> Revise ({Object.keys(comments).length})</>
+                  <><RotateCcw className="h-3 w-3 mr-1" /> Revise ({comments.length})</>
                 )}
               </Button>
             )}
@@ -304,156 +281,16 @@ function PlanEditor() {
         )}
       </div>
 
-      {/* ── Body: markdown + comment annotations ── */}
-      <div ref={bodyRef} className="px-6 pt-5 pb-16 max-w-3xl mx-auto">
-
-        {/* Rendered plan as markdown */}
-        <div className="plan-markdown-body">
-          <MarkdownRenderer content={markdown} />
-        </div>
-
-        {/* ── Comment section ── */}
-        {!isApproved && (
-          <div className="mt-8 border-t pt-6" style={{ borderColor: 'var(--border)' }}>
-            <p className="text-[11px] font-semibold uppercase tracking-wider mb-3"
-               style={{ color: 'var(--fg-muted)' }}>
-              Revision Comments
-            </p>
-
-            {/* Existing comments */}
-            {Object.entries(comments).map(([id, text]) => (
-              <CommentBubble
-                key={id}
-                sectionLabel={sectionLabel(id as SectionId)}
-                text={text}
-                onEdit={() => setActiveComment(id as SectionId)}
-                onRemove={() => removeComment(id as SectionId)}
-              />
-            ))}
-
-            {/* Active comment editor */}
-            {activeComment && (
-              <CommentEditor
-                sectionLabel={sectionLabel(activeComment)}
-                value={comments[activeComment] ?? ''}
-                onSave={text => saveComment(activeComment, text)}
-                onCancel={() => setActiveComment(null)}
-              />
-            )}
-
-            {/* Add comment buttons — one per section */}
-            {!activeComment && (
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                {sectionIds.map(id => (
-                  <button
-                    key={id}
-                    onClick={() => setActiveComment(id)}
-                    className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md border transition-all hover:border-[var(--accent)]"
-                    style={{
-                      borderColor: comments[id] ? 'var(--accent)' : 'var(--border)',
-                      color: comments[id] ? 'var(--accent)' : 'var(--fg-muted)',
-                      backgroundColor: comments[id] ? 'rgba(99,102,241,0.08)' : 'transparent',
-                    }}
-                  >
-                    {comments[id] ? (
-                      <><MessageSquare className="h-3 w-3" /> {sectionLabel(id)}</>
-                    ) : (
-                      <><Plus className="h-3 w-3" /> {sectionLabel(id)}</>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {!hasComments && !activeComment && (
-              <p className="text-[12px] mt-2" style={{ color: 'var(--fg-muted)' }}>
-                Click a section above to add revision feedback. Comments will be sent to the LLM when you click Revise.
-              </p>
-            )}
-          </div>
-        )}
+      {/* ── Body: PlanDocumentViewer ── */}
+      <div ref={bodyRef} className="pb-16">
+        <PlanDocumentViewer
+          markdown={markdown}
+          comments={comments}
+          showLineNumbers={!isApproved}
+          onComment={!isApproved ? handleAddComment : undefined}
+          onRemoveComment={!isApproved ? handleRemoveComment : undefined}
+        />
       </div>
-    </div>
-  );
-}
-
-// ── Small helpers ─────────────────────────────────────────────────────────────
-
-function CommentEditor({
-  sectionLabel: label,
-  value,
-  onSave,
-  onCancel,
-}: {
-  sectionLabel: string;
-  value: string;
-  onSave: (text: string) => void;
-  onCancel: () => void;
-}) {
-  const [text, setText] = useState(value);
-  return (
-    <div className="mt-2 rounded-lg border p-3" style={{ borderColor: 'var(--accent)', backgroundColor: 'rgba(99,102,241,0.05)' }}>
-      <p className="text-[11px] font-medium mb-1.5" style={{ color: 'var(--accent)' }}>
-        Comment on: {label}
-      </p>
-      <textarea
-        autoFocus
-        value={text}
-        onChange={e => setText(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSave(text);
-          if (e.key === 'Escape') onCancel();
-        }}
-        placeholder="Describe what should change..."
-        rows={3}
-        className="w-full text-xs px-2 py-1.5 rounded border bg-transparent outline-none resize-y"
-        style={{ borderColor: 'var(--border)', color: 'var(--fg)' }}
-      />
-      <div className="flex gap-1 mt-1.5 justify-end">
-        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="sm" className="h-6 text-[10px]" onClick={() => onSave(text)}>
-          Save
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function CommentBubble({
-  sectionLabel: label,
-  text,
-  onEdit,
-  onRemove,
-}: {
-  sectionLabel: string;
-  text: string;
-  onEdit: () => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div
-      className="mb-2 text-[12px] px-3 py-2 rounded-lg border-l-2 flex items-start gap-2 group cursor-pointer hover:opacity-90 transition-opacity"
-      style={{
-        color: 'var(--fg)',
-        borderColor: 'var(--accent)',
-        backgroundColor: 'rgba(99,102,241,0.06)',
-      }}
-      onClick={onEdit}
-    >
-      <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" style={{ color: 'var(--accent)' }} />
-      <div className="flex-1 min-w-0">
-        <span className="text-[10px] font-medium" style={{ color: 'var(--accent)' }}>{label}</span>
-        <p className="mt-0.5">{text}</p>
-      </div>
-      <button
-        onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        className="opacity-0 group-hover:opacity-70 hover:!opacity-100 transition-opacity shrink-0"
-        title="Remove comment"
-      >
-        <X className="h-3 w-3" />
-      </button>
     </div>
   );
 }

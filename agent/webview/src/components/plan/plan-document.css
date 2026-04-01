@@ -1,0 +1,174 @@
+/* plan-document.css — Document typography for PlanDocumentViewer */
+
+.plan-document {
+  position: relative;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  color: var(--fg);
+  line-height: 1.7;
+}
+
+.plan-document-body {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem 3rem 2rem 4rem;  /* left padding for line numbers */
+  font-size: 15px;
+}
+
+/* Heading hierarchy — distinct sizes, weights, spacing */
+.plan-document-body h1 { font-size: 2em; font-weight: 700; margin: 2rem 0 1rem; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.plan-document-body h2 { font-size: 1.5em; font-weight: 600; margin: 1.75rem 0 0.75rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--divider-subtle); }
+.plan-document-body h3 { font-size: 1.25em; font-weight: 600; margin: 1.5rem 0 0.5rem; }
+.plan-document-body h4 { font-size: 1em; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+
+/* Paragraphs with generous spacing */
+.plan-document-body p { margin: 0.75em 0; }
+
+/* Lists */
+.plan-document-body ul, .plan-document-body ol { padding-left: 2em; margin: 0.5em 0; }
+.plan-document-body li { margin: 0.25em 0; }
+
+/* Task list checkboxes */
+.task-checkbox { font-size: 1.1em; margin-right: 0.3em; cursor: default; }
+.plan-task-item { list-style: none; margin-left: -1.5em; }
+
+/* Inline code */
+.plan-inline-code {
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+}
+
+/* Blockquotes */
+.plan-document-body blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 0.5em 1em;
+  margin: 1em 0;
+  color: var(--fg-secondary);
+  font-style: italic;
+}
+
+/* Tables — GitHub style */
+.plan-document-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+.plan-document-body th, .plan-document-body td {
+  border: 1px solid var(--border);
+  padding: 0.5em 1em;
+  text-align: left;
+}
+.plan-document-body th { background: var(--toolbar-bg); font-weight: 600; font-size: 0.9em; }
+
+/* HR */
+.plan-document-body hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+
+/* Line number gutter */
+.plan-line-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3rem;
+  padding-top: 2rem;
+}
+
+.plan-line-row { position: relative; min-height: 1.7em; }
+
+.plan-line-gutter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 1.7em;
+}
+
+.plan-line-number {
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-align: right;
+  width: 2.5rem;
+  font-family: var(--font-mono);
+  user-select: none;
+}
+
+.plan-line-comment-btn {
+  opacity: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+}
+
+.plan-line-row:hover .plan-line-comment-btn { opacity: 1; }
+
+/* Comment editor */
+.plan-comment-editor {
+  margin: 4px 0 4px 3.5rem;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.plan-comment-editor textarea {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  background: var(--input-bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.plan-comment-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.plan-comment-actions button {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+}
+
+.plan-comment-actions button:first-child { background: var(--accent); color: var(--bg); }
+.plan-comment-actions button:last-child { background: var(--fg-muted); color: var(--bg); }
+
+/* Comment bubble */
+.plan-comment-bubble {
+  margin: 2px 0 2px 3.5rem;
+  padding: 4px 10px;
+  border-left: 3px solid var(--warning, #eab308);
+  background: rgba(234, 179, 8, 0.06);
+  font-size: 12px;
+  color: var(--fg-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 0 4px 4px 0;
+}
+
+.plan-comment-remove {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+}
