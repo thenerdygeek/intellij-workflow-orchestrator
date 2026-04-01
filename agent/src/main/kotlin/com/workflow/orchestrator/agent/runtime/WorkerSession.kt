@@ -6,7 +6,7 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -69,7 +69,7 @@ class WorkerSession(
      * @param tools Map of tool name to AgentTool (available tools for this worker)
      * @param toolDefinitions The tool definitions to send to the LLM
      * @param brain The LLM brain
-     * @param contextManager Manages conversation history with compression
+     * @param bridge Event-sourced context bridge for conversation management
      * @param project The IntelliJ project (needed for tool execution)
      * @return WorkerResult with the final response and metadata
      */
@@ -80,36 +80,36 @@ class WorkerSession(
         tools: Map<String, AgentTool>,
         toolDefinitions: List<ToolDefinition>,
         brain: LlmBrain,
-        contextManager: ContextManager,
+        bridge: EventSourcedContextBridge,
         project: Project,
         maxOutputTokens: Int? = null
     ): WorkerResult {
         LOG.info("WorkerSession: starting $workerType worker for task: ${task.take(100)}")
 
         // Initialize context with system prompt and task
-        contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+        bridge.addSystemPrompt(systemPrompt)
         recordMessage("system", systemPrompt)
 
-        contextManager.addMessage(ChatMessage(role = "user", content = task))
+        bridge.addUserMessage(task)
         recordMessage("user", task)
 
-        return runReactLoop(tools, toolDefinitions, brain, contextManager, project, maxOutputTokens)
+        return runReactLoop(tools, toolDefinitions, brain, bridge, project, maxOutputTokens)
     }
 
     /**
-     * Execute the ReAct loop from an already-populated ContextManager.
+     * Execute the ReAct loop from an already-populated bridge.
      * Used for resume — the context already contains the previous conversation.
      */
     suspend fun executeFromContext(
         tools: Map<String, AgentTool>,
         toolDefinitions: List<ToolDefinition>,
         brain: LlmBrain,
-        contextManager: ContextManager,
+        bridge: EventSourcedContextBridge,
         project: Project,
         maxOutputTokens: Int? = null
     ): WorkerResult {
         LOG.info("WorkerSession: resuming agent $agentId from existing context")
-        return runReactLoop(tools, toolDefinitions, brain, contextManager, project, maxOutputTokens)
+        return runReactLoop(tools, toolDefinitions, brain, bridge, project, maxOutputTokens)
     }
 
     /**
@@ -119,7 +119,7 @@ class WorkerSession(
         tools: Map<String, AgentTool>,
         toolDefinitions: List<ToolDefinition>,
         brain: LlmBrain,
-        contextManager: ContextManager,
+        bridge: EventSourcedContextBridge,
         project: Project,
         maxOutputTokens: Int? = null
     ): WorkerResult {
@@ -142,7 +142,7 @@ class WorkerSession(
             LOG.info("WorkerSession: iteration $iteration/$maxIterations")
             uiCallbacks?.onIteration?.invoke(agentId, iteration)
 
-            val messages = contextManager.getMessages()
+            val messages = bridge.getMessages()
             val activeToolDefs = if (tools.isNotEmpty()) toolDefinitions else null
 
             val result = brain.chat(messages, activeToolDefs, maxOutputTokens)
@@ -153,6 +153,10 @@ class WorkerSession(
                     val usage = response.usage
                     if (usage != null) {
                         totalTokensUsed += usage.totalTokens
+                        // Reconcile token count with API
+                        if (usage.promptTokens > 0) {
+                            bridge.updateTokensFromUsage(usage.promptTokens)
+                        }
                     }
 
                     val choice = response.choices.firstOrNull() ?: break
@@ -160,7 +164,11 @@ class WorkerSession(
                     val toolCalls = message.toolCalls
 
                     // Add assistant message to context
-                    contextManager.addAssistantMessage(message)
+                    if (!toolCalls.isNullOrEmpty()) {
+                        bridge.addAssistantToolCalls(message)
+                    } else {
+                        bridge.addAssistantMessage(message)
+                    }
                     recordMessage("assistant", message.content)
 
                     if (toolCalls.isNullOrEmpty()) {
@@ -174,7 +182,7 @@ class WorkerSession(
                                 "If you have completed the task, call worker_complete with the COMPLETE output " +
                                 "of your work — the orchestrator only sees your worker_complete result, not your " +
                                 "tool call history. If you have more work to do, make your next tool call now."
-                            contextManager.addMessage(ChatMessage(role = "user", content = nudge))
+                            bridge.addUserMessage(nudge)
                             recordMessage("user", nudge)
                             continue
                         }
@@ -213,10 +221,11 @@ class WorkerSession(
                         if (tool == null) {
                             val availableTools = tools.keys.joinToString(", ")
                             val errorContent = "Error: Tool '$toolName' is not available. Available tools: $availableTools. Please use one of these."
-                            contextManager.addToolResult(
+                            bridge.addToolError(
                                 toolCallId = toolCall.id,
                                 content = errorContent,
-                                summary = "Tool not found: $toolName"
+                                summary = "Tool not found: $toolName",
+                                toolName = toolName
                             )
                             recordMessage("tool", errorContent, toolCallId = toolCall.id)
                             continue
@@ -232,11 +241,21 @@ class WorkerSession(
 
                             uiCallbacks?.onToolResult?.invoke(agentId, toolName, toolResult.content, toolDurationMs, toolResult.isError)
 
-                            contextManager.addToolResult(
-                                toolCallId = toolCall.id,
-                                content = toolResult.content,
-                                summary = toolResult.summary
-                            )
+                            if (toolResult.isError) {
+                                bridge.addToolError(
+                                    toolCallId = toolCall.id,
+                                    content = toolResult.content,
+                                    summary = toolResult.summary,
+                                    toolName = toolName
+                                )
+                            } else {
+                                bridge.addToolResult(
+                                    toolCallId = toolCall.id,
+                                    content = toolResult.content,
+                                    summary = toolResult.summary,
+                                    toolName = toolName
+                                )
+                            }
                             recordMessage("tool", toolResult.content, toolCallId = toolCall.id)
 
                             allArtifacts.addAll(toolResult.artifacts)
@@ -258,10 +277,11 @@ class WorkerSession(
                             LOG.warn("WorkerSession: tool '$toolName' failed", e)
                             val errorContent = "Error executing tool '$toolName': ${e.message}"
                             uiCallbacks?.onToolResult?.invoke(agentId, toolName, errorContent, toolDurationMs, true)
-                            contextManager.addToolResult(
+                            bridge.addToolError(
                                 toolCallId = toolCall.id,
                                 content = errorContent,
-                                summary = "Tool error: $toolName"
+                                summary = "Tool error: $toolName",
+                                toolName = toolName
                             )
                             recordMessage("tool", errorContent, toolCallId = toolCall.id)
                         }

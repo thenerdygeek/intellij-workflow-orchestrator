@@ -7,11 +7,13 @@ import com.workflow.orchestrator.agent.api.dto.FunctionCall
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.brain.LlmBrain
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.ToolOutputStore
 import com.workflow.orchestrator.agent.context.RepoMapGenerator
 import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.context.WorkingSet
+import com.workflow.orchestrator.agent.context.condenser.LlmBrainSummarizationClient
 import com.workflow.orchestrator.agent.orchestrator.PromptAssembler
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.service.GlobalSessionIndex
@@ -39,19 +41,19 @@ enum class SessionStatus(val value: String) {
 /**
  * Long-lived conversation session that persists across user messages.
  *
- * Owns the ContextManager — the core fix for multi-turn conversation.
- * Instead of creating a new ContextManager per message, one session
- * keeps the conversation alive until the user clicks "New Chat".
+ * Owns the EventSourcedContextBridge — the single source of truth for conversation context.
+ * Instead of creating a new context per message, one session keeps the conversation
+ * alive until the user clicks "New Chat".
  *
  * Lifecycle:
  *   User sends first message -> ConversationSession.create()
- *   User sends follow-up -> session.addUserMessage() + reuse contextManager
+ *   User sends follow-up -> session.addUserMessage() + reuse bridge
  *   User clicks "New Chat" -> session marked completed, new session created
- *   IDE restarts -> session loaded from JSONL (Task 2)
+ *   IDE restarts -> session loaded from JSONL (event replay)
  */
 class ConversationSession private constructor(
     val sessionId: String,
-    val contextManager: ContextManager,
+    val bridge: EventSourcedContextBridge,
     val brain: LlmBrain,
     val toolDefinitions: List<ToolDefinition>,
     val tools: Map<String, AgentTool>,
@@ -81,7 +83,7 @@ class ConversationSession private constructor(
     val planManager: PlanManager = PlanManager()
 
     /** Change ledger tracking every file edit. Persists to changes.jsonl.
-     *  COMPRESSION: Renders to changeLedgerAnchor in ContextManager —
+     *  COMPRESSION: Renders to changeLedgerAnchor in the bridge —
      *  compression-proof summary of all changes visible to the LLM. */
     val changeLedger: ChangeLedger = ChangeLedger()
 
@@ -103,13 +105,13 @@ class ConversationSession private constructor(
      */
     fun initialize() {
         if (initialized) return
-        contextManager.addMessage(ChatMessage(role = "system", content = systemPrompt))
+        bridge.addSystemPrompt(systemPrompt)
         initialized = true
     }
 
     /**
      * Record that a user message was sent in this session.
-     * The actual message is added to contextManager by SingleAgentSession.
+     * The actual message is added to the bridge by SingleAgentSession.
      */
     fun recordUserMessage(message: String) {
         if (title.isBlank()) title = message.take(100)
@@ -148,12 +150,14 @@ class ConversationSession private constructor(
      * Safe to call repeatedly — tracks offset via [persistedMessageCount].
      */
     fun persistNewMessages() {
-        val allMessages = contextManager.getMessages()
+        val allMessages = bridge.getMessages()
         val newMessages = allMessages.drop(persistedMessageCount)
         for (msg in newMessages) {
             persistMessage(msg)
         }
         persistedMessageCount = allMessages.size
+        // Also flush event store to JSONL
+        bridge.flushEvents()
     }
 
     /**
@@ -358,15 +362,15 @@ class ConversationSession private constructor(
             // Calculate reserved tokens
             val reservedTokens = toolDefTokens + systemPromptTokens + 200
 
-            // Create context manager with reserved tokens
-            val contextManager = ContextManager(
-                maxInputTokens = maxInputTokens,
-                reservedTokens = reservedTokens
-            )
-
+            // Create the session first to get sessionDirectory
             val session = ConversationSession(
                 sessionId = UUID.randomUUID().toString().take(12),
-                contextManager = contextManager,
+                bridge = EventSourcedContextBridge.create(
+                    sessionDir = null, // will be set after store is created
+                    config = ContextManagementConfig.DEFAULT,
+                    maxInputTokens = maxInputTokens,
+                    reservedTokens = reservedTokens
+                ),
                 brain = agentService.brain,
                 toolDefinitions = allToolDefs,
                 tools = allTools,
@@ -378,15 +382,43 @@ class ConversationSession private constructor(
                 projectBasePath = project.basePath
             )
 
+            // Now recreate the bridge with the correct sessionDir
+            val summarizationClient = LlmBrainSummarizationClient(agentService.brain)
+            val bridge = EventSourcedContextBridge.create(
+                sessionDir = session.store.sessionDirectory,
+                config = ContextManagementConfig.DEFAULT,
+                summarizationClient = summarizationClient,
+                maxInputTokens = maxInputTokens,
+                reservedTokens = reservedTokens
+            )
+
+            // Wire disk spillover for full tool outputs (OpenCode pattern)
+            bridge.toolOutputStore = ToolOutputStore(session.store.sessionDirectory)
+
+            // Replace the placeholder bridge with the properly-configured one
+            val properSession = ConversationSession(
+                sessionId = session.sessionId,
+                bridge = bridge,
+                brain = agentService.brain,
+                toolDefinitions = allToolDefs,
+                tools = allTools,
+                systemPrompt = systemPrompt,
+                reservedTokens = reservedTokens,
+                createdAt = session.createdAt,
+                skillManager = skillManager,
+                projectTools = projectTools,
+                projectBasePath = project.basePath
+            )
+
             // Register in the global session index for cross-project history
             try {
                 GlobalSessionIndex.getInstance().addSession(GlobalSessionIndex.SessionEntry(
-                    sessionId = session.sessionId,
+                    sessionId = properSession.sessionId,
                     projectName = project.name,
                     projectPath = project.basePath ?: "",
                     title = "",
-                    createdAt = session.createdAt,
-                    lastMessageAt = session.createdAt,
+                    createdAt = properSession.createdAt,
+                    lastMessageAt = properSession.createdAt,
                     messageCount = 0,
                     status = SessionStatus.ACTIVE.value
                 ))
@@ -394,29 +426,26 @@ class ConversationSession private constructor(
 
             // Set guardrails anchor for compression-proof learned constraints
             if (!guardrailsContext.isNullOrBlank()) {
-                contextManager.setGuardrailsAnchor(ChatMessage(role = "system", content = guardrailsContext))
+                bridge.setGuardrailsAnchor(ChatMessage(role = "system", content = guardrailsContext))
             }
 
-            // Wire disk spillover for full tool outputs (OpenCode pattern)
-            session.contextManager.toolOutputStore = ToolOutputStore(session.store.sessionDirectory)
-
             // Initialize change ledger for edit tracking (persists to changes.jsonl)
-            session.changeLedger.initialize(session.store.sessionDirectory)
+            properSession.changeLedger.initialize(properSession.store.sessionDirectory)
 
             // Set session directory on AgentService for subagent transcript storage
             try {
-                agentService.currentSessionDir = session.store.sessionDirectory
-                agentService.currentContextManager = session.contextManager
+                agentService.currentSessionDir = properSession.store.sessionDirectory
+                agentService.currentContextBridge = bridge
             } catch (_: Exception) {}
 
-            return session
+            return properSession
         }
 
         /**
-         * Load a session from disk by replaying persisted messages into a fresh context.
+         * Load a session from disk by replaying persisted events into a fresh context.
          *
          * Creates the full session infrastructure (brain, tools, system prompt) from
-         * the current project + agentService, then replays the stored messages so the
+         * the current project + agentService, then loads events from disk so the
          * LLM sees the full conversation history on the next turn.
          *
          * Returns null if metadata or messages are missing/corrupt.
@@ -428,12 +457,9 @@ class ConversationSession private constructor(
             if (messages.isEmpty()) return null
 
             // Create a fresh session to get brain, tools, system prompt
-            val session = create(project, agentService)
+            val freshSession = create(project, agentService)
 
             // Override identity and timestamps with persisted values
-            // Note: sessionId from create() is different — we need to construct
-            // with the original sessionId. Use the fresh session's infra but
-            // build a new ConversationSession with the original ID.
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
             val maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
 
@@ -446,17 +472,52 @@ class ConversationSession private constructor(
             val agentDefRegistry = AgentDefinitionRegistry(project).also { it.scan() }
             try { agentService.agentDefinitionRegistry = agentDefRegistry } catch (_: Exception) {}
 
+            // Create the bridge — try to load existing events, else create fresh and replay messages
+            val summarizationClient = LlmBrainSummarizationClient(freshSession.brain)
+            val eventsFile = java.io.File(store.sessionDirectory, com.workflow.orchestrator.agent.context.events.EventStore.JSONL_FILENAME)
+            val bridge = if (eventsFile.exists()) {
+                EventSourcedContextBridge.loadFromDisk(
+                    sessionDir = store.sessionDirectory,
+                    config = ContextManagementConfig.DEFAULT,
+                    summarizationClient = summarizationClient,
+                    maxInputTokens = maxInputTokens,
+                    reservedTokens = freshSession.reservedTokens
+                )
+            } else {
+                // No event store — replay messages into a fresh bridge
+                val freshBridge = EventSourcedContextBridge.create(
+                    sessionDir = store.sessionDirectory,
+                    config = ContextManagementConfig.DEFAULT,
+                    summarizationClient = summarizationClient,
+                    maxInputTokens = maxInputTokens,
+                    reservedTokens = freshSession.reservedTokens
+                )
+                // Replay messages into the bridge
+                for (msg in messages) {
+                    val chatMsg = ChatMessage(
+                        role = msg.role,
+                        content = msg.content,
+                        toolCalls = msg.toolCalls?.map { tc ->
+                            ToolCall(tc.id, function = FunctionCall(tc.name, tc.arguments))
+                        },
+                        toolCallId = msg.toolCallId
+                    )
+                    freshBridge.addMessage(chatMsg)
+                }
+                freshBridge
+            }
+
+            // Wire disk spillover
+            bridge.toolOutputStore = ToolOutputStore(store.sessionDirectory)
+
             val loaded = ConversationSession(
                 sessionId = sessionId,
-                contextManager = ContextManager(
-                    maxInputTokens = maxInputTokens,
-                    reservedTokens = session.reservedTokens
-                ),
-                brain = session.brain,
-                toolDefinitions = session.toolDefinitions,
-                tools = session.tools,
-                systemPrompt = session.systemPrompt,
-                reservedTokens = session.reservedTokens,
+                bridge = bridge,
+                brain = freshSession.brain,
+                toolDefinitions = freshSession.toolDefinitions,
+                tools = freshSession.tools,
+                systemPrompt = freshSession.systemPrompt,
+                reservedTokens = freshSession.reservedTokens,
                 createdAt = metadata.createdAt,
                 title = metadata.title,
                 lastMessageAt = metadata.lastMessageAt,
@@ -466,30 +527,14 @@ class ConversationSession private constructor(
                 projectBasePath = project.basePath
             )
 
-            // Replay messages into context manager
-            for (msg in messages) {
-                val chatMsg = ChatMessage(
-                    role = msg.role,
-                    content = msg.content,
-                    toolCalls = msg.toolCalls?.map { tc ->
-                        ToolCall(tc.id, function = FunctionCall(tc.name, tc.arguments))
-                    },
-                    toolCallId = msg.toolCallId
-                )
-                loaded.contextManager.addMessage(chatMsg)
-            }
-
-            loaded.initialized = true // system prompt already in replayed messages
+            loaded.initialized = true // system prompt already in events
             loaded.persistedMessageCount = messages.size // all messages already on disk
-
-            // Wire disk spillover for full tool outputs (OpenCode pattern)
-            loaded.contextManager.toolOutputStore = ToolOutputStore(loaded.store.sessionDirectory)
 
             // Restore change ledger from disk so edit history survives session resume
             loaded.changeLedger.initialize(loaded.store.sessionDirectory)
             loaded.changeLedger.loadFromDisk()
             // Rebuild the compression-proof anchor from loaded entries
-            loaded.contextManager.updateChangeLedgerAnchor(loaded.changeLedger)
+            bridge.updateChangeLedgerAnchor(loaded.changeLedger)
 
             // Restore persisted plan into PlanManager so update_plan_step and checkDeviation work
             val restoredPlan = PlanPersistence.load(loaded.store.sessionDirectory)
@@ -501,7 +546,7 @@ class ConversationSession private constructor(
             // Set session directory on AgentService for subagent transcript storage
             try {
                 agentService.currentSessionDir = loaded.store.sessionDirectory
-                agentService.currentContextManager = loaded.contextManager
+                agentService.currentContextBridge = bridge
             } catch (_: Exception) {}
 
             // Load checkpoint data and inject resume context if session was interrupted
@@ -522,7 +567,7 @@ class ConversationSession private constructor(
                     appendLine("Review what was accomplished so far, then continue where you left off.")
                     appendLine("</session_resumed>")
                 }
-                loaded.contextManager.addMessage(ChatMessage(role = "system", content = resumeContext))
+                bridge.addSystemMessage(resumeContext)
             }
 
             // Mark as active again now that it's been resumed

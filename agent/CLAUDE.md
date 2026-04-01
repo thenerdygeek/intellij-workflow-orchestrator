@@ -16,20 +16,26 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 
 ```
 AgentController (UI entry point)
-  → ConversationSession (long-lived, owns context + plan + question managers)
+  → ConversationSession (long-lived, owns EventSourcedContextBridge + plan + question managers)
     → AgentOrchestrator.executeTask()
       → SingleAgentSession.execute() (ReAct loop, max 50 iterations)
-        → BudgetEnforcer (COMPRESS at 80%, TERMINATE at 97%)
-        → LoopGuard (loop detection, error nudges, auto-verification)
+        → EventSourcedContextBridge (EventStore + CondenserPipeline + ConversationMemory)
+        → BudgetEnforcer (reads from bridge, COMPRESS/TERMINATE)
+        → LoopGuard (loop detection, condensation loop detection)
         → Tool execution with optional ApprovalGate
 ```
 
 ## Key Components
 
-- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Calls `compressWithLlm(brain)` for LLM-powered compression. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
-- **ConversationSession** — Long-lived session across user messages. Owns `ContextManager`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
-- **ContextManager** — Sliding window compression (Cline-inspired). Phase 1 prunes old tool results (protects last 30K tokens). Phase 2 removes 50% of conversation history via sliding window — preserves system prompt and first user-assistant exchange, removes oldest half of remaining messages, LLM-summarizes dropped content with structured template (Goal/Instructions/Discoveries/Accomplished/Relevant Files). Fallback to truncation summarizer for text-only or on LLM error. Anchored summaries capped at 3 (consolidated when exceeded). Dedicated `planAnchor` slot survives compression. Token reconciliation with API's actual `prompt_tokens` after each LLM call. Old system messages (LoopGuard reminders, budget warnings) are compressible — only the original system prompt is protected. Not thread-safe — must be accessed from a single coroutine context.
-- **BudgetEnforcer** — Three-status budget monitoring (Cline-inspired single compression threshold): OK (<80%), COMPRESS (80-97%), TERMINATE (>97%). COMPRESS fires once per crossing (re-arms when utilization drops back below 80%).
+- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
+- **ConversationSession** — Long-lived session across user messages. Owns `EventSourcedContextBridge`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
+- **EventSourcedContextBridge** — The sole context management system. Owns `EventStore`, `CondenserPipeline`, `ConversationMemory`, all anchors (facts, skills, guardrails, mentions, plan, changeLedger), token tracking, and `ToolOutputStore`. Every mutation is recorded as a typed event in `EventStore`. Before each LLM call, `getMessagesViaCondenser()` runs the full `EventStore → View → CondenserPipeline → ConversationMemory → List<ChatMessage>` pipeline. Exposes `currentTokens`, `effectiveMaxInputTokens`, `updateTokensFromUsage()`, `updateReservedTokens()`, and all anchor slots.
+- **EventStore** — Append-only log of typed agent events (MessageAction, ToolAction, ToolResultObservation, SystemMessageAction, FactRecordedAction, PlanUpdatedAction, etc.). Persisted as JSONL under `{sessionDir}/events.jsonl`. Loaded and replayed on session resume. Single source of truth.
+- **View** — Immutable projection of all EventStore events at a point in time. Produced by `View.fromEvents(eventStore.all())`. Carries `events` (ordered list), `forgottenEventIds` (from condensation actions), and token estimates. Passed to the CondenserPipeline as the input for each condensation decision.
+- **CondenserPipeline** — Ordered chain of condensers applied to a View. Returns either `CondenserView` (view is ready for LLM call) or `Condensation` (condensation action needed before proceeding). Created by `CondenserFactory` using `ContextManagementConfig`. Default pipeline: SmartPrunerCondenser → ObservationMaskingCondenser → ConversationWindowCondenser → LLMSummarizingCondenser.
+- **ContextManagementConfig** — Single config object for the entire condenser pipeline. Fields: `smartPrunerEnabled`, `observationMaskingThreshold`, `conversationWindowThreshold`, `llmSummarizationThreshold`, `condensationLoopThreshold`. Defaults in `ContextManagementConfig.DEFAULT`. Passed through `EventSourcedContextBridge.create()`.
+- **ConversationMemory** — Converts a filtered View (post-condensation) into `List<ChatMessage>` ready for an LLM call. Handles role assignment, forgotten-event suppression, and proper message ordering. Invoked by `EventSourcedContextBridge.getMessagesViaCondenser()` after the pipeline returns a `CondenserView`.
+- **BudgetEnforcer** — Three-status budget monitoring (Cline-inspired single compression threshold): OK (<80%), COMPRESS (80-97%), TERMINATE (>97%). COMPRESS fires once per crossing (re-arms when utilization drops back below 80%). Reads token counts from `EventSourcedContextBridge`.
 - **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
 - **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
 - **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
@@ -108,23 +114,31 @@ Three layers:
 
 ## Context Management
 
-- **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). Full content saved to disk for re-reads after pruning.
+All context management runs through `EventSourcedContextBridge`. There is no separate legacy path.
+
+### Event-Sourced Pipeline
+
+The pipeline is: **EventStore → View → CondenserPipeline → ConversationMemory → List<ChatMessage>**
+
+1. All agent actions are recorded as typed events in `EventStore` (append-only JSONL).
+2. Before each LLM call, `View.fromEvents(eventStore.all())` projects the full event log into an ordered view with token estimates.
+3. The `CondenserPipeline` (created by `CondenserFactory` from `ContextManagementConfig`) runs the view through condensers in order:
+   - **SmartPrunerCondenser** (Stage 1, zero-loss): Deduplication (keep latest file read, respects edit boundaries), error purging (truncate failed tool args after 4 turns), write superseding (compact writes confirmed by subsequent reads). Runs if `smartPrunerEnabled = true` (default).
+   - **ObservationMaskingCondenser** (Stage 2, cheap): Replaces large tool result bodies with rich placeholders (tool name, args, content preview, disk path, recovery hint). Three tiers: FULL (within 40K window), COMPRESSED (within 60K window, first 20 + last 5 lines), METADATA (beyond both). Activates above `observationMaskingThreshold` (default: 0.60 utilization).
+   - **ConversationWindowCondenser** (Stage 3, reactive): Sliding window — removes oldest 50% of eligible messages (after protecting system prompt and first user-assistant exchange). Returns `Condensation` action to be stored in EventStore. Activates above `conversationWindowThreshold` (default: 0.75 utilization).
+   - **LLMSummarizingCondenser** (Stage 4, expensive): LLM-powered structured summary (Goal/Instructions/Discoveries/Accomplished/Files template) with [APPROX] markers. Falls back to truncation summarizer on LLM error. Activates above `llmSummarizationThreshold` (default: 0.85 utilization).
+4. If the pipeline returns `CondenserView`, `ConversationMemory.processEvents()` converts filtered events → `List<ChatMessage>` for the LLM call.
+5. If the pipeline returns `Condensation`, the condensation action is added to the EventStore and the condenser runs again (guarded against infinite loops by `condensationLoopCount > condensationLoopThreshold`).
+
+- **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). Full content saved to disk for re-reads after condensation.
 - **Facts Store**: Compression-proof append-only log of verified findings (FILE_READ, EDIT_MADE, CODE_PATTERN, ERROR_FOUND, COMMAND_RESULT, DISCOVERY). Injected as `factsAnchor`. Deduped by (type, path), capped at 50 entries. Think tool also records DISCOVERY facts.
-- **Phase 0 (smart pruning)**: Deduplication (keep latest file read, respects edit boundaries), error purging (truncate failed tool args after 4 turns), write superseding (compact writes confirmed by subsequent reads). Zero information loss.
-- **Phase 1 (tiered tool result pruning)**: Three tiers:
-  - FULL: within 40K protection window — kept intact
-  - COMPRESSED: within 60K window — first 20 + last 5 lines kept
-  - METADATA: beyond both — rich placeholder (tool name, args, preview, disk path, recovery hint)
-  - Protected tools (agent, delegate_task, create_plan, etc.) are NEVER pruned
-  - Minimum savings threshold: skip results under 200 tokens
-- **Phase 2 (summarization)**: Structured LLM summary (Goal/Discoveries/Accomplished/Files template) with [APPROX] markers. Fallback summarizer preserves first 10 lines of tool results (8K char cap).
-- **Compression boundary**: After any compression, a `[CONTEXT COMPRESSED]` marker warns LLM earlier content is approximate.
-- **Compression trigger**: 85% of effective budget (auto-compress in addMessage)
+- **Compression boundary**: `[CONTEXT COMPRESSED]` marker after any condensation action.
+- **System messages**: Old LoopGuard/budget warnings are compressible, capped at 2 active warnings.
+- **Orphan protection**: When condensation drops an assistant tool_call, its tool result is also dropped.
 - **Budget thresholds**: OK (<80%), COMPRESS (80-97%), TERMINATE (>97%)
+- **Token reconciliation**: After each LLM call, `bridge.updateTokensFromUsage(promptTokens)` updates `lastReportedPromptTokens` (used by condenser for accurate utilization). API's `promptTokens` is authoritative.
 - **Middle-truncation**: Command and git output keeps first 60% + last 40%, truncating verbose middle.
-- **System messages**: Old LoopGuard/budget warnings compressible, capped at 2 active warnings
-- **Orphan protection**: When compression drops an assistant tool_call, its tool result is also dropped
-- **Re-read tracking**: Cleared after pruning events so agent can re-read pruned files
+- **Re-read tracking**: Cleared after condensation events so agent can re-read condensed files.
 
 ## Tool Execution
 
@@ -137,7 +151,7 @@ Three layers:
 ## Error Handling
 
 - **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429 AND 5xx
-- **Context overflow**: Phase 1 prune + Phase 2 compress + replay
+- **Context overflow**: Condenser pipeline triggered + replay (OpenCode pattern)
 - **Streaming**: Heuristic token estimate when API returns usage: null
 
 ## Ralph Loop Patterns
@@ -156,9 +170,10 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 
 ## Token Management
 
-- Token display shows current context window fill (contextManager.currentTokens), not cumulative API total
-- Token reconciliation uses API's promptTokens as authoritative (no stale reservation subtraction)
-- reservedTokens recalculated when tool set changes
+- Token display shows current context window fill via `bridge.currentTokens`, not cumulative API total
+- Token reconciliation: `bridge.updateTokensFromUsage(promptTokens)` updates `lastReportedPromptTokens` for accurate condenser utilization. API's `promptTokens` is authoritative (no stale reservation subtraction).
+- `lastReportedPromptTokens` is used by `getMessagesViaCondenser()` to build `CondenserContext.currentTokens`.
+- reservedTokens recalculated when tool set changes (via `bridge.updateReservedTokens()`)
 
 ## Interactive UI
 
@@ -170,7 +185,7 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 ## Plan Persistence (Three Layers)
 
 1. **Disk** — `plan.json` in session directory (`PlanPersistence`)
-2. **Context** — `<active_plan>` system message with structured summary, updated in-place (`PlanAnchor` + `ContextManager.planAnchor`)
+2. **Context** — `<active_plan>` system message with structured summary, updated in-place via `bridge.planAnchor`; also recorded as `PlanUpdatedAction` in EventStore
 3. **UI** — Editor tab + chat card, real-time step updates
 
 ## Conversation Persistence & Durable Execution

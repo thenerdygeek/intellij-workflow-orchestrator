@@ -109,7 +109,7 @@ class WorkerTranscriptStore(private val sessionDir: File) {
     }
 
     /**
-     * Convert transcript messages to ChatMessages for ContextManager replay.
+     * Convert transcript messages to ChatMessages for context replay.
      */
     fun toChatMessages(transcript: List<TranscriptMessage>): List<ChatMessage> {
         return transcript.map { msg ->

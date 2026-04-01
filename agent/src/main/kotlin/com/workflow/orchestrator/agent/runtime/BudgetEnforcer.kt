@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.runtime
 
 import com.intellij.openapi.diagnostic.Logger
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 
 /**
  * Monitors token usage during the ReAct loop and signals when action is needed.
@@ -12,7 +12,7 @@ import com.workflow.orchestrator.agent.context.ContextManager
  * - TERMINATE: over 97% — hard stop, context rotation or fail
  */
 class BudgetEnforcer(
-    private val contextManager: ContextManager,
+    private val bridge: EventSourcedContextBridge,
     private val effectiveBudget: Int = com.workflow.orchestrator.agent.settings.AgentSettings.DEFAULTS.maxInputTokens
 ) {
     companion object {
@@ -28,7 +28,7 @@ class BudgetEnforcer(
      * Check current token usage and return the appropriate budget status.
      */
     fun check(): BudgetStatus {
-        val used = contextManager.currentTokens
+        val used = bridge.currentTokens
         return when {
             used < compressionThreshold -> {
                 BudgetStatus.OK
@@ -48,7 +48,7 @@ class BudgetEnforcer(
      * Get the current utilization as a percentage (0-100).
      */
     fun utilizationPercent(): Int {
-        return (contextManager.currentTokens * 100) / effectiveBudget
+        return (bridge.currentTokens * 100) / effectiveBudget
     }
 
     enum class BudgetStatus {
