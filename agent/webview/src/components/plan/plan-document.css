@@ -7,20 +7,61 @@
   line-height: 1.7;
 }
 
-.plan-document-body {
+/* Non-interactive mode (approved plan) */
+.plan-document:not(.plan-document-interactive) .plan-document-body {
   max-width: 800px;
   margin: 0 auto;
-  padding: 2rem 3rem 2rem 4rem;  /* left padding for line numbers */
+  padding: 2rem 3rem;
   font-size: 15px;
 }
 
-/* Heading hierarchy — distinct sizes, weights, spacing */
+/* Interactive mode: no extra padding, handled by block rows */
+.plan-document-interactive .plan-document-body {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 1rem 1rem;
+  font-size: 15px;
+}
+
+/* ── Block row: gutter + content side by side ── */
+.plan-block-row {
+  display: flex;
+  align-items: flex-start;
+  border-radius: 4px;
+  transition: background-color 0.1s;
+}
+
+.plan-block-row:hover {
+  background-color: rgba(128, 128, 128, 0.04);
+}
+
+.plan-block-gutter {
+  flex-shrink: 0;
+  width: 3.5rem;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: 0.2em;
+  user-select: none;
+}
+
+.plan-block-content {
+  flex: 1;
+  min-width: 0;
+  padding-right: 1rem;
+}
+
+/* Collapse vertical margins inside block content so spacing is controlled by the row */
+.plan-block-content > :first-child { margin-top: 0; }
+.plan-block-content > :last-child { margin-bottom: 0; }
+
+/* ── Heading hierarchy ── */
 .plan-document-body h1 { font-size: 2em; font-weight: 700; margin: 2rem 0 1rem; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
 .plan-document-body h2 { font-size: 1.5em; font-weight: 600; margin: 1.75rem 0 0.75rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--divider-subtle); }
 .plan-document-body h3 { font-size: 1.25em; font-weight: 600; margin: 1.5rem 0 0.5rem; }
 .plan-document-body h4 { font-size: 1em; font-weight: 600; margin: 1.25rem 0 0.5rem; }
 
-/* Paragraphs with generous spacing */
+/* Paragraphs */
 .plan-document-body p { margin: 0.75em 0; }
 
 /* Lists */
@@ -65,55 +106,45 @@
 /* HR */
 .plan-document-body hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 
-/* Line number gutter */
-.plan-line-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 3rem;
-  padding-top: 2rem;
-}
-
-.plan-line-row { position: relative; min-height: 1.7em; }
-
-.plan-line-gutter {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 1.7em;
-}
-
+/* ── Line number ── */
 .plan-line-number {
   font-size: 11px;
   color: var(--fg-muted);
   text-align: right;
-  width: 2.5rem;
+  width: 2rem;
   font-family: var(--font-mono);
   user-select: none;
+  opacity: 0.5;
 }
 
+.plan-block-row:hover .plan-line-number {
+  opacity: 1;
+}
+
+/* ── Comment button (appears on hover) ── */
 .plan-line-comment-btn {
   opacity: 0;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: none;
   background: var(--accent);
   color: var(--bg);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: bold;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: opacity 0.15s;
+  flex-shrink: 0;
 }
 
-.plan-line-row:hover .plan-line-comment-btn { opacity: 1; }
+.plan-block-row:hover .plan-line-comment-btn { opacity: 1; }
 
-/* Comment editor */
+/* ── Comment editor ── */
 .plan-comment-editor {
-  margin: 4px 0 4px 3.5rem;
+  margin: 6px 0;
   padding: 8px;
   border: 1px solid var(--accent);
   border-radius: 6px;
@@ -151,10 +182,10 @@
 .plan-comment-actions button:first-child { background: var(--accent); color: var(--bg); }
 .plan-comment-actions button:last-child { background: var(--fg-muted); color: var(--bg); }
 
-/* Comment bubble */
+/* ── Comment bubble ── */
 .plan-comment-bubble {
-  margin: 2px 0 2px 3.5rem;
-  padding: 4px 10px;
+  margin: 4px 0;
+  padding: 5px 12px;
   border-left: 3px solid var(--warning, #eab308);
   background: rgba(234, 179, 8, 0.06);
   font-size: 12px;
@@ -170,5 +201,14 @@
   background: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
 }
+
+.plan-comment-remove:hover {
+  color: var(--error, #ef4444);
+}
+
+/* ── Legacy absolute overlay (kept for backward compat, hidden in interactive mode) ── */
+.plan-document-interactive .plan-line-overlay { display: none; }

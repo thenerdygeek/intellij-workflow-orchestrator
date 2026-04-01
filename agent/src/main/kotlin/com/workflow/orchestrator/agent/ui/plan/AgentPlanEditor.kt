@@ -17,6 +17,10 @@ import com.workflow.orchestrator.agent.ui.AgentColors
 import com.workflow.orchestrator.agent.ui.CefResourceSchemeHandler
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
@@ -45,9 +49,29 @@ class AgentPlanEditor(
 
         reviseQuery.addHandler { commentsJson ->
             try {
-                val comments = Json.decodeFromString<Map<String, String>>(commentsJson)
-                AgentService.getInstance(project).currentPlanManager?.revisePlan(comments)
-            } catch (_: Exception) {
+                // Parse v2 format: { comments: [{ line, content, comment }], markdown }
+                val payload = Json.parseToJsonElement(commentsJson).jsonObject
+                val commentsArray = payload["comments"]?.jsonArray
+                val markdown = payload["markdown"]?.jsonPrimitive?.contentOrNull
+
+                if (commentsArray != null) {
+                    val revisions = commentsArray.map { elem ->
+                        val obj = elem.jsonObject
+                        com.workflow.orchestrator.agent.runtime.PlanRevisionComment(
+                            line = obj["content"]?.jsonPrimitive?.content ?: "",
+                            comment = obj["comment"]?.jsonPrimitive?.content ?: ""
+                        )
+                    }
+                    AgentService.getInstance(project).currentPlanManager
+                        ?.revisePlanWithContext(revisions, markdown)
+                } else {
+                    // Fallback: old format Map<String, String>
+                    val comments = Json.decodeFromString<Map<String, String>>(commentsJson)
+                    AgentService.getInstance(project).currentPlanManager?.revisePlan(comments)
+                }
+            } catch (e: Exception) {
+                com.intellij.openapi.diagnostic.Logger.getInstance(AgentPlanEditor::class.java)
+                    .warn("AgentPlanEditor: failed to parse revision payload", e)
             }
             null
         }

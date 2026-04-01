@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback } from 'react';
+import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -20,6 +20,74 @@ interface PlanDocumentViewerProps {
   stepStatuses?: Record<string, string>; // stepId -> status for emoji overlay
 }
 
+/**
+ * Groups consecutive source lines into blocks that must be rendered together
+ * as a single markdown unit (e.g., fenced code blocks, tables, lists).
+ * Each block knows its start line number and raw content.
+ */
+interface LineBlock {
+  startLine: number; // 1-based
+  endLine: number;   // 1-based, inclusive
+  content: string;   // raw markdown lines joined with \n
+  type: 'normal' | 'code' | 'table';
+}
+
+function groupLinesIntoBlocks(lines: string[]): LineBlock[] {
+  const blocks: LineBlock[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i]!;
+
+    // Fenced code block: ``` or ~~~
+    if (/^(`{3,}|~{3,})/.test(line)) {
+      const fence = line.match(/^(`{3,}|~{3,})/)?.[0] ?? '```';
+      const fenceChar = fence.charAt(0);
+      const fenceLen = fence.length;
+      const start = i;
+      i++;
+      while (i < lines.length && !(lines[i]!.startsWith(fenceChar.repeat(fenceLen)))) {
+        i++;
+      }
+      if (i < lines.length) i++; // include closing fence
+      blocks.push({
+        startLine: start + 1,
+        endLine: i,
+        content: lines.slice(start, i).join('\n'),
+        type: 'code',
+      });
+      continue;
+    }
+
+    // Table: line starts with | and next line is separator (|---|)
+    const nextLine = i + 1 < lines.length ? lines[i + 1]! : '';
+    if (/^\|/.test(line) && /^\|[\s\-:|]+\|/.test(nextLine)) {
+      const start = i;
+      while (i < lines.length && /^\|/.test(lines[i]!)) {
+        i++;
+      }
+      blocks.push({
+        startLine: start + 1,
+        endLine: i,
+        content: lines.slice(start, i).join('\n'),
+        type: 'table',
+      });
+      continue;
+    }
+
+    // Normal line (including empty lines, headings, paragraphs, list items)
+    blocks.push({
+      startLine: i + 1,
+      endLine: i + 1,
+      content: line,
+      type: 'normal',
+    });
+    i++;
+  }
+
+  return blocks;
+}
+
 export const PlanDocumentViewer = memo(function PlanDocumentViewer({
   markdown,
   comments = [],
@@ -27,15 +95,24 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
   onComment,
   onRemoveComment,
 }: PlanDocumentViewerProps) {
-  // Split markdown into lines for line numbering
   const lines = useMemo(() => markdown.split('\n'), [markdown]);
+  const blocks = useMemo(() => groupLinesIntoBlocks(lines), [lines]);
   const [activeCommentLine, setActiveCommentLine] = useState<number | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const commentsByLine = useMemo(() => {
     const map = new Map<number, LineComment>();
     comments.forEach(c => map.set(c.lineNumber, c));
     return map;
   }, [comments]);
+
+  // Focus textarea when comment editor opens
+  useEffect(() => {
+    if (activeCommentLine !== null && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [activeCommentLine]);
 
   const handleSubmitComment = useCallback((lineNumber: number) => {
     if (commentDraft.trim() && onComment) {
@@ -45,50 +122,75 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
     }
   }, [commentDraft, onComment, lines]);
 
-  // Render the full markdown as a document with line-numbered wrapper
-  return (
-    <div className="plan-document">
-      {/* Rendered markdown with document typography */}
-      <div className="plan-document-body">
-        <Markdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeRaw]}
-          components={createDocumentComponents()}
-        >
-          {markdown}
-        </Markdown>
+  if (!showLineNumbers) {
+    // Simple mode: just render the markdown without line numbers
+    return (
+      <div className="plan-document">
+        <div className="plan-document-body">
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeRaw]}
+            components={createDocumentComponents()}
+          >
+            {markdown}
+          </Markdown>
+        </div>
       </div>
+    );
+  }
 
-      {/* Line-numbered overlay for comments */}
-      {showLineNumbers && (
-        <div className="plan-line-overlay">
-          {lines.map((_, idx) => {
-            const lineNum = idx + 1;
-            const comment = commentsByLine.get(lineNum);
-            const isActive = activeCommentLine === lineNum;
+  // Interactive mode: render blocks with inline line numbers and comment UI
+  return (
+    <div className="plan-document plan-document-interactive">
+      <div className="plan-document-body">
+        {blocks.map((block) => {
+          // For multi-line blocks (code/table), show the start line number
+          // and a single comment target for the whole block
+          const lineNum = block.startLine;
+          const comment = commentsByLine.get(lineNum);
+          const isActive = activeCommentLine === lineNum;
+          // Also check if any line in a multi-line block has a comment
+          const blockComments: LineComment[] = [];
+          for (let l = block.startLine; l <= block.endLine; l++) {
+            const c = commentsByLine.get(l);
+            if (c) blockComments.push(c);
+          }
 
-            return (
-              <div key={lineNum} className="plan-line-row" data-line-number={lineNum}>
-                {/* Gutter with line number + comment button */}
-                <div className="plan-line-gutter">
-                  <span className="plan-line-number">{lineNum}</span>
-                  {onComment && !comment && (
-                    <button
-                      className="plan-line-comment-btn"
-                      onClick={() => { setActiveCommentLine(isActive ? null : lineNum); setCommentDraft(''); }}
-                      title="Add comment"
-                    >+</button>
-                  )}
-                </div>
+          return (
+            <div key={lineNum} className="plan-block-row" data-line={lineNum}>
+              {/* Gutter */}
+              <div className="plan-block-gutter">
+                <span className="plan-line-number">{lineNum}</span>
+                {onComment && !comment && blockComments.length === 0 && (
+                  <button
+                    className="plan-line-comment-btn"
+                    onClick={() => {
+                      setActiveCommentLine(isActive ? null : lineNum);
+                      setCommentDraft('');
+                    }}
+                    title="Add comment"
+                  >+</button>
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="plan-block-content">
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw]}
+                  components={createDocumentComponents()}
+                >
+                  {block.content}
+                </Markdown>
 
                 {/* Inline comment editor */}
                 {isActive && (
                   <div className="plan-comment-editor">
                     <textarea
+                      ref={textareaRef}
                       value={commentDraft}
                       onChange={e => setCommentDraft(e.target.value)}
                       placeholder="Add your comment..."
-                      autoFocus
                       onKeyDown={e => {
                         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmitComment(lineNum);
                         if (e.key === 'Escape') setActiveCommentLine(null);
@@ -101,20 +203,20 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
                   </div>
                 )}
 
-                {/* Existing comment bubble */}
-                {comment && !isActive && (
-                  <div className="plan-comment-bubble">
-                    <span className="plan-comment-text">{comment.text}</span>
+                {/* Existing comment bubbles */}
+                {(comment ? [comment] : blockComments).map((c) => (
+                  <div key={c.lineNumber} className="plan-comment-bubble">
+                    <span className="plan-comment-text">{c.text}</span>
                     {onRemoveComment && (
-                      <button className="plan-comment-remove" onClick={() => onRemoveComment(lineNum)}>x</button>
+                      <button className="plan-comment-remove" onClick={() => onRemoveComment(c.lineNumber)}>×</button>
                     )}
                   </div>
-                )}
+                ))}
               </div>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 });
