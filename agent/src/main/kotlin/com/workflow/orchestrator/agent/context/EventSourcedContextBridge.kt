@@ -345,7 +345,9 @@ class EventSourcedContextBridge(
                     // Condensation loop protection: fall back to ConversationMemory directly
                     condensationLoopCount = 0
                     val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
-                    val messages = conversationMemory.processEvents(view.events, initial, view.forgottenEventIds)
+                    val messages = conversationMemory.processEvents(view.events, initial, view.forgottenEventIds).toMutableList()
+                    // Append compression-proof anchors so the LLM always sees them regardless of path
+                    messages.addAll(contextManager.getAnchorMessages())
                     CondenserOutcome.Messages(messages)
                 } else {
                     CondenserOutcome.NeedsCondensation(result.action)
@@ -358,7 +360,9 @@ class EventSourcedContextBridge(
                     result.view.events,
                     initial,
                     result.view.forgottenEventIds
-                )
+                ).toMutableList()
+                // Append compression-proof anchors so the LLM always sees them regardless of path
+                messages.addAll(contextManager.getAnchorMessages())
                 CondenserOutcome.Messages(messages)
             }
         }

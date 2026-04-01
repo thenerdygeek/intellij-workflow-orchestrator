@@ -722,6 +722,27 @@ critical for continuing the task.
         addMessage(ChatMessage(role = "system", content = content))
     }
 
+    /**
+     * Return all compression-proof anchor messages in their display order.
+     *
+     * Used by [EventSourcedContextBridge.getMessagesViaCondenser] to append anchors after
+     * [ConversationMemory.processEvents] so the LLM sees the same compression-proof content
+     * regardless of which context path is active (Phase 1 or Phase 2).
+     *
+     * Order mirrors [getMessages]: background anchors first (skill, mention, facts, guardrails,
+     * changeLedger), then plan last (recency attention for U-shaped attention bias).
+     */
+    fun getAnchorMessages(): List<ChatMessage> {
+        val result = mutableListOf<ChatMessage>()
+        skillAnchor?.let { result.add(it) }
+        mentionAnchor?.let { result.add(it) }
+        factsAnchor?.let { result.add(it) }
+        guardrailsAnchor?.let { result.add(it) }
+        changeLedgerAnchor?.let { result.add(it) }
+        planAnchor?.let { result.add(it) }
+        return result
+    }
+
     /** Reset the context (for a new worker session). */
     fun reset() {
         messages.clear()

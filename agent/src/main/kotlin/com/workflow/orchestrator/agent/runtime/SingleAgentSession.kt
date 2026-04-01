@@ -412,7 +412,13 @@ class SingleAgentSession(
                         eventLog?.log(AgentEventType.COMPRESSION_TRIGGERED, "At iteration $iteration, ${budgetEnforcer.utilizationPercent()}% used")
                         val tokensBefore = contextManager.currentTokens
                         val messagesBefore = contextManager.messageCount
-                        contextManager.compressWithLlm(brain)
+                        if (eventBridge != null) {
+                            // Condenser pipeline handles compression via getMessagesViaCondenser() —
+                            // skip legacy ContextManager compression to avoid dual compression and state divergence.
+                            eventBridge.requestCondensation()
+                        } else {
+                            contextManager.compressWithLlm(brain)
+                        }
                         metrics.compressionCount++
                         loopGuard.clearAllFileReads()
                         val tokensAfter = contextManager.currentTokens
@@ -446,10 +452,12 @@ class SingleAgentSession(
                     contextManager.removeOldestSystemWarning()
                 }
                 val remaining = maxInputTokens - contextManager.currentTokens
-                contextManager.addMessage(ChatMessage(
-                    role = "system",
-                    content = "<system_warning>Context usage: ${contextManager.currentTokens}/$maxInputTokens tokens ($usedPercent%). $remaining tokens remaining. Be efficient with remaining context.</system_warning>"
-                ))
+                val budgetWarningContent = "<system_warning>Context usage: ${contextManager.currentTokens}/$maxInputTokens tokens ($usedPercent%). $remaining tokens remaining. Be efficient with remaining context.</system_warning>"
+                if (eventBridge != null) {
+                    eventBridge.addSystemMessage(budgetWarningContent)
+                } else {
+                    contextManager.addMessage(ChatMessage(role = "system", content = budgetWarningContent))
+                }
             }
 
             // 5b: Graceful degradation at high iterations
@@ -459,20 +467,24 @@ class SingleAgentSession(
                     while (contextManager.countSystemWarnings() >= 2) {
                         contextManager.removeOldestSystemWarning()
                     }
-                    contextManager.addMessage(ChatMessage(
-                        role = "system",
-                        content = "<system_warning>CRITICAL: This is your final iteration. Tools are disabled after this response. Provide a complete summary of what you accomplished and what remains.</system_warning>"
-                    ))
+                    val finalIterContent = "<system_warning>CRITICAL: This is your final iteration. Tools are disabled after this response. Provide a complete summary of what you accomplished and what remains.</system_warning>"
+                    if (eventBridge != null) {
+                        eventBridge.addSystemMessage(finalIterContent)
+                    } else {
+                        contextManager.addMessage(ChatMessage(role = "system", content = finalIterContent))
+                    }
                     forceTextOnly = true
                 }
                 iterationPercent >= 80 -> {
                     while (contextManager.countSystemWarnings() >= 2) {
                         contextManager.removeOldestSystemWarning()
                     }
-                    contextManager.addMessage(ChatMessage(
-                        role = "system",
-                        content = "<system_warning>IMPORTANT: You have used $iteration of $maxIterations iterations. Focus on completing the task. Avoid unnecessary exploration.</system_warning>"
-                    ))
+                    val wrapUpContent = "<system_warning>IMPORTANT: You have used $iteration of $maxIterations iterations. Focus on completing the task. Avoid unnecessary exploration.</system_warning>"
+                    if (eventBridge != null) {
+                        eventBridge.addSystemMessage(wrapUpContent)
+                    } else {
+                        contextManager.addMessage(ChatMessage(role = "system", content = wrapUpContent))
+                    }
                 }
             }
 
@@ -510,12 +522,18 @@ class SingleAgentSession(
                 LOG.info("SingleAgentSession: context exceeded — pruning old tool results + compressing")
                 // Event-sourced path: signal condensation needed via event store
                 eventBridge?.eventStore?.add(CondensationRequestAction(), EventSource.SYSTEM)
-                // Phase 1: Prune old tool results (fast, no LLM)
-                contextManager.pruneOldToolResults()
-                // Phase 2: Full compression (LLM if brain available, otherwise truncation)
                 val tokensBefore = contextManager.currentTokens
                 val messagesBefore = contextManager.messageCount
-                try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
+                if (eventBridge != null) {
+                    // Condenser pipeline handles compression via getMessagesViaCondenser() —
+                    // skip legacy ContextManager compression to avoid dual compression and state divergence.
+                    eventBridge.requestCondensation()
+                } else {
+                    // Phase 1: Prune old tool results (fast, no LLM)
+                    contextManager.pruneOldToolResults()
+                    // Phase 2: Full compression (LLM if brain available, otherwise truncation)
+                    try { contextManager.compressWithLlm(brain) } catch (_: Exception) { contextManager.compress() }
+                }
                 metrics.compressionCount++
                 loopGuard.clearAllFileReads()
                 compressionDone = true
@@ -524,7 +542,17 @@ class SingleAgentSession(
                 agentFileLogger?.logCompression(sessionId, "context_overflow", tokensBefore, tokensAfter)
                 onDebugLog?.invoke("warn", "compression", "$tokensBefore → $tokensAfter tokens (context overflow)", null)
                 // Re-fetch messages after compression
-                val compressedMessages = contextManager.getMessages()
+                val compressedMessages = if (eventBridge != null) {
+                    when (val condenserOutcome = eventBridge.getMessagesViaCondenser()) {
+                        is CondenserOutcome.Messages -> condenserOutcome.messages
+                        is CondenserOutcome.NeedsCondensation -> {
+                            eventBridge.eventStore.add(condenserOutcome.action, EventSource.SYSTEM)
+                            eventBridge.getMessages() // fallback to legacy path if still needs condensation
+                        }
+                    }
+                } else {
+                    contextManager.getMessages()
+                }
                 // Retry with reduced tools and compressed context
                 val retryResult = callLlmWithRetry(
                     brain, compressedMessages, activeToolDefs, maxOutputTokens,
@@ -703,12 +731,14 @@ class SingleAgentSession(
             if (toolCalls.isNullOrEmpty()) {
                 // Case 1: Text response truncated — ask to continue or summarize
                 LOG.info("SingleAgentSession: text response truncated (finishReason=length), requesting continuation")
-                contextManager.addMessage(ChatMessage(
-                    role = "user",
-                    content = "Your response was truncated due to the output token limit. " +
-                        "If you were about to use a tool, please do so now. " +
-                        "If you were providing a final answer, please provide a concise summary instead."
-                ))
+                val truncatedTextContent = "Your response was truncated due to the output token limit. " +
+                    "If you were about to use a tool, please do so now. " +
+                    "If you were providing a final answer, please provide a concise summary instead."
+                if (eventBridge != null) {
+                    eventBridge.addUserMessage(truncatedTextContent)
+                } else {
+                    contextManager.addMessage(ChatMessage(role = "user", content = truncatedTextContent))
+                }
                 return null // continue loop
             } else {
                 // Case 2: Tool call likely truncated (JSON may be invalid).
@@ -731,13 +761,15 @@ class SingleAgentSession(
                     // JSON is truncated — ask LLM to retry with smaller scope
                     LOG.warn("SingleAgentSession: tool call JSON is invalid/truncated, requesting smaller operation")
                     val truncatedToolName = firstCall?.function?.name ?: "unknown"
-                    contextManager.addMessage(ChatMessage(
-                        role = "user",
-                        content = "Your previous tool call to '$truncatedToolName' was truncated because " +
-                            "it exceeded the output token limit. The arguments were incomplete and could not be parsed. " +
-                            "Please retry with a SMALLER operation — for example, edit one function at a time " +
-                            "instead of an entire file, or break the task into multiple tool calls."
-                    ))
+                    val truncatedToolContent = "Your previous tool call to '$truncatedToolName' was truncated because " +
+                        "it exceeded the output token limit. The arguments were incomplete and could not be parsed. " +
+                        "Please retry with a SMALLER operation — for example, edit one function at a time " +
+                        "instead of an entire file, or break the task into multiple tool calls."
+                    if (eventBridge != null) {
+                        eventBridge.addUserMessage(truncatedToolContent)
+                    } else {
+                        contextManager.addMessage(ChatMessage(role = "user", content = truncatedToolContent))
+                    }
                     return null // continue loop with retry guidance
                 }
             }
@@ -761,21 +793,25 @@ class SingleAgentSession(
                     LOG.warn("SingleAgentSession: $MAX_MALFORMED_RETRIES consecutive malformed tool calls — forcing text-only response")
                     onDebugLog?.invoke("error", "force_text", "Forcing text-only after $MAX_MALFORMED_RETRIES failed tool call attempts", null)
                     onProgress(AgentProgress(step = "Tool calls failed $MAX_MALFORMED_RETRIES times — switching to text response", tokensUsed = contextManager.currentTokens))
-                    contextManager.addMessage(ChatMessage(
-                        role = "user",
-                        content = "IMPORTANT: Your last $MAX_MALFORMED_RETRIES attempts to call tools all failed because the tool call " +
-                            "arguments were empty or malformed. The streaming API is not delivering your tool call arguments correctly. " +
-                            "DO NOT attempt any more tool calls. Instead, respond with a TEXT message explaining what you were " +
-                            "trying to do, and I will help you accomplish it another way."
-                    ))
+                    val forceTextContent = "IMPORTANT: Your last $MAX_MALFORMED_RETRIES attempts to call tools all failed because the tool call " +
+                        "arguments were empty or malformed. The streaming API is not delivering your tool call arguments correctly. " +
+                        "DO NOT attempt any more tool calls. Instead, respond with a TEXT message explaining what you were " +
+                        "trying to do, and I will help you accomplish it another way."
+                    if (eventBridge != null) {
+                        eventBridge.addUserMessage(forceTextContent)
+                    } else {
+                        contextManager.addMessage(ChatMessage(role = "user", content = forceTextContent))
+                    }
                     forceTextOnly = true
                 } else {
                     onProgress(AgentProgress(step = "Tool call failed (malformed args, retry $consecutiveMalformedRetries/$MAX_MALFORMED_RETRIES)...", tokensUsed = contextManager.currentTokens))
-                    contextManager.addMessage(ChatMessage(
-                        role = "user",
-                        content = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
-                            "arguments were empty or malformed and could not be parsed. Please retry — call ONE tool at a time with valid JSON arguments."
-                    ))
+                    val malformedRetryContent = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
+                        "arguments were empty or malformed and could not be parsed. Please retry — call ONE tool at a time with valid JSON arguments."
+                    if (eventBridge != null) {
+                        eventBridge.addUserMessage(malformedRetryContent)
+                    } else {
+                        contextManager.addMessage(ChatMessage(role = "user", content = malformedRetryContent))
+                    }
                 }
                 return null // continue loop with retry guidance
             }
@@ -807,7 +843,11 @@ class SingleAgentSession(
                     null
                 }
                 if (nudgeMessage != null) {
-                    contextManager.addMessage(ChatMessage(role = "user", content = nudgeMessage))
+                    if (eventBridge != null) {
+                        eventBridge.addUserMessage(nudgeMessage)
+                    } else {
+                        contextManager.addMessage(ChatMessage(role = "user", content = nudgeMessage))
+                    }
                     onDebugLog?.invoke("warn", "nudge", "No tool calls (×$consecutiveNoToolResponses) — nudging to use attempt_completion", null)
                     return null // continue loop
                 }
@@ -819,7 +859,11 @@ class SingleAgentSession(
             if (gateBlock != null && iteration < maxIterations - 1) {
                 val blockedGate = completionGatekeeper?.lastBlockedGate ?: "unknown"
                 metrics.completionGateBlocks[blockedGate] = (metrics.completionGateBlocks[blockedGate] ?: 0) + 1
-                contextManager.addMessage(ChatMessage(role = "user", content = gateBlock))
+                if (eventBridge != null) {
+                    eventBridge.addUserMessage(gateBlock)
+                } else {
+                    contextManager.addMessage(ChatMessage(role = "user", content = gateBlock))
+                }
                 return null // continue loop
             }
             // Check if the gatekeeper force-accepted (max attempts exceeded)
@@ -875,11 +919,13 @@ class SingleAgentSession(
         val hasOtherTools = toolCalls.any { it.function.name != "attempt_completion" }
         val effectiveToolCalls = if (hasAttemptCompletion && hasOtherTools) {
             // Discard attempt_completion, execute only other tools
-            contextManager.addMessage(ChatMessage(
-                role = "user",
-                content = "You called attempt_completion alongside other tools. Complete your tool calls first, " +
-                    "then call attempt_completion separately when you are truly done."
-            ))
+            val mixedCompletionContent = "You called attempt_completion alongside other tools. Complete your tool calls first, " +
+                "then call attempt_completion separately when you are truly done."
+            if (eventBridge != null) {
+                eventBridge.addUserMessage(mixedCompletionContent)
+            } else {
+                contextManager.addMessage(ChatMessage(role = "user", content = mixedCompletionContent))
+            }
             onDebugLog?.invoke("warn", "mixed_completion", "attempt_completion discarded — mixed with ${toolCalls.size - 1} other tools", null)
             toolCalls.filter { it.function.name != "attempt_completion" }
         } else {
@@ -901,7 +947,11 @@ class SingleAgentSession(
             if (doomMessage != null) {
                 doomLoopTriggers++
                 // SKIP execution — don't waste time on a doom loop call
-                contextManager.addToolResult(tc.id, doomMessage, "Doom loop detected — execution skipped")
+                if (eventBridge != null) {
+                    eventBridge.addToolError(tc.id, doomMessage, "Doom loop detected — execution skipped", tc.function.name)
+                } else {
+                    contextManager.addToolResult(tc.id, doomMessage, "Doom loop detected — execution skipped")
+                }
                 doomSkipped.add(tc.id)
                 toolResults.add(tc.id to true)
                 onProgress(AgentProgress(
@@ -973,14 +1023,21 @@ class SingleAgentSession(
                     if (tr.isError && verifiedFile != null && selfCorrectionGate.isTracked(verifiedFile)) {
                         val reflection = selfCorrectionGate.buildReflectionPrompt(verifiedFile, toolName, tr.content)
                         if (reflection != null) {
-                            contextManager.addMessage(reflection)
+                            if (eventBridge != null) {
+                                eventBridge.addMessage(reflection)
+                            } else {
+                                contextManager.addMessage(reflection)
+                            }
                         }
                     }
                 }
                 if (metrics.isCircuitBroken(toolName)) {
-                    contextManager.addSystemMessage(
-                        "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
-                    )
+                    val circuitBreakerContent = "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
+                    if (eventBridge != null) {
+                        eventBridge.addSystemMessage(circuitBreakerContent)
+                    } else {
+                        contextManager.addSystemMessage(circuitBreakerContent)
+                    }
                     // Auto-record to guardrails
                     loopGuard.guardrailStore?.record(
                         "Tool '$toolName' frequently fails in this project — consider alternative approaches"
@@ -1021,7 +1078,11 @@ class SingleAgentSession(
         // Execute write tools sequentially
         for (toolCall in activeWriteCalls) {
             if (cancelled.get()) {
-                contextManager.addToolResult(toolCall.id, "Cancelled by user", "Cancelled")
+                if (eventBridge != null) {
+                    eventBridge.addToolError(toolCall.id, "Cancelled by user", "Cancelled", toolCall.function.name)
+                } else {
+                    contextManager.addToolResult(toolCall.id, "Cancelled by user", "Cancelled")
+                }
                 break
             }
             val toolName = toolCall.function.name
@@ -1033,7 +1094,11 @@ class SingleAgentSession(
                 if (editPath != null) {
                     val preEditWarning = loopGuard.checkPreEditRead(editPath)
                     if (preEditWarning != null) {
-                        contextManager.addToolResult(toolCall.id, preEditWarning, "Edit blocked: file not read")
+                        if (eventBridge != null) {
+                            eventBridge.addToolError(toolCall.id, preEditWarning, "Edit blocked: file not read", toolCall.function.name)
+                        } else {
+                            contextManager.addToolResult(toolCall.id, preEditWarning, "Edit blocked: file not read")
+                        }
                         toolResults.add(toolCall.id to true)
                         onProgress(AgentProgress(
                             step = "Edit blocked: $editPath not read yet",
@@ -1067,11 +1132,15 @@ class SingleAgentSession(
                 } else toolResult.content
 
                 // Persist the completion summary in conversation context so follow-up messages retain it
-                contextManager.addToolResult(
-                    toolCallId = toolCall.id,
-                    content = sanitizedContent,
-                    summary = toolResult.summary
-                )
+                if (eventBridge != null) {
+                    eventBridge.addToolResult(toolCall.id, sanitizedContent, toolResult.summary, toolCall.function.name)
+                } else {
+                    contextManager.addToolResult(
+                        toolCallId = toolCall.id,
+                        content = sanitizedContent,
+                        summary = toolResult.summary
+                    )
+                }
 
                 // Emit completion summary as streamed text, not a tool call card
                 onProgress(AgentProgress(
@@ -1192,22 +1261,33 @@ class SingleAgentSession(
                 if (toolResult.isError && verifiedFile != null && selfCorrectionGate.isTracked(verifiedFile)) {
                     val reflection = selfCorrectionGate.buildReflectionPrompt(verifiedFile, toolName, toolResult.content)
                     if (reflection != null) {
-                        contextManager.addMessage(reflection)
+                        if (eventBridge != null) {
+                            eventBridge.addMessage(reflection)
+                        } else {
+                            contextManager.addMessage(reflection)
+                        }
                     }
                 }
             }
             // Backpressure error on test/build failures
             if (toolResult.isError && toolName in setOf("run_command", "runtime")) {
                 val bpError = backpressureGate.createBackpressureError(toolName, toolResult.content)
-                contextManager.addMessage(bpError)
+                if (eventBridge != null) {
+                    eventBridge.addMessage(bpError)
+                } else {
+                    contextManager.addMessage(bpError)
+                }
             }
             if ((toolName == "agent" || toolName == "delegate_task") && !toolResult.isError) {
                 metrics.subagentCount++
             }
             if (metrics.isCircuitBroken(toolName)) {
-                contextManager.addSystemMessage(
-                    "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
-                )
+                val circuitBreakerMsg = "Circuit breaker: '$toolName' has failed ${AgentMetrics.CIRCUIT_BREAKER_THRESHOLD} consecutive times. Try a different approach or tool."
+                if (eventBridge != null) {
+                    eventBridge.addSystemMessage(circuitBreakerMsg)
+                } else {
+                    contextManager.addSystemMessage(circuitBreakerMsg)
+                }
                 // Auto-record to guardrails
                 loopGuard.guardrailStore?.record(
                     "Tool '$toolName' frequently fails in this project — consider alternative approaches"
