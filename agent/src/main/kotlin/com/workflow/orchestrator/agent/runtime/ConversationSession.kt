@@ -541,6 +541,10 @@ class ConversationSession private constructor(
             if (restoredPlan != null) {
                 loaded.planManager.sessionDir = loaded.store.sessionDirectory
                 loaded.planManager.restorePlan(restoredPlan)
+                // Re-enable plan mode if the plan was not yet approved (interrupted mid-planning)
+                if (!restoredPlan.approved) {
+                    com.workflow.orchestrator.agent.AgentService.planModeActive.set(true)
+                }
             }
 
             // Set session directory on AgentService for subagent transcript storage
