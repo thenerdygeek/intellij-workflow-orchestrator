@@ -7,7 +7,8 @@ import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.orchestrator.AgentOrchestrator
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.orchestrator.AgentResult

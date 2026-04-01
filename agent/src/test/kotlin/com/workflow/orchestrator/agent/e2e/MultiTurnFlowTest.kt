@@ -9,7 +9,8 @@ import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.api.dto.UsageInfo
 import com.workflow.orchestrator.agent.brain.LlmBrain
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.ContextManagementConfig
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.runtime.AgentMetrics
 import com.workflow.orchestrator.agent.runtime.AgentPlan
 import com.workflow.orchestrator.agent.runtime.BudgetEnforcer
@@ -89,7 +90,11 @@ class MultiTurnFlowTest {
         val planManager = PlanManager()
         planManager.sessionDir = tempDir
 
-        val contextManager = ContextManager(maxInputTokens = 50_000)
+        val contextManager = EventSourcedContextBridge.create(
+            sessionDir = tempDir,
+            config = ContextManagementConfig.DEFAULT,
+            maxInputTokens = 50_000
+        )
 
         // Turn 1: User asks for a feature
         val userMessage = "Add a new endpoint to UserService"
@@ -125,9 +130,9 @@ class MultiTurnFlowTest {
         contextManager.addMessage(ChatMessage(role = "user", content = "Now add tests for the endpoint"))
 
         val messages = contextManager.getMessages()
-        assertTrue(messages.size >= 4, "Context should have system + user + assistant + user messages, got ${messages.size}")
+        assertTrue(messages.size >= 3, "Context should have messages from system, user and assistant, got ${messages.size}")
 
-        // Verify the original user message is still in context
+        // Verify the original user message is still in context (may be merged with system in Sourcegraph format)
         val userMessages = messages.filter { it.role == "user" }
         assertTrue(
             userMessages.any { it.content?.contains("Add a new endpoint") == true },
@@ -149,7 +154,11 @@ class MultiTurnFlowTest {
     @Test
     fun `compression preserves plan anchor`() = runTest {
         // Use a tiny budget to force compression quickly
-        val contextManager = ContextManager(maxInputTokens = 2000)
+        val contextManager = EventSourcedContextBridge.create(
+            sessionDir = tempDir.resolve("compress-test").also { it.mkdirs() },
+            config = ContextManagementConfig.DEFAULT,
+            maxInputTokens = 2000
+        )
 
         // Set a plan anchor
         val planContent = "Step 1: Add UserProfileDto\nStep 2: Add service method\nStep 3: Add controller endpoint"
@@ -195,14 +204,18 @@ class MultiTurnFlowTest {
 
     @Test
     fun `worker delegation result returns to main session context`() = runTest {
-        val contextManager = ContextManager(maxInputTokens = 50_000)
+        val contextManager = EventSourcedContextBridge.create(
+            sessionDir = tempDir,
+            config = ContextManagementConfig.DEFAULT,
+            maxInputTokens = 50_000
+        )
 
         // Main session context
-        contextManager.addMessage(ChatMessage(role = "system", content = "You are the main orchestrator."))
-        contextManager.addMessage(ChatMessage(role = "user", content = "Analyze the authentication module"))
+        contextManager.addSystemPrompt("You are the main orchestrator.")
+        contextManager.addUserMessage("Analyze the authentication module")
 
         // Simulate agent calling delegate_task
-        contextManager.addMessage(ChatMessage(
+        contextManager.addAssistantToolCalls(ChatMessage(
             role = "assistant",
             content = null,
             toolCalls = listOf(ToolCall(
@@ -227,18 +240,18 @@ class MultiTurnFlowTest {
             appendLine("- src/main/kotlin/auth/AuthService.kt")
             appendLine("- src/main/kotlin/auth/JwtTokenProvider.kt")
         }
-        contextManager.addToolResult("tc_delegate_1", workerResult, "Authentication flow analyzed")
+        contextManager.addToolResult("tc_delegate_1", workerResult, "Authentication flow analyzed", "delegate_task")
 
         // Verify the worker result is in the main context
+        // Note: ConversationMemory may convert tool results to user role (Sourcegraph format)
         val messages = contextManager.getMessages()
-        val toolResults = messages.filter { it.role == "tool" }
-        assertTrue(toolResults.isNotEmpty(), "Worker result should be in context as a tool result")
+        val allContent = messages.joinToString("\n") { it.content ?: "" }
         assertTrue(
-            toolResults.any { it.content?.contains("Authentication Flow Analysis") == true },
+            allContent.contains("Authentication Flow Analysis"),
             "Worker result content should be in context"
         )
         assertTrue(
-            toolResults.any { it.content?.contains("LoginController.kt") == true },
+            allContent.contains("LoginController.kt"),
             "Worker result should contain specific file paths"
         )
 
@@ -257,7 +270,12 @@ class MultiTurnFlowTest {
         // does NOT trigger before we can observe BudgetEnforcer thresholds.
         // BudgetEnforcer effectiveBudget is set independently to 10,000 tokens.
         // Token estimation: 1 token per 3.5 chars, so 10,000 tokens = ~35,000 chars.
-        val contextManager = ContextManager(maxInputTokens = 200_000, reservedTokens = 0)
+        val contextManager = EventSourcedContextBridge.create(
+            sessionDir = tempDir.resolve("budget-test").also { it.mkdirs() },
+            config = ContextManagementConfig.DEFAULT,
+            maxInputTokens = 200_000,
+            reservedTokens = 0
+        )
         val enforcer = BudgetEnforcer(contextManager, effectiveBudget = 10_000)
 
         // Initially OK (0 tokens used)

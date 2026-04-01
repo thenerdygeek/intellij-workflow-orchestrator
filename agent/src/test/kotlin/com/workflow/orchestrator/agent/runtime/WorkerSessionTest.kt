@@ -3,7 +3,7 @@ package com.workflow.orchestrator.agent.runtime
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.ApiResult
@@ -21,18 +21,18 @@ class WorkerSessionTest {
 
     private lateinit var session: WorkerSession
     private lateinit var brain: LlmBrain
-    private lateinit var contextManager: ContextManager
+    private lateinit var bridge: EventSourcedContextBridge
     private lateinit var project: Project
 
     @BeforeEach
     fun setup() {
         session = WorkerSession(maxIterations = 5)
         brain = mockk()
-        contextManager = mockk(relaxed = true)
+        bridge = mockk(relaxed = true)
         project = mockk()
 
         // Default: getMessages returns whatever was added
-        every { contextManager.getMessages() } returns listOf(
+        every { bridge.getMessages() } returns listOf(
             ChatMessage(role = "system", content = "You are an analyzer"),
             ChatMessage(role = "user", content = "Analyze this")
         )
@@ -64,7 +64,7 @@ class WorkerSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -144,7 +144,7 @@ class WorkerSessionTest {
                 )
             ),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -156,7 +156,7 @@ class WorkerSessionTest {
         // Verify tool was executed
         coVerify { mockTool.execute(any(), project) }
         // Verify tool result was added to context
-        verify { contextManager.addToolResult("call-1", any(), any()) }
+        verify { bridge.addToolResult("call-1", any(), any(), any()) }
     }
 
     @Test
@@ -210,7 +210,7 @@ class WorkerSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -218,9 +218,10 @@ class WorkerSessionTest {
         assertFalse(result.isError) // The session itself completed successfully
         // Verify error was reported to context with available tools info
         verify {
-            contextManager.addToolResult(
+            bridge.addToolError(
                 "call-1",
                 match { it.contains("not available") },
+                any(),
                 any()
             )
         }
@@ -240,7 +241,7 @@ class WorkerSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -280,7 +281,7 @@ class WorkerSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -341,7 +342,7 @@ class WorkerSessionTest {
             tools = mapOf("write_file" to failingTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -349,9 +350,10 @@ class WorkerSessionTest {
         assertFalse(result.isError) // Session completed successfully despite tool error
         // Verify error was reported to context
         verify {
-            contextManager.addToolResult(
+            bridge.addToolError(
                 "call-1",
                 match { it.contains("Disk full") },
+                any(),
                 any()
             )
         }
@@ -419,14 +421,14 @@ class WorkerSessionTest {
             tools = mapOf("worker_complete" to workerCompleteTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
         assertEquals("task done", result.content)
         assertFalse(result.isError)
         // Nudge was injected into context
-        verify { contextManager.addMessage(match { it.role == "user" && it.content!!.contains("worker_complete") }) }
+        verify { bridge.addUserMessage(match { it.contains("worker_complete") }) }
     }
 
     @Test
@@ -467,7 +469,7 @@ class WorkerSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -546,7 +548,7 @@ class WorkerSessionTest {
             tools = mapOf("real_tool" to realTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -554,6 +556,6 @@ class WorkerSessionTest {
         assertEquals("Still no tools", result.content)
         assertFalse(result.isError)
         // Verify nudge was injected after the no-tool response at iteration 2
-        verify { contextManager.addMessage(match { it.role == "user" && it.content!!.contains("worker_complete") }) }
+        verify { bridge.addUserMessage(match { it.contains("worker_complete") }) }
     }
 }

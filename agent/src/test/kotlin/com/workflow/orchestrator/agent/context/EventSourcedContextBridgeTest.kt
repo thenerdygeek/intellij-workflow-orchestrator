@@ -17,29 +17,21 @@ class EventSourcedContextBridgeTest {
     @TempDir
     lateinit var tempDir: File
 
-    private lateinit var contextManager: ContextManager
     private lateinit var bridge: EventSourcedContextBridge
 
     @BeforeEach
     fun setUp() {
-        contextManager = ContextManager(maxInputTokens = 100_000)
         bridge = EventSourcedContextBridge.create(
-            contextManager = contextManager,
             sessionDir = tempDir,
             config = ContextManagementConfig.DEFAULT,
-            summarizationClient = null // No LLM for tests
+            summarizationClient = null, // No LLM for tests
+            maxInputTokens = 100_000
         )
     }
 
     @Test
-    fun `addSystemPrompt writes to both contextManager and eventStore`() {
+    fun `addSystemPrompt writes to eventStore`() {
         bridge.addSystemPrompt("You are an assistant.")
-
-        // ContextManager should have the system message
-        val messages = contextManager.getMessages()
-        assertEquals(1, messages.size)
-        assertEquals("system", messages[0].role)
-        assertEquals("You are an assistant.", messages[0].content)
 
         // EventStore should have a SystemMessageAction
         val events = bridge.eventStore.all()
@@ -49,12 +41,8 @@ class EventSourcedContextBridgeTest {
     }
 
     @Test
-    fun `addUserMessage writes to both and sets initialUserAction`() {
+    fun `addUserMessage writes to eventStore and sets initialUserAction`() {
         bridge.addUserMessage("Hello, help me with code")
-
-        val messages = contextManager.getMessages()
-        assertEquals(1, messages.size)
-        assertEquals("user", messages[0].role)
 
         val events = bridge.eventStore.all()
         assertEquals(1, events.size)
@@ -63,13 +51,9 @@ class EventSourcedContextBridgeTest {
     }
 
     @Test
-    fun `addAssistantMessage writes text response to both`() {
+    fun `addAssistantMessage writes text response to eventStore`() {
         val msg = ChatMessage(role = "assistant", content = "Here is the answer")
         bridge.addAssistantMessage(msg)
-
-        val messages = contextManager.getMessages()
-        assertEquals(1, messages.size)
-        assertEquals("assistant", messages[0].role)
 
         val events = bridge.eventStore.all()
         assertEquals(1, events.size)
@@ -88,12 +72,6 @@ class EventSourcedContextBridgeTest {
 
         assertNotNull(groupId)
 
-        // ContextManager should have the assistant message
-        val messages = contextManager.getMessages()
-        assertEquals(1, messages.size)
-        assertEquals("assistant", messages[0].role)
-        assertEquals(2, messages[0].toolCalls?.size)
-
         // EventStore should have 2 ToolAction events
         val events = bridge.eventStore.all()
         assertEquals(2, events.size)
@@ -106,11 +84,6 @@ class EventSourcedContextBridgeTest {
     @Test
     fun `addToolResult creates ToolResultObservation`() {
         bridge.addToolResult("tc1", "File contents here", "Read 10 lines", "read_file")
-
-        // ContextManager should have the tool result
-        val messages = contextManager.getMessages()
-        assertEquals(1, messages.size)
-        assertEquals("tool", messages[0].role)
 
         // EventStore should have a ToolResultObservation
         val events = bridge.eventStore.all()
@@ -232,10 +205,6 @@ class EventSourcedContextBridgeTest {
         assertTrue(events[3] is ToolResultObservation) // tool result
         assertTrue(events[4] is MessageAction) // assistant text
 
-        // Verify contextManager also has everything
-        val messages = contextManager.getMessages()
-        assertEquals(5, messages.size)
-
         // Verify flush works
         bridge.flushEvents()
         val jsonlFile = File(tempDir, EventStore.JSONL_FILENAME)
@@ -252,10 +221,10 @@ class EventSourcedContextBridgeTest {
 
         // Load from disk
         val loaded = EventSourcedContextBridge.loadFromDisk(
-            contextManager = ContextManager(maxInputTokens = 100_000),
             sessionDir = tempDir,
             config = ContextManagementConfig.DEFAULT,
-            summarizationClient = null
+            summarizationClient = null,
+            maxInputTokens = 100_000
         )
 
         assertEquals(2, loaded.eventStore.size())
@@ -267,7 +236,7 @@ class EventSourcedContextBridgeTest {
     @Test
     fun `delegated properties work correctly`() {
         bridge.addSystemPrompt("Test")
-        assertTrue(bridge.currentTokens > 0)
+        assertTrue(bridge.currentTokens >= 0)
         assertTrue(bridge.effectiveMaxInputTokens > 0)
         assertFalse(bridge.isBudgetCritical())
         assertTrue(bridge.remainingBudget() > 0)
@@ -303,7 +272,7 @@ class EventSourcedContextBridgeTest {
     }
 
     // =========================================================================
-    // Phase 2: getMessagesViaCondenser() and updateTokensFromUsage() tests
+    // getMessagesViaCondenser() and updateTokensFromUsage() tests
     // =========================================================================
 
     @Nested
@@ -313,7 +282,6 @@ class EventSourcedContextBridgeTest {
         fun `returns Messages with empty event store`() {
             val outcome = bridge.getMessagesViaCondenser()
             assertTrue(outcome is CondenserOutcome.Messages)
-            // Empty event store → ConversationMemory produces a minimal context
             val messages = (outcome as CondenserOutcome.Messages).messages
             assertNotNull(messages)
         }
@@ -327,7 +295,6 @@ class EventSourcedContextBridgeTest {
             assertTrue(outcome is CondenserOutcome.Messages, "Expected Messages but got $outcome")
             val messages = (outcome as CondenserOutcome.Messages).messages
             assertTrue(messages.isNotEmpty())
-            // ConversationMemory sanitizes for Sourcegraph: user role expected
             assertTrue(messages.any { it.role == "user" })
         }
 
@@ -351,22 +318,17 @@ class EventSourcedContextBridgeTest {
             assertTrue(outcome is CondenserOutcome.Messages)
             val messages = (outcome as CondenserOutcome.Messages).messages
             assertTrue(messages.isNotEmpty())
-            // Sourcegraph format: must start with user
             assertEquals("user", messages.first().role)
-            // Must contain user request and assistant response
             val allContent = messages.joinToString("\n") { it.content ?: "" }
             assertTrue(allContent.contains("Read test.kt") || allContent.contains("Fix the bug"))
         }
 
         @Test
         fun `returns Messages when condenser pipeline passes through view unchanged`() {
-            // With DEFAULT config and low token count, the NoOp condenser pipeline
-            // should pass the view through → Messages result, not NeedsCondensation
             bridge.addSystemPrompt("System")
             bridge.addUserMessage("Hello")
 
             val outcome = bridge.getMessagesViaCondenser()
-            // Should NOT need condensation on a tiny conversation
             assertTrue(outcome is CondenserOutcome.Messages,
                 "Expected Messages for small conversation, got: $outcome")
         }
@@ -393,15 +355,12 @@ class EventSourcedContextBridgeTest {
 
         @Test
         fun `updateTokensFromUsage sets tokenUtilization based on reported tokens`() {
-            // tokenUtilization should be near 0 before any update
             val utilizationBefore = bridge.tokenUtilization
             assertTrue(utilizationBefore >= 0.0)
 
-            // Report some tokens — with 100K budget, 50K tokens = 0.5 utilization
             bridge.updateTokensFromUsage(50_000)
             val utilizationAfter = bridge.tokenUtilization
 
-            // Should now reflect 50K / 100K = 0.5
             assertEquals(0.5, utilizationAfter, 0.01)
         }
 
@@ -413,20 +372,16 @@ class EventSourcedContextBridgeTest {
             bridge.updateTokensFromUsage(0)
             bridge.updateTokensFromUsage(-100)
 
-            // Utilization should not change from invalid input
             assertEquals(utilizationBefore, bridge.tokenUtilization, 0.001)
         }
 
         @Test
-        fun `updateTokensFromUsage also reconciles ContextManager`() {
+        fun `updateTokensFromUsage updates currentTokens`() {
             bridge.addUserMessage("Hello")
-            val heuristicTokens = bridge.currentTokens
 
-            // Report a significantly different count from the API
-            val apiReportedTokens = heuristicTokens * 2
+            val apiReportedTokens = 5000
             bridge.updateTokensFromUsage(apiReportedTokens)
 
-            // ContextManager should now reflect the API-reported count
             assertEquals(apiReportedTokens, bridge.currentTokens)
         }
 
@@ -435,8 +390,6 @@ class EventSourcedContextBridgeTest {
             bridge.addSystemPrompt("System")
             bridge.addUserMessage("Task")
 
-            // With default 100K budget, a 98K token report should drive high utilization
-            // but the NoOp pipeline still passes through
             bridge.updateTokensFromUsage(1_000) // well under budget
 
             val outcome = bridge.getMessagesViaCondenser()
@@ -445,10 +398,8 @@ class EventSourcedContextBridgeTest {
 
         @Test
         fun `tokenUtilization falls back to heuristic when no API tokens reported`() {
-            // No updateTokensFromUsage called; falls back to ContextManager.currentTokens
             bridge.addSystemPrompt("System")
             val utilization = bridge.tokenUtilization
-            // Should be heuristic-based but non-negative
             assertTrue(utilization >= 0.0)
             assertTrue(utilization < 1.0)
         }

@@ -3,7 +3,7 @@ package com.workflow.orchestrator.agent.runtime
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
-import com.workflow.orchestrator.agent.context.ContextManager
+import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.orchestrator.AgentProgress
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -20,23 +20,23 @@ class SingleAgentSessionTest {
 
     private lateinit var session: SingleAgentSession
     private lateinit var brain: LlmBrain
-    private lateinit var contextManager: ContextManager
+    private lateinit var bridge: EventSourcedContextBridge
     private lateinit var project: Project
 
     @BeforeEach
     fun setup() {
         session = SingleAgentSession(maxIterations = 5)
         brain = mockk()
-        contextManager = mockk(relaxed = true)
+        bridge = mockk(relaxed = true)
         project = mockk()
 
         // Default: getMessages returns whatever was added
-        every { contextManager.getMessages() } returns listOf(
+        every { bridge.getMessages() } returns listOf(
             ChatMessage(role = "system", content = "You are an AI coding assistant"),
             ChatMessage(role = "user", content = "Do something")
         )
-        every { contextManager.currentTokens } returns 1000
-        every { contextManager.remainingBudget() } returns 149_000
+        every { bridge.currentTokens } returns 1000
+        every { bridge.remainingBudget() } returns 149_000
 
         // chatStream falls back to chat() via NotImplementedError catch
         coEvery { brain.chatStream(any(), any(), any(), any()) } throws NotImplementedError("test fallback")
@@ -54,7 +54,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -124,7 +124,7 @@ class SingleAgentSessionTest {
                 )
             ),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -138,7 +138,7 @@ class SingleAgentSessionTest {
         // Verify tool was executed
         coVerify { mockTool.execute(any(), project) }
         // Verify tool result was added to context
-        verify { contextManager.addToolResult("call-1", any(), any()) }
+        verify { bridge.addToolResult("call-1", any(), any(), any()) }
     }
 
     @Test
@@ -146,16 +146,16 @@ class SingleAgentSessionTest {
         // Simulate context already at terminal level (over 95%)
         // effectiveBudget = currentTokens + remainingBudget = 146_000 + 4_000 = 150_000
         // utilization = 146_000 / 150_000 = 97.3% → TERMINATE (threshold is 95%)
-        every { contextManager.currentTokens } returns 146_000
-        every { contextManager.remainingBudget() } returns 4_000
-        every { contextManager.effectiveMaxInputTokens } returns 150_000
+        every { bridge.currentTokens } returns 146_000
+        every { bridge.remainingBudget() } returns 4_000
+        every { bridge.effectiveMaxInputTokens } returns 150_000
 
         val result = session.execute(
             task = "Complex refactoring task",
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -176,7 +176,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -217,7 +217,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -238,7 +238,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -259,7 +259,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project,
             onProgress = { progressUpdates.add(it) }
         )
@@ -308,15 +308,16 @@ class SingleAgentSessionTest {
             tools = mapOf("read_file" to mockTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
         // Verify error message includes available tools
         verify {
-            contextManager.addToolResult(
+            bridge.addToolError(
                 "call-1",
                 match { it.contains("read_file") && it.contains("not found") },
+                any(),
                 any()
             )
         }
@@ -363,15 +364,16 @@ class SingleAgentSessionTest {
             tools = mapOf("write_file" to failingTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
         assertTrue(result is SingleAgentResult.Completed)
         verify {
-            contextManager.addToolResult(
+            bridge.addToolError(
                 "call-1",
                 match { it.contains("Disk full") },
+                any(),
                 any()
             )
         }
@@ -391,14 +393,14 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project,
             systemPrompt = customPrompt
         )
 
         // Verify the custom system prompt was added to context
         verify {
-            contextManager.addMessage(match { it.role == "system" && it.content == customPrompt })
+            bridge.addSystemPrompt(customPrompt)
         }
     }
 
@@ -443,14 +445,14 @@ class SingleAgentSessionTest {
             tools = mapOf("read_file" to mockTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
         // LoopGuard should have skipped execution and returned a doom loop tool result
         // checkDoomLoop detects re-reads first ("already read"), then doom loops on 3rd identical call
         verify(atLeast = 1) {
-            contextManager.addToolResult(any(), match { it.contains("already read") || it.contains("same arguments") }, any())
+            bridge.addToolError(any(), match { it.contains("already read") || it.contains("same arguments") }, any(), any())
         }
     }
 
@@ -470,7 +472,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -490,7 +492,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -511,7 +513,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project
         )
 
@@ -535,7 +537,7 @@ class SingleAgentSessionTest {
             tools = emptyMap(),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project,
             eventLog = eventLog
         )
@@ -580,7 +582,7 @@ class SingleAgentSessionTest {
             tools = mapOf("read_file" to mockTool),
             toolDefinitions = emptyList(),
             brain = brain,
-            contextManager = contextManager,
+            bridge = bridge,
             project = project,
             eventLog = eventLog
         )
