@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.runtime
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.ChatMessage
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
@@ -489,12 +490,16 @@ class SingleAgentSession(
                     messages = outcome.messages
                 }
             }
-            val toolDefsForCall = if (forceTextOnly) null else if (activeTools.isNotEmpty()) activeToolDefs else null
+            // Plan mode: remove source mutation tools from schema so LLM can't see them
+            val planMode = AgentService.planModeActive.get()
+            val effectiveToolDefs = if (planMode) filterToolDefsForPlanMode(activeToolDefs) else activeToolDefs
+            val effectiveTools = if (planMode) filterToolsForPlanMode(activeTools) else activeTools
+            val toolDefsForCall = if (forceTextOnly) null else if (effectiveTools.isNotEmpty()) effectiveToolDefs else null
 
             // LLM call with retry logic for rate limits and context length exceeded
             val result = callLlmWithRetry(
                 brain, messages, toolDefsForCall, maxOutputTokens,
-                onStreamChunk, activeToolDefs, activeTools, eventLog, onDebugLog, iteration
+                onStreamChunk, effectiveToolDefs, effectiveTools, eventLog, onDebugLog, iteration
             )
 
             // Handle tool reduction if context exceeded
