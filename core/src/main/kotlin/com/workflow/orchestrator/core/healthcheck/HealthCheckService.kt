@@ -30,18 +30,20 @@ class HealthCheckService(private val project: Project) : Disposable {
     )
 
     fun classifyChanges(changedFiles: List<com.intellij.openapi.vfs.VirtualFile>): ChangeClassification {
-        val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
-        var hasProd = false; var hasTest = false; var hasRes = false; var hasBuild = false
+        return com.intellij.openapi.application.ReadAction.compute<ChangeClassification, RuntimeException> {
+            val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
+            var hasProd = false; var hasTest = false; var hasRes = false; var hasBuild = false
 
-        for (file in changedFiles) {
-            when {
-                file.name == "pom.xml" || file.name.endsWith(".gradle.kts") -> hasBuild = true
-                fileIndex.isInTestSourceContent(file) -> hasTest = true
-                fileIndex.isInSourceContent(file) && !fileIndex.isInTestSourceContent(file) -> hasProd = true
-                fileIndex.isInContent(file) && !fileIndex.isInSourceContent(file) -> hasRes = true
+            for (file in changedFiles) {
+                when {
+                    file.name == "pom.xml" || file.name.endsWith(".gradle.kts") -> hasBuild = true
+                    fileIndex.isInTestSourceContent(file) -> hasTest = true
+                    fileIndex.isInSourceContent(file) && !fileIndex.isInTestSourceContent(file) -> hasProd = true
+                    fileIndex.isInContent(file) && !fileIndex.isInSourceContent(file) -> hasRes = true
+                }
             }
+            ChangeClassification(hasProd, hasTest, hasRes, hasBuild)
         }
-        return ChangeClassification(hasProd, hasTest, hasRes, hasBuild)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
