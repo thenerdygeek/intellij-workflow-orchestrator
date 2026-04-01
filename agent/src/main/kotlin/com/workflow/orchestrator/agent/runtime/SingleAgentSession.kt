@@ -166,6 +166,11 @@ class SingleAgentSession(
         fun filterToolDefsForPlanMode(toolDefs: List<ToolDefinition>): List<ToolDefinition> {
             return toolDefs.filter { it.function.name !in PLAN_MODE_BLOCKED_TOOLS }
         }
+
+        /** Check if a tool is blocked by plan mode (plan mode must be active AND tool in blocked set). */
+        fun isPlanModeBlocked(toolName: String): Boolean {
+            return AgentService.planModeActive.get() && toolName in PLAN_MODE_BLOCKED_TOOLS
+        }
     }
 
     /**
@@ -1358,6 +1363,20 @@ class SingleAgentSession(
             return Triple(toolCall, ToolResult(
                 content = "Error: Tool '$toolName' not found. Available tools: ${tools.keys.joinToString(", ")}",
                 summary = "Tool not found: $toolName",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            ), 0L)
+        }
+
+        // Plan mode execution guard — belt-and-suspenders safety net.
+        // Tools should already be filtered from the schema, but if one slips through
+        // (e.g. cached tool call from before mode switch), block it here.
+        if (isPlanModeBlocked(toolName)) {
+            val msg = "Tool '$toolName' is blocked in plan mode. Create and get your plan approved first, then plan mode will deactivate and you can use write tools."
+            eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: blocked by plan mode")
+            return Triple(toolCall, ToolResult(
+                content = msg,
+                summary = "Blocked: $toolName (plan mode)",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             ), 0L)
