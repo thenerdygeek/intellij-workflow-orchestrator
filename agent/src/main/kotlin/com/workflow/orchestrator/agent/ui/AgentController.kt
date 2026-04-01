@@ -312,6 +312,11 @@ class AgentController(
         // Send skills to UI immediately (before any session is created)
         dashboard.updateSkillsList(buildSkillsJson())
 
+        // Wire skill deactivation callback eagerly (uses session field, not parameter)
+        dashboard.setCefSkillCallbacks(
+            onDismiss = { session?.skillManager?.deactivateSkill() }
+        )
+
         dashboard.setOnViewInEditor { viewInEditor() }
 
         dashboard.focusInput()
@@ -1019,10 +1024,6 @@ class AgentController(
                 try { dashboard.hideSkillBanner() } catch (_: Exception) {}
             }
         }
-
-        dashboard.setCefSkillCallbacks(
-            onDismiss = { currentSession.skillManager?.deactivateSkill() }
-        )
 
         val agentSvc = try { AgentService.getInstance(project) } catch (_: Exception) { null }
 
