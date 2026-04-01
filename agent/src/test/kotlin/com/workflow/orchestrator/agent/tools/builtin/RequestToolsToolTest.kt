@@ -99,9 +99,9 @@ class RequestToolsToolTest {
     @Test
     fun `filters disabled tools from activation`() = runTest {
         val prefs = mockk<ToolPreferences>()
-        // Default: enable all tools, then selectively disable the runtime_debug category tools
+        // Default: enable all tools, then selectively disable some debug tools
         every { prefs.isToolEnabled(any()) } returns true
-        every { prefs.isToolEnabled("debug") } returns false
+        every { prefs.isToolEnabled("debug_breakpoints") } returns false
         mockkStatic(ToolPreferences::class)
         every { ToolPreferences.getInstance(project) } returns prefs
 
@@ -115,8 +115,9 @@ class RequestToolsToolTest {
         val result = tool.execute(params, project)
 
         assertFalse(result.isError)
-        assertTrue(queue.contains("runtime"))
-        assertFalse(queue.contains("debug"))
+        assertTrue(queue.contains("runtime_config"))
+        assertTrue(queue.contains("runtime_exec"))
+        assertFalse(queue.contains("debug_breakpoints"))
 
         unmockkStatic(ToolPreferences::class, AgentService::class)
     }

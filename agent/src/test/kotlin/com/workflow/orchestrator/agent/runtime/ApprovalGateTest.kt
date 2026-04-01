@@ -107,7 +107,7 @@ class ApprovalGateTest {
             }
         )
 
-        gate.check("bitbucket", "Create PR for feature/PROJ-123", RiskLevel.HIGH)
+        gate.check("bitbucket_pr", "Create PR for feature/PROJ-123", RiskLevel.HIGH)
 
         assertEquals("Create PR for feature/PROJ-123", receivedDescription)
         assertEquals(RiskLevel.HIGH, receivedRisk)
@@ -339,8 +339,8 @@ class ApprovalGateTest {
     }
 
     @Test
-    fun `classifyRisk - bitbucket create_pr action is MEDIUM risk`() {
-        val risk = ApprovalGate.classifyRisk("bitbucket", mapOf("action" to "create_pr"))
+    fun `classifyRisk - bitbucket_pr create_pr action is MEDIUM risk`() {
+        val risk = ApprovalGate.classifyRisk("bitbucket_pr", mapOf("action" to "create_pr"))
         assertEquals(RiskLevel.MEDIUM, risk)
     }
 
@@ -443,11 +443,11 @@ class ApprovalGateTest {
             onApprovalNeeded = { _, _ -> ApprovalResult.Approved }
         )
 
-        gate.check("bitbucket", "Create PR", RiskLevel.HIGH)
+        gate.check("bitbucket_pr", "Create PR", RiskLevel.HIGH)
 
         assertEquals(1, gate.auditLog.size)
         val entry = gate.auditLog.first()
-        assertEquals("bitbucket", entry.toolName)
+        assertEquals("bitbucket_pr", entry.toolName)
         assertEquals(RiskLevel.HIGH, entry.riskLevel)
         assertSame(ApprovalResult.Approved, entry.result)
         assertNotNull(entry.timestamp)

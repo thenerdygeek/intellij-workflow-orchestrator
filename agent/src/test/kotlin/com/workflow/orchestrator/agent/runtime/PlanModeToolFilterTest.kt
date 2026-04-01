@@ -92,13 +92,28 @@ class PlanModeToolFilterTest {
     // --- PLAN_MODE_BLOCKED_TOOLS does NOT contain runtime or debug ---
 
     @Test
-    fun `PLAN_MODE_BLOCKED_TOOLS does not contain runtime`() {
-        assertFalse("runtime" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
+    fun `PLAN_MODE_BLOCKED_TOOLS does not contain runtime_config`() {
+        assertFalse("runtime_config" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
     }
 
     @Test
-    fun `PLAN_MODE_BLOCKED_TOOLS does not contain debug`() {
-        assertFalse("debug" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
+    fun `PLAN_MODE_BLOCKED_TOOLS does not contain runtime_exec`() {
+        assertFalse("runtime_exec" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
+    }
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_TOOLS does not contain debug_breakpoints`() {
+        assertFalse("debug_breakpoints" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
+    }
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_TOOLS does not contain debug_step`() {
+        assertFalse("debug_step" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
+    }
+
+    @Test
+    fun `PLAN_MODE_BLOCKED_TOOLS does not contain debug_inspect`() {
+        assertFalse("debug_inspect" in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS)
     }
 
     // --- filterToolsForPlanMode correctly filters tool map ---

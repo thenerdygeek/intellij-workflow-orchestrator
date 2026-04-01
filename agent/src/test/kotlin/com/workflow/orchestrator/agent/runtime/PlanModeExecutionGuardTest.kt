@@ -43,10 +43,13 @@ class PlanModeExecutionGuardTest {
     }
 
     @Test
-    fun `isPlanModeBlocked returns false for runtime and debug in plan mode`() {
+    fun `isPlanModeBlocked returns false for runtime and debug tools in plan mode`() {
         AgentService.planModeActive.set(true)
-        assertFalse(SingleAgentSession.isPlanModeBlocked("runtime"))
-        assertFalse(SingleAgentSession.isPlanModeBlocked("debug"))
+        assertFalse(SingleAgentSession.isPlanModeBlocked("runtime_config"))
+        assertFalse(SingleAgentSession.isPlanModeBlocked("runtime_exec"))
+        assertFalse(SingleAgentSession.isPlanModeBlocked("debug_breakpoints"))
+        assertFalse(SingleAgentSession.isPlanModeBlocked("debug_step"))
+        assertFalse(SingleAgentSession.isPlanModeBlocked("debug_inspect"))
     }
 
     // ── Meta-tool action filtering tests ──

@@ -50,7 +50,8 @@ class ToolCategoryRegistryTest {
         assertTrue(alwaysActive.contains("edit_file"))
         // Non-core meta-tools should not be in always-active
         assertFalse(alwaysActive.contains("jira"))
-        assertFalse(alwaysActive.contains("bamboo"))
+        assertFalse(alwaysActive.contains("bamboo_builds"))
+        assertFalse(alwaysActive.contains("bamboo_plans"))
     }
 
     @Test

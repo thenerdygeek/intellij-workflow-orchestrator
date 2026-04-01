@@ -27,8 +27,8 @@ class DynamicToolSelectorTest {
         // IDE
         "run_inspections", "refactor_rename", "find_implementations",
         // Meta-tools (consolidated)
-        "jira", "bamboo", "sonar", "bitbucket",
-        "debug", "git", "spring", "build", "runtime",
+        "jira", "bamboo_builds", "bamboo_plans", "sonar", "bitbucket_pr", "bitbucket_review", "bitbucket_repo",
+        "debug_breakpoints", "debug_step", "debug_inspect", "git", "spring", "build", "runtime_config", "runtime_exec",
         // Meta
         "request_tools"
     ).map { stubTool(it) }
@@ -60,8 +60,8 @@ class DynamicToolSelectorTest {
     fun `build keyword triggers bamboo and runtime meta-tools`() {
         val selected = DynamicToolSelector.selectTools(allTools, "trigger a build")
         val names = selected.map { it.name }.toSet()
-        assertTrue(names.contains("bamboo"))
-        assertTrue(names.contains("runtime"))
+        assertTrue(names.contains("bamboo_builds"))
+        assertTrue(names.contains("runtime_config") || names.contains("runtime_exec"))
     }
 
     @Test
@@ -111,9 +111,9 @@ class DynamicToolSelectorTest {
         val names = selected.map { it.name }.toSet()
         // Should not include integration meta-tools
         assertFalse(names.contains("jira"))
-        assertFalse(names.contains("bamboo"))
+        assertFalse(names.contains("bamboo_builds"))
         assertFalse(names.contains("sonar"))
-        assertFalse(names.contains("bitbucket"))
+        assertFalse(names.contains("bitbucket_pr"))
         // Should include core + request_tools
         assertTrue(names.contains("read_file"))
         assertTrue(names.contains("request_tools"))
@@ -131,7 +131,7 @@ class DynamicToolSelectorTest {
         val selected = DynamicToolSelector.selectTools(allTools, "check jira ticket and build status")
         val names = selected.map { it.name }.toSet()
         assertTrue(names.contains("jira"))
-        assertTrue(names.contains("bamboo"))
+        assertTrue(names.contains("bamboo_builds"))
     }
 
     @Test
@@ -159,7 +159,7 @@ class DynamicToolSelectorTest {
         assertFalse("edit_file" in names, "edit_file should be blocked")
         assertFalse("run_command" in names, "run_command should be blocked")
         assertFalse("jira" in names, "jira meta-tool should be blocked despite keyword match")
-        assertFalse("bamboo" in names, "bamboo meta-tool should be blocked despite keyword match")
+        assertFalse("bamboo_builds" in names, "bamboo_builds meta-tool should be blocked despite keyword match")
     }
 
     @Test

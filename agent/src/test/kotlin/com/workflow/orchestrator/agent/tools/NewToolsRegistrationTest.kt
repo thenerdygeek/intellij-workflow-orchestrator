@@ -71,14 +71,14 @@ class NewToolsRegistrationTest {
     }
 
     @Test
-    fun `bamboo build_status is NONE risk`() {
-        val risk = ApprovalGate.classifyRisk("bamboo", mapOf("action" to "build_status"))
+    fun `bamboo_builds build_status is NONE risk`() {
+        val risk = ApprovalGate.classifyRisk("bamboo_builds", mapOf("action" to "build_status"))
         assertEquals(RiskLevel.NONE, risk)
     }
 
     @Test
-    fun `bamboo trigger_build is MEDIUM risk`() {
-        val risk = ApprovalGate.classifyRisk("bamboo", mapOf("action" to "trigger_build"))
+    fun `bamboo_builds trigger_build is MEDIUM risk`() {
+        val risk = ApprovalGate.classifyRisk("bamboo_builds", mapOf("action" to "trigger_build"))
         assertEquals(RiskLevel.MEDIUM, risk)
     }
 
@@ -98,56 +98,56 @@ class NewToolsRegistrationTest {
     }
 
     @Test
-    fun `runtime run_tests is LOW risk`() {
-        val risk = ApprovalGate.classifyRisk("runtime", mapOf("action" to "run_tests"))
+    fun `runtime_exec run_tests is LOW risk`() {
+        val risk = ApprovalGate.classifyRisk("runtime_exec", mapOf("action" to "run_tests"))
         assertEquals(RiskLevel.LOW, risk)
     }
 
     @Test
-    fun `runtime compile_module is LOW risk`() {
-        val risk = ApprovalGate.classifyRisk("runtime", mapOf("action" to "compile_module"))
+    fun `runtime_exec compile_module is LOW risk`() {
+        val risk = ApprovalGate.classifyRisk("runtime_exec", mapOf("action" to "compile_module"))
         assertEquals(RiskLevel.LOW, risk)
     }
 
     @Test
-    fun `runtime get_run_configurations is NONE risk`() {
-        val risk = ApprovalGate.classifyRisk("runtime", mapOf("action" to "get_run_configurations"))
+    fun `runtime_config get_run_configurations is NONE risk`() {
+        val risk = ApprovalGate.classifyRisk("runtime_config", mapOf("action" to "get_run_configurations"))
         assertEquals(RiskLevel.NONE, risk)
     }
 
     @Test
-    fun `debug get_state is NONE risk`() {
-        val risk = ApprovalGate.classifyRisk("debug", mapOf("action" to "get_state"))
+    fun `debug_step get_state is NONE risk`() {
+        val risk = ApprovalGate.classifyRisk("debug_step", mapOf("action" to "get_state"))
         assertEquals(RiskLevel.NONE, risk)
     }
 
     @Test
-    fun `debug step_over is LOW risk`() {
-        val risk = ApprovalGate.classifyRisk("debug", mapOf("action" to "step_over"))
+    fun `debug_step step_over is LOW risk`() {
+        val risk = ApprovalGate.classifyRisk("debug_step", mapOf("action" to "step_over"))
         assertEquals(RiskLevel.LOW, risk)
     }
 
     @Test
-    fun `debug start_session is MEDIUM risk`() {
-        val risk = ApprovalGate.classifyRisk("debug", mapOf("action" to "start_session"))
+    fun `debug_breakpoints start_session is MEDIUM risk`() {
+        val risk = ApprovalGate.classifyRisk("debug_breakpoints", mapOf("action" to "start_session"))
         assertEquals(RiskLevel.MEDIUM, risk)
     }
 
     @Test
-    fun `bitbucket get_pr_diff is NONE risk`() {
-        val risk = ApprovalGate.classifyRisk("bitbucket", mapOf("action" to "get_pr_diff"))
+    fun `bitbucket_pr get_pr_diff is NONE risk`() {
+        val risk = ApprovalGate.classifyRisk("bitbucket_pr", mapOf("action" to "get_pr_diff"))
         assertEquals(RiskLevel.NONE, risk)
     }
 
     @Test
-    fun `bitbucket add_inline_comment is LOW risk`() {
-        val risk = ApprovalGate.classifyRisk("bitbucket", mapOf("action" to "add_inline_comment"))
+    fun `bitbucket_review add_inline_comment is LOW risk`() {
+        val risk = ApprovalGate.classifyRisk("bitbucket_review", mapOf("action" to "add_inline_comment"))
         assertEquals(RiskLevel.LOW, risk)
     }
 
     @Test
-    fun `bitbucket merge_pr is MEDIUM risk`() {
-        val risk = ApprovalGate.classifyRisk("bitbucket", mapOf("action" to "merge_pr"))
+    fun `bitbucket_pr merge_pr is MEDIUM risk`() {
+        val risk = ApprovalGate.classifyRisk("bitbucket_pr", mapOf("action" to "merge_pr"))
         assertEquals(RiskLevel.MEDIUM, risk)
     }
 
@@ -211,10 +211,13 @@ class NewToolsRegistrationTest {
 
     @Test
     fun `debug keyword selects debug and runtime meta-tools`() {
-        val allTools = listOf("debug", "runtime", "read_file").map { stubTool(it) }
+        val allTools = listOf("debug_breakpoints", "debug_step", "debug_inspect", "runtime_config", "runtime_exec", "read_file").map { stubTool(it) }
         val selected = DynamicToolSelector.selectTools(allTools, "debug the issue")
-        assertTrue(selected.any { it.name == "debug" })
-        assertTrue(selected.any { it.name == "runtime" })
+        assertTrue(selected.any { it.name == "debug_breakpoints" })
+        assertTrue(selected.any { it.name == "debug_step" })
+        assertTrue(selected.any { it.name == "debug_inspect" })
+        assertTrue(selected.any { it.name == "runtime_config" })
+        assertTrue(selected.any { it.name == "runtime_exec" })
     }
 
     private fun stubTool(name: String) = object : AgentTool {

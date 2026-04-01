@@ -57,10 +57,10 @@ class IntegrationToolMetadataTest {
     }
 
     @Test
-    fun `bitbucket_create_pr has correct metadata`() {
+    fun `bitbucket_pr has correct metadata`() {
         val tool = BitbucketPrTool()
-        assertEquals("bitbucket_create_pr", tool.name)
-        assertTrue(tool.parameters.required.containsAll(listOf("title", "description", "from_branch")))
+        assertEquals("bitbucket_pr", tool.name)
+        assertTrue(tool.parameters.required.contains("action"))
         assertTrue(tool.allowedWorkers.contains(WorkerType.TOOLER))
     }
 
