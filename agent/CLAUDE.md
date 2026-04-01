@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 104 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 110 tools.
 
 ## LLM API
 
@@ -81,7 +81,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (62 registered, 9 meta-tools consolidating 138 actions)
+## Tools (68 registered, 15 meta-tools consolidating 140 actions)
 
 | Category | Tools |
 |----------|-------|
@@ -90,14 +90,15 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Process Interaction | send_stdin, kill_process, ask_user_input, send_message_to_parent |
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |
-| Runtime & Debug | **runtime** (9 actions: get_run_configurations, create/modify/delete_run_config, get_running_processes, get_run_output, get_test_results, run_tests, compile_module), **debug** (24 actions: breakpoints, stepping, inspection, hotswap, attach) |
+| Runtime | **runtime_config** (4 actions: get_run_configurations, create/modify/delete_run_config), **runtime_exec** (5 actions: get_running_processes, get_run_output, get_test_results, run_tests, compile_module) |
+| Debug | **debug_breakpoints** (8 actions: add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process), **debug_step** (8 actions: get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop), **debug_inspect** (8 actions: evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame) |
 | VCS | **git** (11 actions: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
 | Spring & Framework | **spring** (15 actions: context, endpoints, bean_graph, config, version_info, profiles, repositories, security_config, scheduled_tasks, event_listeners, boot_endpoints/autoconfig/config_properties/actuator, jpa_entities) |
 | Build Systems | **build** (11 actions: maven_dependencies/properties/plugins/profiles/dependency_tree/effective_pom, gradle_dependencies/tasks/properties, project_modules, module_dependency_graph) |
 | Jira | **jira** (15 actions: get_ticket, search_issues, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work) |
-| CI/CD — Bamboo | **bamboo** (18 actions: build_status, get/trigger/stop/cancel_build, get_build_log, test_results, artifacts, recent_builds, plans, running_builds, variables, rerun_failed, trigger_stage) |
+| CI/CD — Bamboo | **bamboo_builds** (10 actions: build_status, get_build, trigger_build, stop_build, cancel_build, get_build_log, get_test_results, get_artifacts, recent_builds, get_running_builds), **bamboo_plans** (8 actions: get_plans, get_project_plans, search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage) |
 | Quality — SonarQube | **sonar** (11 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications) |
-| Pull Requests — Bitbucket | **bitbucket** (26 actions: create/approve/merge/decline_pr, comments, reviewers, branches, diff, build_statuses, repos) |
+| Pull Requests — Bitbucket | **bitbucket_pr** (14 actions: create/approve/merge/decline_pr, get_pr_detail/commits/activities/changes/diff, check_merge_status, update_pr_title/description, get_my_prs, get_reviewing_prs), **bitbucket_review** (6 actions: add_pr_comment, add_inline_comment, reply_to_comment, add/remove_reviewer, set_reviewer_status), **bitbucket_repo** (6 actions: get_branches, create_branch, search_users, get_file_content, get_build_statuses, list_repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
 | Skills | activate_skill, deactivate_skill |
 | Database | db_list_profiles, db_query, db_schema |
@@ -156,11 +157,11 @@ Two-layer enforcement (Claude Code style + Cline safety net):
    `activeToolDefs`/`activeTools` before each LLM call. The LLM never sees blocked tools.
 2. **Execution guard** — `executeSingleToolRaw()` checks `isPlanModeBlocked()` as a safety net
    for cached tool calls from before mode switch.
-3. **Meta-tool action filtering** — Write actions within `jira`/`bamboo`/`bitbucket`/`git`
+3. **Meta-tool action filtering** — Write actions within `jira`/`bamboo_builds`/`bamboo_plans`/`bitbucket_pr`/`bitbucket_review`/`bitbucket_repo`/`git`
    meta-tools are blocked at execution time via `PLAN_MODE_BLOCKED_ACTIONS`.
 
 **Blocked tools:** edit_file, create_file, format_code, optimize_imports, refactor_rename, rollback_changes
-**Always available:** read_file, search_code, run_command, runtime, debug, think, create_plan, agent, etc.
+**Always available:** read_file, search_code, run_command, runtime_config, runtime_exec, debug_breakpoints, debug_step, debug_inspect, think, create_plan, agent, etc.
 
 **Transition:** `PlanManager.approvePlan()` → `AgentService.planModeActive.set(false)` → tools restored on next LLM call → `dashboard.setPlanMode(false)` unclicks UI button.
 

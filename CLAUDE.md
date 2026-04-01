@@ -33,7 +33,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, Cody pre-review, QA clipboard, time logging |
 | `:git-integration` | Git branch operations and VCS integration |
-| `:agent` | AI coding agent — ReAct loop, 100 tools, delegate_task, plan persistence, JCEF chat UI |
+| `:agent` | AI coding agent — ReAct loop, 110 tools (68 registered, 15 meta-tools), delegate_task, plan persistence, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -123,8 +123,8 @@ If any answer is NO, the AI agent cannot use this feature.
 
 Mechanical enforcement (Claude Code style): when plan mode is active, source code mutation tools
 (`edit_file`, `create_file`, `format_code`, `optimize_imports`, `refactor_rename`, `rollback_changes`) are
-removed from the LLM's tool schema. Meta-tool write actions (`jira.transition`, `bamboo.trigger_build`,
-`bitbucket.create_pr`, etc.) are blocked at execution time. Read, run, debug, runtime, analysis, and
+removed from the LLM's tool schema. Meta-tool write actions (`jira.transition`, `bamboo_builds.trigger_build`,
+`bitbucket_pr.create_pr`, etc.) are blocked at execution time. Read, run, debug, runtime, analysis, and
 planning tools remain available.
 
 - **Activation:** UI Plan button toggle, or LLM calls `enable_plan_mode` tool
