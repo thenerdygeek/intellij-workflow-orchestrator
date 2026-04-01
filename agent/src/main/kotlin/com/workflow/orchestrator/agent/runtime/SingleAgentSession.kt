@@ -316,6 +316,23 @@ class SingleAgentSession(
                 )
             }
 
+            // Drain messages from child workers (findings, status updates, file conflicts)
+            try {
+                val bus = AgentService.getInstance(project).workerMessageBus
+                if (bus != null) {
+                    val childMessages = bus.drain(WorkerMessageBus.ORCHESTRATOR_ID)
+                    if (childMessages.isNotEmpty()) {
+                        val formatted = childMessages.joinToString("\n") { msg ->
+                            "<worker_message from=\"${msg.from}\" type=\"${msg.type.name.lowercase()}\">\n" +
+                            "${msg.content}\n" +
+                            "</worker_message>"
+                        }
+                        bridge.addSystemMessage(formatted)
+                        LOG.info("SingleAgentSession: injected ${childMessages.size} worker messages at iteration $iteration")
+                    }
+                }
+            } catch (_: Exception) { /* service not available in tests */ }
+
             LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
             val iterationStartMs = System.currentTimeMillis()
             metrics.turnCount = iteration
