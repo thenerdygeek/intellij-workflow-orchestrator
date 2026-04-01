@@ -81,13 +81,13 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (61 registered, 9 meta-tools consolidating 138 actions)
+## Tools (62 registered, 9 meta-tools consolidating 138 actions)
 
 | Category | Tools |
 |----------|-------|
 | Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think, request_tools, project_context |
 | Change Tracking | list_changes (always active, read-only), rollback_changes (reverts to LocalHistory checkpoint) |
-| Process Interaction | send_stdin, kill_process, ask_user_input |
+| Process Interaction | send_stdin, kill_process, ask_user_input, send_message_to_parent |
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |
 | Runtime & Debug | **runtime** (9 actions: get_run_configurations, create/modify/delete_run_config, get_running_processes, get_run_output, get_test_results, run_tests, compile_module), **debug** (24 actions: breakpoints, stepping, inspection, hotswap, attach) |
@@ -311,6 +311,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 **Background:** `agent(description="...", prompt="...", run_in_background=true)` — returns immediately with agentId
 **Resume:** `agent(resume="agentId", prompt="continue with authorization module")` — continues with full previous context
 **Kill:** `agent(kill="agentId")` — cancels a running background agent
+**Send:** `agent(send="agentId", message="focus on service layer")` — sends instruction to running worker
 
 **Transcript persistence:** All worker conversations are saved to `~/.workflow-orchestrator/{proj}/agent/sessions/{sessionId}/subagents/agent-{id}.jsonl`. Resume reconstructs the full conversation context from the transcript.
 
@@ -318,6 +319,29 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 
 **Built-in types:** general-purpose, explorer (PSI-powered, read-only, thoroughness: quick/medium/very thorough), coder, reviewer, tooler
 **Custom types:** Any agent defined in `.workflow/agents/{name}.md`
+
+## Subagent Coordination
+
+### File Ownership
+`FileOwnershipRegistry` prevents concurrent workers from editing the same file. Write tools (`edit_file`, `create_file`) acquire ownership before proceeding; `read_file` warns if the file is owned by another worker. Ownership is released when workers complete, fail, or are killed.
+
+- Orchestrator is exempt from ownership checks
+- Whole-file granularity (not line-level)
+- Canonical paths prevent aliasing
+
+### Parent↔Child Messaging
+`WorkerMessageBus` enables bidirectional communication via Kotlin `Channel(capacity=20, DROP_OLDEST)`:
+
+- **Parent → Child:** `agent(send="agentId", message="...")` sends `INSTRUCTION` to worker's inbox
+- **Child → Parent:** `send_message_to_parent(type="finding|status_update", content="...")` sends to orchestrator inbox
+- **System:** `FILE_CONFLICT` messages auto-sent on ownership denial
+- Messages consumed at ReAct loop iteration boundaries (not instant)
+
+### WorkerContext
+Coroutine context element (`AbstractCoroutineContextElement`) carrying `agentId`, `workerType`, `messageBus`, and `fileOwnership` to all tools within a worker's scope. Set via `withContext(WorkerContext(...))` in `WorkerSession.execute()`.
+
+### No Wall-Clock Timeouts
+Workers are bounded by iteration limits (default 10) and context budget (150K), not wall-clock timeouts. This matches Claude Code, Codex CLI, Cursor, and Cline — no enterprise coding agent uses hard timeouts on sub-agents.
 
 ## Custom Subagents
 

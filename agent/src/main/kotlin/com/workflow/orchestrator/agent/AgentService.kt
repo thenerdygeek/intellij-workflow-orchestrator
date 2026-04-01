@@ -86,6 +86,12 @@ class AgentService(
     /** Tracks delegation attempts per retry key to limit retries (max 2 per key). */
     val delegationAttempts = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
+    /** Per-session file ownership registry. Created by ConversationSession, shared across all workers. */
+    @Volatile var fileOwnershipRegistry: com.workflow.orchestrator.agent.runtime.FileOwnershipRegistry? = null
+
+    /** Per-session message bus. Created by ConversationSession, shared across all workers. */
+    @Volatile var workerMessageBus: com.workflow.orchestrator.agent.runtime.WorkerMessageBus? = null
+
     /**
      * Tracks background workers for lifecycle management.
      * Key: agentId, Value: BackgroundWorker with job handle and metadata.
@@ -160,6 +166,8 @@ class AgentService(
         worker.status = WorkerStatus.KILLED
         backgroundWorkers.remove(agentId)
         activeWorkerCount.decrementAndGet()
+        fileOwnershipRegistry?.releaseAll(agentId)
+        workerMessageBus?.closeInbox(agentId)
         return true
     }
 
@@ -231,6 +239,7 @@ class AgentService(
             register(DelegateTaskTool())
             register(ThinkTool())
             register(WorkerCompleteTool())
+            register(SendMessageToParentTool())
             register(CoreMemoryReadTool())
             register(CoreMemoryAppendTool())
             register(CoreMemoryReplaceTool())

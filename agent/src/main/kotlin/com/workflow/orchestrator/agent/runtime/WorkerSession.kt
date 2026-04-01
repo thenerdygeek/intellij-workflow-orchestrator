@@ -11,6 +11,7 @@ import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.ApiResult
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
@@ -42,7 +43,9 @@ class WorkerSession(
     private val parentJob: kotlinx.coroutines.Job? = null,
     private val transcriptStore: WorkerTranscriptStore? = null,
     val agentId: String = WorkerTranscriptStore.generateAgentId(),
-    private val uiCallbacks: AgentService.SubAgentCallbacks? = null
+    private val uiCallbacks: AgentService.SubAgentCallbacks? = null,
+    private val messageBus: WorkerMessageBus? = null,
+    private val fileOwnership: FileOwnershipRegistry? = null
 ) {
     companion object {
         private val LOG = Logger.getInstance(WorkerSession::class.java)
@@ -93,7 +96,14 @@ class WorkerSession(
         bridge.addUserMessage(task)
         recordMessage("user", task)
 
-        return runReactLoop(tools, toolDefinitions, brain, bridge, project, maxOutputTokens)
+        return withContext(WorkerContext(
+            agentId = agentId,
+            workerType = workerType,
+            messageBus = messageBus,
+            fileOwnership = fileOwnership
+        )) {
+            runReactLoop(tools, toolDefinitions, brain, bridge, project, maxOutputTokens)
+        }
     }
 
     /**
@@ -109,7 +119,14 @@ class WorkerSession(
         maxOutputTokens: Int? = null
     ): WorkerResult {
         LOG.info("WorkerSession: resuming agent $agentId from existing context")
-        return runReactLoop(tools, toolDefinitions, brain, bridge, project, maxOutputTokens)
+        return withContext(WorkerContext(
+            agentId = agentId,
+            workerType = WorkerType.ORCHESTRATOR,
+            messageBus = messageBus,
+            fileOwnership = fileOwnership
+        )) {
+            runReactLoop(tools, toolDefinitions, brain, bridge, project, maxOutputTokens)
+        }
     }
 
     /**
@@ -137,6 +154,21 @@ class WorkerSession(
                     artifacts = allArtifacts,
                     isError = true
                 )
+            }
+
+            // Drain pending messages from parent orchestrator
+            if (messageBus != null) {
+                val pending = messageBus.drain(agentId)
+                if (pending.isNotEmpty()) {
+                    val formatted = pending.joinToString("\n") { msg ->
+                        "<parent_message type=\"${msg.type.name.lowercase()}\" timestamp=\"${msg.timestamp}\">\n" +
+                        "${msg.content}\n" +
+                        "</parent_message>"
+                    }
+                    bridge.addSystemMessage(formatted)
+                    recordMessage("system", formatted)
+                    LOG.info("WorkerSession: injected ${pending.size} parent messages at iteration $iteration")
+                }
             }
 
             LOG.info("WorkerSession: iteration $iteration/$maxIterations")

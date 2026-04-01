@@ -437,6 +437,14 @@ class ConversationSession private constructor(
                 agentService.currentContextBridge = bridge
             } catch (_: Exception) {}
 
+            // Initialize subagent coordination infrastructure
+            try {
+                agentService.fileOwnershipRegistry = FileOwnershipRegistry()
+                agentService.workerMessageBus = WorkerMessageBus().also {
+                    it.createInbox(WorkerMessageBus.ORCHESTRATOR_ID)
+                }
+            } catch (_: Exception) {}
+
             return properSession
         }
 
