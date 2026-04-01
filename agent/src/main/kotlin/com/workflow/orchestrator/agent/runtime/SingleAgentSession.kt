@@ -147,6 +147,24 @@ class SingleAgentSession(
             // Read-only meta-tools (all actions are read-only)
             "sonar", "spring", "build"
         )
+
+        /** Source-code mutation tools blocked during plan mode.
+         *  When plan mode is active, these are removed from the LLM's tool schema
+         *  so it cannot attempt file modifications — only read/analyze/plan. */
+        val PLAN_MODE_BLOCKED_TOOLS = setOf(
+            "edit_file", "create_file", "format_code",
+            "optimize_imports", "refactor_rename", "rollback_changes"
+        )
+
+        /** Filter a tool map to remove plan-mode-blocked tools. */
+        fun filterToolsForPlanMode(tools: Map<String, AgentTool>): Map<String, AgentTool> {
+            return tools.filterKeys { it !in PLAN_MODE_BLOCKED_TOOLS }
+        }
+
+        /** Filter tool definitions to remove plan-mode-blocked tools. */
+        fun filterToolDefsForPlanMode(toolDefs: List<ToolDefinition>): List<ToolDefinition> {
+            return toolDefs.filter { it.function.name !in PLAN_MODE_BLOCKED_TOOLS }
+        }
     }
 
     /**
