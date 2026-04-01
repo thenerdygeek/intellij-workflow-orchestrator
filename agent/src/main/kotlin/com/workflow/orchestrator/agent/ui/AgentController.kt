@@ -228,7 +228,12 @@ class AgentController(
 
         // Wire JCEF plan card callbacks (approve, revise)
         dashboard.setCefPlanCallbacks(
-            onApprove = { session?.planManager?.approvePlan() },
+            onApprove = {
+                session?.planManager?.approvePlan()
+                // Auto-exit plan mode: unclick the Plan button
+                planModeEnabled = false
+                SwingUtilities.invokeLater { dashboard.setPlanMode(false) }
+            },
             onRevise = { revisionJson ->
                 try {
                     val json = kotlinx.serialization.json.Json.parseToJsonElement(revisionJson).jsonObject
@@ -404,7 +409,12 @@ class AgentController(
             onPromptSubmitted = { text -> executeTask(text) }
         )
         panel.setCefPlanCallbacks(
-            onApprove = { session?.planManager?.approvePlan() },
+            onApprove = {
+                session?.planManager?.approvePlan()
+                // Auto-exit plan mode: unclick the Plan button
+                planModeEnabled = false
+                SwingUtilities.invokeLater { panel.setPlanMode(false) }
+            },
             onRevise = { revisionJson ->
                 try {
                     val json = kotlinx.serialization.json.Json.parseToJsonElement(revisionJson).jsonObject

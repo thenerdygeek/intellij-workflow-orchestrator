@@ -6,6 +6,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import com.workflow.orchestrator.agent.AgentService
 import java.util.concurrent.CompletableFuture
 
 @Serializable
@@ -110,6 +111,7 @@ class PlanManager {
         } catch (e: TimeoutCancellationException) {
             LOG.info("PlanManager: approval timed out after ${timeoutMs / 1000}s — auto-approving")
             currentPlan?.approved = true
+            AgentService.planModeActive.set(false)
             currentPlan?.let { onPlanAnchorUpdate?.invoke(it) }
             PlanApprovalResult.Approved
         } finally {
@@ -122,6 +124,8 @@ class PlanManager {
 
     fun approvePlan() {
         currentPlan?.approved = true
+        // Auto-exit plan mode: tools are restored on next LLM call
+        AgentService.planModeActive.set(false)
         // Resolve the async deferred if using submitPlanAndWait
         approvalDeferred?.complete(PlanApprovalResult.Approved)
         approvalDeferred = null
