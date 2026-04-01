@@ -292,6 +292,10 @@ class AgentDashboardPanel(
         cefPanel?.onOpenInEditorTab = onOpen
     }
 
+    fun setCefFocusPlanEditorCallback(onFocus: () -> Unit) {
+        cefPanel?.onFocusPlanEditor = onFocus
+    }
+
     // ═══════════════════════════════════════════════════
     //  Delegate API — routes to JCEF or fallback
     // ═══════════════════════════════════════════════════

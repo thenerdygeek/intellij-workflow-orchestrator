@@ -74,6 +74,7 @@ class AgentCefPanel(
     private var validateTicketQuery: JBCefJSQuery? = null
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
+    private var focusPlanEditorQuery: JBCefJSQuery? = null
     private var viewInEditorQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
     private var denyToolCallQuery: JBCefJSQuery? = null
@@ -139,6 +140,9 @@ class AgentCefPanel(
     var onOpenToolsPanel: (() -> Unit)? = null
     /** Callback when user clicks "Open in Tab" on a visualization. Params: type, content JSON payload. */
     var onOpenInEditorTab: ((String) -> Unit)? = null
+
+    /** Callback when user clicks "View Implementation Plan" on the plan card. Focuses the existing plan editor tab. */
+    var onFocusPlanEditor: (() -> Unit)? = null
 
     /** Callback when user clicks "View in Editor" in the top toolbar to open the chat in a full editor tab. */
     var onViewInEditor: (() -> Unit)? = null
@@ -381,6 +385,9 @@ class AgentCefPanel(
         openInEditorTabQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
         }
+        focusPlanEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        }
         viewInEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
         }
@@ -560,6 +567,10 @@ class AgentCefPanel(
                     openInEditorTabQuery?.let { q ->
                         val tabJs = q.inject("payload")
                         js("window._openInEditorTab = function(payload) { $tabJs }")
+                    }
+                    focusPlanEditorQuery?.let { q ->
+                        val focusJs = q.inject("''")
+                        js("window._focusPlanEditor = function() { $focusJs }")
                     }
                     viewInEditorQuery?.let { q ->
                         val vJs = q.inject("''")
@@ -1097,6 +1108,7 @@ class AgentCefPanel(
         validateTicketQuery?.dispose()
         sendMessageWithMentionsQuery?.dispose()
         openInEditorTabQuery?.dispose()
+        focusPlanEditorQuery?.dispose()
         viewInEditorQuery?.dispose()
         approveToolCallQuery?.dispose()
         denyToolCallQuery?.dispose()
@@ -1137,6 +1149,7 @@ class AgentCefPanel(
         validateTicketQuery = null
         sendMessageWithMentionsQuery = null
         openInEditorTabQuery = null
+        focusPlanEditorQuery = null
         viewInEditorQuery = null
         approveToolCallQuery = null
         denyToolCallQuery = null

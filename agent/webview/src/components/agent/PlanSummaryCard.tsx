@@ -1,9 +1,8 @@
 import { useCallback, useState } from 'react';
-import { FileText, Check, RotateCcw, Loader2 } from 'lucide-react';
+import { FileText, Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { PlanCompact } from '@/components/ui/tool-ui/plan';
-import { openInEditorTab } from '@/bridge/jcef-bridge';
 import type { Plan } from '@/bridge/types';
 import { Badge } from '@/components/ui/badge';
 
@@ -28,19 +27,15 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   }));
 
   const handleViewPlan = useCallback(() => {
-    openInEditorTab('plan', JSON.stringify(plan));
-  }, [plan]);
+    // Focus the existing AgentPlanEditor tab (opened automatically when plan was created).
+    // Uses a bridge function that finds and focuses the plan file in the editor.
+    (window as any)._focusPlanEditor?.();
+  }, []);
 
   const handleApprove = useCallback(() => {
     setPending('approve');
     (window as any)._approvePlan?.();
   }, []);
-
-  const handleRevise = useCallback(() => {
-    // Open the plan editor tab so the user can add inline comments.
-    // Previously sent empty string which broke Kotlin JSON parsing.
-    openInEditorTab('plan', JSON.stringify(plan));
-  }, [plan]);
 
   return (
     <Card
@@ -132,19 +127,6 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           ) : (
             <><Check size={14} /> Approve</>
           )}
-        </Button>
-        <Button
-          onClick={handleRevise}
-          className="text-[12px] font-medium"
-          size="sm"
-          variant="outline"
-          disabled={pending !== null}
-          style={{
-            borderColor: 'var(--border)',
-            color: 'var(--fg-secondary)',
-          }}
-        >
-          <RotateCcw size={14} /> Revise in Editor
         </Button>
       </CardFooter>
     </Card>

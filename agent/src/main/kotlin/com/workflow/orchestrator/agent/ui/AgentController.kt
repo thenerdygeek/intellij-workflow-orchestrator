@@ -156,6 +156,16 @@ class AgentController(
             LOG.info("Interactive HTML message: ${json.take(200)}")
         }
 
+        // Wire "View Implementation Plan" button — focuses the existing plan editor tab
+        dashboard.setCefFocusPlanEditorCallback {
+            ApplicationManager.getApplication().invokeLater {
+                val planFile = currentPlanFile
+                if (planFile != null) {
+                    FileEditorManager.getInstance(project).openFile(planFile, true)
+                }
+            }
+        }
+
         // Wire "Open in Editor Tab" button for visualizations (chart, flow, mermaid, diff, etc.)
         dashboard.setCefEditorTabCallback { payload ->
             try {
@@ -495,6 +505,11 @@ class AgentController(
         panel.setCefKillCallback { toolCallId -> ProcessRegistry.kill(toolCallId) }
         panel.setCefKillSubAgentCallback { agentId ->
             try { AgentService.getInstance(project).killWorker(agentId) } catch (_: Exception) {}
+        }
+        panel.setCefFocusPlanEditorCallback {
+            ApplicationManager.getApplication().invokeLater {
+                currentPlanFile?.let { FileEditorManager.getInstance(project).openFile(it, true) }
+            }
         }
         panel.setCefEditorTabCallback { payload ->
             try {
