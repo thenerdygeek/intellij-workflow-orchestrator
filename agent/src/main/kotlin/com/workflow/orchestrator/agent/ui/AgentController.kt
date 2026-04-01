@@ -58,6 +58,12 @@ class AgentController(
     @Volatile private var currentApprovalGate: ApprovalGate? = null
     private val mentionContextBuilder by lazy { MentionContextBuilder(project) }
 
+    // Eager skill discovery — independent of session lifecycle
+    private val skillRegistry = SkillRegistry(
+        project.basePath,
+        System.getProperty("user.home")
+    ).also { it.scan() }
+
     init {
         // Tie coroutine scope to project lifecycle — cancel when project closes
         com.intellij.openapi.util.Disposer.register(project, com.intellij.openapi.Disposable {
@@ -297,6 +303,9 @@ class AgentController(
 
         dashboard.setMentionSearchProvider(MentionSearchProvider(project))
 
+        // Send skills to UI immediately (before any session is created)
+        dashboard.updateSkillsList(buildSkillsJson())
+
         dashboard.setOnViewInEditor { viewInEditor() }
 
         dashboard.focusInput()
@@ -490,7 +499,19 @@ class AgentController(
             try { ToolPreferences.getInstance(project).setToolEnabled(toolName, enabled) } catch (_: Exception) {}
         }
         panel.setMentionSearchProvider(MentionSearchProvider(project))
+        panel.updateSkillsList(buildSkillsJson())
         panel.setOnViewInEditor { viewInEditor() }
+    }
+
+    private fun buildSkillsJson(): String {
+        return kotlinx.serialization.json.buildJsonArray {
+            skillRegistry.getUserInvocableSkills().forEach { skill ->
+                add(kotlinx.serialization.json.buildJsonObject {
+                    put("name", kotlinx.serialization.json.JsonPrimitive(skill.name))
+                    put("description", kotlinx.serialization.json.JsonPrimitive(skill.description))
+                })
+            }
+        }.toString()
     }
 
     private fun viewInEditor() {
@@ -708,7 +729,7 @@ class AgentController(
                 // Create session off EDT (RepoMapGenerator + skill discovery + memory loading are heavy)
                 if (isNewSession) {
                     debugLog("info", "session", "Creating new ConversationSession...")
-                    session = ConversationSession.create(project, agentService, planMode = planModeEnabled)
+                    session = ConversationSession.create(project, agentService, planMode = planModeEnabled, skillRegistry = skillRegistry)
                     wireSessionCallbacks(session!!)
                     debugLog("info", "session", "Session created: ${session!!.sessionId}")
                 }
@@ -979,17 +1000,6 @@ class AgentController(
             }
         }
 
-        // Skills list — serialize to JSON for JCEF input bar
-        val skillsJson = kotlinx.serialization.json.buildJsonArray {
-            currentSession.skillManager?.registry?.getUserInvocableSkills()?.forEach { skill ->
-                add(kotlinx.serialization.json.buildJsonObject {
-                    put("name", kotlinx.serialization.json.JsonPrimitive(skill.name))
-                    put("description", kotlinx.serialization.json.JsonPrimitive(skill.description))
-                })
-            }
-        }.toString()
-        dashboard.updateSkillsList(skillsJson)
-
         dashboard.setCefSkillCallbacks(
             onDismiss = { currentSession.skillManager?.deactivateSkill() }
         )
@@ -1109,7 +1119,7 @@ class AgentController(
             dashboard.appendError("Agent service not available.")
             return
         }
-        val loaded = ConversationSession.load(sessionId, project, agentService)
+        val loaded = ConversationSession.load(sessionId, project, agentService, skillRegistry = skillRegistry)
         if (loaded == null) {
             dashboard.appendError("Failed to load session $sessionId")
             return
