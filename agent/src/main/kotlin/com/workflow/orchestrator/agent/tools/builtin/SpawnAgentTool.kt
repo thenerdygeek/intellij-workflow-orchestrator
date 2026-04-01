@@ -25,24 +25,24 @@ import java.util.Locale
 /**
  * Spawns a subagent to handle a task autonomously, matching Claude Code's Agent tool design.
  *
- * Supports three lifecycle operations beyond basic spawn:
+ * Supports lifecycle operations:
+ * - **Spawn:** Create a new worker with isolated context, filtered tools, and file ownership tracking
  * - **Resume:** Reload a previous agent's transcript and continue execution
  * - **Background:** Launch an agent in a detached coroutine, return immediately
  * - **Kill:** Cancel a running background agent via its agentId
+ * - **Send:** Send an instruction message to a running worker
  *
  * Only available to ORCHESTRATOR-level sessions (the main agent).
  * Workers cannot spawn further agents, preventing nested delegation.
  *
- * The tool spawns a WorkerSession with a fresh EventSourcedContextBridge, filtered tools,
- * and a 5-minute timeout. On failure or timeout, file changes are rolled back
- * via LocalHistory.
+ * Workers are bounded by iteration limits (default 10) and context budget (150K),
+ * not wall-clock timeouts. On failure, file changes are rolled back via LocalHistory.
  */
 class SpawnAgentTool : AgentTool {
 
     companion object {
         private val LOG = Logger.getInstance(SpawnAgentTool::class.java)
         private const val MAX_CONCURRENT_WORKERS = 5
-        private const val WORKER_TIMEOUT_MS = 300_000L // 5 minutes
         private const val DEFAULT_MAX_ITERATIONS = 10
 
         data class BuiltInAgent(
@@ -130,6 +130,14 @@ class SpawnAgentTool : AgentTool {
             "kill" to ParameterProperty(
                 type = "string",
                 description = "Agent ID to kill. Cancels a running background agent."
+            ),
+            "send" to ParameterProperty(
+                type = "string",
+                description = "Agent ID to send a message to. Use with 'message' parameter to send an instruction to a running worker."
+            ),
+            "message" to ParameterProperty(
+                type = "string",
+                description = "Instruction message to send to a running agent. Requires 'send' parameter."
             )
         ),
         required = listOf("description", "prompt")
@@ -155,6 +163,32 @@ class SpawnAgentTool : AgentTool {
                 ToolResult("Agent '$killId' has been killed.", "Killed agent $killId", 20)
             } else {
                 errorResult("Agent '$killId' not found or not running. Active: ${agentService.listBackgroundWorkers().joinToString { it.agentId }}")
+            }
+        }
+
+        // --- 0b. Send check (no description/prompt required) ---
+        val sendTo = params["send"]?.jsonPrimitive?.contentOrNull
+        if (sendTo != null) {
+            val sendMessage = params["message"]?.jsonPrimitive?.contentOrNull
+            if (sendMessage.isNullOrBlank()) {
+                return errorResult("Error: 'message' parameter required when using 'send'")
+            }
+            val bus = agentService.workerMessageBus
+                ?: return errorResult("Error: message bus not available. No active session.")
+            val sent = bus.send(WorkerMessage(
+                from = WorkerMessageBus.ORCHESTRATOR_ID,
+                to = sendTo,
+                type = MessageType.INSTRUCTION,
+                content = sendMessage
+            ))
+            return if (sent) {
+                ToolResult(
+                    "Message sent to agent '$sendTo'. It will receive this at its next iteration.",
+                    "Sent instruction to $sendTo",
+                    30
+                )
+            } else {
+                errorResult("Agent '$sendTo' not found or inbox closed. Active: ${agentService.listBackgroundWorkers().joinToString { it.agentId }}")
             }
         }
 
@@ -289,28 +323,30 @@ class SpawnAgentTool : AgentTool {
             val toolMap = filteredTools.associateBy { it.name }
             val toolDefinitions = filteredTools.map { it.toToolDefinition() }
 
-            // Execute with timeout
+            // Create worker inbox for message reception
+            agentService.workerMessageBus?.createInbox(agentId)
+
             val parentJob = currentCoroutineContext()[Job]
             val workerSession = WorkerSession(
                 maxIterations = maxIter,
                 parentJob = parentJob,
                 transcriptStore = transcriptStore,
                 agentId = agentId,
-                uiCallbacks = uiCallbacks
+                uiCallbacks = uiCallbacks,
+                messageBus = agentService.workerMessageBus,
+                fileOwnership = agentService.fileOwnershipRegistry
             )
-            val workerResult: WorkerResult = withTimeout(WORKER_TIMEOUT_MS) {
-                workerSession.execute(
-                    workerType = workerType,
-                    systemPrompt = systemPrompt,
-                    task = prompt,
-                    tools = toolMap,
-                    toolDefinitions = toolDefinitions,
-                    brain = agentService.brain,
-                    bridge = contextManager,
-                    project = project,
-                    maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
-                )
-            }
+            val workerResult: WorkerResult = workerSession.execute(
+                workerType = workerType,
+                systemPrompt = systemPrompt,
+                task = prompt,
+                tools = toolMap,
+                toolDefinitions = toolDefinitions,
+                brain = agentService.brain,
+                bridge = contextManager,
+                project = project,
+                maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
+            )
 
             // Track tokens
             agentService.totalSessionTokens.addAndGet(workerResult.tokensUsed.toLong())
@@ -374,22 +410,6 @@ class SpawnAgentTool : AgentTool {
                 artifacts = workerResult.artifacts
             )
 
-        } catch (e: TimeoutCancellationException) {
-            // Timeout — rollback
-            rollbackManager.rollbackToCheckpoint(checkpointId)
-            eventLog.log(AgentEventType.WORKER_TIMED_OUT, "timeout=${WORKER_TIMEOUT_MS}ms")
-            eventLog.log(AgentEventType.WORKER_ROLLED_BACK, "checkpoint=$checkpointId")
-            transcriptStore?.updateStatus(agentId, "failed", summary = "Timed out after ${WORKER_TIMEOUT_MS / 1000}s")
-            uiCallbacks?.onComplete?.invoke(agentId, "Timed out after ${WORKER_TIMEOUT_MS / 1000}s", 0, true)
-
-            return ToolResult(
-                content = "Error: Agent ($resolvedType) timed out after ${WORKER_TIMEOUT_MS / 1000} seconds. " +
-                    "File changes have been rolled back. Consider breaking the task into smaller pieces.\n" +
-                    "Agent ID: $agentId (can be resumed with agent(resume='$agentId', prompt='...'))",
-                summary = "Agent '$description' timed out after ${WORKER_TIMEOUT_MS / 1000}s",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
         } catch (e: Exception) {
             // Unexpected error — rollback
             LOG.warn("SpawnAgentTool: agent execution failed", e)
@@ -409,6 +429,8 @@ class SpawnAgentTool : AgentTool {
             )
         } finally {
             agentService.activeWorkerCount.decrementAndGet()
+            agentService.fileOwnershipRegistry?.releaseAll(agentId)
+            agentService.workerMessageBus?.closeInbox(agentId)
         }
     }
 
@@ -464,26 +486,27 @@ class SpawnAgentTool : AgentTool {
         uiCallbacks?.onSpawn?.invoke(agentId, resumeLabel)
 
         // Resume execution
+        agentService.workerMessageBus?.createInbox(agentId)
         val workerSession = WorkerSession(
             maxIterations = agentDef?.maxTurns ?: DEFAULT_MAX_ITERATIONS,
             parentJob = currentCoroutineContext()[Job],
             transcriptStore = transcriptStore,
             agentId = agentId,
-            uiCallbacks = uiCallbacks
+            uiCallbacks = uiCallbacks,
+            messageBus = agentService.workerMessageBus,
+            fileOwnership = agentService.fileOwnershipRegistry
         )
 
         agentService.activeWorkerCount.incrementAndGet()
         try {
-            val result = withTimeout(WORKER_TIMEOUT_MS) {
-                workerSession.executeFromContext(
-                    tools = toolMap,
-                    toolDefinitions = toolDefinitions,
-                    brain = agentService.brain,
-                    bridge = contextManager,
-                    project = project,
-                    maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
-                )
-            }
+            val result = workerSession.executeFromContext(
+                tools = toolMap,
+                toolDefinitions = toolDefinitions,
+                brain = agentService.brain,
+                bridge = contextManager,
+                project = project,
+                maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
+            )
 
             transcriptStore.updateStatus(agentId, if (result.isError) "failed" else "completed",
                 summary = result.summary, tokensUsed = result.tokensUsed)
@@ -508,6 +531,8 @@ class SpawnAgentTool : AgentTool {
             return errorResult("Resumed agent '$agentId' failed: ${e.message}")
         } finally {
             agentService.activeWorkerCount.decrementAndGet()
+            agentService.fileOwnershipRegistry?.releaseAll(agentId)
+            agentService.workerMessageBus?.closeInbox(agentId)
         }
     }
 
@@ -559,26 +584,27 @@ class SpawnAgentTool : AgentTool {
 
                 val systemPrompt = resolveSystemPrompt(agentDef, subagentType, agentService, project)
 
+                agentService.workerMessageBus?.createInbox(agentId)
                 val workerSession = WorkerSession(
                     maxIterations = maxIter,
                     transcriptStore = transcriptStore,
                     agentId = agentId,
-                    uiCallbacks = uiCallbacks
+                    uiCallbacks = uiCallbacks,
+                    messageBus = agentService.workerMessageBus,
+                    fileOwnership = agentService.fileOwnershipRegistry
                 )
 
-                val result = withTimeout(WORKER_TIMEOUT_MS) {
-                    workerSession.execute(
-                        workerType = workerType,
-                        systemPrompt = systemPrompt,
-                        task = prompt,
-                        tools = toolMap,
-                        toolDefinitions = toolDefinitions,
-                        brain = agentService.brain,
-                        bridge = contextManager,
-                        project = project,
-                        maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
-                    )
-                }
+                val result = workerSession.execute(
+                    workerType = workerType,
+                    systemPrompt = systemPrompt,
+                    task = prompt,
+                    tools = toolMap,
+                    toolDefinitions = toolDefinitions,
+                    brain = agentService.brain,
+                    bridge = contextManager,
+                    project = project,
+                    maxOutputTokens = AgentSettings.getInstance(project).state.maxOutputTokens
+                )
 
                 // Update metadata
                 transcriptStore?.updateStatus(agentId, if (result.isError) "failed" else "completed",
@@ -615,6 +641,8 @@ class SpawnAgentTool : AgentTool {
                 )
             } finally {
                 agentService.activeWorkerCount.decrementAndGet()
+                agentService.fileOwnershipRegistry?.releaseAll(agentId)
+                agentService.workerMessageBus?.closeInbox(agentId)
                 agentService.backgroundWorkers.remove(agentId)
             }
         }
