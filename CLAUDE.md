@@ -119,6 +119,19 @@ If any answer is NO, the AI agent cannot use this feature.
 - **EventBus** — SharedFlow for cross-module events (see `WorkflowEvent.kt` for full list)
 - **CredentialStore** — PasswordSafe wrapper for all secrets
 
+## Plan Mode
+
+Mechanical enforcement (Claude Code style): when plan mode is active, source code mutation tools
+(`edit_file`, `create_file`, `format_code`, `optimize_imports`, `refactor_rename`, `rollback_changes`) are
+removed from the LLM's tool schema. Meta-tool write actions (`jira.transition`, `bamboo.trigger_build`,
+`bitbucket.create_pr`, etc.) are blocked at execution time. Read, run, debug, runtime, analysis, and
+planning tools remain available.
+
+- **Activation:** UI Plan button toggle, or LLM calls `enable_plan_mode` tool
+- **Deactivation:** User approves plan (auto), user unclicks Plan button (manual), new chat, or cancel
+- **State:** `AgentService.planModeActive` (AtomicBoolean) — single source of truth
+- **Enforcement:** Two layers — schema filtering (tools removed before LLM call) + execution guard (safety net)
+
 ## Threading
 
 - API calls: `suspend fun` on `Dispatchers.IO`

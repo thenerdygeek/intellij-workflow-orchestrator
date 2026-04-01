@@ -148,6 +148,22 @@ The pipeline is: **EventStore → View → CondenserPipeline → ConversationMem
 - **File re-read detection**: Warns when reading a file already in context; cleared on edit
 - **Context overflow**: Compress + REPLAY the failed request (OpenCode pattern)
 
+## Plan Mode Enforcement
+
+Two-layer enforcement (Claude Code style + Cline safety net):
+
+1. **Schema filtering** — `SingleAgentSession.execute()` removes `PLAN_MODE_BLOCKED_TOOLS` from
+   `activeToolDefs`/`activeTools` before each LLM call. The LLM never sees blocked tools.
+2. **Execution guard** — `executeSingleToolRaw()` checks `isPlanModeBlocked()` as a safety net
+   for cached tool calls from before mode switch.
+3. **Meta-tool action filtering** — Write actions within `jira`/`bamboo`/`bitbucket`/`git`
+   meta-tools are blocked at execution time via `PLAN_MODE_BLOCKED_ACTIONS`.
+
+**Blocked tools:** edit_file, create_file, format_code, optimize_imports, refactor_rename, rollback_changes
+**Always available:** read_file, search_code, run_command, runtime, debug, think, create_plan, agent, etc.
+
+**Transition:** `PlanManager.approvePlan()` → `AgentService.planModeActive.set(false)` → tools restored on next LLM call → `dashboard.setPlanMode(false)` unclicks UI button.
+
 ## Error Handling
 
 - **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429 AND 5xx
