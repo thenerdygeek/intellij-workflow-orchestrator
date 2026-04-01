@@ -293,6 +293,11 @@ class AgentService(
     }
 
     companion object {
+        /** Whether plan mode is currently active — single source of truth.
+         *  Read by SingleAgentSession to filter tools before LLM calls.
+         *  Set by EnablePlanModeTool, AgentController (UI toggle), and PlanManager (on approval). */
+        val planModeActive = java.util.concurrent.atomic.AtomicBoolean(false)
+
         fun getInstance(project: Project): AgentService {
             return project.service<AgentService>()
         }
