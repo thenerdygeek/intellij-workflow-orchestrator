@@ -203,6 +203,56 @@ data class SonarNewCodePeriodDto(
     val inherited: Boolean = false
 )
 
+// --- Security Hotspots ---
+
+@Serializable
+data class SonarHotspotSearchResult(
+    val paging: SonarPagingDto = SonarPagingDto(),
+    val hotspots: List<SonarHotspotDto> = emptyList()
+)
+
+@Serializable
+data class SonarHotspotDto(
+    val key: String,
+    val message: String,
+    val component: String,
+    val securityCategory: String = "",
+    val vulnerabilityProbability: String = "",  // HIGH, MEDIUM, LOW
+    val status: String = "TO_REVIEW",          // TO_REVIEW, REVIEWED
+    val resolution: String? = null,            // FIXED, SAFE, ACKNOWLEDGED
+    val line: Int? = null,
+    val creationDate: String? = null,
+    val updateDate: String? = null,
+    val author: String? = null
+)
+
+// --- Duplications ---
+
+@Serializable
+data class SonarDuplicationsResponse(
+    val duplications: List<SonarDuplicationDto> = emptyList(),
+    val files: Map<String, SonarDuplicationFileDto> = emptyMap()
+)
+
+@Serializable
+data class SonarDuplicationDto(
+    val blocks: List<SonarDuplicationBlockDto> = emptyList()
+)
+
+@Serializable
+data class SonarDuplicationBlockDto(
+    @SerialName("_ref") val ref: String = "",
+    val from: Int = 0,
+    val size: Int = 0
+)
+
+@Serializable
+data class SonarDuplicationFileDto(
+    val key: String = "",
+    val name: String = "",
+    val projectName: String = ""
+)
+
 // --- Source Lines (per-line coverage) ---
 
 @Serializable

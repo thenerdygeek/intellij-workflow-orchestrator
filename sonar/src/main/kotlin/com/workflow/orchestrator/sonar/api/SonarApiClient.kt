@@ -200,6 +200,33 @@ class SonarApiClient(
         return get<SonarNewCodePeriodDto>(params)
     }
 
+    suspend fun getSecurityHotspots(
+        projectKey: String,
+        branch: String? = null
+    ): ApiResult<SonarHotspotSearchResult> {
+        log.info("[Sonar:API] GET /api/hotspots/search for project '$projectKey' branch='${branch ?: "default"}'")
+        val params = buildString {
+            append("/api/hotspots/search?project=")
+            append(URLEncoder.encode(projectKey, "UTF-8"))
+            append("&ps=500")
+            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+        }
+        return get<SonarHotspotSearchResult>(params)
+    }
+
+    suspend fun getDuplications(
+        componentKey: String,
+        branch: String? = null
+    ): ApiResult<SonarDuplicationsResponse> {
+        log.info("[Sonar:API] GET /api/duplications/show for component '$componentKey' branch='${branch ?: "default"}'")
+        val params = buildString {
+            append("/api/duplications/show?key=")
+            append(URLEncoder.encode(componentKey, "UTF-8"))
+            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+        }
+        return get<SonarDuplicationsResponse>(params)
+    }
+
     suspend fun getSourceLines(
         componentKey: String,
         from: Int? = null,

@@ -142,6 +142,54 @@ data class SourceLineData(
 }
 
 /**
+ * Security hotspot from SonarQube's dedicated hotspot API.
+ */
+@Serializable
+data class SecurityHotspotData(
+    val key: String,
+    val message: String,
+    val component: String,
+    val line: Int?,
+    val securityCategory: String,
+    val probability: String,     // HIGH, MEDIUM, LOW
+    val status: String,          // TO_REVIEW, REVIEWED
+    val resolution: String?      // FIXED, SAFE, ACKNOWLEDGED
+) {
+    override fun toString(): String {
+        val file = component.substringAfterLast(':').substringAfterLast('/')
+        val loc = if (line != null) "$file:$line" else file
+        return "[$probability] $loc — ${message.take(120)} ($status)"
+    }
+}
+
+/**
+ * Code duplication details showing which blocks are duplicated across files.
+ */
+@Serializable
+data class DuplicationData(
+    val blocks: List<DuplicationBlock>
+) {
+    override fun toString(): String = buildString {
+        append("${blocks.size} duplication group(s)")
+        blocks.forEachIndexed { i, block ->
+            append("\n  Group ${i + 1}: ${block.fragments.joinToString(" ↔ ") { "${it.file}:${it.startLine}-${it.endLine}" }}")
+        }
+    }.trimEnd()
+}
+
+@Serializable
+data class DuplicationBlock(
+    val fragments: List<DuplicationFragment>
+)
+
+@Serializable
+data class DuplicationFragment(
+    val file: String,
+    val startLine: Int,
+    val endLine: Int
+)
+
+/**
  * Paged issue results with total count for pagination.
  */
 @Serializable

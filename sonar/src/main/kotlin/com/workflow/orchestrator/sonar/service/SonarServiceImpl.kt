@@ -14,6 +14,10 @@ import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
 import com.workflow.orchestrator.core.model.sonar.SonarBranchData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
+import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
+import com.workflow.orchestrator.core.model.sonar.DuplicationData
+import com.workflow.orchestrator.core.model.sonar.DuplicationBlock
+import com.workflow.orchestrator.core.model.sonar.DuplicationFragment
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
@@ -646,6 +650,116 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     summary = "Error fetching issues for $projectKey: ${result.message}",
                     isError = true,
                     hint = "Check SonarQube connection and project key."
+                )
+            }
+        }
+    }
+
+    override suspend fun getSecurityHotspots(
+        projectKey: String,
+        branch: String?,
+        repoName: String?
+    ): ToolResult<List<SecurityHotspotData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "SonarQube not configured. Cannot fetch security hotspots.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getSecurityHotspots(projectKey, branch)) {
+            is ApiResult.Success -> {
+                val hotspots = result.data.hotspots.map { dto ->
+                    SecurityHotspotData(
+                        key = dto.key,
+                        message = dto.message,
+                        component = dto.component,
+                        line = dto.line,
+                        securityCategory = dto.securityCategory,
+                        probability = dto.vulnerabilityProbability,
+                        status = dto.status,
+                        resolution = dto.resolution
+                    )
+                }
+
+                val byProb = hotspots.groupBy { it.probability }
+                val summary = buildString {
+                    append("${hotspots.size} security hotspot(s) for $projectKey")
+                    if (branch != null) append(" on branch '$branch'")
+                    if (byProb.isNotEmpty()) {
+                        append("\n")
+                        val counts = listOf("HIGH", "MEDIUM", "LOW")
+                            .mapNotNull { p -> byProb[p]?.let { "$p: ${it.size}" } }
+                        append(counts.joinToString(" | "))
+                    }
+                    if (hotspots.isNotEmpty()) {
+                        append("\n\n")
+                        hotspots.take(20).forEach { append("$it\n") }
+                        if (hotspots.size > 20) append("... and ${hotspots.size - 20} more")
+                    }
+                }
+
+                ToolResult.success(data = hotspots, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch security hotspots for $projectKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching security hotspots for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and project key. Security hotspots require Developer Edition+."
+                )
+            }
+        }
+    }
+
+    override suspend fun getDuplications(
+        componentKey: String,
+        branch: String?,
+        repoName: String?
+    ): ToolResult<DuplicationData> {
+        val api = client ?: return ToolResult(
+            data = DuplicationData(emptyList()),
+            summary = "SonarQube not configured. Cannot fetch duplications.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getDuplications(componentKey, branch)) {
+            is ApiResult.Success -> {
+                val fileMap = result.data.files
+                val blocks = result.data.duplications.map { dup ->
+                    DuplicationBlock(
+                        fragments = dup.blocks.map { block ->
+                            val fileInfo = fileMap[block.ref]
+                            DuplicationFragment(
+                                file = fileInfo?.name ?: fileInfo?.key ?: block.ref,
+                                startLine = block.from,
+                                endLine = block.from + block.size - 1
+                            )
+                        }
+                    )
+                }
+
+                val data = DuplicationData(blocks)
+                val summary = buildString {
+                    append("${blocks.size} duplication group(s) in $componentKey")
+                    if (branch != null) append(" on branch '$branch'")
+                    if (blocks.isNotEmpty()) {
+                        append("\n\n")
+                        append(data.toString())
+                    }
+                }
+
+                ToolResult.success(data = data, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch duplications for $componentKey: ${result.message}")
+                ToolResult(
+                    data = DuplicationData(emptyList()),
+                    summary = "Error fetching duplications for $componentKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and component key."
                 )
             }
         }

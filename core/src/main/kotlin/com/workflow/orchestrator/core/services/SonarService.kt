@@ -9,6 +9,8 @@ import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData
 import com.workflow.orchestrator.core.model.sonar.SonarBranchData
 import com.workflow.orchestrator.core.model.sonar.SonarIssueData
 import com.workflow.orchestrator.core.model.sonar.SonarProjectData
+import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
+import com.workflow.orchestrator.core.model.sonar.DuplicationData
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
 
 /**
@@ -45,6 +47,12 @@ interface SonarService {
 
     /** Get source lines with per-line coverage status, optionally for a specific branch (internal API). */
     suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null, branch: String? = null, repoName: String? = null): ToolResult<List<SourceLineData>>
+
+    /** Get security hotspots (separate from issues — requires dedicated API), optionally for a specific branch. */
+    suspend fun getSecurityHotspots(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<List<SecurityHotspotData>>
+
+    /** Get code duplication details for a file — duplicate block locations across files. */
+    suspend fun getDuplications(componentKey: String, branch: String? = null, repoName: String? = null): ToolResult<DuplicationData>
 
     /** Get issues with paging metadata for pagination support, optionally for a specific branch. */
     suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null): ToolResult<PagedIssuesData>

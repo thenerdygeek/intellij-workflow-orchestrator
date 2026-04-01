@@ -24,8 +24,8 @@ class SonarTool : AgentTool {
     override val name = "sonar"
 
     override val description =
-        "SonarQube code quality integration — issues, quality gate, coverage, measures, branches, source lines.\n" +
-        "Actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged"
+        "SonarQube code quality integration — issues, quality gate, coverage, measures, branches, source lines, security hotspots, duplications.\n" +
+        "Actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications"
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -34,7 +34,8 @@ class SonarTool : AgentTool {
                 description = "Operation to perform",
                 enumValues = listOf(
                     "issues", "quality_gate", "coverage", "search_projects",
-                    "analysis_tasks", "branches", "project_measures", "source_lines", "issues_paged"
+                    "analysis_tasks", "branches", "project_measures", "source_lines", "issues_paged",
+                    "security_hotspots", "duplications"
                 )
             ),
             "project_key" to ParameterProperty(
@@ -43,7 +44,7 @@ class SonarTool : AgentTool {
             ),
             "component_key" to ParameterProperty(
                 type = "string",
-                description = "SonarQube component key e.g. 'com.example:my-service:src/main/java/MyClass.java' — for source_lines"
+                description = "SonarQube component key e.g. 'com.example:my-service:src/main/java/MyClass.java' — for source_lines, duplications"
             ),
             "query" to ParameterProperty(
                 type = "string",
@@ -55,7 +56,7 @@ class SonarTool : AgentTool {
             ),
             "branch" to ParameterProperty(
                 type = "string",
-                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged. Use project_context tool to discover current branch."
+                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch."
             ),
             "from" to ParameterProperty(
                 type = "string",
@@ -162,6 +163,20 @@ class SonarTool : AgentTool {
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getIssuesPaged(projectKey, page, pageSize, branch = branch, repoName = repoName).toAgentToolResult()
+            }
+
+            "security_hotspots" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val branch = params["branch"]?.jsonPrimitive?.content
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getSecurityHotspots(projectKey, branch = branch, repoName = repoName).toAgentToolResult()
+            }
+
+            "duplications" -> {
+                val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return missingParam("component_key")
+                val branch = params["branch"]?.jsonPrimitive?.content
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getDuplications(componentKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             else -> ToolResult(
