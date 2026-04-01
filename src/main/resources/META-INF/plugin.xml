@@ -177,10 +177,6 @@
             <category>Workflow Orchestrator</category>
         </intentionAction>
 
-        <!-- Cody Commit Message -->
-        <vcsCheckinHandlerFactory
-            implementation="com.workflow.orchestrator.cody.vcs.CodyCommitMessageHandlerFactory"/>
-
         <!-- Automation Module Project Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.automation.service.QueueService"/>

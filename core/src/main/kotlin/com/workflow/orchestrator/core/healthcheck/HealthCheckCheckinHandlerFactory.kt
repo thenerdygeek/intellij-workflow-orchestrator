@@ -7,6 +7,8 @@ import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.changes.CommitContext
 import com.intellij.openapi.vcs.checkin.CheckinHandler
 import com.intellij.openapi.vcs.checkin.VcsCheckinHandlerFactory
+import com.intellij.openapi.vcs.ui.RefreshableOnComponent
+import com.intellij.ui.components.JBCheckBox
 import com.workflow.orchestrator.core.healthcheck.checks.HealthCheckContext
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -14,6 +16,9 @@ import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.GitVcs
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.runBlocking
+import java.awt.BorderLayout
+import javax.swing.JComponent
+import javax.swing.JPanel
 
 class HealthCheckCheckinHandlerFactory : VcsCheckinHandlerFactory(GitVcs.getKey()) {
 
@@ -29,12 +34,32 @@ class HealthCheckCheckinHandler(
     private val panel: CheckinProjectPanel
 ) : CheckinHandler() {
 
+    private var runHealthChecks = false  // Default: disabled
+
+    override fun getBeforeCheckinConfigurationPanel(): RefreshableOnComponent {
+        val checkbox = JBCheckBox("Run health checks before commit", false)
+        runHealthChecks = false
+        checkbox.addActionListener { runHealthChecks = checkbox.isSelected }
+
+        val panel = JPanel(BorderLayout())
+        panel.add(checkbox, BorderLayout.WEST)
+
+        return object : RefreshableOnComponent {
+            override fun getComponent(): JComponent = panel
+            override fun refresh() {}
+            override fun saveState() {}
+            override fun restoreState() {}
+        }
+    }
+
     override fun beforeCheckin(): ReturnResult {
+        if (!runHealthChecks) return ReturnResult.COMMIT
+
         val project = panel.project
         val settings = PluginSettings.getInstance(project).state
         val mode = settings.healthCheckBlockingMode
 
-        if (!settings.healthCheckEnabled || mode == "off") return ReturnResult.COMMIT
+        if (mode == "off") return ReturnResult.COMMIT
 
         val resolver = RepoContextResolver.getInstance(project)
         val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()

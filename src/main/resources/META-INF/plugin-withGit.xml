@@ -4,9 +4,6 @@
 -->
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Commit message auto-prefix (requires GitVcs.getKey()) -->
-        <vcsCheckinHandlerFactory
-            implementation="com.workflow.orchestrator.jira.listeners.CommitMessagePrefixHandlerFactory"/>
     </extensions>
 
     <projectListeners>

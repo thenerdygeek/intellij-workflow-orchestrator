@@ -97,8 +97,6 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         if (minutes <= 0) return
 
         val settings = PluginSettings.getInstance(project)
-        if (!settings.state.autoLogTimeOnCommit) return
-
         val ticketId = settings.state.activeTicketId
         if (ticketId.isNullOrBlank()) return
 

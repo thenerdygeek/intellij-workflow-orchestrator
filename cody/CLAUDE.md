@@ -10,5 +10,4 @@ Only rewired UI actions remain:
 - `CodyIntentionAction` -- Alt+Enter quick fix, redirects to agent chat via `AgentChatRedirect`
 - `CodyTestGenerator` -- "Generate Test" gutter action, redirects to agent chat via `AgentChatRedirect`
 - `GenerateCommitMessageAction` -- VCS toolbar action, uses `LlmBrainFactory` for commit messages
-- `CodyCommitMessageHandlerFactory` -- VCS checkin handler, uses `LlmBrainFactory` for commit messages
 - `PsiContextEnricher` -- PSI-based code intelligence used by commit message generation
