@@ -289,14 +289,16 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
         val FORCED_PLANNING_RULES = """
             <planning mode="required">
-            - You MUST call create_plan before making any code changes or executing any write tools.
-            - First, analyze the task by reading relevant files using read_file, search_code, file_structure.
+            - Plan mode is ACTIVE. Source code mutation tools (edit_file, create_file, format_code,
+              optimize_imports, refactor_rename) are NOT available until you create a plan and the user approves it.
+            - First, analyze the task by reading relevant files using read_file, search_code, file_structure,
+              diagnostics, run_command (for tests/builds), runtime, and debug tools.
             - Then produce a comprehensive implementation plan using create_plan with:
               1. `markdown` — full plan as a rich markdown document (## Goal, ## Steps, ### Step N, code blocks)
               2. `steps` — JSON array for status tracking
               3. `title` — short display title
-            - Do NOT call edit_file, run_command, or any write operations until the plan is approved by the user.
-            - After plan approval, execute step by step, calling update_plan_step to track progress.
+            - Once the user approves the plan, plan mode will automatically deactivate and all tools
+              will become available. Then execute step by step, calling update_plan_step to track progress.
             - If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
         """.trimIndent()
