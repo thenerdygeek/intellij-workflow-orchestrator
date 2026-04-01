@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.runtime.WorkerContext
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -99,10 +100,20 @@ class ReadFileTool : AgentTool {
         val truncated = if (offset + limit < lines.size) "\n... (${lines.size - offset - limit} more lines)" else ""
         val fullContent = content + truncated
 
+        // Warn if file is being edited by another worker (stale read risk)
+        val workerCtx = kotlin.coroutines.coroutineContext[WorkerContext]
+        val ownerWarning = if (workerCtx != null && !workerCtx.isOrchestrator && workerCtx.agentId != null) {
+            val registry = workerCtx.fileOwnership
+            if (registry != null && registry.isOwnedByOther(resolvedPath, workerCtx.agentId!!)) {
+                val owner = registry.getOwner(resolvedPath)
+                "⚠ This file is being actively edited by agent '${owner?.agentId}'. Contents may change.\n\n"
+            } else ""
+        } else ""
+
         return ToolResult(
-            content = fullContent,
+            content = ownerWarning + fullContent,
             summary = "Read ${selectedLines.size} lines from $rawPath (${lines.size} total)",
-            tokenEstimate = TokenEstimator.estimate(fullContent)
+            tokenEstimate = TokenEstimator.estimate(ownerWarning + fullContent)
         )
     }
 

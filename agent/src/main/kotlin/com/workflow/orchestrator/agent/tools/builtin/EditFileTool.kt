@@ -12,7 +12,7 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
@@ -56,6 +56,31 @@ class EditFileTool : AgentTool {
         val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
         if (pathError != null) return pathError
         val resolvedPath = path!!
+
+        // File ownership check — workers cannot edit files owned by other workers
+        val workerCtx = kotlin.coroutines.coroutineContext[WorkerContext]
+        if (workerCtx != null && !workerCtx.isOrchestrator) {
+            val registry = workerCtx.fileOwnership
+            if (registry != null) {
+                val claim = registry.claim(resolvedPath, workerCtx.agentId!!, workerCtx.workerType)
+                if (claim.result == ClaimResult.DENIED) {
+                    workerCtx.messageBus?.send(WorkerMessage(
+                        from = workerCtx.agentId!!,
+                        to = WorkerMessageBus.ORCHESTRATOR_ID,
+                        type = MessageType.FILE_CONFLICT,
+                        content = "Edit denied for '$resolvedPath' — locked by agent '${claim.ownerAgentId}'",
+                        metadata = mapOf("file" to resolvedPath, "owner" to (claim.ownerAgentId ?: ""))
+                    ))
+                    return ToolResult(
+                        "Error: File '$rawPath' is locked by agent '${claim.ownerAgentId}'. " +
+                            "Wait for it to complete or ask the orchestrator to coordinate.",
+                        "File locked by ${claim.ownerAgentId}",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
+            }
+        }
 
         // Try VFS-backed path first (undo support, sees unsaved changes), fall back to java.io.File
         val vFile = findVirtualFile(resolvedPath)
