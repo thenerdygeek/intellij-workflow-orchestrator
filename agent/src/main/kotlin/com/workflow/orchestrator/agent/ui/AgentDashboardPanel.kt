@@ -179,6 +179,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.updatePlanStep(stepId, status) }
     }
 
+    fun setPlanCommentCount(count: Int) {
+        cefPanel?.setPlanCommentCount(count)
+        mirrors.forEach { it.setPlanCommentCount(count) }
+    }
+
     // ── Question wizard delegation ──
 
     fun showQuestions(questionsJson: String) {
@@ -294,6 +299,10 @@ class AgentDashboardPanel(
 
     fun setCefFocusPlanEditorCallback(onFocus: () -> Unit) {
         cefPanel?.onFocusPlanEditor = onFocus
+    }
+
+    fun setCefRevisePlanFromEditorCallback(onRevise: () -> Unit) {
+        cefPanel?.onRevisePlanFromEditor = onRevise
     }
 
     // ═══════════════════════════════════════════════════

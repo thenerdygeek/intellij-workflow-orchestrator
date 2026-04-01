@@ -75,6 +75,7 @@ class AgentCefPanel(
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
     private var focusPlanEditorQuery: JBCefJSQuery? = null
+    private var revisePlanFromEditorQuery: JBCefJSQuery? = null
     private var viewInEditorQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
     private var denyToolCallQuery: JBCefJSQuery? = null
@@ -143,6 +144,9 @@ class AgentCefPanel(
 
     /** Callback when user clicks "View Implementation Plan" on the plan card. Focuses the existing plan editor tab. */
     var onFocusPlanEditor: (() -> Unit)? = null
+
+    /** Callback when user clicks "Revise" on the chat plan card. Triggers revise on the plan editor tab. */
+    var onRevisePlanFromEditor: (() -> Unit)? = null
 
     /** Callback when user clicks "View in Editor" in the top toolbar to open the chat in a full editor tab. */
     var onViewInEditor: (() -> Unit)? = null
@@ -388,6 +392,9 @@ class AgentCefPanel(
         focusPlanEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
         }
+        revisePlanFromEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onRevisePlanFromEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        }
         viewInEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
         }
@@ -572,6 +579,10 @@ class AgentCefPanel(
                         val focusJs = q.inject("''")
                         js("window._focusPlanEditor = function() { $focusJs }")
                     }
+                    revisePlanFromEditorQuery?.let { q ->
+                        val revJs = q.inject("''")
+                        js("window._revisePlanFromEditor = function() { $revJs }")
+                    }
                     viewInEditorQuery?.let { q ->
                         val vJs = q.inject("''")
                         js("window._viewInEditor = function() { $vJs }")
@@ -728,6 +739,10 @@ class AgentCefPanel(
 
     fun updatePlanStep(stepId: String, status: String) {
         callJs("updatePlanStep(${jsonStr(stepId)}, ${jsonStr(status)})")
+    }
+
+    fun setPlanCommentCount(count: Int) {
+        callJs("setPlanCommentCount($count)")
     }
 
     // ── Question wizard rendering ──
@@ -1109,6 +1124,7 @@ class AgentCefPanel(
         sendMessageWithMentionsQuery?.dispose()
         openInEditorTabQuery?.dispose()
         focusPlanEditorQuery?.dispose()
+        revisePlanFromEditorQuery?.dispose()
         viewInEditorQuery?.dispose()
         approveToolCallQuery?.dispose()
         denyToolCallQuery?.dispose()
@@ -1150,6 +1166,7 @@ class AgentCefPanel(
         sendMessageWithMentionsQuery = null
         openInEditorTabQuery = null
         focusPlanEditorQuery = null
+        revisePlanFromEditorQuery = null
         viewInEditorQuery = null
         approveToolCallQuery = null
         denyToolCallQuery = null

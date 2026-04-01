@@ -69,6 +69,7 @@ interface ChatState {
   activeStream: { text: string; isStreaming: boolean } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
+  planCommentCount: number;
   questions: Question[] | null;
   activeQuestionIndex: number;
   questionSummary: any | null;
@@ -116,6 +117,7 @@ interface ChatState {
   setPlan(plan: Plan): void;
   updatePlanStep(stepId: string, status: string): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
+  setPlanCommentCount(count: number): void;
   showQuestions(questions: Question[]): void;
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
@@ -174,6 +176,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeStream: null,
   activeToolCalls: new Map(),
   plan: null,
+  planCommentCount: 0,
   questions: null,
   activeQuestionIndex: 0,
   questionSummary: null,
@@ -422,7 +425,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setPlan(plan: Plan) {
-    set({ plan });
+    set({ plan, planCommentCount: 0 });
+  },
+
+  setPlanCommentCount(count: number) {
+    set({ planCommentCount: count });
   },
 
   updatePlanStep(stepId: string, status: string) {

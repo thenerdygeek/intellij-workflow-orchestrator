@@ -61,10 +61,16 @@ let pendingPlanData: AgentPlanData | null = null;
 };
 
 let updateStepStatusInternal: ((stepId: string, status: string) => void) | null = null;
+let triggerReviseInternal: (() => void) | null = null;
 
 // Synchronize pending state from chat card or Kotlin
 (window as any).setPlanPending = (state: 'approve' | 'revise' | null) => {
   setPendingExternal?.(state);
+};
+
+// Called from Kotlin (AgentPlanEditor.triggerRevise()) when user clicks Revise on the chat card
+(window as any).triggerReviseFromHost = () => {
+  triggerReviseInternal?.();
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -182,6 +188,7 @@ function PlanEditor() {
       setPlanDataExternal = null;
       updateStepStatusInternal = null;
       setPendingExternal = null;
+      triggerReviseInternal = null;
     };
   }, []);
 
@@ -194,14 +201,20 @@ function PlanEditor() {
 
   const handleAddComment = useCallback((lineNumber: number, text: string, lineContent: string) => {
     setComments(prev => {
-      // Replace existing comment on same line
       const filtered = prev.filter(c => c.lineNumber !== lineNumber);
-      return [...filtered, { lineNumber, text, lineContent }];
+      const updated = [...filtered, { lineNumber, text, lineContent }];
+      // Notify Kotlin → chat panel about comment count change
+      (window as any)._onCommentCountChanged?.(updated.length);
+      return updated;
     });
   }, []);
 
   const handleRemoveComment = useCallback((lineNumber: number) => {
-    setComments(prev => prev.filter(c => c.lineNumber !== lineNumber));
+    setComments(prev => {
+      const updated = prev.filter(c => c.lineNumber !== lineNumber);
+      (window as any)._onCommentCountChanged?.(updated.length);
+      return updated;
+    });
   }, []);
 
   const handleProceed = useCallback(() => {
@@ -212,7 +225,6 @@ function PlanEditor() {
   const handleRevise = useCallback(() => {
     if (!planData) return;
     setPending('revise');
-    // Send v2 format: { comments: [...], markdown: "..." }
     const payload = JSON.stringify({
       comments: comments.map(c => ({
         line: c.lineNumber,
@@ -223,6 +235,12 @@ function PlanEditor() {
     });
     (window as any)._revisePlan?.(payload);
   }, [comments, planData, markdown]);
+
+  // Wire triggerRevise from host (chat card's Revise button)
+  useEffect(() => {
+    triggerReviseInternal = () => { handleRevise(); };
+    return () => { triggerReviseInternal = null; };
+  }, [handleRevise]);
 
   const hasComments = comments.length > 0;
   const isApproved = planData?.approved === true;

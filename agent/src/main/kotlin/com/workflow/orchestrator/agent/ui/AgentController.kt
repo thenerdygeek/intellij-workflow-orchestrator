@@ -166,6 +166,18 @@ class AgentController(
             }
         }
 
+        // Wire "Revise" on chat card — triggers revise on the plan editor tab
+        dashboard.setCefRevisePlanFromEditorCallback {
+            ApplicationManager.getApplication().invokeLater {
+                currentPlanFile?.let { file ->
+                    FileEditorManager.getInstance(project)
+                        .getEditors(file)
+                        .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
+                        .firstOrNull()?.triggerRevise()
+                }
+            }
+        }
+
         // Wire "Open in Editor Tab" button for visualizations (chart, flow, mermaid, diff, etc.)
         dashboard.setCefEditorTabCallback { payload ->
             try {
@@ -509,6 +521,16 @@ class AgentController(
         panel.setCefFocusPlanEditorCallback {
             ApplicationManager.getApplication().invokeLater {
                 currentPlanFile?.let { FileEditorManager.getInstance(project).openFile(it, true) }
+            }
+        }
+        panel.setCefRevisePlanFromEditorCallback {
+            ApplicationManager.getApplication().invokeLater {
+                currentPlanFile?.let { file ->
+                    FileEditorManager.getInstance(project)
+                        .getEditors(file)
+                        .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
+                        .firstOrNull()?.triggerRevise()
+                }
             }
         }
         panel.setCefEditorTabCallback { payload ->
@@ -932,6 +954,15 @@ class AgentController(
                 val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
                 FileEditorManager.getInstance(project).openFile(virtualFile, false)
                 currentPlanFile = virtualFile
+                // Wire comment count sync: plan editor → chat panel
+                FileEditorManager.getInstance(project)
+                    .getEditors(virtualFile)
+                    .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
+                    .forEach { editor ->
+                        editor.onCommentCountChanged = { count ->
+                            dashboard.setPlanCommentCount(count)
+                        }
+                    }
             }
         }
         currentSession.planManager.onStepUpdated = { stepId, status ->

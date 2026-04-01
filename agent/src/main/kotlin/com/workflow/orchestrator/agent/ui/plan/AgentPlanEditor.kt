@@ -37,6 +37,10 @@ class AgentPlanEditor(
     private val approveQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val reviseQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val fileClickQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
+    private val commentCountQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
+
+    /** Callback to update comment count on the chat panel's plan summary card. */
+    var onCommentCountChanged: ((Int) -> Unit)? = null
 
     init {
         approveQuery.addHandler { _ ->
@@ -73,6 +77,14 @@ class AgentPlanEditor(
                 com.intellij.openapi.diagnostic.Logger.getInstance(AgentPlanEditor::class.java)
                     .warn("AgentPlanEditor: failed to parse revision payload", e)
             }
+            null
+        }
+
+        commentCountQuery.addHandler { countStr ->
+            try {
+                val count = countStr.toIntOrNull() ?: 0
+                onCommentCountChanged?.invoke(count)
+            } catch (_: Exception) {}
             null
         }
 
@@ -160,6 +172,7 @@ class AgentPlanEditor(
             window._approvePlan = function() { ${approveQuery.inject("'approved'")} };
             window._revisePlan = function(json) { ${reviseQuery.inject("json")} };
             window._openFile = function(path) { ${fileClickQuery.inject("path")} };
+            window._onCommentCountChanged = function(count) { ${commentCountQuery.inject("'' + count")} };
             if (typeof applyTheme === 'function') applyTheme({$themeObj});
             renderPlan('$escaped');
         """.trimIndent()
@@ -171,6 +184,13 @@ class AgentPlanEditor(
         val safeStatus = status.replace("'", "\\'")
         browser.cefBrowser.executeJavaScript(
             "updatePlanStep('$safeId', '$safeStatus');", "", 0
+        )
+    }
+
+    /** Programmatically trigger the Revise action in the plan editor. Called from chat card's Revise button. */
+    fun triggerRevise() {
+        browser.cefBrowser.executeJavaScript(
+            "if (typeof triggerReviseFromHost === 'function') triggerReviseFromHost();", "", 0
         )
     }
 
@@ -188,6 +208,7 @@ class AgentPlanEditor(
         approveQuery.dispose()
         reviseQuery.dispose()
         fileClickQuery.dispose()
+        commentCountQuery.dispose()
         browser.dispose()
     }
 }

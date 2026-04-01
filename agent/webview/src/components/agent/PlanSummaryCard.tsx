@@ -1,10 +1,11 @@
 import { useCallback, useState } from 'react';
-import { FileText, Check, Loader2 } from 'lucide-react';
+import { FileText, Check, RotateCcw, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { PlanCompact } from '@/components/ui/tool-ui/plan';
 import type { Plan } from '@/bridge/types';
 import { Badge } from '@/components/ui/badge';
+import { useChatStore } from '@/stores/chatStore';
 
 interface PlanSummaryCardProps {
   plan: Plan;
@@ -14,9 +15,11 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   if (plan.approved) return null;
 
   const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
+  const planCommentCount = useChatStore(s => s.planCommentCount);
 
   const stepCount = plan.steps.length;
   const pendingCount = plan.steps.filter(s => s.status === 'pending').length;
+  const hasComments = planCommentCount > 0;
 
   // Map our PlanStep to tool-ui PlanTodo (all pending for unapproved plans)
   const todos = plan.steps.map(step => ({
@@ -27,14 +30,18 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   }));
 
   const handleViewPlan = useCallback(() => {
-    // Focus the existing AgentPlanEditor tab (opened automatically when plan was created).
-    // Uses a bridge function that finds and focuses the plan file in the editor.
     (window as any)._focusPlanEditor?.();
   }, []);
 
   const handleApprove = useCallback(() => {
     setPending('approve');
     (window as any)._approvePlan?.();
+  }, []);
+
+  const handleRevise = useCallback(() => {
+    setPending('revise');
+    // Trigger revision via the plan editor tab's bridge — the editor holds the comments
+    (window as any)._revisePlanFromEditor?.();
   }, []);
 
   return (
@@ -78,11 +85,11 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           variant="outline"
           className="text-[10px] shrink-0"
           style={{
-            borderColor: 'var(--accent)',
-            color: 'var(--accent)',
+            borderColor: hasComments ? 'var(--warning, #eab308)' : 'var(--accent)',
+            color: hasComments ? 'var(--warning, #eab308)' : 'var(--accent)',
           }}
         >
-          Awaiting Approval
+          {hasComments ? `${planCommentCount} comment${planCommentCount !== 1 ? 's' : ''}` : 'Awaiting Approval'}
         </Badge>
       </div>
 
@@ -116,18 +123,38 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           <FileText size={14} />
           View Implementation Plan
         </Button>
-        <Button
-          onClick={handleApprove}
-          className="glow-btn text-[12px] font-medium"
-          size="sm"
-          disabled={pending !== null}
-        >
-          {pending === 'approve' ? (
-            <><Loader2 size={14} className="animate-spin" /> Approving…</>
-          ) : (
-            <><Check size={14} /> Approve</>
-          )}
-        </Button>
+        {hasComments ? (
+          <Button
+            onClick={handleRevise}
+            className="text-[12px] font-medium"
+            size="sm"
+            variant="outline"
+            disabled={pending !== null}
+            style={{
+              borderColor: 'var(--warning, #eab308)',
+              color: 'var(--warning, #eab308)',
+            }}
+          >
+            {pending === 'revise' ? (
+              <><Loader2 size={14} className="animate-spin" /> Revising…</>
+            ) : (
+              <><RotateCcw size={14} /> Revise ({planCommentCount})</>
+            )}
+          </Button>
+        ) : (
+          <Button
+            onClick={handleApprove}
+            className="glow-btn text-[12px] font-medium"
+            size="sm"
+            disabled={pending !== null}
+          >
+            {pending === 'approve' ? (
+              <><Loader2 size={14} className="animate-spin" /> Approving…</>
+            ) : (
+              <><Check size={14} /> Approve</>
+            )}
+          </Button>
+        )}
       </CardFooter>
     </Card>
   );

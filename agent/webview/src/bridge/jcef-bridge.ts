@@ -90,6 +90,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const value = (state === 'approve' || state === 'revise') ? state : null;
     stores?.getChatStore().setPlanPending(value);
   },
+  setPlanCommentCount(count: number) {
+    stores?.getChatStore().setPlanCommentCount(count);
+  },
   showQuestions(questionsJson: string) {
     const questions = JSON.parse(questionsJson);
     stores?.getChatStore().showQuestions(questions);
