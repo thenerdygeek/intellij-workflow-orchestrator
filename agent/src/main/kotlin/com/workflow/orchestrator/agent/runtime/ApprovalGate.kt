@@ -233,8 +233,8 @@ class ApprovalGate(
             // Subagent spawning (runs in isolated context)
             "agent", "delegate_task",
 
-            // Change tracking read-only
-            "list_changes"
+            // Change tracking + project context (read-only)
+            "list_changes", "project_context"
         )
 
         /**
