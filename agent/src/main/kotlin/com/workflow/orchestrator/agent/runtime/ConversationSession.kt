@@ -237,7 +237,7 @@ class ConversationSession private constructor(
          * Create a new conversation session with fresh context.
          * Called on first message or "New Chat".
          */
-        fun create(project: Project, agentService: AgentService, planMode: Boolean = false): ConversationSession {
+        fun create(project: Project, agentService: AgentService, planMode: Boolean = false, skillRegistry: SkillRegistry? = null): ConversationSession {
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
             val maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
 
@@ -277,11 +277,10 @@ class ConversationSession private constructor(
                 } else null
             } catch (_: Exception) { null }
 
-            // Discover skills
-            val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
-            skillRegistry.scan()
-            val skillManager = SkillManager(skillRegistry, project.basePath)
-            val skillDescriptions = skillRegistry.buildDescriptionIndex(maxInputTokens)
+            // Discover skills — use provided registry or create one
+            val actualSkillRegistry = skillRegistry ?: SkillRegistry(project.basePath, System.getProperty("user.home")).also { it.scan() }
+            val skillManager = SkillManager(actualSkillRegistry, project.basePath)
+            val skillDescriptions = actualSkillRegistry.buildDescriptionIndex(maxInputTokens)
 
             // Discover custom subagent definitions
             val agentDefRegistry = AgentDefinitionRegistry(project).also { it.scan() }
@@ -450,23 +449,24 @@ class ConversationSession private constructor(
          *
          * Returns null if metadata or messages are missing/corrupt.
          */
-        fun load(sessionId: String, project: Project, agentService: AgentService): ConversationSession? {
+        fun load(sessionId: String, project: Project, agentService: AgentService, skillRegistry: SkillRegistry? = null): ConversationSession? {
             val store = ConversationStore(sessionId, projectBasePath = project.basePath)
             val metadata = store.loadMetadata() ?: return null
             val messages = store.loadMessages()
             if (messages.isEmpty()) return null
 
             // Create a fresh session to get brain, tools, system prompt
-            val freshSession = create(project, agentService)
+            val freshSession = create(project, agentService, skillRegistry = skillRegistry)
 
             // Override identity and timestamps with persisted values
             val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
             val maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
 
-            // Rebuild SkillRegistry and SkillManager just like create() does
-            val skillRegistry = SkillRegistry(project.basePath, System.getProperty("user.home"))
-            skillRegistry.scan()
-            val skillManager = SkillManager(skillRegistry, project.basePath)
+            // Use the SkillManager from the fresh session (which already used our registry)
+            val actualSkillManager = freshSession.skillManager ?: SkillManager(
+                SkillRegistry(project.basePath, System.getProperty("user.home")).also { it.scan() },
+                project.basePath
+            )
 
             // Rebuild AgentDefinitionRegistry (create() does this but load() was missing it)
             val agentDefRegistry = AgentDefinitionRegistry(project).also { it.scan() }
@@ -523,7 +523,7 @@ class ConversationSession private constructor(
                 lastMessageAt = metadata.lastMessageAt,
                 messageCount = metadata.messageCount,
                 status = metadata.status,
-                skillManager = skillManager,
+                skillManager = actualSkillManager,
                 projectBasePath = project.basePath
             )
 
