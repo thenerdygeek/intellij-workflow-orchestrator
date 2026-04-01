@@ -72,8 +72,8 @@ object ToolCategoryRegistry {
             displayName = "CI/CD — Bamboo",
             color = "#EF4444",
             badgePrefix = "CI",
-            description = "Bamboo meta-tool: build status, trigger/stop/cancel builds, logs, test results, plans, variables",
-            tools = listOf("bamboo")
+            description = "Bamboo tools: bamboo_builds (status, trigger, stop, cancel, logs, tests, artifacts) + bamboo_plans (list, search, variables, branches)",
+            tools = listOf("bamboo_builds", "bamboo_plans")
         ),
         ToolCategory(
             id = "sonar",
@@ -88,16 +88,16 @@ object ToolCategoryRegistry {
             displayName = "Runtime & Debug",
             color = "#E91E63",
             badgePrefix = "DBG",
-            description = "Runtime meta-tool (run configs, processes, tests, compile) + Debug meta-tool (breakpoints, stepping, inspection, hotswap)",
-            tools = listOf("runtime", "debug")
+            description = "Runtime tools (run configs, processes, tests, compile) + Debug tools (breakpoints, stepping, inspection, hotswap)",
+            tools = listOf("runtime_config", "runtime_exec", "debug_breakpoints", "debug_step", "debug_inspect")
         ),
         ToolCategory(
             id = "bitbucket",
             displayName = "Pull Requests — Bitbucket",
             color = "#3B82F6",
             badgePrefix = "PR",
-            description = "Bitbucket meta-tool: PRs, reviews, merges, comments, branches, diffs, build statuses",
-            tools = listOf("bitbucket")
+            description = "Bitbucket tools: bitbucket_pr (create, list, merge, decline) + bitbucket_review (comments, reviewers, approve) + bitbucket_repo (branches, files, repos)",
+            tools = listOf("bitbucket_pr", "bitbucket_review", "bitbucket_repo")
         ),
         ToolCategory(
             id = "planning",

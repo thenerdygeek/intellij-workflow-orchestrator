@@ -173,7 +173,7 @@ class SingleAgentSession(
         }
 
         /** Meta-tools that contain mixed read/write actions. */
-        private val META_TOOLS_WITH_WRITE_ACTIONS = setOf("jira", "bamboo", "bitbucket", "git")
+        private val META_TOOLS_WITH_WRITE_ACTIONS = setOf("jira", "bamboo_builds", "bamboo_plans", "bitbucket_pr", "bitbucket_review", "bitbucket_repo", "git")
 
         /** Meta-tool actions blocked during plan mode. The meta-tool itself stays
          *  available (so read actions work), but write actions are blocked. */
@@ -1208,7 +1208,7 @@ class SingleAgentSession(
                 }
             }
             // Backpressure error on test/build failures
-            if (toolResult.isError && toolName in setOf("run_command", "runtime")) {
+            if (toolResult.isError && toolName in setOf("run_command", "runtime_config", "runtime_exec")) {
                 val bpError = backpressureGate.createBackpressureError(toolName, toolResult.content)
                 bridge.addMessage(bpError)
             }
@@ -1364,7 +1364,7 @@ class SingleAgentSession(
             "search_code", "glob_files", "find_references", "find_definition" -> {
                 factsStore.record(Fact(FactType.CODE_PATTERN, filePath, summary.take(200), iteration))
             }
-            "run_command", "runtime" -> {
+            "run_command", "runtime_config", "runtime_exec" -> {
                 factsStore.record(Fact(FactType.COMMAND_RESULT, null, summary.take(200), iteration))
             }
             "diagnostics", "run_inspections" -> {
@@ -1530,7 +1530,7 @@ class SingleAgentSession(
             }
 
             // Set tool call ID for streaming output + process kill support
-            if (toolName == "run_command" || toolName == "runtime") {
+            if (toolName == "run_command" || toolName == "runtime_config" || toolName == "runtime_exec") {
                 RunCommandTool.currentToolCallId.set(toolCall.id)
             }
             val toolResult = try {

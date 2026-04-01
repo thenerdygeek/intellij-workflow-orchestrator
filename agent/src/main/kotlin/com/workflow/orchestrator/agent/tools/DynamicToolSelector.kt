@@ -53,13 +53,13 @@ object DynamicToolSelector {
 
     private val JIRA_TOOL_NAMES = setOf("jira")
 
-    private val BAMBOO_TOOL_NAMES = setOf("bamboo")
+    private val BAMBOO_TOOL_NAMES = setOf("bamboo_builds", "bamboo_plans")
 
     private val SONAR_TOOL_NAMES = setOf("sonar")
 
-    private val BITBUCKET_TOOL_NAMES = setOf("bitbucket")
+    private val BITBUCKET_TOOL_NAMES = setOf("bitbucket_pr", "bitbucket_review", "bitbucket_repo")
 
-    private val DEBUG_TOOL_NAMES = setOf("debug")
+    private val DEBUG_TOOL_NAMES = setOf("debug_breakpoints", "debug_step", "debug_inspect")
 
     private val VCS_TOOL_NAMES = setOf("git")
 
@@ -73,7 +73,7 @@ object DynamicToolSelector {
 
     private val GRADLE_TOOL_NAMES = setOf("build")
 
-    private val RUNTIME_TOOL_NAMES = setOf("runtime")
+    private val RUNTIME_TOOL_NAMES = setOf("runtime_config", "runtime_exec")
 
     private val IDE_TOOL_NAMES = setOf(
         "run_inspections", "refactor_rename", "list_quickfixes",
@@ -103,7 +103,7 @@ object DynamicToolSelector {
             setOf("bamboo", "build", "ci", "pipeline", "deploy", "artifact", "stage",
                 "compile", "test results", "build log", "stop build", "cancel build",
                 "running build", "plan", "rerun", "variable"),
-            BAMBOO_TOOL_NAMES + setOf("runtime", "semantic_diagnostics")
+            BAMBOO_TOOL_NAMES + setOf("runtime_config", "runtime_exec", "semantic_diagnostics")
         ),
         ToolGroup(
             "sonar",
@@ -125,7 +125,7 @@ object DynamicToolSelector {
                 "step out", "evaluate", "stack trace", "stack frame", "watch",
                 "console", "log output", "drop frame", "hot swap", "hotswap",
                 "memory leak", "heap", "attach", "remote debug"),
-            DEBUG_TOOL_NAMES + setOf("runtime")
+            DEBUG_TOOL_NAMES + setOf("runtime_config", "runtime_exec")
         ),
         ToolGroup(
             "vcs",

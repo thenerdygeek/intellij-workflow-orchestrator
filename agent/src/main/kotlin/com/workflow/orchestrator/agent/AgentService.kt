@@ -213,14 +213,17 @@ class AgentService(
             // Jira integration — single meta-tool replacing 15 individual jira_* tools
             register(JiraTool())
 
-            // Bamboo integration — single meta-tool replacing 18 individual bamboo_* tools
-            register(BambooTool())
+            // Bamboo integration — split into builds (status/trigger/stop/logs/tests) and plans (list/search/variables/branches)
+            register(BambooBuildsTool())
+            register(BambooPlansTool())
 
             // SonarQube integration — single meta-tool replacing 9 individual sonar_* tools
             register(SonarTool())
 
-            // Bitbucket integration — single meta-tool replacing 26 individual bitbucket_* tools
-            register(BitbucketTool())
+            // Bitbucket integration — split into PR management, code review, and repo operations
+            register(BitbucketPrTool())
+            register(BitbucketReviewTool())
+            register(BitbucketRepoTool())
 
             // Database tools (read-only agent access to local/docker/QA/sandbox databases)
             register(com.workflow.orchestrator.agent.tools.database.DbListProfilesTool())
@@ -262,10 +265,13 @@ class AgentService(
             register(RefactorRenameTool())
             register(ListQuickFixesTool())
 
-            // Runtime integration — single meta-tool replacing 9 run config/process/test/compile tools
-            register(RuntimeTool())
-            // Debug integration — single meta-tool replacing 24 individual debug tools
-            register(DebugTool(debugController))
+            // Runtime integration — split into config (run configurations) and exec (processes/tests/compile)
+            register(RuntimeConfigTool())
+            register(RuntimeExecTool())
+            // Debug integration — split into breakpoints, stepping, and inspection
+            register(DebugBreakpointsTool(debugController))
+            register(DebugStepTool(debugController))
+            register(DebugInspectTool(debugController))
 
             // VCS integration — single meta-tool replacing 11 individual git/vcs tools
             register(GitTool())

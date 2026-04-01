@@ -258,44 +258,48 @@ class ApprovalGate(
 
             // Meta-tools with mixed read/write actions — classified at MEDIUM
             // (action-aware classification in classifyRisk upgrades read-only actions to NONE)
-            "jira", "bamboo", "bitbucket", "git", "runtime", "debug"
+            "jira", "bamboo_builds", "bamboo_plans", "bitbucket_pr", "bitbucket_review", "bitbucket_repo", "git", "runtime_config", "runtime_exec", "debug_breakpoints", "debug_step", "debug_inspect"
         )
 
         // Everything else is HIGH: run_command, etc.
 
         /** Meta-tools that contain both read-only and write actions. */
-        private val META_TOOLS_WITH_MIXED_RISK = setOf("jira", "bamboo", "bitbucket", "git", "runtime", "debug")
+        private val META_TOOLS_WITH_MIXED_RISK = setOf("jira", "bamboo_builds", "bamboo_plans", "bitbucket_pr", "bitbucket_review", "bitbucket_repo", "git", "runtime_config", "runtime_exec", "debug_breakpoints", "debug_step", "debug_inspect")
 
         /** Read-only actions per meta-tool — auto-approved (NONE risk). */
         private val META_TOOL_READ_ONLY_ACTIONS = mapOf(
             "jira" to setOf("get_ticket", "get_transitions", "get_comments", "get_worklogs",
                 "get_sprints", "get_linked_prs", "get_boards", "get_sprint_issues",
                 "get_board_issues", "search_issues", "get_dev_branches"),
-            "bamboo" to setOf("build_status", "get_build", "get_build_log", "get_test_results",
-                "recent_builds", "get_plans", "get_project_plans", "search_plans",
-                "get_plan_branches", "get_running_builds", "get_build_variables",
-                "get_plan_variables", "get_artifacts"),
-            "bitbucket" to setOf("get_pr_commits", "get_file_content", "get_branches",
-                "get_my_prs", "get_reviewing_prs", "get_pr_detail", "get_pr_activities",
-                "get_pr_changes", "get_pr_diff", "get_build_statuses",
-                "check_merge_status", "search_users", "list_repos"),
+            "bamboo_builds" to setOf("build_status", "get_build", "get_build_log", "get_test_results",
+                "recent_builds", "get_running_builds", "get_build_variables", "get_artifacts"),
+            "bamboo_plans" to setOf("get_plans", "get_project_plans", "search_plans",
+                "get_plan_branches", "get_plan_variables"),
+            "bitbucket_pr" to setOf("get_my_prs", "get_reviewing_prs", "get_pr_detail",
+                "get_pr_commits", "get_pr_activities", "get_pr_changes", "get_pr_diff",
+                "get_build_statuses", "check_merge_status"),
+            "bitbucket_review" to setOf("search_users"),
+            "bitbucket_repo" to setOf("get_file_content", "get_branches", "list_repos"),
             "git" to setOf("status", "diff", "log", "blame", "branches",
                 "show_file", "show_commit", "stash_list", "merge_base", "file_history"),
-            "runtime" to setOf("get_run_configurations", "get_running_processes",
+            "runtime_config" to setOf("get_run_configurations"),
+            "runtime_exec" to setOf("get_running_processes",
                 "get_run_output", "get_test_results"),
-            "debug" to setOf("list_breakpoints", "get_state", "get_stack_frames",
+            "debug_breakpoints" to setOf("list_breakpoints"),
+            "debug_step" to setOf("get_state"),
+            "debug_inspect" to setOf("get_state", "get_stack_frames",
                 "get_variables", "thread_dump", "memory_view")
         )
 
         /** Low-risk actions — non-destructive writes, verification, comments. */
         private val META_TOOL_LOW_RISK_ACTIONS = mapOf(
             "jira" to setOf("comment", "log_work", "start_work"),
-            "bitbucket" to setOf("add_inline_comment", "reply_to_comment", "add_reviewer",
-                "add_pr_comment"),
+            "bitbucket_pr" to setOf("add_pr_comment"),
+            "bitbucket_review" to setOf("add_inline_comment", "reply_to_comment", "add_reviewer"),
             "git" to setOf("shelve"),  // list/list_shelves/create/shelve/unshelve — all low risk
-            "runtime" to setOf("run_tests", "compile_module"),  // verification, doesn't modify source
-            "debug" to setOf("add_breakpoint", "remove_breakpoint", "step_over",
-                "step_into", "step_out", "resume", "pause", "run_to_cursor")
+            "runtime_exec" to setOf("run_tests", "compile_module"),  // verification, doesn't modify source
+            "debug_breakpoints" to setOf("add_breakpoint", "remove_breakpoint"),
+            "debug_step" to setOf("step_over", "step_into", "step_out", "resume", "pause", "run_to_cursor")
         )
 
         /** Classify a meta-tool action based on read/write semantics. */

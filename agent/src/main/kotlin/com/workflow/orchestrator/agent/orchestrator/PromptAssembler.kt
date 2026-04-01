@@ -182,9 +182,9 @@ class PromptAssembler(
 
         val includeAll = activeToolNames == null
         val hasJira = includeAll || "jira" in activeToolNames!!
-        val hasBamboo = includeAll || "bamboo" in activeToolNames!!
+        val hasBamboo = includeAll || activeToolNames!!.any { it.startsWith("bamboo_") }
         val hasSonar = includeAll || "sonar" in activeToolNames!!
-        val hasBitbucket = includeAll || "bitbucket" in activeToolNames!!
+        val hasBitbucket = includeAll || activeToolNames!!.any { it.startsWith("bitbucket_") }
         val hasSpring = includeAll || "spring" in activeToolNames!!
 
         if (hasJira) parts.add(JIRA_CONTEXT_RULES)
@@ -206,7 +206,7 @@ class PromptAssembler(
         if (hasPsi) parts.add(PSI_TOOL_RULES)
 
         // Debug tool tips — only when debug meta-tool is active
-        val hasDebug = includeAll || "debug" in activeToolNames!!
+        val hasDebug = includeAll || activeToolNames!!.any { it.startsWith("debug_") }
         if (hasDebug) parts.add(DEBUG_TOOL_RULES)
 
         if (parts.isEmpty()) return ""

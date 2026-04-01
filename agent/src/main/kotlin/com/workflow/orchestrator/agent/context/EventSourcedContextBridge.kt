@@ -659,7 +659,7 @@ class EventSourcedContextBridge(
                 DiagnosticsAction(toolCallId = tc.id, responseGroupId = responseGroupId, path = path)
             }
             // Meta-tools: jira, bamboo, sonar, bitbucket, git, runtime, debug, spring, build
-            "jira", "bamboo", "sonar", "bitbucket", "git", "runtime", "debug", "spring", "build" -> {
+            "jira", "bamboo_builds", "bamboo_plans", "sonar", "bitbucket_pr", "bitbucket_review", "bitbucket_repo", "git", "runtime_config", "runtime_exec", "debug_breakpoints", "debug_step", "debug_inspect", "spring", "build" -> {
                 val actionName = extractJsonString(args, "action") ?: "unknown"
                 MetaToolAction(
                     toolCallId = tc.id, responseGroupId = responseGroupId,

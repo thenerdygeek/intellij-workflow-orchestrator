@@ -22,7 +22,7 @@ class SelfCorrectionGate(
 ) {
     companion object {
         /** Tools that count as verification for a specific file. */
-        val VERIFICATION_TOOLS = setOf("diagnostics", "runtime", "run_inspections")
+        val VERIFICATION_TOOLS = setOf("diagnostics", "runtime_config", "runtime_exec", "run_inspections")
 
         /** File extensions that support semantic verification (diagnostics/inspections). */
         private val VERIFIABLE_EXTENSIONS = setOf("kt", "java")
@@ -231,7 +231,7 @@ class SelfCorrectionGate(
      * Returns null for project-wide tools (compile_module) or unparseable args.
      */
     fun extractFilePathFromArgs(toolName: String, args: String): String? {
-        if (toolName == "runtime") return null // Project-wide (compile_module, run_tests actions)
+        if (toolName == "runtime_config" || toolName == "runtime_exec") return null // Project-wide (compile_module, run_tests actions)
         // diagnostics, run_inspections use "path" or "file_path"
         val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(args)
         return pathMatch?.groupValues?.get(1)
