@@ -112,7 +112,10 @@ class PlanManager {
             LOG.info("PlanManager: approval timed out after ${timeoutMs / 1000}s — auto-approving")
             currentPlan?.approved = true
             AgentService.planModeActive.set(false)
-            currentPlan?.let { onPlanAnchorUpdate?.invoke(it) }
+            currentPlan?.let {
+                onPlanAnchorUpdate?.invoke(it)
+                onPlanApproved?.invoke(it)
+            }
             PlanApprovalResult.Approved
         } finally {
             approvalDeferred = null
