@@ -14,6 +14,12 @@ type StoreAccessors = {
 
 let stores: StoreAccessors | null = null;
 
+// Buffer for calls that arrive before stores are initialized (race between
+// Kotlin pendingCalls flush and React useEffect that calls initBridge).
+// Kotlin's onLoadingStateChange fires BEFORE React's useEffect, so early
+// calls like updateSkillsList would be lost without this buffer.
+const pendingCalls: Array<{ name: string; args: any[] }> = [];
+
 export function isJcefEnvironment(): boolean {
   return window.location.origin === 'http://workflow-agent';
 }
@@ -321,14 +327,39 @@ export function openInEditorTab(type: string, content: string): void {
   }
 }
 
+// ═══ Early registration ═══
+// Register bridge functions on window IMMEDIATELY at module load, not in useEffect.
+// This ensures Kotlin's pendingCalls (flushed on onLoadingStateChange) can find them.
+// Calls that arrive before stores are set get buffered and replayed in initBridge().
+for (const [name, fn] of Object.entries(bridgeFunctions)) {
+  (window as any)[name] = (...args: any[]) => {
+    if (stores) {
+      fn(...args);
+    } else {
+      pendingCalls.push({ name, args });
+    }
+  };
+}
+
 // ═══ Initialization ═══
 
 export function initBridge(storeAccessors: StoreAccessors): void {
   stores = storeAccessors;
+
+  // Re-register with direct function references (no buffering wrapper needed now)
   const bridge: Record<string, (...args: any[]) => void> = {};
   for (const [name, fn] of Object.entries(bridgeFunctions)) {
     (window as any)[name] = fn;
     bridge[name] = fn;
   }
   (window as any).__bridge = bridge;
+
+  // Replay any calls that arrived before stores were ready
+  for (const call of pendingCalls) {
+    const fn = bridgeFunctions[call.name];
+    if (fn) {
+      try { fn(...call.args); } catch (_) { /* best effort */ }
+    }
+  }
+  pendingCalls.length = 0;
 }
