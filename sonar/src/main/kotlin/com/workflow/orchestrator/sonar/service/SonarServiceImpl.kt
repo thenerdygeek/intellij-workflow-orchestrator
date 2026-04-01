@@ -533,6 +533,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         componentKey: String,
         from: Int?,
         to: Int?,
+        branch: String?,
         repoName: String?
     ): ToolResult<List<SourceLineData>> {
         val api = client ?: return ToolResult(
@@ -542,7 +543,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getSourceLines(componentKey, from, to)) {
+        return when (val result = api.getSourceLines(componentKey, from, to, branch)) {
             is ApiResult.Success -> {
                 val lines = result.data.map { dto ->
                     SourceLineData(

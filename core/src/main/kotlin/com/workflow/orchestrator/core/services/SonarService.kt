@@ -43,8 +43,8 @@ interface SonarService {
     /** Get project-level aggregate measures (ratings, coverage, debt). */
     suspend fun getProjectMeasures(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<ProjectMeasuresData>
 
-    /** Get source lines with per-line coverage status. */
-    suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null, repoName: String? = null): ToolResult<List<SourceLineData>>
+    /** Get source lines with per-line coverage status, optionally for a specific branch (internal API). */
+    suspend fun getSourceLines(componentKey: String, from: Int? = null, to: Int? = null, branch: String? = null, repoName: String? = null): ToolResult<List<SourceLineData>>
 
     /** Get issues with paging metadata for pagination support, optionally for a specific branch. */
     suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null): ToolResult<PagedIssuesData>

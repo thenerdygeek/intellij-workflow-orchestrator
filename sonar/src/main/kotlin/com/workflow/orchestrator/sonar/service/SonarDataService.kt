@@ -168,7 +168,7 @@ class SonarDataService(private val project: Project) : Disposable {
 
         log.info("[Sonar:LineCoverage] Fetching line coverage for '$componentKey' branch='$branch'")
 
-        return when (val result = client.getSourceLines(componentKey)) {
+        return when (val result = client.getSourceLines(componentKey, branch = branch)) {
             is ApiResult.Success -> {
                 val statuses = CoverageMapper.mapLineStatuses(result.data)
                 lineCoverageCache[relativePath] = statuses

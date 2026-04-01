@@ -203,12 +203,14 @@ class SonarApiClient(
     suspend fun getSourceLines(
         componentKey: String,
         from: Int? = null,
-        to: Int? = null
+        to: Int? = null,
+        branch: String? = null
     ): ApiResult<List<SonarSourceLineDto>> {
-        log.debug("[Sonar:API] GET /api/sources/lines for component '$componentKey' from=$from to=$to")
+        log.debug("[Sonar:API] GET /api/sources/lines for component '$componentKey' branch='${branch ?: "default"}' from=$from to=$to")
         val params = buildString {
             append("/api/sources/lines?key=")
             append(URLEncoder.encode(componentKey, "UTF-8"))
+            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
             from?.let { append("&from=$it") }
             to?.let { append("&to=$it") }
         }

@@ -55,7 +55,7 @@ class SonarTool : AgentTool {
             ),
             "branch" to ParameterProperty(
                 type = "string",
-                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, issues_paged. Use project_context tool to discover current branch."
+                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged. Use project_context tool to discover current branch."
             ),
             "from" to ParameterProperty(
                 type = "string",
@@ -150,8 +150,9 @@ class SonarTool : AgentTool {
                 val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return missingParam("component_key")
                 val from = params["from"]?.jsonPrimitive?.content?.toIntOrNull()
                 val to = params["to"]?.jsonPrimitive?.content?.toIntOrNull()
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getSourceLines(componentKey, from, to, repoName = repoName).toAgentToolResult()
+                service.getSourceLines(componentKey, from, to, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "issues_paged" -> {
