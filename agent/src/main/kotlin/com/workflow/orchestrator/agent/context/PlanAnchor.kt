@@ -6,7 +6,7 @@ import com.workflow.orchestrator.agent.runtime.AgentPlan
 /**
  * Builds and manages structured `<active_plan>` summaries that are injected
  * as system messages. Because system messages are never compressed by
- * [ContextManager], the plan summary survives context compression and keeps
+ * [EventSourcedContextBridge], the plan summary survives context compression and keeps
  * the LLM aware of current plan status at all times.
  */
 object PlanAnchor {

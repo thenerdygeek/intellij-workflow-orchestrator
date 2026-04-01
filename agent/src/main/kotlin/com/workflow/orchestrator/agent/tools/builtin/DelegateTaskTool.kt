@@ -25,7 +25,7 @@ import java.util.Locale
  * Only available to ORCHESTRATOR-level sessions (the main agent).
  * Workers cannot call delegate_task, preventing nested delegation.
  *
- * The tool spawns a WorkerSession with a fresh ContextManager, filtered tools,
+ * The tool spawns a WorkerSession with a fresh EventSourcedContextBridge, filtered tools,
  * and a 5-minute timeout. On failure or timeout, file changes are rolled back
  * via LocalHistory.
  */

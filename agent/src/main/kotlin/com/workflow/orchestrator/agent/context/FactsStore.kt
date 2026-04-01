@@ -29,7 +29,7 @@ data class Fact(
  *
  * Records verified facts from tool executions during an agent session.
  * Unlike conversation messages, facts are never dropped by context compression.
- * They are injected as an anchored system message via [ContextManager.updateFactsAnchor].
+ * They are injected as an anchored system message via [EventSourcedContextBridge.updateFactsAnchor].
  *
  * Deduplication: Facts with the same (type, path) replace older entries,
  * keeping only the most recent version. Facts with null path are never deduped.

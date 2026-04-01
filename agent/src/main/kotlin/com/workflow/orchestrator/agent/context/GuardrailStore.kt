@@ -11,7 +11,7 @@ import java.io.File
  * or saved manually by the LLM. They persist to {projectBasePath}/.workflow/agent/guardrails.md
  * and are loaded into the system prompt at session start.
  *
- * The guardrails anchor in ContextManager ensures constraints survive context compression.
+ * The guardrails anchor in EventSourcedContextBridge ensures constraints survive context compression.
  *
  * THREAD SAFETY: Not thread-safe. Access from the ReAct loop's single coroutine context only.
  */

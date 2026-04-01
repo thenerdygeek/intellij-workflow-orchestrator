@@ -888,7 +888,7 @@ class SingleAgentSession(
                     }
                 }.awaitAll()
             }
-            // Add results to context sequentially (ContextManager is not thread-safe)
+            // Add results to context sequentially (EventSourcedContextBridge is not thread-safe)
             for (entry in parallelResults) {
                 val tc = entry.first
                 val tr = entry.second

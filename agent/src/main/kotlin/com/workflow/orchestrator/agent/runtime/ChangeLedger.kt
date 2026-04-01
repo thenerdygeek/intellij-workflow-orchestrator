@@ -122,7 +122,7 @@ class ChangeLedger(private val sessionDir: File? = null) {
      * Render a compact context string for the LLM.
      *
      * COMPRESSION: This string becomes the changeLedgerAnchor in
-     * ContextManager — a compression-proof system message. It must be:
+     * EventSourcedContextBridge — a compression-proof system message. It must be:
      * 1. Compact (token-efficient) — table format, no prose
      * 2. Complete (shows all files, stats, checkpoint IDs)
      * 3. Actionable (LLM can use checkpoint IDs in rollback_changes)
