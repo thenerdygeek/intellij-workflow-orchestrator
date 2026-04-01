@@ -188,6 +188,16 @@ class SingleAgentSession(
             // git write actions
             "shelve"
         )
+
+        /** Tools exempt from the ApprovalGate — plan mode transitions and internal orchestration
+         *  should be frictionless, no user approval prompt needed. */
+        private val APPROVAL_GATE_EXEMPT_TOOLS = setOf(
+            "attempt_completion",
+            "enable_plan_mode",
+            "create_plan",
+            "update_plan_step",
+            "think"
+        )
     }
 
     /**
@@ -1418,8 +1428,10 @@ class SingleAgentSession(
             } catch (_: Exception) { /* parsing failed, allow through */ }
         }
 
-        // Check approval gate before executing risky tools (skip for attempt_completion — internal orchestration)
-        if (approvalGate != null && toolName != "attempt_completion") {
+        // Check approval gate before executing risky tools.
+        // Skip for: attempt_completion (internal orchestration), plan mode tools (frictionless transitions)
+        val skipApproval = toolName in APPROVAL_GATE_EXEMPT_TOOLS
+        if (approvalGate != null && !skipApproval) {
             // Convert tool call arguments to map for context-aware risk classification + approval display
             val paramsMap: Map<String, Any?> = try {
                 val jsonElement = json.parseToJsonElement(toolCall.function.arguments)
