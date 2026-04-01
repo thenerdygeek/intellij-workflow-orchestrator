@@ -60,6 +60,9 @@ class EnablePlanModeTool : AgentTool {
         // Same pattern as LoopGuard / BudgetEnforcer mid-loop system message injection.
         agentService.currentContextBridge?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
 
+        // Set the mechanical enforcement flag — SingleAgentSession will filter tools on next iteration
+        AgentService.planModeActive.set(true)
+
         // Notify the controller → sets planModeEnabled = true + highlights the UI button.
         agentService.onPlanModeEnabled?.invoke(true)
 
