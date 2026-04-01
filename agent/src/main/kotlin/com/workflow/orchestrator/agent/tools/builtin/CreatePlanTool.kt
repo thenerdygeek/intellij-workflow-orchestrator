@@ -28,7 +28,9 @@ class CreatePlanTool : AgentTool {
             "goal" to ParameterProperty(type = "string", description = "What the task aims to achieve (1-2 sentences)"),
             "approach" to ParameterProperty(type = "string", description = "High-level strategy for solving the problem"),
             "steps" to ParameterProperty(type = "string", description = "JSON array of steps. Each step: {\"id\":\"1\",\"title\":\"Step title\",\"description\":\"What this step does\",\"files\":[\"path/to/file.kt\"],\"action\":\"read|edit|create|verify\"}"),
-            "testing" to ParameterProperty(type = "string", description = "How to verify the implementation works")
+            "testing" to ParameterProperty(type = "string", description = "How to verify the implementation works"),
+            "markdown" to ParameterProperty(type = "string", description = "Full implementation plan as a markdown document. Use ## headings for sections (Goal, Approach, Steps, Testing). Use ### for individual steps. Include code blocks, file references, and detailed explanations. This is the primary plan content — the steps parameter provides structured metadata for status tracking."),
+            "title" to ParameterProperty(type = "string", description = "Short title for the plan (shown in chat card header)")
         ),
         required = listOf("goal", "steps")
     )
@@ -43,6 +45,8 @@ class CreatePlanTool : AgentTool {
             ?: return ToolResult("Error: 'steps' parameter required", "Error: missing steps", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val approach = params["approach"]?.jsonPrimitive?.content ?: ""
         val testing = params["testing"]?.jsonPrimitive?.content ?: ""
+        val markdown = params["markdown"]?.jsonPrimitive?.content
+        val title = params["title"]?.jsonPrimitive?.content ?: ""
 
         val steps = try {
             json.decodeFromString<List<PlanStep>>(stepsJson)
@@ -65,7 +69,11 @@ class CreatePlanTool : AgentTool {
             return ToolResult("Error: no active session for plan management", "Error: no session", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        val plan = AgentPlan(goal = goal, approach = approach, steps = steps, testing = testing)
+        val plan = AgentPlan(
+            goal = goal, approach = approach, steps = steps, testing = testing,
+            title = title.ifBlank { goal.take(60) },
+            markdown = markdown
+        )
 
         // Submit plan and suspend until user approves or revises.
         // Uses suspendCancellableCoroutine instead of CompletableFuture.get() to avoid

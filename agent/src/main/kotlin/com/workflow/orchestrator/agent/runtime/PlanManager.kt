@@ -26,7 +26,13 @@ data class AgentPlan(
     val approach: String = "",
     val steps: List<PlanStep>,
     val testing: String = "",
-    var approved: Boolean = false
+    var approved: Boolean = false,
+    /** Display title for the plan (shown in chat card header). */
+    val title: String = "",
+    /** Raw markdown document from the LLM. When present, the plan editor
+     *  renders this directly instead of synthesizing from structured fields.
+     *  Null for backward compat with old plans that only have structured data. */
+    val markdown: String? = null
 )
 
 /** A single user comment on a specific line of the plan. */
