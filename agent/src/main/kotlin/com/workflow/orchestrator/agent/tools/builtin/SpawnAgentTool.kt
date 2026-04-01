@@ -279,8 +279,15 @@ class SpawnAgentTool : AgentTool {
 
             val systemPrompt = resolveSystemPrompt(agentDef, resolvedType, agentService, project)
             val toolsForWorker = resolveTools(agentDef, resolvedType, agentService)
-            val toolMap = toolsForWorker.associateBy { it.name }
-            val toolDefinitions = toolsForWorker.map { it.toToolDefinition() }
+            // Plan mode enforcement: subagents inherit plan mode tool restrictions.
+            // Without this, the LLM can bypass plan mode by delegating write work to a subagent.
+            val filteredTools = if (AgentService.planModeActive.get()) {
+                toolsForWorker.filter { it.name !in SingleAgentSession.PLAN_MODE_BLOCKED_TOOLS }
+            } else {
+                toolsForWorker
+            }
+            val toolMap = filteredTools.associateBy { it.name }
+            val toolDefinitions = filteredTools.map { it.toToolDefinition() }
 
             // Execute with timeout
             val parentJob = currentCoroutineContext()[Job]
