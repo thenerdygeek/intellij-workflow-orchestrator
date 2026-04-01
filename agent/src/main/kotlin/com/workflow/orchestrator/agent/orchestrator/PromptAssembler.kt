@@ -268,12 +268,18 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
         val PLANNING_RULES = """
             <planning>
             - For complex tasks involving 3+ files, refactoring, new features, or architectural changes:
-              call create_plan first with a structured plan before making any code changes.
+              call create_plan with a comprehensive markdown plan before making code changes.
             - For simple tasks (questions, single-file fixes, running commands, checking status):
               act directly without creating a plan.
             - If you realize mid-task that thorough planning is required, call enable_plan_mode
-              with your reasoning before calling create_plan. This enforces mandatory planning
-              for the rest of the session and notifies the user.
+              with your reasoning before calling create_plan.
+            - When calling create_plan, provide BOTH:
+              1. `markdown` — the full plan as a rich markdown document with ## Goal, ## Approach,
+                 ## Steps (### 1. Step Title), ## Testing sections. Include code blocks, file paths,
+                 detailed explanations. This is the document the user reads and comments on.
+              2. `steps` — JSON array of step metadata for status tracking:
+                 [{"id":"1","title":"Step title","description":"Brief desc","files":["path"],"action":"read|edit|create|verify"}]
+              3. `title` — short title for the plan card header.
             - When executing an approved plan, call update_plan_step to mark each step as
               'running' when you start it and 'done' when you complete it (or 'failed' if it fails).
             - If the user requests revision with comments, incorporate their feedback and
@@ -285,7 +291,10 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             <planning mode="required">
             - You MUST call create_plan before making any code changes or executing any write tools.
             - First, analyze the task by reading relevant files using read_file, search_code, file_structure.
-            - Then produce a comprehensive implementation plan using create_plan.
+            - Then produce a comprehensive implementation plan using create_plan with:
+              1. `markdown` — full plan as a rich markdown document (## Goal, ## Steps, ### Step N, code blocks)
+              2. `steps` — JSON array for status tracking
+              3. `title` — short display title
             - Do NOT call edit_file, run_command, or any write operations until the plan is approved by the user.
             - After plan approval, execute step by step, calling update_plan_step to track progress.
             - If the user requests revision, incorporate their feedback and call create_plan again.
