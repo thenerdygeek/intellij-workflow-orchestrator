@@ -12,24 +12,33 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Consolidated Bamboo meta-tool replacing 18 individual bamboo_* tools.
+ * Bamboo build lifecycle tool — trigger, monitor, stop, and inspect builds.
  *
- * Saves ~17,280 tokens per API call by collapsing all Bamboo CI/CD operations into
- * a single tool definition with an `action` discriminator parameter.
- *
- * Actions: build_status, get_build, trigger_build, get_build_log, get_test_results,
- *          stop_build, cancel_build, get_artifacts, recent_builds, get_plans,
- *          get_project_plans, search_plans, get_plan_branches, get_running_builds,
- *          get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage
+ * Split from the consolidated BambooTool. Covers 10 build-oriented actions:
+ * build_status, get_build, trigger_build, get_build_log, get_test_results,
+ * stop_build, cancel_build, get_artifacts, recent_builds, get_running_builds.
  */
-class BambooTool : AgentTool {
+class BambooBuildsTool : AgentTool {
 
-    override val name = "bamboo"
+    override val name = "bamboo_builds"
 
-    override val description = """Bamboo CI/CD integration — build status, logs, test results, artifacts, plans, branches, variables.
-Actions: build_status, get_build, trigger_build, get_build_log, get_test_results, stop_build,
-cancel_build, get_artifacts, recent_builds, get_plans, get_project_plans, search_plans,
-get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage""".trimIndent()
+    override val description = """
+Bamboo build lifecycle — trigger, monitor, stop, inspect builds and test results.
+
+Actions and their parameters:
+- build_status(plan_key, branch?, repo_name?) → Latest build status for plan
+- get_build(build_key) → Detailed build info
+- trigger_build(plan_key, variables?) → Trigger new build (variables: JSON {"key":"value"})
+- get_build_log(build_key) → Build log output
+- get_test_results(build_key) → Test results for build
+- stop_build(result_key) → Stop running build
+- cancel_build(result_key) → Cancel queued build
+- get_artifacts(result_key) → List build artifacts
+- recent_builds(plan_key, branch?, repo_name?, max_results?) → Recent builds (default 10)
+- get_running_builds(plan_key, repo_name?) → Currently running builds
+
+description optional: for approval dialog on trigger/stop/cancel.
+""".trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -38,14 +47,12 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
                 description = "Operation to perform",
                 enumValues = listOf(
                     "build_status", "get_build", "trigger_build", "get_build_log", "get_test_results",
-                    "stop_build", "cancel_build", "get_artifacts", "recent_builds", "get_plans",
-                    "get_project_plans", "search_plans", "get_plan_branches", "get_running_builds",
-                    "get_build_variables", "get_plan_variables", "rerun_failed_jobs", "trigger_stage"
+                    "stop_build", "cancel_build", "get_artifacts", "recent_builds", "get_running_builds"
                 )
             ),
             "plan_key" to ParameterProperty(
                 type = "string",
-                description = "Bamboo plan key e.g. PROJ-PLAN — for build_status, trigger_build, recent_builds, get_plan_branches, get_running_builds, get_plan_variables, rerun_failed_jobs, trigger_stage"
+                description = "Bamboo plan key e.g. PROJ-PLAN — for build_status, trigger_build, recent_builds, get_running_builds"
             ),
             "build_key" to ParameterProperty(
                 type = "string",
@@ -53,31 +60,7 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
             ),
             "result_key" to ParameterProperty(
                 type = "string",
-                description = "Bamboo build result key e.g. PROJ-PLAN-123 — for stop_build, cancel_build, get_artifacts, get_build_variables"
-            ),
-            "project_key" to ParameterProperty(
-                type = "string",
-                description = "Bamboo project key e.g. PROJ — for get_project_plans"
-            ),
-            "build_number" to ParameterProperty(
-                type = "string",
-                description = "Build number integer — for rerun_failed_jobs"
-            ),
-            "stage" to ParameterProperty(
-                type = "string",
-                description = "Stage name to trigger (optional) — for trigger_stage"
-            ),
-            "query" to ParameterProperty(
-                type = "string",
-                description = "Search query — for search_plans"
-            ),
-            "variables" to ParameterProperty(
-                type = "string",
-                description = "JSON object of build variables e.g. '{\"key\":\"value\"}' — for trigger_build, trigger_stage"
-            ),
-            "max_results" to ParameterProperty(
-                type = "string",
-                description = "Max results to return (default 10) — for recent_builds"
+                description = "Bamboo build result key e.g. PROJ-PLAN-123 — for stop_build, cancel_build, get_artifacts"
             ),
             "branch" to ParameterProperty(
                 type = "string",
@@ -85,11 +68,19 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
             ),
             "repo_name" to ParameterProperty(
                 type = "string",
-                description = "Repository name for multi-repo projects — for build_status, recent_builds, get_plan_branches, get_running_builds"
+                description = "Repository name for multi-repo projects — for build_status, recent_builds, get_running_builds"
+            ),
+            "variables" to ParameterProperty(
+                type = "string",
+                description = "JSON object of build variables e.g. '{\"key\":\"value\"}' — for trigger_build"
+            ),
+            "max_results" to ParameterProperty(
+                type = "string",
+                description = "Max results to return (default 10) — for recent_builds"
             ),
             "description" to ParameterProperty(
                 type = "string",
-                description = "Brief description shown in approval dialog — for write actions: trigger_build, stop_build, cancel_build, rerun_failed_jobs, trigger_stage"
+                description = "Brief description shown in approval dialog — for write actions: trigger_build, stop_build, cancel_build"
             )
         ),
         required = listOf("action")
@@ -183,81 +174,11 @@ get_plan_branches, get_running_builds, get_build_variables, get_plan_variables, 
                 service.getRecentBuilds(planKey, maxResults, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
-            "get_plans" -> {
-                service.getPlans().toAgentToolResult()
-            }
-
-            "get_project_plans" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
-                ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
-                service.getProjectPlans(projectKey).toAgentToolResult()
-            }
-
-            "search_plans" -> {
-                val query = params["query"]?.jsonPrimitive?.content ?: return missingParam("query")
-                ToolValidation.validateNotBlank(query, "query")?.let { return it }
-                service.searchPlans(query).toAgentToolResult()
-            }
-
-            "get_plan_branches" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
-                ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
-                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getPlanBranches(planKey, repoName = repoName).toAgentToolResult()
-            }
-
             "get_running_builds" -> {
                 val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getRunningBuilds(planKey, repoName = repoName).toAgentToolResult()
-            }
-
-            "get_build_variables" -> {
-                val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return missingParam("result_key")
-                ToolValidation.validateBambooBuildKey(resultKey)?.let { return it }
-                service.getBuildVariables(resultKey).toAgentToolResult()
-            }
-
-            "get_plan_variables" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
-                ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
-                service.getPlanVariables(planKey).toAgentToolResult()
-            }
-
-            "rerun_failed_jobs" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
-                val buildNumberStr = params["build_number"]?.jsonPrimitive?.content ?: return missingParam("build_number")
-                val buildNumber = buildNumberStr.toIntOrNull()
-                    ?: return ToolResult(
-                        "Error: 'build_number' must be an integer, got '$buildNumberStr'",
-                        "Error: invalid build_number",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
-                ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
-                service.rerunFailedJobs(planKey, buildNumber).toAgentToolResult()
-            }
-
-            "trigger_stage" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
-                val stage = params["stage"]?.jsonPrimitive?.content
-                ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
-                val variablesStr = params["variables"]?.jsonPrimitive?.content
-                val variables = if (!variablesStr.isNullOrBlank()) {
-                    try {
-                        val obj = kotlinx.serialization.json.Json.parseToJsonElement(variablesStr).jsonObject
-                        obj.mapValues { it.value.jsonPrimitive.content }
-                    } catch (_: Exception) {
-                        return ToolResult(
-                            "Invalid variables JSON: '$variablesStr'. Expected format: {\"key\":\"value\"}",
-                            "Invalid variables",
-                            ToolResult.ERROR_TOKEN_ESTIMATE,
-                            isError = true
-                        )
-                    }
-                } else emptyMap()
-                service.triggerStage(planKey, variables, stage).toAgentToolResult()
             }
 
             else -> ToolResult(
