@@ -58,6 +58,13 @@ data class View(
                 }
             }
 
+            // Step 1b: Protect NEVER_FORGET_TYPES — remove their IDs from forgotten set
+            val neverForgetIds = history
+                .filter { event -> NEVER_FORGET_TYPES.any { it.isInstance(event) } }
+                .map { it.id }
+                .toSet()
+            forgottenIds.removeAll(neverForgetIds)
+
             // Step 2: Filter out forgotten events
             val keptEvents = history.filter { it.id !in forgottenIds }.toMutableList()
 

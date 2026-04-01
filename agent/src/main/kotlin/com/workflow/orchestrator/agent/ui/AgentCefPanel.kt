@@ -315,12 +315,12 @@ class AgentCefPanel(
                 // Search on IO thread, callback to JS
                 scope.launch {
                     try {
-                        withTimeout(5000L) {
+                        withTimeout(15_000L) {
                             val results = mentionSearchProvider?.search(type, query) ?: "[]"
                             callJs("receiveMentionResults(${jsonStr(results)})")
                         }
                     } catch (e: Exception) {
-                        LOG.debug("searchMentions handler failed: ${e.message}")
+                        LOG.warn("searchMentions handler failed: ${e.message}")
                         callJs("receiveMentionResults('[]')")
                     }
                 }
@@ -331,12 +331,12 @@ class AgentCefPanel(
             addHandler { query ->
                 scope.launch {
                     try {
-                        withTimeout(5000L) {
+                        withTimeout(15_000L) {
                             val results = mentionSearchProvider?.searchTickets(query) ?: "[]"
                             callJs("(window.__ticketSearchCallback)(${jsonStr(results)})")
                         }
                     } catch (e: Exception) {
-                        LOG.debug("searchTickets handler failed: ${e.message}")
+                        LOG.warn("searchTickets handler failed: ${e.message}")
                         callJs("(window.__ticketSearchCallback)('[]')")
                     }
                 }
@@ -351,13 +351,13 @@ class AgentCefPanel(
                 val callbackName = parts.getOrElse(1) { "" }
                 scope.launch {
                     try {
-                        withTimeout(5000L) {
+                        withTimeout(15_000L) {
                             val result = mentionSearchProvider?.validateTicket(ticketKey)
                             val json = result ?: """{"valid":false}"""
                             callJs("(window[${jsonStr(callbackName)}])(${jsonStr(json)})")
                         }
                     } catch (e: Exception) {
-                        LOG.debug("validateTicket handler failed: ${e.message}")
+                        LOG.warn("validateTicket handler failed: ${e.message}")
                         callJs("(window[${jsonStr(callbackName)}])(${jsonStr("""{"valid":false}""")})")
                     }
                 }
