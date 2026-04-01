@@ -96,7 +96,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Build Systems | **build** (11 actions: maven_dependencies/properties/plugins/profiles/dependency_tree/effective_pom, gradle_dependencies/tasks/properties, project_modules, module_dependency_graph) |
 | Jira | **jira** (15 actions: get_ticket, search_issues, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work) |
 | CI/CD — Bamboo | **bamboo** (18 actions: build_status, get/trigger/stop/cancel_build, get_build_log, test_results, artifacts, recent_builds, plans, running_builds, variables, rerun_failed, trigger_stage) |
-| Quality — SonarQube | **sonar** (9 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged) |
+| Quality — SonarQube | **sonar** (11 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications) |
 | Pull Requests — Bitbucket | **bitbucket** (26 actions: create/approve/merge/decline_pr, comments, reviewers, branches, diff, build_statuses, repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
 | Skills | activate_skill, deactivate_skill |

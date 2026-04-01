@@ -15,7 +15,9 @@ Key endpoints:
 - `GET /api/measures/component_tree?component={key}&metricKeys=...` — coverage + code metrics
 - `GET /api/ce/activity?component={key}` — compute engine activity (analysis status)
 - `GET /api/new_code_periods/show?project={key}` — new code period definition
-- `GET /api/sources/lines?key={fileKey}&from={line}&to={line}` — source lines with coverage data
+- `GET /api/sources/lines?key={fileKey}&from={line}&to={line}&branch={branch}` — source lines with coverage data (branch is internal param)
+- `GET /api/hotspots/search?project={key}&branch={branch}` — security hotspots (Developer Edition+)
+- `GET /api/duplications/show?key={fileKey}&branch={branch}` — duplicate code block locations (branch is internal param)
 
 ## Architecture
 

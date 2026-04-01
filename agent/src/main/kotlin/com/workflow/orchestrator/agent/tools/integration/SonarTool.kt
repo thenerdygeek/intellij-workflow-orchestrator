@@ -11,13 +11,14 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Consolidated SonarQube meta-tool replacing 9 individual sonar_* tools.
+ * Consolidated SonarQube meta-tool (11 actions).
  *
  * Saves token budget per API call by collapsing all SonarQube operations into
  * a single tool definition with an `action` discriminator parameter.
  *
  * Actions: issues, quality_gate, coverage, search_projects, analysis_tasks,
- *          branches, project_measures, source_lines, issues_paged
+ *          branches, project_measures, source_lines, issues_paged,
+ *          security_hotspots, duplications
  */
 class SonarTool : AgentTool {
 
