@@ -396,7 +396,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             WHEN TO USE: Architecture/flows → ```flow. Sequences → ```mermaid. Tabular data → ```table. Metrics → ```chart. Simple answers → plain markdown.
             WHEN NOT TO USE: Don't create a chart for 1-2 data points. Don't use these formats inside tool call arguments.
 
-            Additional formats (timeline, progress, diff, output, visualization, image, LaTeX, code annotations) are available — use activate_skill('rich-rendering') for the full reference.
+            Additional formats (timeline, progress, diff, output, visualization, image, LaTeX, code annotations) are also available.
             </rendering>
         """.trimIndent()
 
@@ -468,6 +468,12 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
               agent(subagent_type="reviewer", prompt="Review changes in src/main/kotlin/auth/. Verify: JWT dependency added, token generation correct, existing tests updated, no security issues.")
             Bad approach: Declaring "Done!" without verifying multi-file changes.
             </example>
+
+            <example name="skill-activation">
+            User: "The UserService tests are failing with NPE"
+            Good approach: activate_skill(name="systematic-debugging") — this activates a structured debugging workflow that ensures root cause investigation before proposing fixes.
+            Bad approach: Jumping straight to guessing the fix without investigating the root cause.
+            </example>
             </examples>
         """.trimIndent()
 
@@ -517,6 +523,8 @@ Remember: Use tools to discover information — never guess. Verify your work be
         val SONAR_CONTEXT_RULES = """
             - SonarQube: Use sonar(action="quality_gate") for pass/fail status, sonar(action="issues") for detailed findings.
             - Filter issues by severity (BLOCKER, CRITICAL, MAJOR, MINOR, INFO) and type (BUG, VULNERABILITY, CODE_SMELL).
+            - Use sonar(action="security_hotspots") for security hotspots (separate from issues). Use sonar(action="duplications") with component_key for duplicate code block locations.
+            - Use sonar(action="source_lines") with component_key and branch for per-line coverage data (which lines are covered/uncovered).
             - Pass branch parameter to get data for the current branch. Use project_context tool to discover the current branch name and sonar project key.
         """.trimIndent()
 
