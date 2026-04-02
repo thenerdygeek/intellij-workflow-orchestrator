@@ -68,6 +68,9 @@ class AgentService(
     /** Rollback manager for the current session. Set by AgentOrchestrator. */
     @Volatile var currentRollbackManager: AgentRollbackManager? = null
 
+    /** Ralph Loop orchestrator — manages iterative self-improvement loops. Wired by AgentController. */
+    @Volatile var ralphLoopActive: Boolean = false
+
     /** Current iteration number in the ReAct loop. Set by SingleAgentSession. */
     @Volatile var currentIteration: Int? = null
 
