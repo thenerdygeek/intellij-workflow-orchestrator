@@ -974,15 +974,6 @@ class AgentCefPanel(
         callJs("updateCheckpoints(${jsonStr(checkpointsJson)})")
     }
 
-    // Backward compat
-    fun appendText(text: String) = appendStreamToken(text)
-    fun setText(text: String) {
-        callJs("clearChat(); appendToken(${jsonStr(text)}); endStream()")
-    }
-    fun appendSeparator(label: String = "") {
-        if (label.isNotBlank()) appendStatus(label)
-    }
-
     // ═══════════════════════════════════════════════════
     //  Theme
     // ═══════════════════════════════════════════════════

@@ -28,14 +28,14 @@ class PreReviewService {
      * The LLM returns free-text; we look for patterns like:
      * - **HIGH** `file.kt:42` — Missing @Transactional [missing-transactional]
      */
-    fun parseFindings(codyResponse: String): List<ReviewFinding> {
-        log.debug("[Handover:Review] Parsing findings from AI response (${codyResponse.length} chars)")
+    fun parseFindings(aiResponse: String): List<ReviewFinding> {
+        log.debug("[Handover:Review] Parsing findings from AI response (${aiResponse.length} chars)")
         val findings = mutableListOf<ReviewFinding>()
         val pattern = Regex(
             """\*\*(HIGH|MEDIUM|LOW)\*\*\s+`([^:]+):(\d+)`\s*[-\u2013\u2014]\s*(.+?)\s*\[([^\]]+)]"""
         )
 
-        for (match in pattern.findAll(codyResponse)) {
+        for (match in pattern.findAll(aiResponse)) {
             val severity = when (match.groupValues[1]) {
                 "HIGH" -> FindingSeverity.HIGH
                 "MEDIUM" -> FindingSeverity.MEDIUM

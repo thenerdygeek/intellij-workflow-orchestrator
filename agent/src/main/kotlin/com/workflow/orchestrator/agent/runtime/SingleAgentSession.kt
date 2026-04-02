@@ -133,7 +133,7 @@ class SingleAgentSession(
         private const val MAX_NO_TOOL_NUDGES = 4
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
-        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think", "attempt_completion")
+        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "agent", "think", "attempt_completion")
 
 
         /** Read-only tools safe to execute in parallel (no side effects on project state).
@@ -1211,7 +1211,7 @@ class SingleAgentSession(
                 val bpError = backpressureGate.createBackpressureError(toolName, toolResult.content)
                 bridge.addMessage(bpError)
             }
-            if ((toolName == "agent" || toolName == "delegate_task") && !toolResult.isError) {
+            if (toolName == "agent" && !toolResult.isError) {
                 metrics.subagentCount++
             }
             if (metrics.isCircuitBroken(toolName)) {

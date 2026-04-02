@@ -28,9 +28,6 @@ class CopyrightFixService {
     private val YEAR_RANGE_PATTERN = Regex("""((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})""")
     private val FULL_YEAR_EXPR = Regex("""(?:(?:19|20)\d{2})(?:\s*[-–,]\s*(?:(?:19|20)\d{2}))*""")
 
-    private val SOURCE_EXTENSIONS = setOf("java", "kt", "kts", "xml", "yaml", "yml", "properties")
-    private val GENERATED_PATH_PREFIXES = listOf("target/", "build/", ".gradle/", "node_modules/", ".idea/")
-
     /**
      * Cache of FileType by file extension. FileTypeRegistry.getFileTypeByFile() involves
      * registry lookups that are redundant when processing many files with the same extension
@@ -90,17 +87,6 @@ class CopyrightFixService {
         }
     }
 
-    /** @deprecated Use wrapForLanguage(template, VirtualFile) instead */
-    @Deprecated("Use VirtualFile overload", ReplaceWith("wrapForLanguage(template, file)"))
-    fun wrapForLanguage(template: String, fileExtension: String): String {
-        return when (fileExtension) {
-            "java", "kt", "kts" -> "/*\n${template.lines().joinToString("\n") { " * $it" }}\n */"
-            "xml" -> "<!--\n$template\n-->"
-            "properties", "yaml", "yml" -> template.lines().joinToString("\n") { "# $it" }
-            else -> template
-        }
-    }
-
     fun prepareHeader(template: String, currentYear: Int): String {
         return template.replace("{year}", currentYear.toString())
     }
@@ -115,24 +101,10 @@ class CopyrightFixService {
         return !fileType.isBinary
     }
 
-    /** @deprecated Use isSourceFile(VirtualFile) instead */
-    @Deprecated("Use VirtualFile overload", ReplaceWith("isSourceFile(file)"))
-    fun isSourceFile(fileName: String): Boolean {
-        val extension = fileName.substringAfterLast('.', "")
-        return extension in SOURCE_EXTENSIONS
-    }
-
     fun isGeneratedFile(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
         val proj = project ?: return false
         val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(proj)
         return fileIndex.isInGeneratedSources(file) || fileIndex.isExcluded(file)
-    }
-
-    /** @deprecated Use isGeneratedFile(VirtualFile) instead */
-    @Deprecated("Use VirtualFile overload", ReplaceWith("isGeneratedFile(file)"))
-    fun isGeneratedPath(filePath: String): Boolean {
-        val normalized = filePath.replace('\\', '/')
-        return GENERATED_PATH_PREFIXES.any { normalized.startsWith(it) }
     }
 
     fun analyzeFile(

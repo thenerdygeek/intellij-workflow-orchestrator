@@ -54,11 +54,7 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         // Fall back to primary repo
         val primary = settings.getPrimaryRepo()
         if (primary != null && primary.isConfigured) return Pair(primary.bitbucketProjectKey!!, primary.bitbucketRepoSlug!!)
-        // Final fallback to legacy scalar settings
-        val pk = settings.state.bitbucketProjectKey.orEmpty()
-        val rs = settings.state.bitbucketRepoSlug.orEmpty()
-        if (pk.isBlank() || rs.isBlank()) return null
-        return Pair(pk, rs)
+        return null
     }
 
     override suspend fun listRepos(): ToolResult<List<RepoInfo>> {

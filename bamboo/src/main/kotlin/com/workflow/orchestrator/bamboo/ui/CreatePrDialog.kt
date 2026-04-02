@@ -39,7 +39,7 @@ import javax.swing.event.HyperlinkEvent
 
 /**
  * Modal dialog for creating a pull request on Bitbucket.
- * Features: searchable target branch, Cody-generated markdown description with Edit/Preview,
+ * Features: searchable target branch, AI-generated markdown description with Edit/Preview,
  * reviewer autocomplete from Bitbucket users API, and optional Jira ticket transition.
  */
 class CreatePrDialog(

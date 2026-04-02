@@ -1681,10 +1681,10 @@ class PrDetailPanel(
         private val cancelEditButton = JButton("Cancel").apply {
             mnemonic = java.awt.event.KeyEvent.VK_C
         }
-        private val enhanceWithCodyButton = JButton("Enhance with Cody").apply {
+        private val enhanceWithAiButton = JButton("Enhance with AI").apply {
             icon = AllIcons.Actions.Lightning
             toolTipText = "Use AI to generate or enhance the PR description"
-            addActionListener { enhanceWithCody() }
+            addActionListener { enhanceWithAi() }
         }
 
         private val emptyDescLabel = JBLabel("No description provided.").apply {
@@ -1714,7 +1714,7 @@ class PrDetailPanel(
                 val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
                     isOpaque = false
                     add(editButton)
-                    add(enhanceWithCodyButton)
+                    add(enhanceWithAiButton)
                 }
                 add(buttonRow, BorderLayout.SOUTH)
             } else {
@@ -1728,7 +1728,7 @@ class PrDetailPanel(
                 val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
                     isOpaque = false
                     add(editButton)
-                    add(enhanceWithCodyButton)
+                    add(enhanceWithAiButton)
                 }
                 add(buttonRow, BorderLayout.SOUTH)
             }
@@ -1808,44 +1808,44 @@ class PrDetailPanel(
             }
         }
 
-        private fun enhanceWithCody() {
-            log.info("[PR:Cody] enhanceWithCody() called, prId=${currentPrId}, pr=${currentPr != null}")
+        private fun enhanceWithAi() {
+            log.info("[PR:AI] enhanceWithAi() called, prId=${currentPrId}, pr=${currentPr != null}")
             val prId = currentPrId
             if (prId == null) {
-                log.warn("[PR:Cody] currentPrId is null — aborting")
+                log.warn("[PR:AI] currentPrId is null — aborting")
                 return
             }
             val pr = currentPr
             if (pr == null) {
-                log.warn("[PR:Cody] currentPr is null — aborting")
+                log.warn("[PR:AI] currentPr is null — aborting")
                 return
             }
-            enhanceWithCodyButton.isEnabled = false
-            enhanceWithCodyButton.text = "Generating..."
-            log.info("[PR:Cody] Button disabled, starting coroutine")
+            enhanceWithAiButton.isEnabled = false
+            enhanceWithAiButton.text = "Generating..."
+            log.info("[PR:AI] Button disabled, starting coroutine")
 
             scope.launch {
                 try {
-                    log.info("[PR:Cody] Coroutine started, checking TextGenerationService")
+                    log.info("[PR:AI] Coroutine started, checking TextGenerationService")
                     val textGen = com.workflow.orchestrator.core.ai.TextGenerationService.getInstance()
-                    log.info("[PR:Cody] TextGenerationService: ${textGen?.javaClass?.simpleName ?: "NULL"}")
+                    log.info("[PR:AI] TextGenerationService: ${textGen?.javaClass?.simpleName ?: "NULL"}")
                     if (textGen == null) {
                         SwingUtilities.invokeLater {
-                            enhanceWithCodyButton.isEnabled = true
-                            enhanceWithCodyButton.text = "Enhance with Cody"
-                            enhanceWithCodyButton.toolTipText = "Cody is not running — start the Cody agent first"
+                            enhanceWithAiButton.isEnabled = true
+                            enhanceWithAiButton.text = "Enhance with AI"
+                            enhanceWithAiButton.toolTipText = "AI service is not available — configure Sourcegraph in Settings"
                         }
                         return@launch
                     }
 
-                    log.info("[PR:Cody] Fetching diff for PR #$prId")
+                    log.info("[PR:AI] Fetching diff for PR #$prId")
                     val diff = PrDetailService.getInstance(project).getDiff(prId)
-                    log.info("[PR:Cody] Diff result: ${if (diff == null) "NULL" else "${diff.length} chars"}")
+                    log.info("[PR:AI] Diff result: ${if (diff == null) "NULL" else "${diff.length} chars"}")
                     if (diff.isNullOrBlank()) {
                         SwingUtilities.invokeLater {
-                            enhanceWithCodyButton.isEnabled = true
-                            enhanceWithCodyButton.text = "Enhance with Cody"
-                            enhanceWithCodyButton.toolTipText = "Could not fetch PR diff from Bitbucket"
+                            enhanceWithAiButton.isEnabled = true
+                            enhanceWithAiButton.text = "Enhance with AI"
+                            enhanceWithAiButton.toolTipText = "Could not fetch PR diff from Bitbucket"
                         }
                         return@launch
                     }
@@ -1857,7 +1857,7 @@ class PrDetailPanel(
                     val ticketId = com.workflow.orchestrator.core.settings.PluginSettings
                         .getInstance(project).state.activeTicketId.orEmpty()
 
-                    log.info("[PR:Cody] Calling generatePrDescription: diff=${truncatedDiff.length} chars, ticketId=$ticketId, title=${pr.title}, from=${pr.fromRef?.displayId}, to=${pr.toRef?.displayId}")
+                    log.info("[PR:AI] Calling generatePrDescription: diff=${truncatedDiff.length} chars, ticketId=$ticketId, title=${pr.title}, from=${pr.fromRef?.displayId}, to=${pr.toRef?.displayId}")
                     val enhanced = textGen.generatePrDescription(
                         project = project,
                         diff = truncatedDiff,
@@ -1868,27 +1868,27 @@ class PrDetailPanel(
                         targetBranch = pr.toRef?.displayId ?: ""
                     )
 
-                    log.info("[PR:Cody] generatePrDescription result: ${if (enhanced == null) "NULL" else "${enhanced.length} chars"}")
+                    log.info("[PR:AI] generatePrDescription result: ${if (enhanced == null) "NULL" else "${enhanced.length} chars"}")
                     SwingUtilities.invokeLater {
-                        enhanceWithCodyButton.isEnabled = true
-                        enhanceWithCodyButton.text = "Enhance with Cody"
+                        enhanceWithAiButton.isEnabled = true
+                        enhanceWithAiButton.text = "Enhance with AI"
                         if (!enhanced.isNullOrBlank()) {
-                            enhanceWithCodyButton.toolTipText = "Use AI to generate or enhance the PR description"
+                            enhanceWithAiButton.toolTipText = "Use AI to generate or enhance the PR description"
                             enterEditMode()
                             editArea.text = enhanced
                             editArea.caretPosition = 0
-                            log.info("[PR:Cody] Description set in edit mode")
+                            log.info("[PR:AI] Description set in edit mode")
                         } else {
-                            enhanceWithCodyButton.toolTipText = "Cody returned empty — check IDE log for [Cody:PrChain] errors"
-                            log.warn("[PR:Cody] Cody returned null/empty for PR #$prId")
+                            enhanceWithAiButton.toolTipText = "AI returned empty — check IDE log for errors"
+                            log.warn("[PR:AI] AI returned null/empty for PR #$prId")
                         }
                     }
                 } catch (e: Exception) {
-                    log.warn("[PR:Cody] Exception: ${e::class.simpleName}: ${e.message}", e)
+                    log.warn("[PR:AI] Exception: ${e::class.simpleName}: ${e.message}", e)
                     SwingUtilities.invokeLater {
-                        enhanceWithCodyButton.isEnabled = true
-                        enhanceWithCodyButton.text = "Enhance with Cody"
-                        enhanceWithCodyButton.toolTipText = "Failed: ${e.message}"
+                        enhanceWithAiButton.isEnabled = true
+                        enhanceWithAiButton.text = "Enhance with AI"
+                        enhanceWithAiButton.toolTipText = "Failed: ${e.message}"
                     }
                 }
             }
@@ -2605,7 +2605,7 @@ class PrDetailPanel(
             border = JBUI.Borders.empty(8)
             background = CARD_BG
         }
-        private val statusLabel = JBLabel("Click 'Run AI Review' to analyze this PR with Cody.").apply {
+        private val statusLabel = JBLabel("Click 'Run AI Review' to analyze this PR.").apply {
             foreground = SECONDARY_TEXT
             horizontalAlignment = SwingConstants.CENTER
             border = JBUI.Borders.emptyTop(20)
@@ -2630,7 +2630,7 @@ class PrDetailPanel(
                 add(JPanel(FlowLayout(FlowLayout.CENTER)).apply {
                     isOpaque = false
                     add(JBLabel(AnimatedIcon.Default()))
-                    add(JBLabel("Analyzing PR diff with Cody..."))
+                    add(JBLabel("Analyzing PR diff with AI..."))
                 }, BorderLayout.CENTER)
                 revalidate()
                 repaint()
@@ -2651,8 +2651,8 @@ class PrDetailPanel(
                                 border = JBUI.Borders.emptyTop(20)
                             }, BorderLayout.CENTER)
                         } else {
-                            // TODO: Wire to Cody agent for actual AI review
-                            resultsArea.text = "AI Review is not yet connected to Cody.\n\n" +
+                            // TODO: Wire to AI agent for actual AI review
+                            resultsArea.text = "AI Review is not yet connected.\n\n" +
                                 "Diff size: ${diff.length} characters\n" +
                                 "This feature will analyze the diff and provide:\n" +
                                 "- Code quality observations\n" +

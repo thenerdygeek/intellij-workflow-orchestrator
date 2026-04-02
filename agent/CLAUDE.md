@@ -44,7 +44,6 @@ AgentController (UI entry point)
 - **WorkerCompleteTool** (`worker_complete`) — Lightweight completion signal for worker sessions (subagents). Analogous to `attempt_completion` but without CompletionGatekeeper dependency. Returns `isCompletion=true` to exit the WorkerSession ReAct loop immediately. Available to all WorkerTypes (ORCHESTRATOR, ANALYZER, CODER, REVIEWER, TOOLER). No collision with `attempt_completion` — that tool is injected directly into SingleAgentSession's tool set, not registered in ToolRegistry.
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
 - **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
-- **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
 - **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
 
 ## System Prompt Structure (`PromptAssembler`)
@@ -85,7 +84,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think, request_tools, project_context |
+| Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, think, request_tools, project_context |
 | Change Tracking | list_changes (always active, read-only), rollback_changes (reverts to LocalHistory checkpoint) |
 | Process Interaction | send_stdin, kill_process, ask_user_input, send_message_to_parent |
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
@@ -110,7 +109,7 @@ Three layers:
 1. **DynamicToolSelector** — keyword scan of last 3 user messages triggers relevant tool groups
 2. **RequestToolsTool** (`request_tools`) — LLM activates categories on demand (always available)
 3. **ToolPreferences** — user checkboxes in Tools panel, persisted per project
-4. **agent**, **delegate_task**, and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
+4. **agent** and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
 5. Tool set stabilizes per session — tools only expand across messages, never shrink
 
 ## Context Management
@@ -367,7 +366,7 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 - `project`: `.workflow/agent-memory/{name}/`
 - `local`: `.workflow/agent-memory-local/{name}/`
 
-Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt. Legacy `delegate_task(agent="name", task="...")` still supported but deprecated.
+Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt.
 
 ## Evaluation & Observability
 

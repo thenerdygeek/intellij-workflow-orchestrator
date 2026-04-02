@@ -36,7 +36,7 @@ class AuthTestService {
     ): ApiResult<String> = withContext(Dispatchers.IO) {
         val normalizedBaseUrl = baseUrl.trimEnd('/')
 
-        // Sourcegraph uses GraphQL for auth (same path the Cody agent uses internally)
+        // Sourcegraph uses GraphQL for auth
         if (serviceType == ServiceType.SOURCEGRAPH) {
             return@withContext testSourcegraphConnection(normalizedBaseUrl, token)
         }
@@ -57,16 +57,15 @@ class AuthTestService {
     }
 
     /**
-     * Tests Sourcegraph connection using the SAME GraphQL endpoint the Cody agent uses.
+     * Tests Sourcegraph connection via GraphQL CurrentUser query.
      *
-     * The agent validates auth via `POST /.api/graphql` with a CurrentUser query,
+     * Validates auth via `POST /.api/graphql` with a CurrentUser query,
      * NOT via `/.api/client-config` (which only exists on Sourcegraph >= 5.5.0).
-     * Using the same endpoint ensures "Test Connection" result matches actual agent behavior.
      *
-     * After auth succeeds, also checks if Cody is admin-enabled on the instance.
+     * After auth succeeds, also checks if the LLM API is admin-enabled on the instance.
      */
     private fun testSourcegraphConnection(baseUrl: String, token: String): ApiResult<String> {
-        log.info("[Core:Auth] Testing Sourcegraph connection at $baseUrl via GraphQL (same path as Cody agent)")
+        log.info("[Core:Auth] Testing Sourcegraph connection at $baseUrl via GraphQL")
 
         // Step 1: Validate token via CurrentUser GraphQL query (what the agent does)
         val graphqlUrl = "$baseUrl/.api/graphql"
@@ -105,22 +104,22 @@ class AuthTestService {
                 val username = usernameMatch?.groupValues?.get(1) ?: "unknown"
                 log.info("[Core:Auth] Sourcegraph auth successful — user: $username")
 
-                // Step 2: Check if Cody is enabled on this instance
-                val codyStatus = checkCodyEnabled(baseUrl, token)
+                // Step 2: Check if the LLM API is enabled on this instance
+                val llmEnabled = checkLlmEnabled(baseUrl, token)
 
                 return when {
-                    codyStatus == null -> {
+                    llmEnabled == null -> {
                         // Couldn't determine — old Sourcegraph version, just report auth success
-                        ApiResult.Success("Authenticated as $username (Cody status: unknown — Sourcegraph may be < 5.5.0)")
+                        ApiResult.Success("Authenticated as $username (LLM API status: unknown — Sourcegraph may be < 5.5.0)")
                     }
-                    codyStatus -> {
-                        ApiResult.Success("Authenticated as $username — Cody is enabled")
+                    llmEnabled -> {
+                        ApiResult.Success("Authenticated as $username — LLM API is enabled")
                     }
                     else -> {
-                        log.warn("[Core:Auth] Sourcegraph auth succeeded but Cody is disabled by admin")
+                        log.warn("[Core:Auth] Sourcegraph auth succeeded but LLM API is disabled by admin")
                         ApiResult.Error(ErrorType.FORBIDDEN,
-                            "Authenticated as $username, but Cody is disabled by your site admin. " +
-                            "Contact your Sourcegraph administrator to enable Cody.")
+                            "Authenticated as $username, but the LLM API is disabled by your site admin. " +
+                            "Contact your Sourcegraph administrator to enable it.")
                     }
                 }
             }
@@ -141,10 +140,11 @@ class AuthTestService {
     }
 
     /**
-     * Checks if Cody is enabled on the Sourcegraph instance.
+     * Checks if the LLM API (Cody feature) is enabled on the Sourcegraph instance.
      * Returns true/false, or null if the check couldn't be performed (old Sourcegraph version).
+     * Note: The Sourcegraph API field is still named "codyEnabled" / "isCodyEnabled".
      */
-    private fun checkCodyEnabled(baseUrl: String, token: String): Boolean? {
+    private fun checkLlmEnabled(baseUrl: String, token: String): Boolean? {
         return try {
             // Try /.api/client-config first (Sourcegraph >= 5.5.0)
             val configRequest = Request.Builder()
@@ -157,19 +157,19 @@ class AuthTestService {
             configResponse.use {
                 if (it.code == 404) {
                     // Old Sourcegraph version — try GraphQL fallback
-                    return checkCodyEnabledViaGraphQL(baseUrl, token)
+                    return checkLlmEnabledViaGraphQL(baseUrl, token)
                 }
                 val body = it.body?.string() ?: ""
                 val codyEnabled = Regex(""""codyEnabled"\s*:\s*(true|false)""").find(body)
                 codyEnabled?.groupValues?.get(1)?.toBoolean()
             }
         } catch (e: Exception) {
-            log.debug("[Core:Auth] Could not check Cody enabled status: ${e.message}")
+            log.debug("[Core:Auth] Could not check LLM enabled status: ${e.message}")
             null
         }
     }
 
-    private fun checkCodyEnabledViaGraphQL(baseUrl: String, token: String): Boolean? {
+    private fun checkLlmEnabledViaGraphQL(baseUrl: String, token: String): Boolean? {
         return try {
             val query = """{"query":"query { site { isCodyEnabled } }"}"""
             val request = Request.Builder()
@@ -185,7 +185,7 @@ class AuthTestService {
                 match?.groupValues?.get(1)?.toBoolean()
             }
         } catch (e: Exception) {
-            log.debug("[Core:Auth] GraphQL Cody enabled check failed: ${e.message}")
+            log.debug("[Core:Auth] GraphQL LLM enabled check failed: ${e.message}")
             null
         }
     }
@@ -269,7 +269,7 @@ class AuthTestService {
      * Builds the correct Authorization header value for each service type.
      *
      * - Jira Server, Bamboo, Bitbucket, SonarQube: Bearer PAT
-     * - Sourcegraph (Cody Enterprise): "token <access_token>" (Sourcegraph-specific format)
+     * - Sourcegraph: "token <access_token>" (Sourcegraph-specific format)
      * - Nexus Docker Registry: Basic auth with token as username, empty password
      */
     private fun buildAuthHeader(serviceType: ServiceType, token: String, username: String? = null): String = when (serviceType) {

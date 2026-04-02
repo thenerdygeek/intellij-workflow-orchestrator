@@ -803,7 +803,6 @@ class AgentController(
                 val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
                 val approvalGate = ApprovalGate(
                     approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
-                    onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) },
                     approvalCallback = { toolName, risk, params ->
                         val metadata = buildApprovalMetadata(toolName, params)
                         val description = buildApprovalDescription(toolName, params)

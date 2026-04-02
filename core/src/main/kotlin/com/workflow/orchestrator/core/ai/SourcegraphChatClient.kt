@@ -68,15 +68,6 @@ class SourcegraphChatClient(
 
         /** Sourcegraph API path for listing available models. */
         const val MODELS_PATH = "/.api/llm/models"
-
-        /**
-         * Maximum output tokens — no longer hardcoded.
-         * The actual limit varies per model and Sourcegraph instance configuration.
-         * We pass through whatever maxOutputTokens the user configures in settings.
-         * If omitted, the API uses its own default.
-         */
-        @Deprecated("Output limit varies per model. Use AgentSettings.maxOutputTokens instead.")
-        const val MAX_OUTPUT_TOKENS = 4000
     }
 
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.

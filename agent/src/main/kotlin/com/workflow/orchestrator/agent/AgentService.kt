@@ -239,7 +239,6 @@ class AgentService(
             // Meta-tools
             register(RequestToolsTool())
             register(SpawnAgentTool())
-            register(DelegateTaskTool())
             register(ThinkTool())
             register(WorkerCompleteTool())
             register(SendMessageToParentTool())

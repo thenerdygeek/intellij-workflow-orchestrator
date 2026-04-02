@@ -215,7 +215,7 @@ class WorkflowConfigurable(private val project: Project) : SearchableConfigurabl
                             { settings.state.branchPattern ?: "feature/{ticketId}-{summary}" },
                             { settings.state.branchPattern = it }
                         )
-                        .comment("Placeholders: {ticketId}, {summary}, {type}, {cody-summary}")
+                        .comment("Placeholders: {ticketId}, {summary}, {type}, {ai-summary}")
                 }
                 row("Max branch name length:") {
                     intTextField(range = 10..200)

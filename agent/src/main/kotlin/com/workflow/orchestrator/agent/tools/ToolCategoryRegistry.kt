@@ -31,7 +31,6 @@ object ToolCategoryRegistry {
                 "file_structure", "find_definition", "find_references",
                 "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations",
                 "type_inference", "structural_search", "dataflow_analysis", "read_write_access", "test_finder",
-                "delegate_task",
                 "think"
             )
         ),

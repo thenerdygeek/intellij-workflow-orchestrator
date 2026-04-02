@@ -40,7 +40,7 @@ class WorkflowSettingsConfigurable(
             "Bamboo" to cs.bambooUrl,
             "Bitbucket" to cs.bitbucketUrl,
             "SonarQube" to cs.sonarUrl,
-            "Cody" to cs.sourcegraphUrl,
+            "Sourcegraph" to cs.sourcegraphUrl,
             "Nexus" to cs.nexusUrl,
         )
 

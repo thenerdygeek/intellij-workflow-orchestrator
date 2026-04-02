@@ -2,7 +2,6 @@ package com.workflow.orchestrator.agent.orchestrator
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.*
 import com.workflow.orchestrator.agent.brain.LlmBrain
 import com.workflow.orchestrator.agent.brain.OpenAiCompatBrain
@@ -86,7 +85,7 @@ data class ToolCallInfo(
  * Top-level orchestrator that manages task execution using a single ReAct loop.
  *
  * The LLM has ALL tools available and decides whether to analyze, code, review,
- * or call enterprise tools. For complex tasks, the LLM can use the delegate_task
+ * or call enterprise tools. For complex tasks, the LLM can use the agent
  * tool to spawn sub-agents.
  */
 class AgentOrchestrator(
@@ -105,7 +104,7 @@ class AgentOrchestrator(
      * Execute a task end-to-end using a single ReAct loop.
      *
      * The agent has ALL tools and handles the full task in one loop.
-     * For complex sub-tasks, the LLM can use the delegate_task tool.
+     * For complex sub-tasks, the LLM can use the agent tool.
      */
     suspend fun executeTask(
         taskDescription: String,
@@ -118,7 +117,7 @@ class AgentOrchestrator(
         cancelled.set(false)
 
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
-        val maxOutputTokens = settings?.state?.maxOutputTokens ?: SourcegraphChatClient.MAX_OUTPUT_TOKENS
+        val maxOutputTokens = settings?.state?.maxOutputTokens ?: AgentSettings.DEFAULTS.maxOutputTokens
 
         // Scope API debug dumps to the active session directory.
         // Counter resets per session so file numbering restarts from 001.

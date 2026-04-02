@@ -34,9 +34,9 @@ object BranchNameValidator {
      * - {ticketId} — the Jira ticket key (e.g. PROJ-123)
      * - {summary} — sanitized ticket summary
      * - {type} — issue type prefix (bugfix, feature, task, improvement, etc.)
-     * - {cody-summary} — replaced separately by AI-generated slug (caller must pre-replace)
+     * - {ai-summary} — replaced separately by AI-generated slug (caller must pre-replace)
      *
-     * @param codySummary If non-null, replaces {cody-summary} in the pattern
+     * @param aiSummary If non-null, replaces {ai-summary} in the pattern
      */
     fun generateBranchName(
         pattern: String,
@@ -44,7 +44,7 @@ object BranchNameValidator {
         summary: String,
         maxSummaryLength: Int = 50,
         issueTypeName: String? = null,
-        codySummary: String? = null
+        aiSummary: String? = null
     ): String {
         val sanitizedSummary = summary
             .lowercase()
@@ -61,18 +61,18 @@ object BranchNameValidator {
             .replace("{summary}", sanitizedSummary)
             .replace("{type}", typePrefix)
 
-        if (codySummary != null) {
-            result = result.replace("{cody-summary}", codySummary)
+        if (aiSummary != null) {
+            result = result.replace("{ai-summary}", aiSummary)
         }
 
         return result
     }
 
     /**
-     * Whether the given pattern contains the {cody-summary} placeholder.
+     * Whether the given pattern contains the {ai-summary} placeholder.
      */
-    fun requiresCodySummary(pattern: String): Boolean =
-        pattern.contains("{cody-summary}")
+    fun requiresAiSummary(pattern: String): Boolean =
+        pattern.contains("{ai-summary}")
 
     fun isValidBranchName(name: String): Boolean {
         if (name.isBlank()) {

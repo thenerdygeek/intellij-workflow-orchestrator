@@ -214,7 +214,7 @@ class MultiTurnFlowTest {
         contextManager.addSystemPrompt("You are the main orchestrator.")
         contextManager.addUserMessage("Analyze the authentication module")
 
-        // Simulate agent calling delegate_task
+        // Simulate agent calling agent tool (subagent spawn)
         contextManager.addAssistantToolCalls(ChatMessage(
             role = "assistant",
             content = null,
@@ -240,7 +240,7 @@ class MultiTurnFlowTest {
             appendLine("- src/main/kotlin/auth/AuthService.kt")
             appendLine("- src/main/kotlin/auth/JwtTokenProvider.kt")
         }
-        contextManager.addToolResult("tc_delegate_1", workerResult, "Authentication flow analyzed", "delegate_task")
+        contextManager.addToolResult("tc_delegate_1", workerResult, "Authentication flow analyzed", "agent")
 
         // Verify the worker result is in the main context
         // Note: ConversationMemory may convert tool results to user role (Sourcegraph format)

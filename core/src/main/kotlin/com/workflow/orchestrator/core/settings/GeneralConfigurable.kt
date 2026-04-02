@@ -164,16 +164,7 @@ class GeneralConfigurable(
             pluginSettings.state.repos.add(copy)
         }
 
-        // Sync primary repo's scalar fields for backward compatibility
-        val primary = editedRepos.find { it.isPrimary } ?: editedRepos.firstOrNull()
-        pluginSettings.state.bitbucketProjectKey = primary?.bitbucketProjectKey ?: ""
-        pluginSettings.state.bitbucketRepoSlug = primary?.bitbucketRepoSlug ?: ""
-        pluginSettings.state.bambooPlanKey = primary?.bambooPlanKey ?: ""
-        pluginSettings.state.sonarProjectKey = primary?.sonarProjectKey ?: ""
-        pluginSettings.state.dockerTagKey = primary?.dockerTagKey ?: ""
-        pluginSettings.state.defaultTargetBranch = primary?.defaultTargetBranch ?: "develop"
-
-        log.info("[Settings:General] Saved ${editedRepos.size} repos, primary='${primary?.displayLabel}'")
+        log.info("[Settings:General] Saved ${editedRepos.size} repos, primary='${(editedRepos.find { it.isPrimary } ?: editedRepos.firstOrNull())?.displayLabel}'")
     }
 
     override fun reset() {
@@ -199,7 +190,7 @@ class GeneralConfigurable(
             { connSettings.state.bitbucketUrl }, { connSettings.state.bitbucketUrl = it })
         serviceGroup("SonarQube Connection", ServiceType.SONARQUBE,
             { connSettings.state.sonarUrl }, { connSettings.state.sonarUrl = it })
-        serviceGroup("Cody Enterprise", ServiceType.SOURCEGRAPH,
+        serviceGroup("Sourcegraph", ServiceType.SOURCEGRAPH,
             { connSettings.state.sourcegraphUrl }, { connSettings.state.sourcegraphUrl = it })
         serviceGroup("Nexus Docker Registry", ServiceType.NEXUS,
             { connSettings.state.nexusUrl }, { connSettings.state.nexusUrl = it })

@@ -202,14 +202,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
                     gs.bitbucketUrl.isNotBlank() ||
                     gs.sonarUrl.isNotBlank() ||
                     gs.sourcegraphUrl.isNotBlank() ||
-                    gs.nexusUrl.isNotBlank() ||
-                    // Fallback: check legacy per-project fields (pre-migration)
-                    !state.jiraUrl.isNullOrBlank() ||
-                    !state.bambooUrl.isNullOrBlank() ||
-                    !state.bitbucketUrl.isNullOrBlank() ||
-                    !state.sonarUrl.isNullOrBlank() ||
-                    !state.sourcegraphUrl.isNullOrBlank() ||
-                    !state.nexusUrl.isNullOrBlank()
+                    gs.nexusUrl.isNotBlank()
         }
 
     override fun loadState(state: State) {

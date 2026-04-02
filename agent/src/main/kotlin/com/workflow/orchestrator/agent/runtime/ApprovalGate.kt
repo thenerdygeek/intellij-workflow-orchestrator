@@ -43,14 +43,11 @@ data class AuditEntry(
  * The approval gate checks each tool action against the user's configured
  * autonomy level and either auto-approves, queues for approval, or blocks.
  *
- * Supports two modes:
- * - **Synchronous** (legacy): Uses [onApprovalNeeded] callback for immediate decisions.
- * - **Asynchronous** (blocking): Uses [CompletableDeferred] + [respondToApproval] for UI-driven approval.
- *   Waits indefinitely until user responds.
+ * Uses [CompletableDeferred] + [respondToApproval] for UI-driven approval.
+ * Waits indefinitely until the user responds.
  */
 class ApprovalGate(
     private val approvalRequired: Boolean = true,
-    private val onApprovalNeeded: ((String, RiskLevel) -> ApprovalResult)? = null,
     private val approvalCallback: ((String, RiskLevel, Map<String, Any?>) -> Unit)? = null
 ) {
     private val log = Logger.getInstance(ApprovalGate::class.java)
@@ -69,40 +66,6 @@ class ApprovalGate(
      */
     @Volatile
     private var pendingApproval: CompletableDeferred<ApprovalResult>? = null
-
-    /**
-     * Legacy synchronous check for backward compatibility.
-     * @param toolName The tool being called
-     * @param description Human-readable description of what the tool will do
-     * @param riskLevel The risk level of this action
-     * @return ApprovalResult indicating whether to proceed
-     */
-    fun check(toolName: String, description: String, riskLevel: RiskLevel): ApprovalResult {
-        // Read-only actions always proceed
-        if (riskLevel == RiskLevel.NONE) return ApprovalResult.Approved
-
-        // If approval not required in settings, auto-approve LOW and MEDIUM
-        if (!approvalRequired && riskLevel <= RiskLevel.MEDIUM) return ApprovalResult.Approved
-
-        // HIGH and DESTRUCTIVE always require approval regardless of settings
-        if (riskLevel >= RiskLevel.HIGH || (approvalRequired && riskLevel >= RiskLevel.MEDIUM)) {
-            val result = onApprovalNeeded?.invoke(description, riskLevel)
-                ?: ApprovalResult.Rejected("No approval callback — blocked by default")
-
-            // Record in audit log
-            auditLog.add(AuditEntry(
-                toolName = toolName,
-                riskLevel = riskLevel,
-                params = emptyMap(),
-                timestamp = Instant.now(),
-                result = result
-            ))
-
-            return result
-        }
-
-        return ApprovalResult.Approved
-    }
 
     /**
      * Blocking approval check — the primary method for agentic execution.
@@ -231,7 +194,7 @@ class ApprovalGate(
             "kill_process", "ask_user_input",
 
             // Subagent spawning (runs in isolated context)
-            "agent", "delegate_task",
+            "agent",
 
             // Change tracking + project context (read-only)
             "list_changes", "project_context"

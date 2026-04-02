@@ -45,7 +45,7 @@ class BitbucketApiClientTest {
             projectKey = "PROJ",
             repoSlug = "my-service",
             title = "PROJ-123: Add login feature",
-            description = "Cody-generated description",
+            description = "AI-generated description",
             fromBranch = "feature/PROJ-123-add-login",
             toBranch = "develop"
         )

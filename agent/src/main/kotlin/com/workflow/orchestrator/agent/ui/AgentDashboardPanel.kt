@@ -402,11 +402,6 @@ class AgentDashboardPanel(
         mirrors.forEach { it.pushDebugLogEntry(level, event, detail, meta) }
     }
 
-    fun showResult(text: String) {
-        runOnEdt { cefPanel?.setText(text) ?: fallbackPanel?.setText(text) }
-        mirrors.forEach { it.showResult(text) }
-    }
-
     fun reset() {
         runOnEdt { cefPanel?.clear() ?: fallbackPanel?.clear() }
         mirrors.forEach { it.reset() }

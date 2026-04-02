@@ -756,17 +756,17 @@ class SprintDashboardPanel(
 
             val credentialStore = CredentialStore()
 
-            val needsCody = BranchNameValidator.requiresCodySummary(pattern)
-            log.info("[Jira:StartWork] Pattern='$pattern', needsCody=$needsCody")
+            val needsAi = BranchNameValidator.requiresAiSummary(pattern)
+            log.info("[Jira:StartWork] Pattern='$pattern', needsAi=$needsAi")
 
-            // Fallback branch name (uses {summary} in place of {cody-summary} when Cody fails)
-            val fallbackPattern = pattern.replace("{cody-summary}", "{summary}")
+            // Fallback branch name (uses {summary} in place of {ai-summary} when AI fails)
+            val fallbackPattern = pattern.replace("{ai-summary}", "{summary}")
             val fallbackBranchName = branchingService.generateBranchName(
                 selectedIssue, fallbackPattern, settings.state.branchMaxSummaryLength
             )
 
-            // If no Cody needed, generate the name immediately
-            val staticBranchName = if (!needsCody) {
+            // If no AI needed, generate the name immediately
+            val staticBranchName = if (!needsAi) {
                 branchingService.generateBranchName(
                     selectedIssue, pattern, settings.state.branchMaxSummaryLength
                 )
@@ -831,23 +831,23 @@ class SprintDashboardPanel(
                         remoteBranches = branches,
                         defaultSourceBranch = defaultSource,
                         repoDisplay = repoDisplay,
-                        needsCodyGeneration = needsCody,
+                        needsAiGeneration = needsAi,
                         fallbackBranchName = fallbackBranchName,
                         existingBranches = linkedBranches,
                         repos = allRepos,
                         initialRepoIndex = detectedIndex
                     )
 
-                    // If Cody is needed, launch generation in background AFTER dialog is shown
-                    if (needsCody) {
+                    // If AI is needed, launch generation in background AFTER dialog is shown
+                    if (needsAi) {
                         scope.launch {
-                            log.info("[Jira:StartWork] Launching Cody branch name generation for ${selectedIssue.key}")
+                            log.info("[Jira:StartWork] Launching AI branch name generation for ${selectedIssue.key}")
                             try {
                                 val generator = BranchNameAiGenerator.getInstance()
                                 if (generator == null) {
-                                    log.warn("[Jira:StartWork] No BranchNameAiGenerator registered — Cody not available")
+                                    log.warn("[Jira:StartWork] No BranchNameAiGenerator registered — AI not available")
                                     withContext(Dispatchers.EDT) {
-                                        dialog.setCodyFailed("Cody AI not available")
+                                        dialog.setAiFailed("AI not available")
                                     }
                                 } else {
                                     log.info("[Jira:StartWork] BranchNameAiGenerator found: ${generator.javaClass.name}")
@@ -859,25 +859,25 @@ class SprintDashboardPanel(
                                     )
 
                                     if (slug != null) {
-                                        val codyBranchName = branchingService.generateBranchName(
+                                        val aiBranchName = branchingService.generateBranchName(
                                             selectedIssue, pattern, settings.state.branchMaxSummaryLength,
-                                            codySummary = slug
+                                            aiSummary = slug
                                         )
-                                        log.info("[Jira:StartWork] Cody generated full branch name: '$codyBranchName'")
+                                        log.info("[Jira:StartWork] AI generated full branch name: '$aiBranchName'")
                                         withContext(Dispatchers.EDT) {
-                                            dialog.setCodyResult(codyBranchName)
+                                            dialog.setAiResult(aiBranchName)
                                         }
                                     } else {
-                                        log.warn("[Jira:StartWork] Cody returned null slug")
+                                        log.warn("[Jira:StartWork] AI returned null slug")
                                         withContext(Dispatchers.EDT) {
-                                            dialog.setCodyFailed("Cody returned empty response")
+                                            dialog.setAiFailed("AI returned empty response")
                                         }
                                     }
                                 }
                             } catch (e: Exception) {
-                                log.error("[Jira:StartWork] Cody branch generation failed with exception", e)
+                                log.error("[Jira:StartWork] AI branch generation failed with exception", e)
                                 withContext(Dispatchers.EDT) {
-                                    dialog.setCodyFailed(e.message ?: "Unknown error")
+                                    dialog.setAiFailed(e.message ?: "Unknown error")
                                 }
                             }
                         }

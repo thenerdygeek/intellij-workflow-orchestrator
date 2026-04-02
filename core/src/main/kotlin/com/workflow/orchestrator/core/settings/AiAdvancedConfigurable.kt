@@ -6,7 +6,7 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.*
 
 /**
- * Settings page for Cody AI configuration, network timeouts, and Jira custom fields.
+ * Settings page for AI configuration, network timeouts, and Jira custom fields.
  * Extracted from AdvancedConfigurable as part of the settings UI refactor (7 pages -> 4).
  */
 class AiAdvancedConfigurable(private val project: Project) :
@@ -16,7 +16,7 @@ class AiAdvancedConfigurable(private val project: Project) :
         val settings = PluginSettings.getInstance(project)
 
         return panel {
-            group("Cody AI") {
+            group("AI") {
                 row("Max diff lines for review:") {
                     intTextField(range = 100..100000)
                         .bindIntText(settings.state::maxDiffLinesForReview)

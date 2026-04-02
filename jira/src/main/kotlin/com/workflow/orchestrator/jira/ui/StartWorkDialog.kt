@@ -42,7 +42,7 @@ class StartWorkDialog(
     private val remoteBranches: List<BitbucketBranch>,
     private val defaultSourceBranch: String,
     private val repoDisplay: String,
-    private val needsCodyGeneration: Boolean,
+    private val needsAiGeneration: Boolean,
     private val fallbackBranchName: String,
     private val existingBranches: List<String> = emptyList(),
     private val repos: List<RepoConfig> = emptyList(),
@@ -65,7 +65,7 @@ class StartWorkDialog(
     private var selectedSourceBranch: String = defaultSourceBranch
     private val branchNameField = JBTextField(40)
     private val loadingPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
-    private val loadingLabel = JBLabel("Cody generating branch name\u2026")
+    private val loadingLabel = JBLabel("AI generating branch name\u2026")
     private val loadingIcon = JBLabel(AnimatedIcon.Default())
     private val errorLabel = JBLabel().apply {
         foreground = StatusColors.ERROR
@@ -81,9 +81,9 @@ class StartWorkDialog(
         init()
 
         if (!isDualMode) {
-            if (needsCodyGeneration) {
-                log.info("[Jira:StartWork] Dialog opened with Cody generation pending for $ticketKey")
-                setCodyLoading(true)
+            if (needsAiGeneration) {
+                log.info("[Jira:StartWork] Dialog opened with AI generation pending for $ticketKey")
+                setAiLoading(true)
             } else {
                 log.info("[Jira:StartWork] Dialog opened with static branch name for $ticketKey")
                 branchNameField.text = defaultBranchName
@@ -266,9 +266,9 @@ class StartWorkDialog(
         val useExisting = useExistingRadio?.isSelected == true
         updateCreatePanelEnabled(!useExisting)
 
-        // Trigger Cody generation when switching to "Create new" if needed
-        if (!useExisting && needsCodyGeneration && branchNameField.text.isBlank()) {
-            setCodyLoading(true)
+        // Trigger AI generation when switching to "Create new" if needed
+        if (!useExisting && needsAiGeneration && branchNameField.text.isBlank()) {
+            setAiLoading(true)
         }
     }
 
@@ -332,12 +332,12 @@ class StartWorkDialog(
         super.doOKAction()
     }
 
-    fun setCodyLoading(loading: Boolean) {
-        log.info("[Jira:StartWork] setCodyLoading($loading)")
+    fun setAiLoading(loading: Boolean) {
+        log.info("[Jira:StartWork] setAiLoading($loading)")
         branchNameField.isEnabled = !loading
         if (loading) {
             branchNameField.text = ""
-            branchNameField.emptyText.setText("Waiting for Cody\u2026")
+            branchNameField.emptyText.setText("Waiting for AI\u2026")
         }
         loadingPanel.isVisible = loading
         // Only disable OK when loading AND create-new is the active mode
@@ -346,8 +346,8 @@ class StartWorkDialog(
         }
     }
 
-    fun setCodyResult(branchName: String) {
-        log.info("[Jira:StartWork] Cody generated branch name: '$branchName'")
+    fun setAiResult(branchName: String) {
+        log.info("[Jira:StartWork] AI generated branch name: '$branchName'")
         branchNameField.text = branchName
         branchNameField.isEnabled = createNewRadio?.isSelected != false
         loadingPanel.isVisible = false
@@ -355,12 +355,12 @@ class StartWorkDialog(
         isOKActionEnabled = true
     }
 
-    fun setCodyFailed(errorMessage: String) {
-        log.warn("[Jira:StartWork] Cody generation failed: $errorMessage — falling back to '$fallbackBranchName'")
+    fun setAiFailed(errorMessage: String) {
+        log.warn("[Jira:StartWork] AI generation failed: $errorMessage — falling back to '$fallbackBranchName'")
         branchNameField.text = fallbackBranchName
         branchNameField.isEnabled = createNewRadio?.isSelected != false
         loadingPanel.isVisible = false
-        errorLabel.text = "Cody branch generation failed: $errorMessage. Using fallback name."
+        errorLabel.text = "AI branch generation failed: $errorMessage. Using fallback name."
         errorLabel.isVisible = true
         isOKActionEnabled = true
     }
