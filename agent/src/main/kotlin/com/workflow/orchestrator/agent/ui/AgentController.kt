@@ -93,8 +93,11 @@ class AgentController(
                     // Inject planning constraints into any active session context so the LLM
                     // immediately sees planning mode rules — mirrors what EnablePlanModeTool does.
                     try {
-                        AgentService.getInstance(project).currentContextBridge
+                        val service = AgentService.getInstance(project)
+                        service.currentContextBridge
                             ?.addSystemMessage(PromptAssembler.FORCED_PLANNING_RULES)
+                        // Auto-activate planning skill (compression-proof methodology anchor)
+                        service.currentSkillManager?.activateSkill("planning")
                     } catch (_: Exception) {}
                     dashboard.setPlanMode(true)
                 } else {
