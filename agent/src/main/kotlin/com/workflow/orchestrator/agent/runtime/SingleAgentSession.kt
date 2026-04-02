@@ -965,12 +965,11 @@ class SingleAgentSession(
                 val tr = entry.second
                 val durMs = entry.third
                 val toolName = tc.function.name
-                // 5C: Redact credentials before injecting tool results into LLM context
-                val redactedContent = CredentialRedactor.redact(tr.content)
+                // 5C: Inject tool results into LLM context (no redaction — LLM needs raw content)
                 if (tr.isError) {
-                    bridge.addToolError(tc.id, redactedContent, tr.summary, toolName)
+                    bridge.addToolError(tc.id, tr.content, tr.summary, toolName)
                 } else {
-                    bridge.addToolResult(tc.id, redactedContent, tr.summary, toolName)
+                    bridge.addToolResult(tc.id, tr.content, tr.summary, toolName)
                 }
                 recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, bridge, project)
                 allArtifacts.addAll(tr.artifacts)
@@ -1122,14 +1121,14 @@ class SingleAgentSession(
                 )
             }
 
-            // 5C: Redact credentials before injecting tool results into LLM context
-            val redactedWriteContent = CredentialRedactor.redact(toolResult.content)
+            // 5C: Inject tool results into LLM context (no redaction — LLM needs raw content
+            // to work with real files, certs, config values. Redaction only on disk logs.)
             if (toolResult.isError) {
-                bridge.addToolError(toolCall.id, redactedWriteContent, toolResult.summary, toolName)
+                bridge.addToolError(toolCall.id, toolResult.content, toolResult.summary, toolName)
             } else {
-                bridge.addToolResult(toolCall.id, redactedWriteContent, toolResult.summary, toolName)
+                bridge.addToolResult(toolCall.id, toolResult.content, toolResult.summary, toolName)
             }
-            recordFactFromToolResult(toolName, toolCall.function.arguments, redactedWriteContent, toolResult.summary, iteration, bridge, project)
+            recordFactFromToolResult(toolName, toolCall.function.arguments, toolResult.content, toolResult.summary, iteration, bridge, project)
 
             allArtifacts.addAll(toolResult.artifacts)
             toolResults.add(toolCall.id to toolResult.isError)
