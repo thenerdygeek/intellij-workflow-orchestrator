@@ -318,6 +318,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 **Background notifications:** When a background agent completes, the parent is notified via a system message injected into the conversation context (`<background_agent_completed>` tag) and a UI status message in the chat panel.
 
 **Built-in types:** general-purpose, explorer (PSI-powered, read-only, thoroughness: quick/medium/very thorough), coder, reviewer, tooler
+**Bundled specialist agents:** code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer (loaded from plugin resources, overridable by user/project agents)
 **Custom types:** Any agent defined in `.workflow/agents/{name}.md`
 
 ## Subagent Coordination
