@@ -47,6 +47,8 @@ import org.jetbrains.java.debugger.breakpoints.properties.JavaFieldBreakpointPro
 import org.jetbrains.java.debugger.breakpoints.properties.JavaMethodBreakpointProperties
 import java.io.File
 import kotlin.coroutines.resume
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Breakpoint management + debug session start/attach.
@@ -174,6 +176,7 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",

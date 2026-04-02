@@ -9,6 +9,8 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Consolidated SonarQube meta-tool (11 actions).
@@ -101,6 +103,7 @@ Common optional: repo_name for multi-repo projects.
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",

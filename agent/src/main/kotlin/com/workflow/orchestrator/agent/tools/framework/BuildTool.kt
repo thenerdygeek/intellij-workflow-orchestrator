@@ -19,6 +19,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.Properties
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Consolidated build system meta-tool replacing 11 individual Maven/Gradle/module tools.
@@ -107,6 +109,7 @@ Actions and their parameters:
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.CODER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",

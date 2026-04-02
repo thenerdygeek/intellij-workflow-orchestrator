@@ -21,6 +21,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Spawns a subagent to handle a task autonomously, matching Claude Code's Agent tool design.
@@ -150,6 +152,7 @@ class SpawnAgentTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         // --- 0. Get services early (needed by all paths) ---
         val agentService: AgentService
         try {

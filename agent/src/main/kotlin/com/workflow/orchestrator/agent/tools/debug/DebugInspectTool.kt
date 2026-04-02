@@ -20,6 +20,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.coroutines.resume
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Debug inspection and advanced operations — evaluate, variables, stack frames,
@@ -125,6 +127,7 @@ Most actions require a suspended session. session_id defaults to active session.
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",

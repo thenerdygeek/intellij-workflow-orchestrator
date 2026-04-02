@@ -171,6 +171,14 @@ class AgentService(
         return true
     }
 
+    /** Kill all background workers — called when user presses Stop to ensure nothing keeps running. */
+    fun killAllWorkers() {
+        val ids = backgroundWorkers.keys.toList()
+        for (id in ids) {
+            killWorker(id)
+        }
+    }
+
     fun getWorkerStatus(agentId: String): WorkerStatus? {
         return backgroundWorkers[agentId]?.status
     }

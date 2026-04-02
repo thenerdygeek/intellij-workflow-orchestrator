@@ -12,6 +12,8 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 class SearchCodeTool : AgentTool {
     override val name = "search_code"
@@ -52,6 +54,7 @@ class SearchCodeTool : AgentTool {
     )
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         // Backward compat: accept "query" as alias for "pattern"
         val pattern = (params["pattern"] ?: params["query"])?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'pattern' parameter required", "Error: missing pattern", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)

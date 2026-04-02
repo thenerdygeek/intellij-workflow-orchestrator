@@ -631,6 +631,17 @@ class SingleAgentSession(
                     totalTokensUsed = result.totalTokensSoFar
                 }
                 is LlmCallResult.Failed -> {
+                    // Cancelled by user — exit cleanly as Completed (not Failed)
+                    if (cancelled.get()) {
+                        LOG.info("SingleAgentSession: cancelled during LLM call at iteration $iteration")
+                        return SingleAgentResult.Completed(
+                            content = "Task cancelled by user after $iteration iterations.",
+                            summary = "Cancelled",
+                            tokensUsed = totalTokensUsed,
+                            artifacts = allArtifacts,
+                            scorecard = buildScorecard(sessionId, "cancelled", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
+                        )
+                    }
                     eventLog?.log(AgentEventType.SESSION_FAILED, result.error)
                     sessionTrace?.dumpConversationState(bridge.getMessages(), "llm_call_failed: ${result.error}")
                     sessionTrace?.sessionFailed(result.error, totalTokensUsed, iteration)
@@ -990,7 +1001,7 @@ class SingleAgentSession(
                 } else {
                     bridge.addToolResult(tc.id, tr.content, tr.summary, toolName)
                 }
-                recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, bridge, project)
+                recordFactFromToolResult(toolName, tc.function.arguments, tr.content, tr.summary, iteration, bridge, project)
                 allArtifacts.addAll(tr.artifacts)
                 toolResults.add(tc.id to tr.isError)
 
@@ -1564,6 +1575,8 @@ class SingleAgentSession(
             }
 
             Triple(toolCall, toolResult, toolDurationMs)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // Never swallow CancellationException — propagate for structured concurrency
         } catch (e: Exception) {
             val toolDurationMs = System.currentTimeMillis() - toolStartMs
             LOG.warn("SingleAgentSession: tool '$toolName' failed", e)
@@ -1595,6 +1608,9 @@ class SingleAgentSession(
         var lastError: String? = null
 
         for (attempt in 1..MAX_RETRIES) {
+            // Check cancellation before each attempt (especially important during retries)
+            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
+
             // Use non-streaming to get complete, well-structured tool call arguments.
             // Sourcegraph's streaming SSE can produce empty/malformed tool call args
             // (tool name arrives but arguments are empty strings). Non-streaming
@@ -1603,11 +1619,16 @@ class SingleAgentSession(
             val streamed = false
             val result = brain.chat(messages, toolDefs, maxOutputTokens)
 
+            // Check cancellation after LLM call returns (call may have been aborted)
+            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
+
             when (result) {
                 is ApiResult.Success -> {
                     return LlmCallResult.Success(result.data, wasStreamed = streamed)
                 }
                 is ApiResult.Error -> {
+                    // If cancelled and we got a network error, that's the abort — exit cleanly
+                    if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
                     when (result.type) {
                         ErrorType.RATE_LIMITED, ErrorType.SERVER_ERROR -> {
                             lastError = result.message
@@ -1620,9 +1641,14 @@ class SingleAgentSession(
                                 LOG.info("SingleAgentSession: retry $attempt/$MAX_RETRIES after ${delayMs}ms ($reason)")
                                 eventLog?.log(AgentEventType.RATE_LIMITED_RETRY, "Attempt $attempt, backoff ${delayMs}ms ($reason)")
                                 onDebugLog?.invoke("warn", "retry", "$reason — attempt $attempt/$MAX_RETRIES, backoff ${delayMs}ms", mapOf("iteration" to iteration))
-                                delay(delayMs)
+                                delay(delayMs) // delay() is cancellable — Job.cancel() will interrupt this
                             }
                             continue // retry with backoff
+                        }
+                        ErrorType.NETWORK_ERROR -> {
+                            // Network error during cancellation = expected (socket closed by cancelActiveRequest)
+                            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
+                            return LlmCallResult.Failed(result.message)
                         }
                         ErrorType.CONTEXT_LENGTH_EXCEEDED -> {
                             // Reduce tools to core set and retry once

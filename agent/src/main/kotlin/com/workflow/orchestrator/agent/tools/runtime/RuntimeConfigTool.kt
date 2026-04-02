@@ -18,6 +18,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Run configuration CRUD — create, modify, delete, and list IntelliJ run/debug configurations.
@@ -117,6 +119,7 @@ description optional: for approval dialog on create/modify/delete.
     )
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",

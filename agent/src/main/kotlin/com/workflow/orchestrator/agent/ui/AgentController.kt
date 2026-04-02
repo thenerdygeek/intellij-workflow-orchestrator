@@ -894,6 +894,9 @@ class AgentController(
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
         ProcessRegistry.killAll()
+        // Kill all background sub-agents — they use independent SupervisorJobs
+        // that don't get cancelled by currentTaskJob.cancel()
+        try { AgentService.getInstance(project).killAllWorkers() } catch (_: Exception) {}
         currentTaskJob?.cancel()
         currentTaskJob = null
         // Reset plan mode on cancel

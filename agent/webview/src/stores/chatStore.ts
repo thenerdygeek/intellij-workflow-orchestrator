@@ -99,6 +99,7 @@ interface ChatState {
   editStats: EditStats | null;
   checkpoints: CheckpointInfo[];
   planPending: 'approve' | 'revise' | null;
+  planCompletedPendingClear: boolean;
 
   // Actions
   startSession(task: string): void;
@@ -212,6 +213,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   editStats: null,
   checkpoints: [],
   planPending: null,
+  planCompletedPendingClear: false,
 
   // Actions
   startSession(task: string) {
@@ -226,6 +228,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeStream: null,
       activeToolCalls: new Map(),
       plan: null,
+      planCompletedPendingClear: false,
       questions: null,
       questionSummary: null,
       busy: true,
@@ -255,6 +258,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeStream: null,
       activeToolCalls: new Map(),
       messages,
+      // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
+      ...(state.planCompletedPendingClear ? { plan: null, planCompletedPendingClear: false } : {}),
     });
   },
 
@@ -299,6 +304,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   endStream() {
     const state = get();
     const stream = state.activeStream;
+    const shouldClearPlan = state.planCompletedPendingClear;
 
     if (stream && stream.text.length > 0) {
       const message: Message = {
@@ -310,9 +316,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({
         messages: [...state.messages, message],
         activeStream: null,
+        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
       });
     } else {
-      set({ activeStream: null });
+      set({
+        activeStream: null,
+        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
+      });
     }
   },
 
@@ -418,6 +428,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeStream: null,
       activeToolCalls: new Map(),
       plan: null,
+      planCompletedPendingClear: false,
       questions: null,
       questionSummary: null,
       retryMessage: null,
@@ -438,7 +449,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const steps = state.plan.steps.map(step =>
         step.id === stepId ? { ...step, status: status as PlanStepStatus } : step
       );
-      return { plan: { ...state.plan, steps } };
+      const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
+      const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
+      return {
+        plan: { ...state.plan, steps },
+        planCompletedPendingClear: allTerminal,
+      };
     });
   },
 

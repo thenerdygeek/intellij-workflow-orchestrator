@@ -9,6 +9,8 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Consolidated Jira meta-tool replacing 15 individual jira_* tools.
@@ -141,6 +143,7 @@ description optional: for approval dialog on write actions.
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",
