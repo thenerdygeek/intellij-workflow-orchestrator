@@ -132,9 +132,9 @@ class LLMSummarizingCondenser(
             }
         }
 
-        // Step 11: Handle failure — fall back to simple concatenation
+        // Step 11: Handle failure — fall back to simple concatenation, preserving previous summary
         val finalSummary = if (summary.isNullOrBlank()) {
-            buildFallbackSummary(forgottenEvents)
+            buildFallbackSummary(forgottenEvents, previousSummary)
         } else {
             summary
         }
@@ -193,13 +193,24 @@ class LLMSummarizingCondenser(
         is CondensationRequestAction -> "[Condensation request]"
     }
 
-    private fun buildFallbackSummary(events: List<Event>): String {
+    private fun buildFallbackSummary(events: List<Event>, previousSummary: String?): String {
         val MAX_FALLBACK_LENGTH = 4096
-        val descriptions = events.joinToString("\n") { "- ${formatEvent(it)}" }
-        return if (descriptions.length > MAX_FALLBACK_LENGTH) {
-            descriptions.take(MAX_FALLBACK_LENGTH) + "..."
-        } else {
-            descriptions
+        val newDescriptions = events.joinToString("\n") { "- ${formatEvent(it)}" }
+
+        return buildString {
+            // Preserve previous summary in fallback too
+            if (!previousSummary.isNullOrBlank()) {
+                append("PREVIOUSLY_COMPACTED:\n")
+                append(previousSummary.take(MAX_FALLBACK_LENGTH / 2))
+                append("\n\nNEWLY_COMPACTED:\n")
+            }
+            val remaining = MAX_FALLBACK_LENGTH - length
+            if (newDescriptions.length > remaining) {
+                append(newDescriptions.take(remaining))
+                append("...")
+            } else {
+                append(newDescriptions)
+            }
         }
     }
 
@@ -221,34 +232,45 @@ class LLMSummarizingCondenser(
     }
 
     companion object {
-        internal const val SUMMARIZATION_PROMPT = """You are maintaining a context-aware state summary for an interactive agent.
+        internal const val SUMMARIZATION_PROMPT = """You are maintaining a hierarchical context-aware state summary for an interactive agent.
 You will be given a list of events corresponding to actions taken by the agent, and the most recent previous summary if one exists.
-If the events being summarized contain ANY task-tracking, you MUST include a TASK_TRACKING section to maintain continuity.
-When referencing tasks make sure to preserve exact task IDs and statuses.
 
-Track:
+CRITICAL — HIERARCHICAL PRESERVATION:
+The PREVIOUS SUMMARY section contains context from EARLIER compaction rounds. This information has ALREADY been compressed from original events that are no longer available. You MUST:
+1. PRESERVE all key findings, decisions, and context from the previous summary
+2. BUILD UPON it with new information from the current events
+3. NEVER discard or replace previous summary content — merge it
+4. Structure the output so both previously compacted context AND newly compacted context are clearly visible
 
-USER_CONTEXT: (Preserve essential user requirements, goals, and clarifications in concise form)
+Use this structure:
 
-TASK_TRACKING: {Active tasks, their IDs and statuses - PRESERVE TASK IDs}
+PREVIOUSLY_COMPACTED: (Carry forward key points from PREVIOUS SUMMARY — do NOT discard)
 
-COMPLETED: (Tasks completed so far, with brief results)
+NEWLY_COMPACTED: (Summarize the new events being condensed now)
+
+USER_CONTEXT: (Preserve essential user requirements, goals, and clarifications — merge old + new)
+
+TASK_TRACKING: {Active tasks, their IDs and statuses - PRESERVE TASK IDs from both old and new}
+
+COMPLETED: (All tasks completed across ALL compaction rounds)
 PENDING: (Tasks that still need to be done)
 CURRENT_STATE: (Current variables, data structures, or relevant state)
 
 For code-specific tasks, also include:
-CODE_STATE: {File paths, function signatures, data structures}
+CODE_STATE: {File paths, function signatures, data structures — cumulative across rounds}
 TESTS: {Failing cases, error messages, outputs}
-CHANGES: {Code edits, variable updates}
+CHANGES: {Code edits — cumulative across ALL compaction rounds, not just the latest}
 DEPS: {Dependencies, imports, external calls}
 VERSION_CONTROL_STATUS: {Repository state, current branch, PR status, commit history}
 
 PRIORITIZE:
-1. Adapt tracking format to match the actual task type
-2. Capture key user requirements and goals
-3. Distinguish between completed and pending tasks
-4. Keep all sections concise and relevant
+1. NEVER lose information from the previous summary — it represents events that are gone forever
+2. Merge old and new context into a coherent whole
+3. Capture key user requirements and goals from ALL rounds
+4. Distinguish between completed and pending tasks across ALL rounds
+5. Keep all sections concise but comprehensive
 
-SKIP: Tracking irrelevant details for the current task type"""
+SKIP: Tracking irrelevant details for the current task type
+WARNING: If the PREVIOUS SUMMARY is not "No events summarized", you are in a MULTI-ROUND compaction. Losing previous summary content is a critical failure."""
     }
 }

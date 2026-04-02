@@ -326,7 +326,7 @@ class LLMSummarizingCondenserTest {
             val result = c.getCondensation(contextOf(view)) as Condensation
 
             assertNotNull(result.action.summary)
-            assertTrue(result.action.summary!!.startsWith("-"), "Fallback summary should be bullet list")
+            assertTrue(result.action.summary!!.contains("[Message from"), "Fallback summary should contain formatted events")
         }
 
         @Test
@@ -463,6 +463,87 @@ class LLMSummarizingCondenserTest {
             c.getCondensation(contextOf(view))
 
             coVerify(exactly = 1) { llmClient.summarize(any()) }
+        }
+
+        @Test
+        fun `fallback preserves previous summary in hierarchical structure`() = runTest {
+            coEvery { llmClient.summarize(any()) } returns null
+
+            val c = condenser(keepFirst = 2, maxSize = 10)
+            val events = listOf(
+                message(1),
+                message(2),
+                condensationObs("Important context from round 1: user wants to refactor auth module"),
+                message(100),
+                message(101),
+                message(102),
+                message(103),
+                message(104),
+                message(105),
+                message(106),
+                message(107),
+                message(108)
+            )
+            val view = View(events = events)
+
+            val result = c.getCondensation(contextOf(view)) as Condensation
+
+            val summary = result.action.summary!!
+            assertTrue(
+                summary.contains("PREVIOUSLY_COMPACTED"),
+                "Fallback should have PREVIOUSLY_COMPACTED section"
+            )
+            assertTrue(
+                summary.contains("refactor auth module"),
+                "Fallback should preserve previous summary content"
+            )
+            assertTrue(
+                summary.contains("NEWLY_COMPACTED"),
+                "Fallback should have NEWLY_COMPACTED section"
+            )
+        }
+
+        @Test
+        fun `LLM prompt instructs hierarchical preservation`() = runTest {
+            val messagesSlot = slot<List<ChatMessage>>()
+            coEvery { llmClient.summarize(capture(messagesSlot)) } returns "merged summary"
+
+            val c = condenser(keepFirst = 2, maxSize = 10)
+            val events = listOf(
+                message(1),
+                message(2),
+                condensationObs("Round 1 summary: user fixed auth bug"),
+                message(100),
+                message(101),
+                message(102),
+                message(103),
+                message(104),
+                message(105),
+                message(106),
+                message(107),
+                message(108)
+            )
+            val view = View(events = events)
+
+            c.getCondensation(contextOf(view))
+
+            val promptContent = messagesSlot.captured[0].content!!
+            assertTrue(
+                promptContent.contains("HIERARCHICAL PRESERVATION"),
+                "Prompt should contain hierarchical preservation instructions"
+            )
+            assertTrue(
+                promptContent.contains("NEVER discard or replace previous summary content"),
+                "Prompt should warn against discarding previous summary"
+            )
+            assertTrue(
+                promptContent.contains("PREVIOUSLY_COMPACTED"),
+                "Prompt should instruct using PREVIOUSLY_COMPACTED structure"
+            )
+            assertTrue(
+                promptContent.contains("Round 1 summary: user fixed auth bug"),
+                "Prompt should include the actual previous summary"
+            )
         }
 
         @Test
