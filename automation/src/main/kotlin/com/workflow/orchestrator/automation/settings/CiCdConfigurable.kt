@@ -14,10 +14,7 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.service.AutomationSettingsService
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
@@ -56,7 +53,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
     private val searchResultsPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
     }
-    private var bambooClient: BambooApiClient? = null
+    private val bambooService: BambooService by lazy { project.getService(BambooService::class.java) }
 
     data class SuiteRow(
         val displayNameField: JBTextField,
@@ -72,7 +69,6 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val settings = PluginSettings.getInstance(project)
         val automationSettings = AutomationSettingsService.getInstance()
-        initBambooClient()
 
         // === DSL panel for simple field groups ===
         val dslPanel = panel {
@@ -381,8 +377,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         return wrapper
     }
 
-    private fun initBambooClient() {
-        log.info("[CiCd] initBambooClient() called")
+    private fun loadProjects() {
         val connSettings = ConnectionSettings.getInstance()
         val url = connSettings.state.bambooUrl.trimEnd('/')
         if (url.isBlank()) {
@@ -393,14 +388,6 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
             }
             return
         }
-        bambooClient = BambooApiClient(
-            baseUrl = url,
-            tokenProvider = { CredentialStore().getToken(ServiceType.BAMBOO) }
-        )
-    }
-
-    private fun loadProjects() {
-        val client = bambooClient ?: return
         runOnEdt {
             projectCombo.removeAllItems()
             projectCombo.addItem(CiCdProjectItem("", "Loading projects..."))
@@ -408,24 +395,21 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         scope.launch {
             try {
                 val result = withTimeout(15_000) {
-                    client.getProjects()
+                    bambooService.getProjects()
                 }
                 runOnEdt {
                     projectCombo.removeAllItems()
-                    when (result) {
-                        is ApiResult.Success -> {
-                            if (result.data.isEmpty()) {
-                                projectCombo.addItem(CiCdProjectItem("", "No projects found"))
-                            } else {
-                                projectCombo.addItem(CiCdProjectItem("", "Select a project..."))
-                                for (proj in result.data.sortedBy { it.name }) {
-                                    projectCombo.addItem(CiCdProjectItem(proj.key, proj.name))
-                                }
+                    if (!result.isError) {
+                        if (result.data.isEmpty()) {
+                            projectCombo.addItem(CiCdProjectItem("", "No projects found"))
+                        } else {
+                            projectCombo.addItem(CiCdProjectItem("", "Select a project..."))
+                            for (proj in result.data.sortedBy { it.name }) {
+                                projectCombo.addItem(CiCdProjectItem(proj.key, proj.name))
                             }
                         }
-                        is ApiResult.Error -> {
-                            projectCombo.addItem(CiCdProjectItem("", "Failed: ${result.message}"))
-                        }
+                    } else {
+                        projectCombo.addItem(CiCdProjectItem("", "Failed: ${result.summary}"))
                     }
                 }
             } catch (e: Exception) {
@@ -440,32 +424,28 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
     private fun loadPlansForProject(projectKey: String) {
         if (projectKey.isBlank()) return
-        val client = bambooClient ?: return
         val projectName = (projectCombo.selectedItem as? CiCdProjectItem)?.name ?: ""
         runOnEdt {
             planCombo.removeAllItems()
             planCombo.addItem(CiCdPlanItem("", "Loading plans..."))
         }
         scope.launch {
-            val result = client.getProjectPlans(projectKey)
+            val result = bambooService.getProjectPlans(projectKey)
             runOnEdt {
                 planCombo.removeAllItems()
-                when (result) {
-                    is ApiResult.Success -> {
-                        if (result.data.isEmpty()) {
-                            planCombo.addItem(CiCdPlanItem("", "No plans in this project"))
-                        } else {
-                            for (plan in result.data.sortedBy { it.name }) {
-                                val displayName = plan.name
-                                    .removePrefix("$projectName - ")
-                                    .removePrefix("$projectName-")
-                                planCombo.addItem(CiCdPlanItem(plan.key, displayName))
-                            }
+                if (!result.isError) {
+                    if (result.data.isEmpty()) {
+                        planCombo.addItem(CiCdPlanItem("", "No plans in this project"))
+                    } else {
+                        for (plan in result.data.sortedBy { it.name }) {
+                            val displayName = plan.name
+                                .removePrefix("$projectName - ")
+                                .removePrefix("$projectName-")
+                            planCombo.addItem(CiCdPlanItem(plan.key, displayName))
                         }
                     }
-                    is ApiResult.Error -> {
-                        planCombo.addItem(CiCdPlanItem("", "Failed: ${result.message}"))
-                    }
+                } else {
+                    planCombo.addItem(CiCdPlanItem("", "Failed: ${result.summary}"))
                 }
             }
         }
@@ -482,14 +462,13 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         val pattern = searchField.text.trim()
         if (pattern.isBlank()) return
 
-        val client = bambooClient ?: return
         searchResultsPanel.removeAll()
         searchResultsPanel.add(JBLabel("Searching...").apply { foreground = StatusColors.SECONDARY_TEXT })
         searchResultsPanel.revalidate()
 
         scope.launch {
-            val result = client.getPlans()
-            if (result is ApiResult.Success) {
+            val result = bambooService.getPlans()
+            if (!result.isError) {
                 val regex = try {
                     Regex(pattern, RegexOption.IGNORE_CASE)
                 } catch (_: Exception) {

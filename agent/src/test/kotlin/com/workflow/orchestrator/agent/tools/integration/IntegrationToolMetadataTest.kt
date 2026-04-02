@@ -5,59 +5,42 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 /**
- * Metadata tests for integration tools.
- * These tools now delegate to the unified service layer (JiraService, BambooService, etc.)
- * so HTTP-level tests live in the service implementation tests in their respective modules.
- * These tests verify tool names, descriptions, parameters, and worker scoping.
+ * Metadata tests for integration meta-tools.
+ * These meta-tools consolidate individual actions into single tools
+ * (e.g., JiraTool handles get_ticket, transition, comment, etc.).
  */
 class IntegrationToolMetadataTest {
 
     @Test
-    fun `jira_get_ticket has correct metadata`() {
-        val tool = JiraGetTicketTool()
-        assertEquals("jira_get_ticket", tool.name)
-        assertTrue(tool.description.contains("Jira"))
-        assertTrue(tool.parameters.required.contains("key"))
+    fun `jira meta-tool has correct metadata`() {
+        val tool = JiraTool()
+        assertEquals("jira", tool.name)
+        assertTrue(tool.description.contains("Jira", ignoreCase = true))
+        assertTrue(tool.parameters.required.contains("action"))
         assertTrue(tool.allowedWorkers.contains(WorkerType.TOOLER))
         assertTrue(tool.allowedWorkers.contains(WorkerType.ORCHESTRATOR))
     }
 
     @Test
-    fun `jira_transition has correct metadata`() {
-        val tool = JiraTransitionTool()
-        assertEquals("jira_transition", tool.name)
-        assertTrue(tool.parameters.required.containsAll(listOf("key", "transition_id")))
-        assertTrue(tool.allowedWorkers.contains(WorkerType.TOOLER))
-    }
-
-    @Test
-    fun `jira_comment has correct metadata`() {
-        val tool = JiraCommentTool()
-        assertEquals("jira_comment", tool.name)
-        assertTrue(tool.parameters.required.containsAll(listOf("key", "body")))
-        assertTrue(tool.allowedWorkers.contains(WorkerType.TOOLER))
-    }
-
-    @Test
-    fun `bamboo_build_status has correct metadata`() {
-        val tool = BambooBuildTool()
-        assertEquals("bamboo_build_status", tool.name)
-        assertTrue(tool.parameters.required.contains("plan_key"))
+    fun `bamboo_builds meta-tool has correct metadata`() {
+        val tool = BambooBuildsTool()
+        assertEquals("bamboo_builds", tool.name)
+        assertTrue(tool.parameters.required.contains("action"))
         assertTrue(tool.allowedWorkers.contains(WorkerType.TOOLER))
         assertTrue(tool.allowedWorkers.contains(WorkerType.ORCHESTRATOR))
     }
 
     @Test
-    fun `sonar_issues has correct metadata`() {
-        val tool = SonarIssuesTool()
-        assertEquals("sonar_issues", tool.name)
-        assertTrue(tool.parameters.required.contains("project_key"))
+    fun `sonar meta-tool has correct metadata`() {
+        val tool = SonarTool()
+        assertEquals("sonar", tool.name)
+        assertTrue(tool.parameters.required.contains("action"))
         assertTrue(tool.allowedWorkers.contains(WorkerType.TOOLER))
         assertTrue(tool.allowedWorkers.contains(WorkerType.ANALYZER))
     }
 
     @Test
-    fun `bitbucket_pr has correct metadata`() {
+    fun `bitbucket_pr meta-tool has correct metadata`() {
         val tool = BitbucketPrTool()
         assertEquals("bitbucket_pr", tool.name)
         assertTrue(tool.parameters.required.contains("action"))
@@ -65,10 +48,10 @@ class IntegrationToolMetadataTest {
     }
 
     @Test
-    fun `all tools produce valid tool definitions`() {
+    fun `all meta-tools produce valid tool definitions`() {
         val tools = listOf(
-            JiraGetTicketTool(), JiraTransitionTool(), JiraCommentTool(),
-            BambooBuildTool(), SonarIssuesTool(), BitbucketPrTool()
+            JiraTool(), BambooBuildsTool(), BambooPlansTool(),
+            SonarTool(), BitbucketPrTool(), BitbucketReviewTool(), BitbucketRepoTool()
         )
         for (tool in tools) {
             val def = tool.toToolDefinition()

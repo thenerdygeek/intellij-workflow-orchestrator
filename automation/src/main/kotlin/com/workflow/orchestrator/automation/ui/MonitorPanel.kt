@@ -10,11 +10,7 @@ import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
-import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
-import com.workflow.orchestrator.bamboo.service.BambooTestResultConverter
-import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.*
@@ -139,44 +135,43 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     private suspend fun pollAllRuns() {
-        val apiClient = createApiClient() ?: return
+        val bambooService = project.getService(BambooService::class.java) ?: return
 
         for (i in 0 until runListModel.size()) {
             val entry = runListModel.getElementAt(i)
             if (entry.status == "Successful" || entry.status == "Failed") continue
 
             try {
-                val result = apiClient.getBuildResult(entry.resultKey)
-                if (result is ApiResult.Success) {
-                    val dto = result.data
-                    val stages = dto.stages.stage.map { stage ->
+                val result = bambooService.getBuild(entry.resultKey)
+                if (!result.isError) {
+                    val buildData = result.data
+                    val stages = buildData.stages.map { stage ->
                         StageInfo(
                             name = stage.name,
                             state = stage.state,
-                            duration = if (stage.buildDurationInSeconds > 0) "${stage.buildDurationInSeconds / 60}m ${stage.buildDurationInSeconds % 60}s" else ""
+                            duration = if (stage.durationSeconds > 0) "${stage.durationSeconds / 60}m ${stage.durationSeconds % 60}s" else ""
                         )
                     }
 
                     val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
                     val updated = entry.copy(
-                        buildNumber = dto.buildNumber,
-                        status = dto.state,
+                        buildNumber = buildData.buildNumber,
+                        status = buildData.state,
                         stages = stages,
-                        totalTests = dto.stages.stage.sumOf { it.results.result.size },
-                        duration = "${dto.buildDurationInSeconds / 60}m ${dto.buildDurationInSeconds % 60}s",
+                        duration = "${buildData.durationSeconds / 60}m ${buildData.durationSeconds % 60}s",
                         bambooUrl = "$bambooUrl/browse/${entry.resultKey}"
                     )
 
                     // Fetch test results if build is finished
-                    if (dto.lifeCycleState.equals("Finished", ignoreCase = true)) {
-                        val testResult = apiClient.getTestResults(entry.resultKey)
-                        if (testResult is ApiResult.Success) {
-                            val testData = testResult.data.testResults
-                            val failedNames = testData.failedTests.testResult.map {
+                    if (buildData.state == "Successful" || buildData.state == "Failed") {
+                        val testResult = bambooService.getTestResults(entry.resultKey)
+                        if (!testResult.isError) {
+                            val testData = testResult.data
+                            val failedNames = testData.failedTests.map {
                                 "${it.className.substringAfterLast('.')}.${it.methodName}"
                             }
                             val withTests = updated.copy(
-                                totalTests = testData.all,
+                                totalTests = testData.total,
                                 failedTests = testData.failed,
                                 failedTestNames = failedNames
                             )
@@ -374,10 +369,6 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     override fun dispose() {
         poller?.stop()
         scope.cancel()
-    }
-
-    private fun createApiClient(): BambooApiClient? {
-        return BambooServiceImpl.getInstance(project).getApiClient()
     }
 
     private class RunListCellRenderer : ListCellRenderer<RunEntry> {

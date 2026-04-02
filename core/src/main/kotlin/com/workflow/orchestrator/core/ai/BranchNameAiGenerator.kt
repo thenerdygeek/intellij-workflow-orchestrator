@@ -5,8 +5,8 @@ import com.intellij.openapi.project.Project
 
 /**
  * Extension point interface for AI-powered branch name generation.
- * Lives in :core so :jira can consume it without depending on :cody.
- * :cody provides the implementation via plugin.xml extension.
+ * Lives in :core so :jira can consume it without depending on any feature module.
+ * :core provides the implementation via SourcegraphBranchNameGenerator.
  */
 interface BranchNameAiGenerator {
 
@@ -15,7 +15,7 @@ interface BranchNameAiGenerator {
      * The returned string should be lowercase, hyphen-separated, and suitable for use in a git branch name.
      * Example: "fix-null-pointer-in-order-service"
      *
-     * @param project The current IntelliJ project (needed to acquire Cody agent)
+     * @param project The current IntelliJ project (needed to access Sourcegraph LLM API)
      * @param ticketKey The Jira ticket key (e.g. "PROJ-123")
      * @param title The ticket summary/title
      * @param description Optional ticket description (lower priority than title)

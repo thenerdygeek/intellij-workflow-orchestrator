@@ -121,4 +121,4 @@ add_breakpoint(file="UserController.kt", line=20, condition="request.getHeader('
 | Inspect | `get_debug_state`, `get_variables`, `get_stack_frames`, `evaluate_expression` | Observe state |
 | Cleanup | `debug_stop`, `remove_breakpoint` | Always clean up |
 
-After resolving the issue, use `save_memory` to record the debugging approach and root cause for future reference.
+After resolving the issue, use `archival_memory_insert` to record the debugging approach and root cause for future reference.

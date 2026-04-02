@@ -24,7 +24,6 @@ dependencies {
     }
 
     implementation(project(":core"))
-    implementation(project(":bamboo"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)

@@ -115,7 +115,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var worklogIncrementHours by property(0.5f)
 
         // VCS commit handler toggles
-        var autoLogTimeOnCommit by property(false)
         var autoTransitionOnCommit by property(false)
 
         // Branching & PRs
@@ -129,7 +128,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var reviewerFieldId by string("")
         var testerFieldId by string("")
 
-        // Cody AI
+        // AI review
         var maxDiffLinesForReview by property(10000)
 
         // SonarQube

@@ -686,7 +686,6 @@ class SingleAgentSession(
             sessionOutputTokens += usage.completionTokens.toLong()
             // Reconcile token count with actual API-reported count.
             // The API's prompt_tokens is authoritative — calibrate to it.
-            bridge.reconcileWithActualTokens(usage.promptTokens)
             bridge.updateTokensFromUsage(usage.promptTokens)
         } else {
             // Streaming response returned null/zero usage — estimate heuristically

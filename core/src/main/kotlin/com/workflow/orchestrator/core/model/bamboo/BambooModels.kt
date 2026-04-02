@@ -103,3 +103,13 @@ data class PlanBranchData(
     val name: String,
     val enabled: Boolean = true
 )
+
+/**
+ * A Bamboo project (contains plans).
+ */
+@Serializable
+data class ProjectData(
+    val key: String,
+    val name: String,
+    val description: String? = null
+)

@@ -5,6 +5,7 @@ import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.model.bamboo.PlanBranchData
 import com.workflow.orchestrator.core.model.bamboo.PlanData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
+import com.workflow.orchestrator.core.model.bamboo.ProjectData
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 
 /**
@@ -71,4 +72,7 @@ interface BambooService {
 
     /** Get variables used in a specific build result. */
     suspend fun getBuildVariables(resultKey: String): ToolResult<List<PlanVariableData>>
+
+    /** List all projects visible to the authenticated user. */
+    suspend fun getProjects(): ToolResult<List<ProjectData>>
 }

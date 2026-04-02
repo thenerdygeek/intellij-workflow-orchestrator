@@ -4,9 +4,9 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import com.workflow.orchestrator.core.psi.PsiContextEnricher
 import com.workflow.orchestrator.handover.model.FindingSeverity
 import com.workflow.orchestrator.handover.model.ReviewFinding
-import java.lang.reflect.Method
 
 @Service(Service.Level.PROJECT)
 class PreReviewService {
@@ -21,32 +21,15 @@ class PreReviewService {
 
     private val log = Logger.getInstance(PreReviewService::class.java)
 
-    // --- Cached reflection lookups (H-01 perf fix) ---
-    // These avoid re-resolving Class/Method objects per file during enriched review.
-    // Classes and methods are resolved lazily on first use and reused across all files.
-
-    private val psiEnricherClass: Class<*>? by lazy {
-        try { Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher") }
-        catch (_: ClassNotFoundException) { log.info("[Handover:Review] PsiContextEnricher not available — Cody module deprecated"); null }
-    }
-    private val enrichPsiMethod: Method? by lazy {
-        psiEnricherClass?.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
-    }
-    private val springEnricherClass: Class<*>? by lazy {
-        try { Class.forName("com.workflow.orchestrator.cody.service.SpringContextEnricher") }
-        catch (_: ClassNotFoundException) { log.info("[Handover:Review] SpringContextEnricher not available — Cody module deprecated"); null }
-    }
-    private val enrichSpringMethod: Method? by lazy {
-        springEnricherClass?.getMethod("enrich", String::class.java, kotlin.coroutines.Continuation::class.java)
-    }
+    // PsiContextEnricher is now in :core — direct usage, no reflection needed.
 
     /**
-     * Parses Cody's text response into structured findings.
-     * Cody returns free-text; we look for patterns like:
+     * Parses the AI review text response into structured findings.
+     * The LLM returns free-text; we look for patterns like:
      * - **HIGH** `file.kt:42` — Missing @Transactional [missing-transactional]
      */
     fun parseFindings(codyResponse: String): List<ReviewFinding> {
-        log.debug("[Handover:Review] Parsing findings from Cody response (${codyResponse.length} chars)")
+        log.debug("[Handover:Review] Parsing findings from AI response (${codyResponse.length} chars)")
         val findings = mutableListOf<ReviewFinding>()
         val pattern = Regex(
             """\*\*(HIGH|MEDIUM|LOW)\*\*\s+`([^:]+):(\d+)`\s*[-\u2013\u2014]\s*(.+?)\s*\[([^\]]+)]"""
@@ -67,7 +50,7 @@ class PreReviewService {
             ))
         }
 
-        log.info("[Handover:Review] Parsed ${findings.size} findings from Cody response")
+        log.info("[Handover:Review] Parsed ${findings.size} findings from AI response")
         return findings.sortedBy { it.severity.ordinal }
     }
 
@@ -92,9 +75,7 @@ class PreReviewService {
      * Enhanced review prompt that includes PSI + Spring annotations for changed files.
      * Falls back to plain diff if PSI enrichment fails.
      *
-     * Uses reflection to access PsiContextEnricher and SpringContextEnricher from the
-     * :cody module to avoid a compile-time cross-module dependency. At runtime, the
-     * classes are available because both modules are loaded into the same plugin classloader.
+     * Uses PsiContextEnricher from :core for PSI-based code intelligence.
      */
     suspend fun buildEnrichedReviewPrompt(
         diff: String,
@@ -117,94 +98,27 @@ class PreReviewService {
         }
     }
 
-    @Suppress("UNCHECKED_CAST")
     private suspend fun buildFileAnnotations(
         proj: Project,
         changedFiles: List<VirtualFile>
     ): List<String> {
-        // Create enricher instances (classes + methods are cached as lazy fields)
-        // Return empty if Cody module enrichers are not available (deprecated)
-        val psiClass = psiEnricherClass ?: return emptyList()
-        val psiMethod = enrichPsiMethod ?: return emptyList()
-        val psiEnricher = psiClass.getConstructor(Project::class.java).newInstance(proj)
-
-        val sprClass = springEnricherClass
-        val sprMethod = enrichSpringMethod
-        val springEnricher: Any? = if (sprClass != null) {
-            try {
-                proj.getService(sprClass) ?: getSpringEnricherEmpty(sprClass)
-            } catch (_: Exception) {
-                getSpringEnricherEmpty(sprClass)
-            }
-        } else null
+        val enricher = PsiContextEnricher(proj)
 
         return changedFiles.mapNotNull { file ->
             try {
-                val psi = invokeSuspend(psiEnricher, psiMethod, file.path) ?: return@mapNotNull null
-                val spring = if (springEnricher != null && sprMethod != null) {
-                    invokeSuspend(springEnricher, sprMethod, file.path)
-                } else null
+                val psi = enricher.enrich(file.path)
 
-                val className = psi.javaClass.getMethod("getClassName").invoke(psi) as? String
-                    ?: return@mapNotNull null
-                val classAnnotations = psi.javaClass.getMethod("getClassAnnotations").invoke(psi) as List<String>
+                val className = psi.className ?: return@mapNotNull null
 
                 buildString {
                     append("${file.name}: $className")
-                    if (classAnnotations.isNotEmpty()) {
-                        append(" (${classAnnotations.joinToString(", ") { "@$it" }})")
-                    }
-                    if (spring != null) {
-                        val isBean = spring.javaClass.getMethod("isBean").invoke(spring) as Boolean
-                        if (isBean) {
-                            appendSpringDetails(spring)
-                        }
+                    if (psi.classAnnotations.isNotEmpty()) {
+                        append(" (${psi.classAnnotations.joinToString(", ") { "@$it" }})")
                     }
                 }
             } catch (_: Exception) {
                 null
             }
-        }
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun StringBuilder.appendSpringDetails(spring: Any) {
-        val transactionalMethods = spring.javaClass.getMethod("getTransactionalMethods")
-            .invoke(spring) as List<String>
-        if (transactionalMethods.isNotEmpty()) {
-            append("\n  @Transactional methods: ${transactionalMethods.joinToString(", ")}")
-        }
-
-        val requestMappings = spring.javaClass.getMethod("getRequestMappings")
-            .invoke(spring) as List<Any>
-        if (requestMappings.isNotEmpty()) {
-            val mappingStrings = requestMappings.map { mapping ->
-                val method = mapping.javaClass.getMethod("getMethod").invoke(mapping) as String
-                val path = mapping.javaClass.getMethod("getPath").invoke(mapping) as String
-                "$method $path"
-            }
-            append("\n  Endpoints: ${mappingStrings.joinToString(", ")}")
-        }
-
-        val injectedDeps = spring.javaClass.getMethod("getInjectedDependencies")
-            .invoke(spring) as List<Any>
-        if (injectedDeps.isNotEmpty()) {
-            val depStrings = injectedDeps.map { dep ->
-                val beanType = dep.javaClass.getMethod("getBeanType").invoke(dep) as String
-                beanType.substringAfterLast('.')
-            }
-            append("\n  Dependencies: ${depStrings.joinToString(", ")}")
-        }
-    }
-
-    private fun getSpringEnricherEmpty(springEnricherClass: Class<*>): Any {
-        val companion = springEnricherClass.getField("Companion").get(null)
-        return companion.javaClass.getMethod("getEMPTY").invoke(companion)
-    }
-
-    private suspend fun invokeSuspend(obj: Any, method: Method, arg: String): Any? {
-        return kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { cont ->
-            method.invoke(obj, arg, cont)
         }
     }
 

@@ -81,11 +81,6 @@ data class BambooBranchDto(
 // --- Build Result DTOs ---
 
 @Serializable
-data class BambooResultResponse(
-    val results: BambooResultCollection = BambooResultCollection()
-)
-
-@Serializable
 data class BambooResultCollection(
     val size: Int = 0,
     val result: List<BambooResultDto> = emptyList()

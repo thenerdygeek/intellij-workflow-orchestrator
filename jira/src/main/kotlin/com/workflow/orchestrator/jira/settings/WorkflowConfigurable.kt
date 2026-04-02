@@ -271,11 +271,6 @@ class WorkflowConfigurable(private val project: Project) : SearchableConfigurabl
                         )
                 }
                 row {
-                    checkBox("Automatically log time on commit")
-                        .bindSelected(settings.state::autoLogTimeOnCommit)
-                        .comment("Log elapsed time to the active Jira ticket when you commit")
-                }
-                row {
                     checkBox("Automatically transition ticket on commit")
                         .bindSelected(settings.state::autoTransitionOnCommit)
                         .comment("Move the active ticket to 'In Progress' on first commit")

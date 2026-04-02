@@ -487,15 +487,6 @@ class EventSourcedContextBridge(
         eventStore.appendToJsonl()
     }
 
-    /**
-     * Reconcile token count with actual API-reported tokens.
-     */
-    fun reconcileWithActualTokens(actualPromptTokens: Int) {
-        if (actualPromptTokens > 0) {
-            lastReportedPromptTokens = actualPromptTokens
-        }
-    }
-
     // =========================================================================
     // Token management
     // =========================================================================

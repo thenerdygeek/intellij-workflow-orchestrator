@@ -5,7 +5,7 @@ import com.intellij.openapi.project.Project
 
 /**
  * Interface for cross-module AI text generation.
- * Implemented by :cody module, consumed by :bamboo (PR description) without compile-time dependency.
+ * Implemented by :core via SourcegraphTextGenerationService, consumed by :bamboo (PR description) without compile-time dependency.
  */
 interface TextGenerationService {
 
