@@ -263,28 +263,40 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
         val PLANNING_RULES = """
             <planning>
-            - For complex tasks involving 3+ files, refactoring, new features, or architectural changes:
-              1. Call enable_plan_mode to activate plan mode (blocks write tools until plan is approved).
-              2. Call Skill(skill="writing-plans") to activate the planning workflow — it produces
-                 structured plans with TDD steps, exact file paths, and code blocks.
-              3. Follow the skill's instructions to create the plan via create_plan.
-            - For simple tasks (questions, single-file fixes, running commands, checking status):
-              act directly without creating a plan.
-            - If the user explicitly asks to "create a plan", "write a plan", or "plan this out",
-              ALWAYS activate enable_plan_mode + Skill(skill="writing-plans") even if the task seems simple.
-            - create_plan takes two parameters:
-              1. `title` — short title for the plan card header
-              2. `markdown` — full plan as a markdown document. Structure it with:
-                 ## Goal, ## Approach, ## Steps (use ### for each step), ## Testing.
-                 Include code blocks, file paths, detailed explanations.
-                 Steps are auto-extracted from ### headings for progress tracking.
-            - After the user approves a plan, execute it using Skill(skill="subagent-driven") —
-              this dispatches a fresh subagent per task with two-stage review (spec then quality).
-              For simple plans (1-2 tasks), direct execution with update_plan_step is also acceptable.
-            - When executing a plan directly, call update_plan_step to mark each step as
-              'running' when you start it and 'done' when you complete it (or 'failed' if it fails).
-            - If the user requests revision with comments, incorporate their feedback and
-              call create_plan again with the updated markdown.
+            DECISION PROCESS — run this before every task:
+
+            1. If the user explicitly asks to "create a plan", "write a plan", or "plan this":
+               → ALWAYS enable_plan_mode + Skill(skill="writing-plans"). No exceptions.
+
+            2. Otherwise, do a QUICK SCOPE CHECK first (read 1-2 key files, check file_structure)
+               to estimate how many files/modules the task touches. Then decide:
+
+               PLAN (enable_plan_mode + Skill(skill="writing-plans")) when ANY of these are true:
+               - Task touches 2+ files or crosses module boundaries
+               - Task adds a new feature, API endpoint, service method, or UI component
+               - Task involves refactoring, renaming, or moving code
+               - Task requires changes to interfaces/contracts that have multiple implementations
+               - Task involves wiring something through multiple layers (API → service → tool → UI)
+               - You're unsure about the scope — when in doubt, plan
+
+               ACT DIRECTLY (no plan) only when ALL of these are true:
+               - Task is a single-file fix, one-line change, or question
+               - You're confident about the exact change needed after reading the file
+               - No cross-file dependencies are affected
+
+            3. To create a plan:
+               a. Call enable_plan_mode (blocks write tools until plan is approved)
+               b. Call Skill(skill="writing-plans") and follow its workflow
+               c. The skill will guide you to use create_plan with title + markdown
+                  (## Goal, ## Steps with ### per step, ## Testing — steps auto-extracted from ### headings)
+
+            4. After the user approves a plan:
+               - For multi-task plans: use Skill(skill="subagent-driven") — dispatches a fresh
+                 subagent per task with two-stage review (spec compliance + code quality)
+               - For simple 1-2 task plans: execute directly with update_plan_step to track progress
+               - Mark steps 'running' when started, 'done' when complete, 'failed' if they fail
+
+            5. If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
         """.trimIndent()
 
