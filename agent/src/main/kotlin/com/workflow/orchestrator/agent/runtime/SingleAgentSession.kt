@@ -32,6 +32,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -198,6 +199,22 @@ class SingleAgentSession(
             "update_plan_step",
             "think"
         )
+
+        /**
+         * Check if a tool call is a background agent launch. These are safe to
+         * parallelize because they just spawn a coroutine and return an ID immediately.
+         */
+        private fun isBackgroundAgentCall(tc: com.workflow.orchestrator.agent.api.dto.ToolCall): Boolean {
+            if (tc.function.name != "agent") return false
+            return try {
+                val params = kotlinx.serialization.json.Json.parseToJsonElement(tc.function.arguments)
+                (params as? kotlinx.serialization.json.JsonObject)
+                    ?.get("run_in_background")
+                    ?.jsonPrimitive?.booleanOrNull == true
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     /**
@@ -920,9 +937,11 @@ class SingleAgentSession(
         // Execute tool calls: read-only tools in parallel, write tools sequentially
         val toolResults = mutableListOf<Pair<String, Boolean>>() // (toolCallId, isError) for LoopGuard
 
-        // Split into read-only (parallel-safe) and write (sequential) tool calls
+        // Split into parallel-safe and sequential tool calls.
+        // Read-only tools are always parallel-safe. Background agent launches are also
+        // parallel-safe (they just spawn a coroutine and return an ID immediately).
         val (readOnlyCalls, writeCalls) = effectiveToolCalls.partition { tc ->
-            tc.function.name in READ_ONLY_TOOLS
+            tc.function.name in READ_ONLY_TOOLS || isBackgroundAgentCall(tc)
         }
 
         // Doom loop detection: check each tool call before execution, skip if detected
