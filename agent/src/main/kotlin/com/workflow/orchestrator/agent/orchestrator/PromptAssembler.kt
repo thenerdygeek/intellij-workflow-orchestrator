@@ -77,11 +77,11 @@ class PromptAssembler(
             sections.add(guardrailsContext)
         }
 
-        // Available Agents — ALWAYS inject built-in + custom
+        // Available Agents — ALWAYS inject built-in + specialist + custom
         val builtInDescs = SpawnAgentTool.BUILT_IN_AGENTS.entries
             .joinToString("\n") { "- ${it.key}: ${it.value.description}" }
         val allAgentDescs = if (!agentDescriptions.isNullOrBlank()) {
-            "$builtInDescs\n\nCustom agents:\n$agentDescriptions"
+            "$builtInDescs\n\nSpecialist agents:\n$agentDescriptions"
         } else {
             builtInDescs
         }
