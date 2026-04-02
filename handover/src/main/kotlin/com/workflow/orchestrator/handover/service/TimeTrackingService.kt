@@ -21,8 +21,6 @@ class TimeTrackingService {
     private val log = Logger.getInstance(TimeTrackingService::class.java)
 
     companion object {
-        @Deprecated("Read maxWorklogHours from PluginSettings via getMaxHours() instead")
-        const val MAX_HOURS = 7.0
         private val ISO_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
 
         fun getInstance(project: Project): TimeTrackingService {

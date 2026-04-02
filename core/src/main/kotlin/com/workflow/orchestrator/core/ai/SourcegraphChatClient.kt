@@ -68,15 +68,6 @@ class SourcegraphChatClient(
 
         /** Sourcegraph API path for listing available models. */
         const val MODELS_PATH = "/.api/llm/models"
-
-        /**
-         * Maximum output tokens — no longer hardcoded.
-         * The actual limit varies per model and Sourcegraph instance configuration.
-         * We pass through whatever maxOutputTokens the user configures in settings.
-         * If omitted, the API uses its own default.
-         */
-        @Deprecated("Output limit varies per model. Use AgentSettings.maxOutputTokens instead.")
-        const val MAX_OUTPUT_TOKENS = 4000
     }
 
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.
@@ -494,22 +485,31 @@ class SourcegraphChatClient(
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
                 .build()
 
-            httpClient.newCall(httpRequest).execute().use { response ->
-                val body = response.body?.string() ?: ""
+            val call = httpClient.newCall(httpRequest)
+            activeCall.set(call)
+            try {
+                call.execute().use { response ->
+                    activeCall.set(null)
+                    val body = response.body?.string() ?: ""
 
-                when {
-                    response.isSuccessful -> {
-                        val parsed = json.decodeFromString<ChatCompletionResponse>(body)
-                        log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
-                        dumpApiResponse(parsed)
-                        ApiResult.Success(parsed)
-                    }
-                    else -> {
-                        dumpApiError(response.code, body)
-                        mapErrorResponse(response.code, body)
+                    when {
+                        response.isSuccessful -> {
+                            val parsed = json.decodeFromString<ChatCompletionResponse>(body)
+                            log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
+                            dumpApiResponse(parsed)
+                            ApiResult.Success(parsed)
+                        }
+                        else -> {
+                            dumpApiError(response.code, body)
+                            mapErrorResponse(response.code, body)
+                        }
                     }
                 }
+            } finally {
+                activeCall.set(null)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // Never swallow CancellationException — propagate for structured concurrency
         } catch (e: IOException) {
             log.warn("[Agent:API] Network error: ${e.message}", e)
             ApiResult.Error(ErrorType.NETWORK_ERROR, "Network error: ${e.message}", e)

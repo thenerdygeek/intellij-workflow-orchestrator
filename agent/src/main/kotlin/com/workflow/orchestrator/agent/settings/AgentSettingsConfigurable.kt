@@ -48,9 +48,7 @@ class AgentSettingsConfigurable(
     private var sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
     private var maxInputTokens = settings.state.maxInputTokens
     private var maxOutputTokens = settings.state.maxOutputTokens
-    private var enableFastPath = settings.state.enableFastPath
     private var approvalRequiredForEdits = settings.state.approvalRequiredForEdits
-    private var tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
     private var showDebugLog = settings.state.showDebugLog
     private var powershellEnabled = settings.state.powershellEnabled
 
@@ -131,19 +129,9 @@ class AgentSettingsConfigurable(
             }
             group("Behavior") {
                 row {
-                    checkBox("Enable fast path for simple tasks")
-                        .bindSelected(::enableFastPath)
-                        .comment("Routes simple tasks directly to a single worker instead of full orchestration")
-                }
-                row {
                     checkBox("Require approval for file edits")
                         .bindSelected(::approvalRequiredForEdits)
                         .comment("Shows a confirmation dialog before the agent modifies files")
-                }
-                row("Token budget warning (%):") {
-                    spinner(0..100, 5)
-                        .bindIntValue(::tokenBudgetWarningPercent)
-                        .comment("Show warning when token usage exceeds this percentage")
                 }
                 row {
                     checkBox("Allow PowerShell in run_command tool")
@@ -390,9 +378,7 @@ class AgentSettingsConfigurable(
         settings.state.sourcegraphChatModel = sourcegraphChatModel
         settings.state.maxInputTokens = maxInputTokens
         settings.state.maxOutputTokens = maxOutputTokens
-        settings.state.enableFastPath = enableFastPath
         settings.state.approvalRequiredForEdits = approvalRequiredForEdits
-        settings.state.tokenBudgetWarningPercent = tokenBudgetWarningPercent
         settings.state.showDebugLog = showDebugLog
         settings.state.powershellEnabled = powershellEnabled
 
@@ -406,9 +392,7 @@ class AgentSettingsConfigurable(
         sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
         maxInputTokens = settings.state.maxInputTokens
         maxOutputTokens = settings.state.maxOutputTokens
-        enableFastPath = settings.state.enableFastPath
         approvalRequiredForEdits = settings.state.approvalRequiredForEdits
-        tokenBudgetWarningPercent = settings.state.tokenBudgetWarningPercent
         showDebugLog = settings.state.showDebugLog
         powershellEnabled = settings.state.powershellEnabled
         dialogPanel?.reset()

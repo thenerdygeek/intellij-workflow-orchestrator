@@ -36,7 +36,6 @@ object DynamicToolSelector {
         "diagnostics", "problem_view", "format_code", "optimize_imports",
         "send_stdin", "kill_process", "ask_user_input",
         "agent",
-        "delegate_task",
         "think",
         // Planning & interaction — always available so the agent can clarify, plan, and guide users
         "ask_questions", "create_plan", "update_plan_step", "enable_plan_mode",
@@ -85,7 +84,7 @@ object DynamicToolSelector {
         "archival_memory_insert", "archival_memory_search", "conversation_search"
     )
 
-    private val SKILL_TOOL_NAMES = setOf("activate_skill", "deactivate_skill")
+    private val SKILL_TOOL_NAMES = setOf("Skill")
 
     private val JPA_TOOL_NAMES = setOf("spring")
 
@@ -277,9 +276,8 @@ object DynamicToolSelector {
         // This is a hard whitelist — overrides all other selection logic
         if (skillAllowedTools != null) {
             val allowed = skillAllowedTools.toMutableSet()
-            // agent + delegate_task are escape hatches — request_tools could bypass the whitelist
+            // agent is an escape hatch — request_tools could bypass the whitelist
             allowed.add("agent")
-            allowed.add("delegate_task")
             return allTools.filter { it.name in allowed }
         }
 
@@ -311,9 +309,8 @@ object DynamicToolSelector {
         // Always include request_tools meta-tool AFTER removing disabled tools
         // — this is the LLM's escape hatch; disabling it breaks the hybrid system
         selectedNames.add("request_tools")
-        // agent + delegate_task are always available — delegation escape hatches
+        // agent is always available — delegation escape hatch
         selectedNames.add("agent")
-        selectedNames.add("delegate_task")
         // attempt_completion is always available — the LLM must always be able to signal task completion
         selectedNames.add("attempt_completion")
 

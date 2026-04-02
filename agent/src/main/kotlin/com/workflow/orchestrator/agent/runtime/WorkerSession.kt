@@ -304,6 +304,8 @@ class WorkerSession(
                                     isError = false
                                 )
                             }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e // Never swallow CancellationException — propagate for structured concurrency
                         } catch (e: Exception) {
                             val toolDurationMs = System.currentTimeMillis() - toolStartMs
                             LOG.warn("WorkerSession: tool '$toolName' failed", e)

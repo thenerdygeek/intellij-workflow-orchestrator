@@ -11,8 +11,8 @@ import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
 
 /**
- * Generates PR descriptions using Cody (with fallback to commit messages).
- * Uses [TextGenerationService] interface from :core — no compile-time :cody dependency.
+ * Generates PR descriptions using AI (with fallback to commit messages).
+ * Uses [TextGenerationService] interface from :core for Sourcegraph-backed generation.
  */
 object PrDescriptionGenerator {
 
@@ -33,10 +33,10 @@ object PrDescriptionGenerator {
         val commitMessages = getCommitMessages(project, sourceBranch, targetBranch)
         val changedFilePaths = getChangedFilePaths(project)
 
-        // Try Cody with 3-step chain
+        // Try AI with 3-step chain
         val textGen = TextGenerationService.getInstance()
         if (textGen != null) {
-            log.info("[Build:PrDesc] Using Cody for PR description generation (chained)")
+            log.info("[Build:PrDesc] Using AI for PR description generation (chained)")
 
             // Get the actual diff between branches for the chain
             val diff = getDiffBetweenBranches(project, sourceBranch, targetBranch)
@@ -64,15 +64,15 @@ object PrDescriptionGenerator {
             // Fallback to single prompt
             log.info("[Build:PrDesc] Falling back to single prompt")
             val prompt = buildPrompt(ticketDetails, commitMessages, sourceBranch)
-            val codyResult = try {
+            val aiResult = try {
                 textGen.generateText(project, prompt, changedFilePaths.take(MAX_CONTEXT_FILES))
             } catch (e: Exception) {
                 log.warn("[Build:PrDesc] Single prompt failed: ${e.message}")
                 null
             }
-            if (!codyResult.isNullOrBlank()) {
-                log.info("[Build:PrDesc] Single prompt generated ${codyResult.length} chars")
-                return codyResult
+            if (!aiResult.isNullOrBlank()) {
+                log.info("[Build:PrDesc] Single prompt generated ${aiResult.length} chars")
+                return aiResult
             }
         }
 
@@ -82,7 +82,7 @@ object PrDescriptionGenerator {
     }
 
     /**
-     * Generate a PR title. Tries Cody for a concise title, falls back to pattern.
+     * Generate a PR title. Tries AI for a concise title, falls back to pattern.
      */
     suspend fun generateTitle(
         project: Project,

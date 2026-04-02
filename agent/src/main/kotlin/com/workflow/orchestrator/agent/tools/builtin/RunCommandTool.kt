@@ -19,6 +19,8 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 class RunCommandTool : AgentTool {
     override val name = "run_command"
@@ -469,6 +471,10 @@ class RunCommandTool : AgentTool {
 
             // Event-driven coroutine monitor loop
             while (true) {
+                // Coroutine cancellation check — allows instant exit when user presses Stop.
+                // delay() is also cancellable, but ensureActive() gives an immediate check
+                // before waiting 500ms.
+                coroutineContext.ensureActive()
                 kotlinx.coroutines.delay(500)
                 val now = System.currentTimeMillis()
 
@@ -497,6 +503,9 @@ class RunCommandTool : AgentTool {
             // Unreachable — loop always returns
             @Suppress("UNREACHABLE_CODE")
             ToolResult("Error: unexpected exit from monitor loop", "Error: internal", 5, isError = true)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Coroutine cancelled (user pressed Stop) — ProcessRegistry.killAll() handles cleanup
+            throw e // Propagate for structured concurrency
         } catch (e: Exception) {
             ToolResult(
                 "Error executing command: ${e.message}",

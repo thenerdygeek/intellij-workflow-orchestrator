@@ -4,10 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.Conflict
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -17,25 +14,19 @@ import kotlinx.serialization.json.jsonPrimitive
 class ConflictDetectorService {
 
     private val log = Logger.getInstance(ConflictDetectorService::class.java)
-    private val bambooClient: BambooApiClient
+    private val bambooService: BambooService
     private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
         val settings = PluginSettings.getInstance(project)
-        val credentialStore = CredentialStore()
-        this.bambooClient = BambooApiClient(
-            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        )
+        this.bambooService = project.getService(BambooService::class.java)
         this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "dockerTagsAsJson"
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(bambooClient: BambooApiClient, buildVariableName: String = "dockerTagsAsJson") {
-        this.bambooClient = bambooClient
+    constructor(bambooService: BambooService, buildVariableName: String = "dockerTagsAsJson") {
+        this.bambooService = bambooService
         this.buildVariableName = buildVariableName
     }
     private val json = Json { ignoreUnknownKeys = true }
@@ -44,16 +35,17 @@ class ConflictDetectorService {
         suitePlanKey: String,
         stagedTags: Map<String, String>
     ): List<Conflict> {
-        val buildsResult = bambooClient.getRunningAndQueuedBuilds(suitePlanKey)
-        if (buildsResult !is ApiResult.Success) return emptyList()
+        val buildsResult = bambooService.getRunningBuilds(suitePlanKey)
+        if (buildsResult.isError) return emptyList()
 
         val conflicts = mutableListOf<Conflict>()
 
         for (build in buildsResult.data) {
-            val varsResult = bambooClient.getBuildVariables(build.key)
-            if (varsResult !is ApiResult.Success) continue
+            val varsResult = bambooService.getBuildVariables(build.buildResultKey)
+            if (varsResult.isError) continue
 
-            val dockerTagsJson = varsResult.data[buildVariableName] ?: continue
+            val variablesMap = varsResult.data.associate { it.name to it.value }
+            val dockerTagsJson = variablesMap[buildVariableName] ?: continue
             val otherTags = parseDockerTagsJson(dockerTagsJson)
 
             for ((service, yourTag) in stagedTags) {
@@ -64,9 +56,9 @@ class ConflictDetectorService {
                             serviceName = service,
                             yourTag = yourTag,
                             otherTag = otherTag,
-                            triggeredBy = varsResult.data["triggerUser"] ?: "unknown",
+                            triggeredBy = variablesMap["triggerUser"] ?: "unknown",
                             buildNumber = build.buildNumber,
-                            isRunning = build.lifeCycleState == "InProgress"
+                            isRunning = build.state == "InProgress" || build.state == "Unknown"
                         )
                     )
                 }

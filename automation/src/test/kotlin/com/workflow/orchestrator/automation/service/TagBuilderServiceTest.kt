@@ -1,11 +1,11 @@
 package com.workflow.orchestrator.automation.service
 
 import com.workflow.orchestrator.automation.model.*
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
-import com.workflow.orchestrator.bamboo.api.dto.BambooStageCollection
-import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto
-import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.bamboo.BuildResultData
+import com.workflow.orchestrator.core.model.bamboo.BuildStageData
+import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
+import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -16,31 +16,43 @@ import java.time.Instant
 
 class TagBuilderServiceTest {
 
-    private lateinit var bambooClient: BambooApiClient
+    private lateinit var bambooService: BambooService
     private lateinit var service: TagBuilderService
 
     @BeforeEach
     fun setUp() {
-        bambooClient = mockk()
-        service = TagBuilderService(bambooClient)
+        bambooService = mockk()
+        service = TagBuilderService(bambooService)
     }
 
     @Test
     fun `scoreAndRankRuns scores runs by release tags and stage results`() = runTest {
         val runs = listOf(
-            makeBuildResult(847, "Successful", listOf("Successful", "Successful", "Successful")),
-            makeBuildResult(848, "Failed", listOf("Successful", "Failed")),
-            makeBuildResult(846, "Successful", listOf("Successful", "Successful"))
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful", "Successful")),
+            makeBuildResultData(848, "Failed", listOf("Successful", "Failed")),
+            makeBuildResultData(846, "Successful", listOf("Successful", "Successful"))
         )
-        coEvery { bambooClient.getRecentResults("PROJ-AUTO", 10) } returns ApiResult.Success(runs)
-        coEvery { bambooClient.getBuildVariables("PROJ-AUTO-847") } returns ApiResult.Success(
-            mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1","user":"1.9.0"}""")
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = runs,
+            summary = "Found 3 recent builds"
         )
-        coEvery { bambooClient.getBuildVariables("PROJ-AUTO-848") } returns ApiResult.Success(
-            mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"feature-abc"}""")
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
+            data = listOf(
+                PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1","user":"1.9.0"}""")
+            ),
+            summary = "1 variable"
         )
-        coEvery { bambooClient.getBuildVariables("PROJ-AUTO-846") } returns ApiResult.Success(
-            mapOf("dockerTagsAsJson" to """{"auth":"2.3.0","payments":"2.3.1"}""")
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-848") } returns ToolResult.success(
+            data = listOf(
+                PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"feature-abc"}""")
+            ),
+            summary = "1 variable"
+        )
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-846") } returns ToolResult.success(
+            data = listOf(
+                PlanVariableData("dockerTagsAsJson", """{"auth":"2.3.0","payments":"2.3.1"}""")
+            ),
+            summary = "1 variable"
         )
 
         val ranked = service.scoreAndRankRuns("PROJ-AUTO")
@@ -53,11 +65,17 @@ class TagBuilderServiceTest {
     @Test
     fun `loadBaseline returns tag entries from best-scored run`() = runTest {
         val runs = listOf(
-            makeBuildResult(847, "Successful", listOf("Successful", "Successful"))
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful"))
         )
-        coEvery { bambooClient.getRecentResults("PROJ-AUTO", 10) } returns ApiResult.Success(runs)
-        coEvery { bambooClient.getBuildVariables("PROJ-AUTO-847") } returns ApiResult.Success(
-            mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1"}""")
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = runs,
+            summary = "Found 1 build"
+        )
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
+            data = listOf(
+                PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1"}""")
+            ),
+            summary = "1 variable"
         )
 
         val entries = service.loadBaseline("PROJ-AUTO")
@@ -135,7 +153,10 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaseline handles empty results gracefully`() = runTest {
-        coEvery { bambooClient.getRecentResults("PROJ-AUTO", 10) } returns ApiResult.Success(emptyList())
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = emptyList(),
+            summary = "No builds found"
+        )
 
         val entries = service.loadBaseline("PROJ-AUTO")
 
@@ -144,36 +165,37 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaseline handles API error gracefully`() = runTest {
-        coEvery { bambooClient.getRecentResults("PROJ-AUTO", 10) } returns
-            ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "timeout")
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult(
+            data = emptyList(),
+            summary = "timeout",
+            isError = true
+        )
 
         val entries = service.loadBaseline("PROJ-AUTO")
 
         assertTrue(entries.isEmpty())
     }
 
-    private fun makeBuildResult(
+    private fun makeBuildResultData(
         buildNumber: Int,
         state: String,
         stageStates: List<String>
-    ): BambooResultDto {
+    ): BuildResultData {
         val stages = stageStates.mapIndexed { i, s ->
-            BambooStageDto(
+            BuildStageData(
                 name = "Stage-$i",
                 state = s,
-                lifeCycleState = "Finished",
-                manual = false,
-                buildDurationInSeconds = 300
+                durationSeconds = 300
             )
         }
-        return BambooResultDto(
-            key = "PROJ-AUTO-$buildNumber",
+        return BuildResultData(
+            planKey = "PROJ-AUTO",
             buildNumber = buildNumber,
             state = state,
-            lifeCycleState = "Finished",
-            buildDurationInSeconds = 700,
+            durationSeconds = 700,
+            buildResultKey = "PROJ-AUTO-$buildNumber",
             buildRelativeTime = "5 min ago",
-            stages = BambooStageCollection(size = stages.size, stage = stages)
+            stages = stages
         )
     }
 }

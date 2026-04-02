@@ -31,7 +31,6 @@ object ToolCategoryRegistry {
                 "file_structure", "find_definition", "find_references",
                 "type_hierarchy", "call_hierarchy", "get_method_body", "get_annotations",
                 "type_inference", "structural_search", "dataflow_analysis", "read_write_access", "test_finder",
-                "delegate_task",
                 "think"
             )
         ),
@@ -105,7 +104,7 @@ object ToolCategoryRegistry {
             color = "#F59E0B",
             badgePrefix = "PLAN",
             description = "Create and update implementation plans",
-            tools = listOf("create_plan", "update_plan_step", "ask_questions", "activate_skill", "deactivate_skill",
+            tools = listOf("create_plan", "update_plan_step", "ask_questions", "Skill",
                 "core_memory_read", "core_memory_append", "core_memory_replace", "archival_memory_insert", "archival_memory_search", "conversation_search")
         )
     )

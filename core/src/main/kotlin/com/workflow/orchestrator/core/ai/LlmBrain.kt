@@ -9,7 +9,7 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * Abstraction over LLM providers. Allows swapping between
- * Sourcegraph OpenAI-compatible API, future Cody CLI tool support,
+ * Sourcegraph OpenAI-compatible API, direct Sourcegraph LLM API,
  * or other providers without changing agent logic.
  */
 interface LlmBrain {

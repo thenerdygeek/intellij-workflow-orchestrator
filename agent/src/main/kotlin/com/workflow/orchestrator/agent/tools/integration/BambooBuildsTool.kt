@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.integration
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.context.TokenEstimator
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -10,13 +11,16 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Bamboo build lifecycle tool — trigger, monitor, stop, and inspect builds.
  *
- * Split from the consolidated BambooTool. Covers 10 build-oriented actions:
+ * Split from the consolidated BambooTool. Covers 11 build-oriented actions:
  * build_status, get_build, trigger_build, get_build_log, get_test_results,
- * stop_build, cancel_build, get_artifacts, recent_builds, get_running_builds.
+ * stop_build, cancel_build, get_artifacts, download_artifact, recent_builds,
+ * get_running_builds.
  */
 class BambooBuildsTool : AgentTool {
 
@@ -34,6 +38,7 @@ Actions and their parameters:
 - stop_build(result_key) → Stop running build
 - cancel_build(result_key) → Cancel queued build
 - get_artifacts(result_key) → List build artifacts
+- download_artifact(artifact_url, target_path?) → Download build artifact to local file
 - recent_builds(plan_key, branch?, repo_name?, max_results?) → Recent builds (default 10)
 - get_running_builds(plan_key, repo_name?) → Currently running builds
 
@@ -47,7 +52,8 @@ description optional: for approval dialog on trigger/stop/cancel.
                 description = "Operation to perform",
                 enumValues = listOf(
                     "build_status", "get_build", "trigger_build", "get_build_log", "get_test_results",
-                    "stop_build", "cancel_build", "get_artifacts", "recent_builds", "get_running_builds"
+                    "stop_build", "cancel_build", "get_artifacts", "download_artifact", "recent_builds",
+                    "get_running_builds"
                 )
             ),
             "plan_key" to ParameterProperty(
@@ -74,6 +80,14 @@ description optional: for approval dialog on trigger/stop/cancel.
                 type = "string",
                 description = "JSON object of build variables e.g. '{\"key\":\"value\"}' — for trigger_build"
             ),
+            "artifact_url" to ParameterProperty(
+                type = "string",
+                description = "Artifact download URL (from get_artifacts output) — for download_artifact"
+            ),
+            "target_path" to ParameterProperty(
+                type = "string",
+                description = "Optional local path to save artifact — for download_artifact (defaults to temp file)"
+            ),
             "max_results" to ParameterProperty(
                 type = "string",
                 description = "Max results to return (default 10) — for recent_builds"
@@ -89,6 +103,7 @@ description optional: for approval dialog on trigger/stop/cancel.
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",
@@ -163,6 +178,28 @@ description optional: for approval dialog on trigger/stop/cancel.
                 val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return missingParam("result_key")
                 ToolValidation.validateBambooBuildKey(resultKey)?.let { return it }
                 service.getArtifacts(resultKey).toAgentToolResult()
+            }
+
+            "download_artifact" -> {
+                val artifactUrl = params["artifact_url"]?.jsonPrimitive?.content
+                    ?: return missingParam("artifact_url")
+                val targetPath = params["target_path"]?.jsonPrimitive?.content
+                val targetFile = if (targetPath != null) {
+                    java.io.File(targetPath)
+                } else {
+                    java.io.File.createTempFile("bamboo-artifact-", ".tmp")
+                }
+                val result = service.downloadArtifact(artifactUrl, targetFile)
+                if (result.isError) {
+                    result.toAgentToolResult()
+                } else {
+                    ToolResult(
+                        content = "Artifact downloaded to: ${targetFile.absolutePath}\nSize: ${targetFile.length()} bytes",
+                        summary = "Downloaded artifact to ${targetFile.name}",
+                        tokenEstimate = TokenEstimator.estimate("Downloaded artifact to ${targetFile.absolutePath}"),
+                        isError = false
+                    )
+                }
             }
 
             "recent_builds" -> {

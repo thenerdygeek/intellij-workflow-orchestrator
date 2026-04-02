@@ -29,7 +29,7 @@ class AgentTabProvider : WorkflowTabProvider {
         if (connections.state.sourcegraphUrl.isBlank()) {
             return EmptyStatePanel(
                 project,
-                "No Sourcegraph connection configured.\nConnect to Cody Enterprise in Settings to use Agent features."
+                "No Sourcegraph connection configured.\nConnect to Sourcegraph in Settings to use Agent features."
             )
         }
 

@@ -9,72 +9,8 @@ import org.junit.jupiter.api.Test
 class ApprovalGateTest {
 
     // ============================================================
-    // Legacy synchronous check() tests
+    // Static risk classification tests
     // ============================================================
-
-    @Test
-    fun `read_file is NONE risk and always approved`() {
-        val riskLevel = ApprovalGate.riskLevelFor("read_file")
-        assertEquals(RiskLevel.NONE, riskLevel)
-
-        val gate = ApprovalGate(approvalRequired = true)
-        val result = gate.check("read_file", "Read a file", riskLevel)
-        assertSame(ApprovalResult.Approved, result)
-    }
-
-    @Test
-    fun `edit_file is MEDIUM risk and approved when approval not required`() {
-        val riskLevel = ApprovalGate.riskLevelFor("edit_file")
-        assertEquals(RiskLevel.MEDIUM, riskLevel)
-
-        val gate = ApprovalGate(approvalRequired = false)
-        val result = gate.check("edit_file", "Edit a file", riskLevel)
-        assertSame(ApprovalResult.Approved, result)
-    }
-
-    @Test
-    fun `edit_file is MEDIUM risk and triggers callback when approval required`() {
-        val riskLevel = ApprovalGate.riskLevelFor("edit_file")
-        assertEquals(RiskLevel.MEDIUM, riskLevel)
-
-        var callbackDescription: String? = null
-        var callbackRisk: RiskLevel? = null
-
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            onApprovalNeeded = { desc, risk ->
-                callbackDescription = desc
-                callbackRisk = risk
-                ApprovalResult.Pending(desc, risk)
-            }
-        )
-
-        val result = gate.check("edit_file", "Modify src/Main.kt", riskLevel)
-
-        assertTrue(result is ApprovalResult.Pending)
-        assertEquals("Modify src/Main.kt", callbackDescription)
-        assertEquals(RiskLevel.MEDIUM, callbackRisk)
-    }
-
-    @Test
-    fun `run_command is HIGH risk and always requires approval`() {
-        val riskLevel = ApprovalGate.riskLevelFor("run_command")
-        assertEquals(RiskLevel.HIGH, riskLevel)
-
-        // Even with approvalRequired=false, HIGH should trigger callback
-        var callbackInvoked = false
-        val gate = ApprovalGate(
-            approvalRequired = false,
-            onApprovalNeeded = { _, _ ->
-                callbackInvoked = true
-                ApprovalResult.Rejected()
-            }
-        )
-
-        val result = gate.check("run_command", "Run mvn clean install", riskLevel)
-        assertTrue(callbackInvoked)
-        assertTrue(result is ApprovalResult.Rejected)
-    }
 
     @Test
     fun `jira meta-tool is MEDIUM risk statically but NONE for read-only actions`() {
@@ -91,74 +27,6 @@ class ApprovalGateTest {
     fun `unknown tool defaults to HIGH risk`() {
         val riskLevel = ApprovalGate.riskLevelFor("some_unknown_tool")
         assertEquals(RiskLevel.HIGH, riskLevel)
-    }
-
-    @Test
-    fun `callback receives correct description and risk level`() {
-        var receivedDescription: String? = null
-        var receivedRisk: RiskLevel? = null
-
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            onApprovalNeeded = { desc, risk ->
-                receivedDescription = desc
-                receivedRisk = risk
-                ApprovalResult.Approved
-            }
-        )
-
-        gate.check("bitbucket_pr", "Create PR for feature/PROJ-123", RiskLevel.HIGH)
-
-        assertEquals("Create PR for feature/PROJ-123", receivedDescription)
-        assertEquals(RiskLevel.HIGH, receivedRisk)
-    }
-
-    @Test
-    fun `LOW risk approved without callback when approval not required`() {
-        val riskLevel = ApprovalGate.riskLevelFor("format_code")
-        assertEquals(RiskLevel.LOW, riskLevel)
-
-        var callbackInvoked = false
-        val gate = ApprovalGate(
-            approvalRequired = false,
-            onApprovalNeeded = { _, _ ->
-                callbackInvoked = true
-                ApprovalResult.Rejected()
-            }
-        )
-
-        val result = gate.check("format_code", "Format code", riskLevel)
-        assertFalse(callbackInvoked)
-        assertSame(ApprovalResult.Approved, result)
-    }
-
-    @Test
-    fun `LOW risk triggers callback when approval required`() {
-        val riskLevel = ApprovalGate.riskLevelFor("format_code")
-        assertEquals(RiskLevel.LOW, riskLevel)
-
-        var callbackInvoked = false
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            onApprovalNeeded = { _, _ ->
-                callbackInvoked = true
-                ApprovalResult.Approved
-            }
-        )
-
-        val result = gate.check("format_code", "Format code", riskLevel)
-        // LOW with approvalRequired=true: not >= MEDIUM, so auto-approved
-        // The condition: riskLevel >= HIGH (no) || (approvalRequired && riskLevel >= MEDIUM) (no, LOW < MEDIUM)
-        // So it falls through to the final return Approved
-        assertSame(ApprovalResult.Approved, result)
-    }
-
-    @Test
-    fun `HIGH risk rejects when no callback provided - safer default`() {
-        val gate = ApprovalGate(approvalRequired = true, onApprovalNeeded = null)
-
-        val result = gate.check("run_command", "Run shell command", RiskLevel.HIGH)
-        assertTrue(result is ApprovalResult.Rejected)
     }
 
     @Test
@@ -437,38 +305,6 @@ class ApprovalGateTest {
     // ============================================================
 
     @Test
-    fun `audit log records sync approval decisions`() {
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            onApprovalNeeded = { _, _ -> ApprovalResult.Approved }
-        )
-
-        gate.check("bitbucket_pr", "Create PR", RiskLevel.HIGH)
-
-        assertEquals(1, gate.auditLog.size)
-        val entry = gate.auditLog.first()
-        assertEquals("bitbucket_pr", entry.toolName)
-        assertEquals(RiskLevel.HIGH, entry.riskLevel)
-        assertSame(ApprovalResult.Approved, entry.result)
-        assertNotNull(entry.timestamp)
-    }
-
-    @Test
-    fun `audit log records sync rejection`() {
-        val gate = ApprovalGate(
-            approvalRequired = true,
-            onApprovalNeeded = { _, _ -> ApprovalResult.Rejected("Not allowed") }
-        )
-
-        gate.check("run_command", "Delete files", RiskLevel.HIGH)
-
-        assertEquals(1, gate.auditLog.size)
-        val entry = gate.auditLog.first()
-        assertEquals("run_command", entry.toolName)
-        assertTrue(entry.result is ApprovalResult.Rejected)
-    }
-
-    @Test
     fun `audit log records async approval`() = runTest {
         val gate = ApprovalGate(
             approvalRequired = true,
@@ -538,16 +374,6 @@ class ApprovalGateTest {
         assertEquals("read_file", gate.auditLog[0].toolName)
         assertEquals("run_command", gate.auditLog[1].toolName)
         assertEquals("format_code", gate.auditLog[2].toolName)
-    }
-
-    @Test
-    fun `audit log does not record NONE risk from sync check`() {
-        val gate = ApprovalGate(approvalRequired = true)
-
-        gate.check("read_file", "Read a file", RiskLevel.NONE)
-
-        // Sync check for NONE returns immediately without auditing
-        assertEquals(0, gate.auditLog.size)
     }
 
     // ============================================================

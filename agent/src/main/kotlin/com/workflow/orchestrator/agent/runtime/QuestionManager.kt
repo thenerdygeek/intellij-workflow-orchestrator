@@ -53,6 +53,10 @@ class QuestionManager {
     private val answers = mutableMapOf<String, QuestionAnswer>()
     private val skipped = mutableSetOf<String>()
 
+    /** True when questions have been submitted and are awaiting user answers. */
+    val isAwaitingAnswers: Boolean
+        get() = submissionFuture != null && submissionFuture?.isDone == false
+
     // UI callbacks
     var onQuestionsCreated: ((QuestionSet) -> Unit)? = null
     var onShowQuestion: ((Int) -> Unit)? = null

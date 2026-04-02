@@ -9,7 +9,6 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 ./gradlew :jira:test                # Jira module tests
 ./gradlew :bamboo:test              # Bamboo module tests
 ./gradlew :sonar:test               # Sonar module tests
-./gradlew :cody:test                # Cody module tests
 ./gradlew :pullrequest:test         # PR module tests
 ./gradlew :automation:test          # Automation module tests
 ./gradlew :handover:test            # Handover module tests
@@ -20,20 +19,18 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 
 ## Architecture
 
-11 Gradle submodules (9 feature modules + core + mock-server):
+9 Gradle submodules (7 feature modules + core + mock-server):
 
 | Module | Purpose |
 |---|---|
-| `:core` | Auth, HTTP, settings, events, polling, health checks, tool window shell |
+| `:core` | Auth, HTTP, settings, events, polling, health checks, tool window shell, PSI context enrichment, AI commit message generation |
 | `:jira` | Sprint dashboard, branching, commit prefix, time tracking, ticket detection |
 | `:bamboo` | Build dashboard, polling, log parsing, CVE remediation, PR creation |
-| `:sonar` | Coverage markers, quality tab, ExternalAnnotator, project key detection |
-| `:cody` | DEPRECATED -- former Cody CLI agent. Now a thin shell for rewired UI actions (intention, gutter, VCS). LLM calls use direct Sourcegraph HTTP in :core. |
+| `:sonar` | Coverage markers, quality tab, ExternalAnnotator, project key detection, Sonar fix intention action |
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
-| `:handover` | Jira closure, copyright fixes, Cody pre-review, QA clipboard, time logging |
-| `:git-integration` | Git branch operations and VCS integration |
-| `:agent` | AI coding agent — ReAct loop, 110 tools (68 registered, 15 meta-tools), delegate_task, plan persistence, JCEF chat UI |
+| `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
+| `:agent` | AI coding agent — ReAct loop, 110 tools (67 registered, 15 meta-tools), agent tool for subagent spawning, plan persistence, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -148,7 +145,7 @@ planning tools remain available.
 | Jira, Bamboo, Bitbucket | Bearer PAT | `Authorization: Bearer <token>` |
 | SonarQube | Bearer user token | `Authorization: Bearer <token>` |
 | Nexus Docker Registry | Basic auth | `Authorization: Basic <base64>` |
-| Cody/Sourcegraph | Access token | Via JSON-RPC `ExtensionConfiguration.accessToken` |
+| Sourcegraph | Token auth | `Authorization: token <sourcegraph-access-token>` |
 
 All credentials stored in PasswordSafe. Never in XML.
 

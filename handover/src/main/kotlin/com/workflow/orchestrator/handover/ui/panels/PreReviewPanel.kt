@@ -17,18 +17,18 @@ class PreReviewPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val listModel = DefaultListModel<ReviewFinding>()
     private val findingsList = JBList(listModel)
-    private val analyzeButton = JButton("Analyze with Cody").apply {
+    private val analyzeButton = JButton("Analyze with AI").apply {
         isEnabled = false
         toolTipText = "Coming soon"
     }
-    private val statusLabel = JBLabel("Click Analyze to run Cody pre-review").apply {
+    private val statusLabel = JBLabel("Click Analyze to run AI pre-review").apply {
         foreground = StatusColors.SECONDARY_TEXT
     }
 
     init {
         border = JBUI.Borders.empty(8)
 
-        val headerLabel = JBLabel("CODY PRE-REVIEW").apply {
+        val headerLabel = JBLabel("AI PRE-REVIEW").apply {
             font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(12).toFloat())
             foreground = StatusColors.SECONDARY_TEXT
             border = JBUI.Borders.emptyLeft(8)

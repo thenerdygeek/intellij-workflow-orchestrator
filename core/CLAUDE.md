@@ -10,12 +10,11 @@ Shared infrastructure for all feature modules. No feature module imports another
 - `BranchChanged` — git branch changed
 - `BuildFinished` / `BuildLogReady` — Bamboo build terminal state / log fetched
 - `QualityGateResult` / `CoverageUpdated` — SonarQube status changes
-- `CodyEditReady` — AI edit accepted/rejected
 - `HealthCheckStarted` / `HealthCheckFinished` — pre-commit health check lifecycle
 - `AutomationTriggered` / `AutomationFinished` / `QueuePositionChanged` — automation queue
-- `PullRequestCreated` / `PullRequestUpdated` / `PullRequestMerged` / `PullRequestDeclined` / `PullRequestApproved` / `PrSelected` — PR lifecycle
+- `PullRequestCreated` / `PullRequestMerged` / `PullRequestDeclined` / `PullRequestApproved` / `PrSelected` — PR lifecycle
 - `TicketDetected` — ticket detected from branch but dismissed (shows banner in Sprint tab)
-- `JiraCommentPosted` / `PreReviewFinished` — handover events
+- `JiraCommentPosted` — handover event
 
 ## ToolResult<T>
 

@@ -263,22 +263,6 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
     }
 
     // ═══════════════════════════════════════════════════
-    //  Backward-Compatible API
-    // ═══════════════════════════════════════════════════
-
-    fun appendText(text: String) = appendStreamToken(text)
-
-    fun setText(text: String) = runOnEdt {
-        editorPane.text = buildBaseHtml()
-        appendHtml("<div class='agent-msg'>${markdownToHtml(escapeHtml(text))}</div>")
-    }
-
-    fun appendSeparator(label: String = "") {
-        flushStreamBuffer()
-        if (label.isNotBlank()) appendStatus(label, StatusType.INFO)
-    }
-
-    // ═══════════════════════════════════════════════════
     //  Private — HTML Helpers
     // ═══════════════════════════════════════════════════
 

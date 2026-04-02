@@ -7,7 +7,7 @@ Task completion workflow: Jira closure, copyright enforcement, pre-review, QA ha
 - `JiraClosureService` — posts rich-text closure comment to Jira (docker tags + test results + links)
 - `HandoverJiraClient` — Jira REST API client for comments and worklogs
 - `TimeTrackingService` — time logging with worklog dialog
-- `PreReviewService` — Cody-powered diff analysis before PR review
+- `PreReviewService` — AI-powered diff analysis before PR review (uses PsiContextEnricher from :core)
 - `CopyrightFixService` — copyright header enforcement with year consolidation (earliest-currentYear)
 - `QaClipboardService` — formatted export for email/Slack
 - `CompletionMacroService` — orchestrates completion steps

@@ -44,7 +44,7 @@ class AgentDefinitionRegistry(private val project: Project) {
         val scope: AgentScope
     )
 
-    enum class AgentScope { USER, PROJECT }
+    enum class AgentScope { BUILTIN, USER, PROJECT }
     enum class MemoryScope { USER, PROJECT, LOCAL }
 
     @Volatile
@@ -52,14 +52,16 @@ class AgentDefinitionRegistry(private val project: Project) {
 
     fun scan() {
         val newAgents = mutableMapOf<String, AgentDefinition>()
-        // User-level agents (lower priority)
+        // Builtin agents (lowest priority — shipped with plugin)
+        loadBuiltinAgents(newAgents)
+        // User-level agents (overwrites builtin)
         val userDir = File(System.getProperty("user.home"), ".workflow-orchestrator/agents")
         scanDirectory(userDir, AgentScope.USER, newAgents)
-        // Project-level agents (higher priority — overwrites user)
+        // Project-level agents (highest priority — overwrites user + builtin)
         val projectDir = File(project.basePath ?: return, ".workflow/agents")
         scanDirectory(projectDir, AgentScope.PROJECT, newAgents)
         agents = newAgents  // atomic swap
-        LOG.info("AgentDefinitionRegistry: loaded ${agents.size} agent definitions")
+        LOG.info("AgentDefinitionRegistry: loaded ${agents.size} agent definitions (${newAgents.count { it.value.scope == AgentScope.BUILTIN }} builtin)")
     }
 
     fun getAgent(name: String): AgentDefinition? = agents[name]
@@ -71,6 +73,47 @@ class AgentDefinitionRegistry(private val project: Project) {
         if (sorted.isEmpty()) return ""
         return "Available subagents:\n" + sorted.joinToString("\n") {
             "- ${it.name} — ${it.description}"
+        }
+    }
+
+    /**
+     * Load built-in agent definitions bundled with the plugin from resources.
+     * These ship with the plugin and provide default subagent workflows.
+     * Users can override them by creating an agent with the same name in their
+     * project (.workflow/agents/) or user (~/.workflow-orchestrator/agents/) directory.
+     */
+    private fun loadBuiltinAgents(target: MutableMap<String, AgentDefinition>) {
+        val builtinAgentNames = listOf(
+            "code-reviewer", "architect-reviewer", "test-automator",
+            "spring-boot-engineer", "refactoring-specialist",
+            "devops-engineer", "security-auditor", "performance-engineer"
+        )
+        for (agentName in builtinAgentNames) {
+            try {
+                val resourcePath = "/agents/$agentName.md"
+                val content = javaClass.getResourceAsStream(resourcePath)?.bufferedReader()?.readText() ?: continue
+                val (frontmatter, body) = parseFrontmatter(content) ?: continue
+                val name = frontmatter["name"] ?: agentName
+                val description = frontmatter["description"] ?: continue
+
+                target[name] = AgentDefinition(
+                    name = name,
+                    description = description,
+                    systemPrompt = body.trim(),
+                    tools = frontmatter["tools"]?.let { parseList(it) }?.takeIf { it.isNotEmpty() },
+                    disallowedTools = frontmatter["disallowed-tools"]?.let { parseList(it) } ?: emptyList(),
+                    model = frontmatter["model"]?.trim()?.takeIf { it.isNotBlank() },
+                    maxTurns = frontmatter["max-turns"]?.toIntOrNull() ?: 32,
+                    skills = frontmatter["skills"]?.let { parseList(it) } ?: emptyList(),
+                    memory = frontmatter["memory"]?.trim()?.uppercase()?.let {
+                        try { MemoryScope.valueOf(it) } catch (_: Exception) { null }
+                    },
+                    filePath = "builtin:$resourcePath",
+                    scope = AgentScope.BUILTIN
+                )
+            } catch (e: Exception) {
+                LOG.warn("AgentDefinitionRegistry: failed to load built-in agent '$agentName'", e)
+            }
         }
     }
 

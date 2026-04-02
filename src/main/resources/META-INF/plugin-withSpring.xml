@@ -4,8 +4,7 @@
 -->
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
-        <projectService
-            serviceInterface="com.workflow.orchestrator.cody.service.SpringContextEnricher"
-            serviceImplementation="com.workflow.orchestrator.cody.service.SpringContextEnricherImpl"/>
+        <!-- SpringContextEnricher was removed when the Cody module was deprecated.
+             Spring-aware PSI analysis now lives in :agent's SpringTool meta-tool. -->
     </extensions>
 </idea-plugin>

@@ -17,6 +17,8 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 class GlobFilesTool : AgentTool {
     override val name = "glob_files"
@@ -40,6 +42,7 @@ class GlobFilesTool : AgentTool {
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val pattern = params["pattern"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'pattern' parameter required", "Error: missing pattern", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 

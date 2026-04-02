@@ -4,8 +4,8 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import com.workflow.orchestrator.core.psi.PsiContextEnricher
 import com.workflow.orchestrator.core.settings.PluginSettings
-import java.lang.reflect.Method
 
 object PrTitleRenderer {
     private val log = Logger.getInstance(PrTitleRenderer::class.java)
@@ -139,31 +139,19 @@ class PrService {
         }
     }
 
-    @Suppress("UNCHECKED_CAST")
     private suspend fun detectControllerEndpoints(proj: Project, changedFiles: List<VirtualFile>): List<String> {
         val endpoints = mutableListOf<String>()
         try {
-            val psiEnricherClass = Class.forName("com.workflow.orchestrator.cody.service.PsiContextEnricher")
-            val psiEnricher = psiEnricherClass.getConstructor(Project::class.java).newInstance(proj)
-            val enrichMethod = psiEnricherClass.getMethod(
-                "enrich", String::class.java, kotlin.coroutines.Continuation::class.java
-            )
+            val enricher = PsiContextEnricher(proj)
             for (file in changedFiles) {
                 try {
-                    val psi = invokeSuspend(psiEnricher, enrichMethod, file.path) ?: continue
-                    val classAnnotations = psi.javaClass.getMethod("getClassAnnotations").invoke(psi) as List<String>
-                    if (classAnnotations.any { it in listOf("RestController", "Controller") }) {
-                        endpoints.add("${file.nameWithoutExtension} (${classAnnotations.joinToString(", ") { "@$it" }})")
+                    val psi = enricher.enrich(file.path)
+                    if (psi.classAnnotations.any { it in listOf("RestController", "Controller") }) {
+                        endpoints.add("${file.nameWithoutExtension} (${psi.classAnnotations.joinToString(", ") { "@$it" }})")
                     }
                 } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
         return endpoints
-    }
-
-    private suspend fun invokeSuspend(obj: Any, method: Method, arg: String): Any? {
-        return kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn { cont ->
-            method.invoke(obj, arg, cont)
-        }
     }
 }

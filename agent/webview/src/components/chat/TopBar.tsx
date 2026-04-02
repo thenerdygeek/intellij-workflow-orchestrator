@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
+import type { Message } from '@/bridge/types';
 
 /**
  * Top bar for the agent chat — shows token budget indicator and new chat button.
@@ -14,6 +15,13 @@ export const TopBar = memo(function TopBar() {
   const debugEntries = useChatStore(s => s.debugLogEntries);
   const hasErrors = debugEntries.some(e => e.level === 'error');
   const pendingApproval = useChatStore(s => s.pendingApproval);
+  const skillBanner = useChatStore(s => s.skillBanner);
+  const messages = useChatStore(s => s.messages);
+
+  // Count running sub-agents from messages
+  const runningAgentCount = useMemo(() => {
+    return messages.filter((m: Message) => m.subAgent?.status === 'RUNNING').length;
+  }, [messages]);
 
   const { used, max } = tokenBudget;
   const hasTokenData = max > 0;
@@ -120,6 +128,42 @@ export const TopBar = memo(function TopBar() {
               Waiting for approval
             </span>
           </button>
+        )}
+
+        {/* Active skill indicator */}
+        {skillBanner && (
+          <div
+            className="flex items-center gap-1 rounded-full px-2 py-0.5 animate-[fade-in_200ms_ease-out]"
+            style={{ background: 'color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent)' }}
+            title={`Skill active: ${skillBanner}`}
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style={{ color: 'var(--accent, #3b82f6)' }}>
+              <path d="M8 1L10 5.5L15 6.5L11.5 10L12.5 15L8 12.5L3.5 15L4.5 10L1 6.5L6 5.5L8 1Z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span className="text-[10px] font-medium" style={{ color: 'var(--accent, #3b82f6)' }}>
+              {skillBanner}
+            </span>
+          </div>
+        )}
+
+        {/* Running sub-agents indicator */}
+        {runningAgentCount > 0 && (
+          <div
+            className="flex items-center gap-1 rounded-full px-2 py-0.5 animate-[fade-in_200ms_ease-out]"
+            style={{ background: 'color-mix(in srgb, var(--accent-write, #22c55e) 12%, transparent)' }}
+            title={`${runningAgentCount} sub-agent${runningAgentCount > 1 ? 's' : ''} running`}
+          >
+            <span
+              className="inline-block size-1.5 rounded-full"
+              style={{
+                background: 'var(--accent-write, #22c55e)',
+                animation: 'pulse 2s ease-in-out infinite',
+              }}
+            />
+            <span className="text-[10px] font-medium" style={{ color: 'var(--accent-write, #22c55e)' }}>
+              {runningAgentCount} agent{runningAgentCount > 1 ? 's' : ''}
+            </span>
+          </div>
         )}
       </div>
 

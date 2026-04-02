@@ -42,7 +42,6 @@ class PromptAssembler(
         frameworkInfo: String? = null,
         previousStepResults: List<String>? = null,
         repoMapContext: String? = null,
-        memoryContext: String? = null,
         coreMemoryContext: String? = null,
         skillDescriptions: String? = null,
         agentDescriptions: String? = null,
@@ -74,25 +73,22 @@ class PromptAssembler(
         if (!coreMemoryContext.isNullOrBlank()) {
             sections.add("<core_memory>\n$coreMemoryContext\n</core_memory>")
         }
-        if (!memoryContext.isNullOrBlank()) {
-            sections.add("<agent_memory>\n$memoryContext\n</agent_memory>")
-        }
         if (!guardrailsContext.isNullOrBlank()) {
             sections.add(guardrailsContext)
         }
 
-        // Available Agents — ALWAYS inject built-in + custom
+        // Available Agents — ALWAYS inject built-in + specialist + custom
         val builtInDescs = SpawnAgentTool.BUILT_IN_AGENTS.entries
             .joinToString("\n") { "- ${it.key}: ${it.value.description}" }
         val allAgentDescs = if (!agentDescriptions.isNullOrBlank()) {
-            "$builtInDescs\n\nCustom agents:\n$agentDescriptions"
+            "$builtInDescs\n\nSpecialist agents:\n$agentDescriptions"
         } else {
             builtInDescs
         }
         sections.add("<available_agents>\n$allAgentDescs\n\nTo delegate, call agent(subagent_type=\"name\", prompt=\"...\").\n</available_agents>")
 
         if (!skillDescriptions.isNullOrBlank()) {
-            sections.add("<available_skills>\n$skillDescriptions\n\nTo activate a skill, call activate_skill(name). Users can also type /skill-name in chat.\n</available_skills>")
+            sections.add("<available_skills>\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n\nIMPORTANT: Before starting work, check if an available skill matches the task. Skills contain battle-tested workflows — always prefer them over ad-hoc approaches. In particular:\n- For planning multi-step tasks → Skill(skill=\"writing-plans\")\n- For brainstorming new features/architecture → Skill(skill=\"brainstorm\")\n- For executing an approved plan → Skill(skill=\"subagent-driven\")\n- For TDD workflow → Skill(skill=\"tdd\")\n- For debugging → Skill(skill=\"systematic-debugging\")\n</available_skills>")
         }
 
         if (!previousStepResults.isNullOrEmpty()) {
@@ -231,7 +227,7 @@ class PromptAssembler(
 
         val CORE_IDENTITY = """
             You are an AI coding assistant integrated into IntelliJ IDEA via the Workflow Orchestrator plugin.
-            You can read/edit code, run commands, check diagnostics, access Jira/Bamboo/SonarQube/Bitbucket, spawn subagents for parallel work, and activate workflow skills for specialized tasks.
+            You can read/edit code, run commands, check diagnostics, access Jira/Bamboo/SonarQube/Bitbucket, spawn subagents for parallel work, and use workflow skills for specialized tasks.
 
             <core_directives>
             These are your most important behavioral rules:
@@ -267,22 +263,41 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
         val PLANNING_RULES = """
             <planning>
-            - For complex tasks involving 3+ files, refactoring, new features, or architectural changes:
-              call create_plan before making code changes.
-            - For simple tasks (questions, single-file fixes, running commands, checking status):
-              act directly without creating a plan.
-            - If you realize mid-task that thorough planning is required, call enable_plan_mode
-              with your reasoning before calling create_plan.
-            - create_plan takes two parameters:
-              1. `title` — short title for the plan card header
-              2. `markdown` — full plan as a markdown document. Structure it with:
-                 ## Goal, ## Approach, ## Steps (use ### for each step), ## Testing.
-                 Include code blocks, file paths, detailed explanations.
-                 Steps are auto-extracted from ### headings for progress tracking.
-            - When executing an approved plan, call update_plan_step to mark each step as
-              'running' when you start it and 'done' when you complete it (or 'failed' if it fails).
-            - If the user requests revision with comments, incorporate their feedback and
-              call create_plan again with the updated markdown.
+            DECISION PROCESS — run this before every task:
+
+            1. If the user explicitly asks to "create a plan", "write a plan", or "plan this":
+               → ALWAYS enable_plan_mode + Skill(skill="writing-plans"). No exceptions.
+
+            2. Otherwise, INVESTIGATE SCOPE first — use agent(subagent_type="explorer") to research
+               the codebase areas involved, or read key files/structure directly for smaller scopes.
+               Then decide based on what you find:
+
+               PLAN (enable_plan_mode + Skill(skill="writing-plans")) when ANY of these are true:
+               - Task touches 2+ files or crosses module boundaries
+               - Task adds a new feature, API endpoint, service method, or UI component
+               - Task involves refactoring, renaming, or moving code
+               - Task requires changes to interfaces/contracts that have multiple implementations
+               - Task involves wiring something through multiple layers (API → service → tool → UI)
+               - You're unsure about the scope — when in doubt, plan
+
+               ACT DIRECTLY (no plan) only when ALL of these are true:
+               - Task is a single-file fix, one-line change, or question
+               - You're confident about the exact change needed after reading the file
+               - No cross-file dependencies are affected
+
+            3. To create a plan:
+               a. Call enable_plan_mode (blocks write tools until plan is approved)
+               b. Call Skill(skill="writing-plans") and follow its workflow
+               c. The skill will guide you to use create_plan with title + markdown
+                  (## Goal, ## Steps with ### per step, ## Testing — steps auto-extracted from ### headings)
+
+            4. After the user approves a plan:
+               - For multi-task plans: use Skill(skill="subagent-driven") — dispatches a fresh
+                 subagent per task with two-stage review (spec compliance + code quality)
+               - For simple 1-2 task plans: execute directly with update_plan_step to track progress
+               - Mark steps 'running' when started, 'done' when complete, 'failed' if they fail
+
+            5. If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
         """.trimIndent()
 
@@ -290,14 +305,16 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             <planning mode="required">
             - Plan mode is ACTIVE. Source code mutation tools (edit_file, create_file, format_code,
               optimize_imports, refactor_rename) are NOT available until you create a plan and the user approves it.
-            - First, analyze the task by reading relevant files using read_file, search_code, file_structure,
+            - Call Skill(skill="writing-plans") to activate the planning workflow, then follow its instructions.
+            - Analyze the task by reading relevant files using read_file, search_code, file_structure,
               diagnostics, run_command (for tests/builds), runtime, and debug tools.
             - Then produce a comprehensive implementation plan using create_plan with:
               1. `title` — short display title
               2. `markdown` — full plan as markdown (## Goal, ## Steps with ### per step, ## Testing)
               Steps are auto-extracted from ### headings — no separate JSON needed.
             - Once the user approves the plan, plan mode will automatically deactivate and all tools
-              will become available. Then execute step by step, calling update_plan_step to track progress.
+              will become available. Execute using Skill(skill="subagent-driven") for multi-task plans,
+              or directly with update_plan_step for simple 1-2 task plans.
             - If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
         """.trimIndent()
@@ -311,7 +328,15 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
             For parallel independent tasks, launch multiple agents in one response.
             Use run_in_background=true for tasks that don't block your next step.
+            Use name="label" to make agents addressable for resume/send.
             Resume a completed agent: agent(resume="agentId", prompt="continue with...")
+
+            Specialist agents: Use bundled specialists (code-reviewer, architect-reviewer, test-automator,
+            spring-boot-engineer, refactoring-specialist, security-auditor, performance-engineer, devops-engineer)
+            via agent(subagent_type="name") for domain-specific tasks. See <available_agents> for full list.
+
+            Plan execution: After a plan is approved, use Skill(skill="subagent-driven") to execute it.
+            This dispatches a fresh subagent per task with two-stage review (spec compliance + code quality).
             </delegation>
         """.trimIndent()
 
@@ -438,9 +463,8 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
             <example name="when-to-plan">
             User: "Refactor the notification system to use events instead of direct calls"
-            This is a multi-file architectural change → call create_plan first.
-            The plan should identify: which files to change, the new event types, which callers to update, and how to verify.
-            Wait for plan approval before making any edits.
+            This is a multi-file architectural change → call enable_plan_mode, then Skill(skill="writing-plans") to create a structured plan.
+            Wait for plan approval, then execute with Skill(skill="subagent-driven").
 
             User: "Add a null check in processOrder()"
             This is a single-file targeted fix → act directly without a plan.
@@ -448,8 +472,8 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
             <example name="multi-file-implementation">
             User: "Add logging to all service classes"
-            Good approach: After creating a plan, delegate each step:
-              agent(subagent_type="coder", prompt="Add SLF4J logging to UserService.kt. Import org.slf4j.LoggerFactory, add companion object with logger, add info/error logs to each public method. File: src/main/kotlin/com/example/service/UserService.kt")
+            Good approach: After plan is approved, use Skill(skill="subagent-driven") to execute it.
+            This dispatches a fresh subagent per task with two-stage review (spec compliance + code quality).
             Bad approach: Editing 10 files yourself, filling your context with verbose file contents.
             </example>
 
@@ -470,8 +494,12 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
             <example name="skill-activation">
             User: "The UserService tests are failing with NPE"
-            Good approach: activate_skill(name="systematic-debugging") — this activates a structured debugging workflow that ensures root cause investigation before proposing fixes.
+            Good approach: Skill(skill="systematic-debugging") — this activates a structured debugging workflow that ensures root cause investigation before proposing fixes.
             Bad approach: Jumping straight to guessing the fix without investigating the root cause.
+
+            User: "I want to add a caching layer to the API"
+            Good approach: Skill(skill="brainstorm") first to explore requirements and design, then Skill(skill="writing-plans") to create the implementation plan.
+            Bad approach: Immediately editing files without understanding requirements or planning.
             </example>
             </examples>
         """.trimIndent()
@@ -522,6 +550,7 @@ Remember: Use tools to discover information — never guess. Verify your work be
         val SONAR_CONTEXT_RULES = """
             - SonarQube: Use sonar(action="quality_gate") for pass/fail status, sonar(action="issues") for detailed findings.
             - Filter issues by severity (BLOCKER, CRITICAL, MAJOR, MINOR, INFO) and type (BUG, VULNERABILITY, CODE_SMELL).
+            - Use new_code_only=true on issues/issues_paged to see only issues introduced in the new code period (since branch point). This is the most useful filter for feature branch reviews.
             - Use sonar(action="security_hotspots") for security hotspots (separate from issues). Use sonar(action="duplications") with component_key for duplicate code block locations.
             - Use sonar(action="source_lines") with component_key and branch for per-line coverage data (which lines are covered/uncovered).
             - Pass branch parameter to get data for the current branch. Use project_context tool to discover the current branch name and sonar project key.

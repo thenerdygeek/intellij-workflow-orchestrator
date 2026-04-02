@@ -43,9 +43,8 @@ AgentController (UI entry point)
 - **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. In normal mode, text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`. Implicit completion via CompletionGatekeeper is only allowed in `forceTextOnly` mode (activated after 4 nudges ignored, malformed retries exhausted, or iteration 95%+). Not available to WorkerSession — workers use `worker_complete` instead.
 - **WorkerCompleteTool** (`worker_complete`) — Lightweight completion signal for worker sessions (subagents). Analogous to `attempt_completion` but without CompletionGatekeeper dependency. Returns `isCompletion=true` to exit the WorkerSession ReAct loop immediately. Available to all WorkerTypes (ORCHESTRATOR, ANALYZER, CODER, REVIEWER, TOOLER). No collision with `attempt_completion` — that tool is injected directly into SingleAgentSession's tool set, not registered in ToolRegistry.
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
-- **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
-- **DelegateTaskTool** (`delegate_task`) — [DEPRECATED] Legacy worker spawning tool. Use `agent` tool instead. Kept for backward compatibility.
-- **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
+- **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
+- **WorkerSession** — Scoped ReAct loop (max 32 iterations) with parent Job cancellation support.
 
 ## System Prompt Structure (`PromptAssembler`)
 
@@ -81,11 +80,11 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (68 registered, 15 meta-tools consolidating 140 actions)
+## Tools (68 registered, 15 meta-tools consolidating 143 actions)
 
 | Category | Tools |
 |----------|-------|
-| Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, delegate_task (deprecated), think, request_tools, project_context |
+| Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, think, request_tools, project_context |
 | Change Tracking | list_changes (always active, read-only), rollback_changes (reverts to LocalHistory checkpoint) |
 | Process Interaction | send_stdin, kill_process, ask_user_input, send_message_to_parent |
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
@@ -95,12 +94,12 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | VCS | **git** (11 actions: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
 | Spring & Framework | **spring** (15 actions: context, endpoints, bean_graph, config, version_info, profiles, repositories, security_config, scheduled_tasks, event_listeners, boot_endpoints/autoconfig/config_properties/actuator, jpa_entities) |
 | Build Systems | **build** (11 actions: maven_dependencies/properties/plugins/profiles/dependency_tree/effective_pom, gradle_dependencies/tasks/properties, project_modules, module_dependency_graph) |
-| Jira | **jira** (15 actions: get_ticket, search_issues, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work) |
-| CI/CD — Bamboo | **bamboo_builds** (10 actions: build_status, get_build, trigger_build, stop_build, cancel_build, get_build_log, get_test_results, get_artifacts, recent_builds, get_running_builds), **bamboo_plans** (8 actions: get_plans, get_project_plans, search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage) |
+| Jira | **jira** (17 actions: get_ticket, search_issues, search_tickets, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work, download_attachment) |
+| CI/CD — Bamboo | **bamboo_builds** (11 actions: build_status, get_build, trigger_build, stop_build, cancel_build, get_build_log, get_test_results, get_artifacts, download_artifact, recent_builds, get_running_builds), **bamboo_plans** (8 actions: get_plans, get_project_plans, search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage) |
 | Quality — SonarQube | **sonar** (11 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications) |
 | Pull Requests — Bitbucket | **bitbucket_pr** (14 actions: create/approve/merge/decline_pr, get_pr_detail/commits/activities/changes/diff, check_merge_status, update_pr_title/description, get_my_prs, get_reviewing_prs), **bitbucket_review** (6 actions: add_pr_comment, add_inline_comment, reply_to_comment, add/remove_reviewer, set_reviewer_status), **bitbucket_repo** (6 actions: get_branches, create_branch, search_users, get_file_content, get_build_statuses, list_repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
-| Skills | activate_skill, deactivate_skill |
+| Skills | Skill |
 | Database | db_list_profiles, db_query, db_schema |
 | Planning | enable_plan_mode, create_plan, update_plan_step, ask_questions, attempt_completion |
 
@@ -110,7 +109,7 @@ Three layers:
 1. **DynamicToolSelector** — keyword scan of last 3 user messages triggers relevant tool groups
 2. **RequestToolsTool** (`request_tools`) — LLM activates categories on demand (always available)
 3. **ToolPreferences** — user checkboxes in Tools panel, persisted per project
-4. **agent**, **delegate_task**, and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
+4. **agent** and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
 5. Tool set stabilizes per session — tools only expand across messages, never shrink
 
 ## Context Management
@@ -281,9 +280,9 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 - User: `~/.workflow-orchestrator/skills/{name}/SKILL.md`
 - Project overrides user if same name
 - Discovery: descriptions loaded at session start, full content on activation
-- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `activate_skill`
+- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `Skill(skill="name")`
 - Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
-- Built-in skills: `systematic-debugging`, `interactive-debugging`, and `create-skill` ship with the plugin from resources
+- Built-in skills: `systematic-debugging`, `interactive-debugging`, `create-skill`, `git-workflow`, `brainstorm`, `writing-plans`, `tdd`, `subagent-driven` ship with the plugin from resources
 - Supporting files: non-SKILL.md files in skill directory listed via `getSupportingFiles()`
 
 **Frontmatter fields:**
@@ -319,6 +318,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 **Background notifications:** When a background agent completes, the parent is notified via a system message injected into the conversation context (`<background_agent_completed>` tag) and a UI status message in the chat panel.
 
 **Built-in types:** general-purpose, explorer (PSI-powered, read-only, thoroughness: quick/medium/very thorough), coder, reviewer, tooler
+**Bundled specialist agents:** code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer (loaded from plugin resources, overridable by user/project agents)
 **Custom types:** Any agent defined in `.workflow/agents/{name}.md`
 
 ## Subagent Coordination
@@ -342,7 +342,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 Coroutine context element (`AbstractCoroutineContextElement`) carrying `agentId`, `workerType`, `messageBus`, and `fileOwnership` to all tools within a worker's scope. Set via `withContext(WorkerContext(...))` in `WorkerSession.execute()`.
 
 ### No Wall-Clock Timeouts
-Workers are bounded by iteration limits (default 10) and context budget (150K), not wall-clock timeouts. This matches Claude Code, Codex CLI, Cursor, and Cline — no enterprise coding agent uses hard timeouts on sub-agents.
+Workers are bounded by iteration limits (default 32) and context budget (150K), not wall-clock timeouts. This matches Claude Code, Codex CLI, Cursor, and Cline — no enterprise coding agent uses hard timeouts on sub-agents.
 
 ## Custom Subagents
 
@@ -367,7 +367,7 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 - `project`: `.workflow/agent-memory/{name}/`
 - `local`: `.workflow/agent-memory-local/{name}/`
 
-Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt. Legacy `delegate_task(agent="name", task="...")` still supported but deprecated.
+Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt.
 
 ## Evaluation & Observability
 

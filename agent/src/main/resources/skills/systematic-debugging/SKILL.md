@@ -193,7 +193,7 @@ you genuinely need to observe runtime state.
    **Discuss with the user before attempting more fixes.**
 
 6. **Record the Fix**
-   After resolving a complex bug, use `save_memory` to record the root cause and fix approach for future sessions.
+   After resolving a complex bug, use `archival_memory_insert` to record the root cause and fix approach for future sessions.
 
 ## Red Flags — STOP and Follow Process
 

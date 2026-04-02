@@ -32,13 +32,6 @@ sealed class WorkflowEvent {
         val lineCoverage: Double
     ) : WorkflowEvent()
 
-    /** Emitted by :cody when a user accepts or rejects an AI-generated edit. */
-    data class CodyEditReady(
-        val taskId: String,
-        val filePath: String,
-        val accepted: Boolean
-    ) : WorkflowEvent()
-
     /** Emitted when health checks start running (before commit). */
     data class HealthCheckStarted(
         val checks: List<String>
@@ -87,22 +80,10 @@ sealed class WorkflowEvent {
         val commentId: String
     ) : WorkflowEvent()
 
-    /** Emitted by :handover when Cody pre-review completes. */
-    data class PreReviewFinished(
-        val findingsCount: Int,
-        val highSeverityCount: Int
-    ) : WorkflowEvent()
-
     /** Emitted by :jira when the active ticket changes (Start Work, branch switch). */
     data class TicketChanged(
         val ticketId: String,
         val ticketSummary: String
-    ) : WorkflowEvent()
-
-    /** Emitted when a pull request is updated (title, description, reviewers). */
-    data class PullRequestUpdated(
-        val prId: Int,
-        val field: String
     ) : WorkflowEvent()
 
     /** Emitted when a pull request is merged. */
@@ -142,31 +123,6 @@ sealed class WorkflowEvent {
         val prId: Int,
         val fromBranch: String,
         val toBranch: String
-    ) : WorkflowEvent()
-
-    /** Emitted by :agent when a task starts execution. */
-    data class AgentTaskStarted(
-        val taskId: String,
-        val description: String
-    ) : WorkflowEvent()
-
-    /** Emitted by :agent when a task completes successfully. */
-    data class AgentTaskCompleted(
-        val taskId: String,
-        val summary: String
-    ) : WorkflowEvent()
-
-    /** Emitted by :agent when a task fails. */
-    data class AgentTaskFailed(
-        val taskId: String,
-        val error: String
-    ) : WorkflowEvent()
-
-    /** Emitted by :agent when a worker progresses (step completion, token usage). */
-    data class AgentWorkerProgress(
-        val taskId: String,
-        val step: String,
-        val tokensUsed: Int
     ) : WorkflowEvent()
 
     enum class BuildEventStatus { SUCCESS, FAILED }

@@ -7,13 +7,12 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ErrorType
-import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,21 +40,14 @@ class QueueService : Disposable {
     private var _project: Project? = null
 
     // Backing fields — set directly by test constructor, or lazily resolved from project
-    private var _bambooClient: BambooApiClient? = null
+    private var _bambooService: BambooService? = null
     private var _registryClient: DockerRegistryClient? = null
     private var _eventBus: EventBus? = null
     private var _tagHistoryService: TagHistoryService? = null
 
-    private val bambooClient: BambooApiClient get() = _bambooClient ?: run {
+    private val bambooService: BambooService get() = _bambooService ?: run {
         val p = _project!!
-        val settings = PluginSettings.getInstance(p)
-        val credentialStore = CredentialStore()
-        BambooApiClient(
-            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        ).also { _bambooClient = it }
+        p.getService(BambooService::class.java).also { _bambooService = it }
     }
 
     private val registryClient: DockerRegistryClient get() = _registryClient ?: run {
@@ -95,7 +87,7 @@ class QueueService : Disposable {
 
     /** Test constructor — allows injecting mocks. */
     constructor(
-        bambooClient: BambooApiClient,
+        bambooService: BambooService,
         registryClient: DockerRegistryClient,
         eventBus: EventBus,
         tagHistoryService: TagHistoryService,
@@ -105,7 +97,7 @@ class QueueService : Disposable {
         tagValidationOnTrigger: Boolean = true,
         buildVariableName: String = "dockerTagsAsJson"
     ) {
-        this._bambooClient = bambooClient
+        this._bambooService = bambooService
         this._registryClient = registryClient
         this._eventBus = eventBus
         this._tagHistoryService = tagHistoryService
@@ -169,7 +161,7 @@ class QueueService : Disposable {
                 if (entry.bambooResultKey != null &&
                     entry.status in listOf(QueueEntryStatus.QUEUED_ON_BAMBOO)) {
                     log.info("[Automation:Queue] Cancelling Bamboo build ${entry.bambooResultKey}")
-                    bambooClient.cancelBuild(entry.bambooResultKey!!)
+                    bambooService.cancelBuild(entry.bambooResultKey!!)
                 }
 
                 tagHistoryService.updateQueueEntryStatus(entryId, QueueEntryStatus.CANCELLED)
@@ -192,7 +184,7 @@ class QueueService : Disposable {
             .indexOfFirst { it.id == entryId }
     }
 
-    suspend fun triggerNow(entry: QueueEntry): ApiResult<String> {
+    suspend fun triggerNow(entry: QueueEntry): ToolResult<String> {
         log.info("[Automation:Queue] Manual trigger requested for entry ${entry.id}, suite='${entry.suitePlanKey}'")
         return mutex.withLock {
             doTrigger(entry)
@@ -257,10 +249,10 @@ class QueueService : Disposable {
 
         if (oldestWaiting?.id != entry.id) return entry
 
-        val runningResult = bambooClient.getRunningAndQueuedBuilds(planKey)
-        if (runningResult is ApiResult.Success && runningResult.data.isEmpty()) {
+        val runningResult = bambooService.getRunningBuilds(planKey)
+        if (!runningResult.isError && runningResult.data.isEmpty()) {
             val triggerResult = doTrigger(entry)
-            return if (triggerResult is ApiResult.Success) {
+            return if (!triggerResult.isError) {
                 log.info("[Automation:Queue] Auto-triggered entry ${entry.id} on Bamboo, resultKey=${triggerResult.data}")
                 entry.copy(
                     status = QueueEntryStatus.QUEUED_ON_BAMBOO,
@@ -278,13 +270,13 @@ class QueueService : Disposable {
     private suspend fun handleRunningOrQueued(entry: QueueEntry): QueueEntry {
         val resultKey = entry.bambooResultKey ?: return entry
 
-        val result = bambooClient.getBuildResult(resultKey)
-        if (result !is ApiResult.Success) return entry
+        val result = bambooService.getBuild(resultKey)
+        if (result.isError) return entry
 
-        val dto = result.data
-        return when (dto.lifeCycleState) {
-            "Finished" -> {
-                val passed = dto.state == "Successful"
+        val buildData = result.data
+        return when {
+            buildData.state == "Successful" || buildData.state == "Failed" -> {
+                val passed = buildData.state == "Successful"
                 log.info("[Automation:Queue] Build finished for entry ${entry.id}, resultKey=$resultKey, passed=$passed")
                 tagHistoryService.updateQueueEntryStatus(
                     entry.id, QueueEntryStatus.COMPLETED, resultKey
@@ -293,25 +285,26 @@ class QueueService : Disposable {
                     suitePlanKey = entry.suitePlanKey,
                     buildResultKey = resultKey,
                     passed = passed,
-                    durationMs = dto.buildDurationInSeconds * 1000
+                    durationMs = buildData.durationSeconds * 1000
                 ))
                 entry.copy(status = QueueEntryStatus.COMPLETED)
             }
-            "InProgress" -> entry.copy(status = QueueEntryStatus.RUNNING)
+            buildData.state == "InProgress" || buildData.state == "Unknown" -> entry.copy(status = QueueEntryStatus.RUNNING)
             else -> entry
         }
     }
 
-    private suspend fun doTrigger(entry: QueueEntry): ApiResult<String> {
+    private suspend fun doTrigger(entry: QueueEntry): ToolResult<String> {
         log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', tagValidation=$tagValidationOnTrigger")
         if (tagValidationOnTrigger) {
             val tagsValid = validateTags(entry)
             if (!tagsValid) {
                 log.error("[Automation:Queue] Tag validation failed for entry ${entry.id}, aborting trigger")
                 tagHistoryService.updateQueueEntryStatus(entry.id, QueueEntryStatus.TAG_INVALID)
-                return ApiResult.Error(
-                    ErrorType.VALIDATION_ERROR,
-                    "One or more Docker tags no longer exist in the registry"
+                return ToolResult(
+                    data = "",
+                    summary = "One or more Docker tags no longer exist in the registry",
+                    isError = true
                 )
             }
         }
@@ -320,30 +313,31 @@ class QueueService : Disposable {
         variables[buildVariableName] = entry.dockerTagsPayload
         log.debug("[Automation:Queue] Using build variable '$buildVariableName' for trigger")
 
-        val result = bambooClient.triggerBuild(entry.suitePlanKey, variables)
-        return when (result) {
-            is ApiResult.Success -> {
-                val buildKey = result.data.buildResultKey
-                log.info("[Automation:Queue] Build triggered successfully, buildKey=$buildKey")
-                tagHistoryService.updateQueueEntryStatus(
-                    entry.id, QueueEntryStatus.QUEUED_ON_BAMBOO, buildKey
-                )
-                eventBus.emit(WorkflowEvent.AutomationTriggered(
-                    suitePlanKey = entry.suitePlanKey,
-                    buildResultKey = buildKey,
-                    dockerTagsJson = entry.dockerTagsPayload,
-                    triggeredBy = if (autoTriggerEnabled) "auto-queue" else "manual"
-                ))
-                ApiResult.Success(buildKey)
-            }
-            is ApiResult.Error -> {
-                log.error("[Automation:Queue] Build trigger failed for entry ${entry.id}: ${result.message}")
-                tagHistoryService.updateQueueEntryStatus(
-                    entry.id, QueueEntryStatus.FAILED_TO_TRIGGER,
-                    errorMessage = result.message
-                )
-                ApiResult.Error(result.type, result.message, result.cause)
-            }
+        val result = bambooService.triggerBuild(entry.suitePlanKey, variables)
+        return if (!result.isError) {
+            val buildKey = result.data.buildKey
+            log.info("[Automation:Queue] Build triggered successfully, buildKey=$buildKey")
+            tagHistoryService.updateQueueEntryStatus(
+                entry.id, QueueEntryStatus.QUEUED_ON_BAMBOO, buildKey
+            )
+            eventBus.emit(WorkflowEvent.AutomationTriggered(
+                suitePlanKey = entry.suitePlanKey,
+                buildResultKey = buildKey,
+                dockerTagsJson = entry.dockerTagsPayload,
+                triggeredBy = if (autoTriggerEnabled) "auto-queue" else "manual"
+            ))
+            ToolResult.success(data = buildKey, summary = "Build triggered: $buildKey")
+        } else {
+            log.error("[Automation:Queue] Build trigger failed for entry ${entry.id}: ${result.summary}")
+            tagHistoryService.updateQueueEntryStatus(
+                entry.id, QueueEntryStatus.FAILED_TO_TRIGGER,
+                errorMessage = result.summary
+            )
+            ToolResult(
+                data = "",
+                summary = "Build trigger failed: ${result.summary}",
+                isError = true
+            )
         }
     }
 

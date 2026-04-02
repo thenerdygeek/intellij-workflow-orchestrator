@@ -734,12 +734,21 @@ class AgentController(
             }
         }
 
-        // If agent is already running, queue the message as intervention
+        // If agent is already running AND actively working (not waiting for user input),
+        // queue the message as intervention
         if (currentOrchestrator != null && session != null) {
-            pendingUserMessages.add(task)
-            dashboard.appendUserMessage(task)
-            dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
-            return
+            val isWaitingForUser = pendingApprovalDeferred != null  // tool approval gate
+                || session?.planManager?.isAwaitingApproval == true  // plan approval
+                || session?.questionManager?.isAwaitingAnswers == true  // question wizard
+
+            if (!isWaitingForUser) {
+                pendingUserMessages.add(task)
+                dashboard.appendUserMessage(task)
+                dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
+                return
+            }
+            // Agent is suspended waiting for user — fall through to start a new turn
+            // (the pending approval/plan/question will be cancelled or resolved by the new turn)
         }
 
         // Helper: always push debug entries (not gated by showDebugLog setting)
@@ -803,7 +812,6 @@ class AgentController(
                 val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
                 val approvalGate = ApprovalGate(
                     approvalRequired = settings?.state?.approvalRequiredForEdits ?: true,
-                    onApprovalNeeded = { desc, risk -> showApprovalDialog(desc, risk) },
                     approvalCallback = { toolName, risk, params ->
                         val metadata = buildApprovalMetadata(toolName, params)
                         val description = buildApprovalDescription(toolName, params)
@@ -895,6 +903,9 @@ class AgentController(
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
         ProcessRegistry.killAll()
+        // Kill all background sub-agents — they use independent SupervisorJobs
+        // that don't get cancelled by currentTaskJob.cancel()
+        try { AgentService.getInstance(project).killAllWorkers() } catch (_: Exception) {}
         currentTaskJob?.cancel()
         currentTaskJob = null
         // Reset plan mode on cancel

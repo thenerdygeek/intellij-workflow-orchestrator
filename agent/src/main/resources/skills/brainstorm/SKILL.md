@@ -167,7 +167,7 @@ The plan should:
 
 ## Step 7: Save Key Decisions
 
-After the brainstorming session, use `save_memory` to persist:
+After the brainstorming session, use `archival_memory_insert` to persist:
 - The chosen approach and why alternatives were rejected
 - Key constraints or requirements that emerged
 - Architecture decisions that should inform future work

@@ -32,6 +32,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -133,7 +134,7 @@ class SingleAgentSession(
         private const val MAX_NO_TOOL_NUDGES = 4
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
-        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "delegate_task", "think", "attempt_completion")
+        val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "agent", "think", "attempt_completion")
 
 
         /** Read-only tools safe to execute in parallel (no side effects on project state).
@@ -198,6 +199,22 @@ class SingleAgentSession(
             "update_plan_step",
             "think"
         )
+
+        /**
+         * Check if a tool call is a background agent launch. These are safe to
+         * parallelize because they just spawn a coroutine and return an ID immediately.
+         */
+        private fun isBackgroundAgentCall(tc: com.workflow.orchestrator.agent.api.dto.ToolCall): Boolean {
+            if (tc.function.name != "agent") return false
+            return try {
+                val params = kotlinx.serialization.json.Json.parseToJsonElement(tc.function.arguments)
+                (params as? kotlinx.serialization.json.JsonObject)
+                    ?.get("run_in_background")
+                    ?.jsonPrimitive?.booleanOrNull == true
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     /**
@@ -614,6 +631,17 @@ class SingleAgentSession(
                     totalTokensUsed = result.totalTokensSoFar
                 }
                 is LlmCallResult.Failed -> {
+                    // Cancelled by user — exit cleanly as Completed (not Failed)
+                    if (cancelled.get()) {
+                        LOG.info("SingleAgentSession: cancelled during LLM call at iteration $iteration")
+                        return SingleAgentResult.Completed(
+                            content = "Task cancelled by user after $iteration iterations.",
+                            summary = "Cancelled",
+                            tokensUsed = totalTokensUsed,
+                            artifacts = allArtifacts,
+                            scorecard = buildScorecard(sessionId, "cancelled", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
+                        )
+                    }
                     eventLog?.log(AgentEventType.SESSION_FAILED, result.error)
                     sessionTrace?.dumpConversationState(bridge.getMessages(), "llm_call_failed: ${result.error}")
                     sessionTrace?.sessionFailed(result.error, totalTokensUsed, iteration)
@@ -686,7 +714,6 @@ class SingleAgentSession(
             sessionOutputTokens += usage.completionTokens.toLong()
             // Reconcile token count with actual API-reported count.
             // The API's prompt_tokens is authoritative — calibrate to it.
-            bridge.reconcileWithActualTokens(usage.promptTokens)
             bridge.updateTokensFromUsage(usage.promptTokens)
         } else {
             // Streaming response returned null/zero usage — estimate heuristically
@@ -921,9 +948,11 @@ class SingleAgentSession(
         // Execute tool calls: read-only tools in parallel, write tools sequentially
         val toolResults = mutableListOf<Pair<String, Boolean>>() // (toolCallId, isError) for LoopGuard
 
-        // Split into read-only (parallel-safe) and write (sequential) tool calls
+        // Split into parallel-safe and sequential tool calls.
+        // Read-only tools are always parallel-safe. Background agent launches are also
+        // parallel-safe (they just spawn a coroutine and return an ID immediately).
         val (readOnlyCalls, writeCalls) = effectiveToolCalls.partition { tc ->
-            tc.function.name in READ_ONLY_TOOLS
+            tc.function.name in READ_ONLY_TOOLS || isBackgroundAgentCall(tc)
         }
 
         // Doom loop detection: check each tool call before execution, skip if detected
@@ -966,14 +995,13 @@ class SingleAgentSession(
                 val tr = entry.second
                 val durMs = entry.third
                 val toolName = tc.function.name
-                // 5C: Redact credentials before injecting tool results into LLM context
-                val redactedContent = CredentialRedactor.redact(tr.content)
+                // 5C: Inject tool results into LLM context (no redaction — LLM needs raw content)
                 if (tr.isError) {
-                    bridge.addToolError(tc.id, redactedContent, tr.summary, toolName)
+                    bridge.addToolError(tc.id, tr.content, tr.summary, toolName)
                 } else {
-                    bridge.addToolResult(tc.id, redactedContent, tr.summary, toolName)
+                    bridge.addToolResult(tc.id, tr.content, tr.summary, toolName)
                 }
-                recordFactFromToolResult(toolName, tc.function.arguments, redactedContent, tr.summary, iteration, bridge, project)
+                recordFactFromToolResult(toolName, tc.function.arguments, tr.content, tr.summary, iteration, bridge, project)
                 allArtifacts.addAll(tr.artifacts)
                 toolResults.add(tc.id to tr.isError)
 
@@ -1123,14 +1151,14 @@ class SingleAgentSession(
                 )
             }
 
-            // 5C: Redact credentials before injecting tool results into LLM context
-            val redactedWriteContent = CredentialRedactor.redact(toolResult.content)
+            // 5C: Inject tool results into LLM context (no redaction — LLM needs raw content
+            // to work with real files, certs, config values. Redaction only on disk logs.)
             if (toolResult.isError) {
-                bridge.addToolError(toolCall.id, redactedWriteContent, toolResult.summary, toolName)
+                bridge.addToolError(toolCall.id, toolResult.content, toolResult.summary, toolName)
             } else {
-                bridge.addToolResult(toolCall.id, redactedWriteContent, toolResult.summary, toolName)
+                bridge.addToolResult(toolCall.id, toolResult.content, toolResult.summary, toolName)
             }
-            recordFactFromToolResult(toolName, toolCall.function.arguments, redactedWriteContent, toolResult.summary, iteration, bridge, project)
+            recordFactFromToolResult(toolName, toolCall.function.arguments, toolResult.content, toolResult.summary, iteration, bridge, project)
 
             allArtifacts.addAll(toolResult.artifacts)
             toolResults.add(toolCall.id to toolResult.isError)
@@ -1212,7 +1240,7 @@ class SingleAgentSession(
                 val bpError = backpressureGate.createBackpressureError(toolName, toolResult.content)
                 bridge.addMessage(bpError)
             }
-            if ((toolName == "agent" || toolName == "delegate_task") && !toolResult.isError) {
+            if (toolName == "agent" && !toolResult.isError) {
                 metrics.subagentCount++
             }
             if (metrics.isCircuitBroken(toolName)) {
@@ -1547,6 +1575,8 @@ class SingleAgentSession(
             }
 
             Triple(toolCall, toolResult, toolDurationMs)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // Never swallow CancellationException — propagate for structured concurrency
         } catch (e: Exception) {
             val toolDurationMs = System.currentTimeMillis() - toolStartMs
             LOG.warn("SingleAgentSession: tool '$toolName' failed", e)
@@ -1578,6 +1608,9 @@ class SingleAgentSession(
         var lastError: String? = null
 
         for (attempt in 1..MAX_RETRIES) {
+            // Check cancellation before each attempt (especially important during retries)
+            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
+
             // Use non-streaming to get complete, well-structured tool call arguments.
             // Sourcegraph's streaming SSE can produce empty/malformed tool call args
             // (tool name arrives but arguments are empty strings). Non-streaming
@@ -1586,11 +1619,16 @@ class SingleAgentSession(
             val streamed = false
             val result = brain.chat(messages, toolDefs, maxOutputTokens)
 
+            // Check cancellation after LLM call returns (call may have been aborted)
+            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
+
             when (result) {
                 is ApiResult.Success -> {
                     return LlmCallResult.Success(result.data, wasStreamed = streamed)
                 }
                 is ApiResult.Error -> {
+                    // If cancelled and we got a network error, that's the abort — exit cleanly
+                    if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
                     when (result.type) {
                         ErrorType.RATE_LIMITED, ErrorType.SERVER_ERROR -> {
                             lastError = result.message
@@ -1603,9 +1641,14 @@ class SingleAgentSession(
                                 LOG.info("SingleAgentSession: retry $attempt/$MAX_RETRIES after ${delayMs}ms ($reason)")
                                 eventLog?.log(AgentEventType.RATE_LIMITED_RETRY, "Attempt $attempt, backoff ${delayMs}ms ($reason)")
                                 onDebugLog?.invoke("warn", "retry", "$reason — attempt $attempt/$MAX_RETRIES, backoff ${delayMs}ms", mapOf("iteration" to iteration))
-                                delay(delayMs)
+                                delay(delayMs) // delay() is cancellable — Job.cancel() will interrupt this
                             }
                             continue // retry with backoff
+                        }
+                        ErrorType.NETWORK_ERROR -> {
+                            // Network error during cancellation = expected (socket closed by cancelActiveRequest)
+                            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
+                            return LlmCallResult.Failed(result.message)
                         }
                         ErrorType.CONTEXT_LENGTH_EXCEEDED -> {
                             // Reduce tools to core set and retry once

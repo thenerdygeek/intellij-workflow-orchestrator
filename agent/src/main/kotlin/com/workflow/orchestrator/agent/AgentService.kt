@@ -171,6 +171,14 @@ class AgentService(
         return true
     }
 
+    /** Kill all background workers — called when user presses Stop to ensure nothing keeps running. */
+    fun killAllWorkers() {
+        val ids = backgroundWorkers.keys.toList()
+        for (id in ids) {
+            killWorker(id)
+        }
+    }
+
     fun getWorkerStatus(agentId: String): WorkerStatus? {
         return backgroundWorkers[agentId]?.status
     }
@@ -239,7 +247,6 @@ class AgentService(
             // Meta-tools
             register(RequestToolsTool())
             register(SpawnAgentTool())
-            register(DelegateTaskTool())
             register(ThinkTool())
             register(WorkerCompleteTool())
             register(SendMessageToParentTool())
@@ -249,8 +256,7 @@ class AgentService(
             register(ArchivalMemoryInsertTool())
             register(ArchivalMemorySearchTool())
             register(ConversationSearchTool())
-            register(ActivateSkillTool())
-            register(DeactivateSkillTool())
+            register(SkillTool())
 
             // Change tracking tools
             register(ListChangesTool())

@@ -4,10 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.*
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -18,26 +15,20 @@ import kotlinx.serialization.json.jsonPrimitive
 class TagBuilderService {
 
     private val log = Logger.getInstance(TagBuilderService::class.java)
-    private val bambooClient: BambooApiClient
+    private val bambooService: BambooService
     private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
         val settings = PluginSettings.getInstance(project)
-        val credentialStore = CredentialStore()
-        this.bambooClient = BambooApiClient(
-            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-        )
+        this.bambooService = project.getService(BambooService::class.java)
         this.buildVariableName = settings.state.bambooBuildVariableName ?: "dockerTagsAsJson"
         log.info("[Automation:Tags] TagBuilderService initialized, buildVariableName='$buildVariableName'")
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(bambooClient: BambooApiClient, buildVariableName: String = "dockerTagsAsJson") {
-        this.bambooClient = bambooClient
+    constructor(bambooService: BambooService, buildVariableName: String = "dockerTagsAsJson") {
+        this.bambooService = bambooService
         this.buildVariableName = buildVariableName
     }
     private val json = Json { ignoreUnknownKeys = true }
@@ -48,57 +39,50 @@ class TagBuilderService {
         maxResults: Int = 10
     ): List<BaselineRun> {
         log.info("[Automation:Tags] Scoring and ranking runs for plan '$suitePlanKey', maxResults=$maxResults")
-        val buildsResult = bambooClient.getRecentResults(suitePlanKey, maxResults)
-        if (buildsResult !is ApiResult.Success) {
-            log.info("[Automation:Tags] getRecentResults failed for '$suitePlanKey': $buildsResult")
+        val buildsResult = bambooService.getRecentBuilds(suitePlanKey, maxResults)
+        if (buildsResult.isError) {
+            log.info("[Automation:Tags] getRecentBuilds failed for '$suitePlanKey': ${buildsResult.summary}")
             return emptyList()
         }
 
         log.info("[Automation:Tags] Found ${buildsResult.data.size} recent builds for '$suitePlanKey'")
 
-        return buildsResult.data.mapNotNull { dto ->
-            log.info("[Automation:Tags] Checking build #${dto.buildNumber} (key=${dto.key}, buildResultKey=${dto.buildResultKey}, state=${dto.state})")
+        return buildsResult.data.mapNotNull { build ->
+            log.info("[Automation:Tags] Checking build #${build.buildNumber} (buildResultKey=${build.buildResultKey}, state=${build.state})")
 
-            // Use inline variables from expand=variables if available, otherwise fetch separately
-            val variables: Map<String, String> = if (dto.variables.variable.isNotEmpty()) {
-                dto.variables.variable.associate { it.name to it.value }.also {
-                    log.info("[Automation:Tags]   Build #${dto.buildNumber}: using inline variables: ${it.keys}")
-                }
-            } else {
-                val resultKey = dto.buildResultKey.ifBlank { dto.key }
-                log.info("[Automation:Tags]   Build #${dto.buildNumber}: no inline variables, fetching from API with key='$resultKey'")
-                val varsResult = bambooClient.getBuildVariables(resultKey)
-                if (varsResult !is ApiResult.Success) {
-                    log.info("[Automation:Tags]   Build #${dto.buildNumber}: failed to get variables: $varsResult")
-                    return@mapNotNull null
-                }
-                varsResult.data.also {
-                    log.info("[Automation:Tags]   Build #${dto.buildNumber}: fetched variables: ${it.keys}")
-                }
+            // Fetch build variables via service
+            val resultKey = build.buildResultKey.ifBlank { "${suitePlanKey}-${build.buildNumber}" }
+            log.info("[Automation:Tags]   Build #${build.buildNumber}: fetching variables with key='$resultKey'")
+            val varsResult = bambooService.getBuildVariables(resultKey)
+            if (varsResult.isError) {
+                log.info("[Automation:Tags]   Build #${build.buildNumber}: failed to get variables: ${varsResult.summary}")
+                return@mapNotNull null
             }
+            val variables = varsResult.data.associate { it.name to it.value }
+            log.info("[Automation:Tags]   Build #${build.buildNumber}: fetched variables: ${variables.keys}")
 
             val dockerTagsJson = variables[buildVariableName]
             if (dockerTagsJson == null) {
-                log.info("[Automation:Tags]   Build #${dto.buildNumber}: no '$buildVariableName' variable found")
+                log.info("[Automation:Tags]   Build #${build.buildNumber}: no '$buildVariableName' variable found")
                 return@mapNotNull null
             }
 
             val tags = parseDockerTagsJson(dockerTagsJson)
             if (tags.isEmpty()) {
-                log.info("[Automation:Tags]   Build #${dto.buildNumber}: dockerTagsJson parsed to empty map: ${dockerTagsJson.take(200)}")
+                log.info("[Automation:Tags]   Build #${build.buildNumber}: dockerTagsJson parsed to empty map: ${dockerTagsJson.take(200)}")
                 return@mapNotNull null
             }
 
             val releaseCount = tags.values.count { semverPattern.matches(it) }
-            val successStages = dto.stages.stage.count { it.state.equals("Successful", ignoreCase = true) }
-            val failedStages = dto.stages.stage.count { it.state.equals("Failed", ignoreCase = true) }
+            val successStages = build.stages.count { it.state.equals("Successful", ignoreCase = true) }
+            val failedStages = build.stages.count { it.state.equals("Failed", ignoreCase = true) }
             val score = (releaseCount * 10) + (successStages * 5) - (failedStages * 20)
 
-            log.info("[Automation:Tags]   Build #${dto.buildNumber}: ${tags.size} services, score=$score")
+            log.info("[Automation:Tags]   Build #${build.buildNumber}: ${tags.size} services, score=$score")
 
             BaselineRun(
-                buildNumber = dto.buildNumber,
-                resultKey = dto.key,
+                buildNumber = build.buildNumber,
+                resultKey = resultKey,
                 dockerTags = tags,
                 releaseTagCount = releaseCount,
                 totalServices = tags.size,
@@ -181,18 +165,18 @@ class TagBuilderService {
         log.info("[Automation:Tags] Extracting docker tag from build log: plan=$serviceCiPlanKey, branch=$branchName")
 
         // Get latest build for this branch
-        val buildResult = bambooClient.getLatestResult(serviceCiPlanKey, branchName)
-        if (buildResult !is ApiResult.Success) {
+        val buildResult = bambooService.getLatestBuild(serviceCiPlanKey, branchName)
+        if (buildResult.isError) {
             log.warn("[Automation:Tags] No build found for $serviceCiPlanKey/$branchName")
             return null
         }
 
-        val resultKey = buildResult.data.key
+        val resultKey = buildResult.data.buildResultKey
         log.info("[Automation:Tags] Found build $resultKey, fetching log...")
 
         // Try to get the build log
-        val logResult = bambooClient.getBuildLog(resultKey)
-        if (logResult !is ApiResult.Success) {
+        val logResult = bambooService.getBuildLog(resultKey)
+        if (logResult.isError) {
             log.warn("[Automation:Tags] Failed to fetch build log for $resultKey")
             return null
         }

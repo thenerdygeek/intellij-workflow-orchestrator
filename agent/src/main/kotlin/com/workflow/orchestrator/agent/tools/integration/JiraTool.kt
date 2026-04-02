@@ -9,6 +9,8 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Consolidated Jira meta-tool replacing 15 individual jira_* tools.
@@ -18,8 +20,8 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * Actions: get_ticket, get_transitions, transition, comment, get_comments,
  *          log_work, get_worklogs, get_sprints, get_linked_prs, get_boards,
- *          get_sprint_issues, get_board_issues, search_issues, get_dev_branches,
- *          start_work
+ *          get_sprint_issues, get_board_issues, search_issues, search_tickets,
+ *          get_dev_branches, start_work, download_attachment
  */
 class JiraTool : AgentTool {
 
@@ -41,9 +43,11 @@ Actions and their parameters:
 - get_sprint_issues(sprint_id) → Issues in sprint
 - get_board_issues(board_id) → Issues on board
 - search_issues(text, max_results?) → JQL/text search (default 20 results)
+- search_tickets(jql, max_results?) → Run raw JQL query
 - get_linked_prs(issue_id) → PRs linked to issue
 - get_dev_branches(issue_id) → Dev branches for issue
 - start_work(issue_key, branch_name, source_branch) → Create branch and start work (also accepts key)
+- download_attachment(key, attachment_id) → Download attachment content
 
 description optional: for approval dialog on write actions.
 """.trimIndent()
@@ -56,8 +60,8 @@ description optional: for approval dialog on write actions.
                 enumValues = listOf(
                     "get_ticket", "get_transitions", "transition", "comment", "get_comments",
                     "log_work", "get_worklogs", "get_sprints", "get_linked_prs", "get_boards",
-                    "get_sprint_issues", "get_board_issues", "search_issues", "get_dev_branches",
-                    "start_work"
+                    "get_sprint_issues", "get_board_issues", "search_issues", "search_tickets",
+                    "get_dev_branches", "start_work", "download_attachment"
                 )
             ),
             "key" to ParameterProperty(
@@ -108,9 +112,17 @@ description optional: for approval dialog on write actions.
                 type = "string",
                 description = "Search text — for search_issues"
             ),
+            "jql" to ParameterProperty(
+                type = "string",
+                description = "Raw JQL query string — for search_tickets"
+            ),
             "max_results" to ParameterProperty(
                 type = "string",
-                description = "Max results (default 20) — for search_issues"
+                description = "Max results (default 20 for search_issues, default 8 for search_tickets)"
+            ),
+            "attachment_id" to ParameterProperty(
+                type = "string",
+                description = "Jira attachment ID — for download_attachment"
             ),
             "branch_name" to ParameterProperty(
                 type = "string",
@@ -131,6 +143,7 @@ description optional: for approval dialog on write actions.
     override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'action' parameter required",
@@ -330,6 +343,23 @@ description optional: for approval dialog on write actions.
                 ToolValidation.validateNotBlank(branchName, "branch_name")?.let { return it }
                 ToolValidation.validateNotBlank(sourceBranch, "source_branch")?.let { return it }
                 service.startWork(issueKey, branchName, sourceBranch).toAgentToolResult()
+            }
+
+            "search_tickets" -> {
+                val jql = params["jql"]?.jsonPrimitive?.content
+                    ?: return missingParam("jql")
+                val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 8
+                ToolValidation.validateNotBlank(jql, "jql")?.let { return it }
+                service.searchTickets(jql, maxResults).toAgentToolResult()
+            }
+
+            "download_attachment" -> {
+                val key = params["key"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                val attachmentId = params["attachment_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("attachment_id")
+                ToolValidation.validateJiraKey(key)?.let { return it }
+                service.downloadAttachment(key, attachmentId).toAgentToolResult()
             }
 
             else -> ToolResult(

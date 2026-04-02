@@ -11,15 +11,6 @@ import com.intellij.openapi.project.Project
 class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(State()) {
 
     class State : BaseState() {
-        // Service endpoints
-        var jiraUrl by string("")
-        var bambooUrl by string("")
-        var bitbucketUrl by string("")
-        var sonarUrl by string("")
-        var sourcegraphUrl by string("")
-        var nexusUrl by string("")
-        var nexusUsername by string("")
-
         // Polling intervals (seconds)
         var buildPollIntervalSeconds by property(30)
         var queuePollIntervalSeconds by property(60)
@@ -115,7 +106,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var worklogIncrementHours by property(0.5f)
 
         // VCS commit handler toggles
-        var autoLogTimeOnCommit by property(false)
         var autoTransitionOnCommit by property(false)
 
         // Branching & PRs
@@ -129,7 +119,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var reviewerFieldId by string("")
         var testerFieldId by string("")
 
-        // Cody AI
+        // AI review
         var maxDiffLinesForReview by property(10000)
 
         // SonarQube
@@ -151,49 +141,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
     /**
      * Convenience accessor for global connection URLs.
-     * All code that previously read settings.state.jiraUrl should use settings.connections.jiraUrl.
      */
     val connections: ConnectionSettings.State
         get() = ConnectionSettings.getInstance().state
-
-    /**
-     * Migrates any URLs stored in per-project settings to the global ConnectionSettings.
-     * Called once on first access. After migration, per-project URL fields are cleared.
-     */
-    fun migrateUrlsToGlobalIfNeeded() {
-        val global = ConnectionSettings.getInstance()
-        val gs = global.state
-        var migrated = false
-
-        fun migrate(localValue: String?, globalValue: String, setter: (String) -> Unit) {
-            if (!localValue.isNullOrBlank() && globalValue.isBlank()) {
-                setter(localValue)
-                migrated = true
-            }
-        }
-
-        migrate(state.jiraUrl, gs.jiraUrl) { gs.jiraUrl = it }
-        migrate(state.bambooUrl, gs.bambooUrl) { gs.bambooUrl = it }
-        migrate(state.bitbucketUrl, gs.bitbucketUrl) { gs.bitbucketUrl = it }
-        migrate(state.sonarUrl, gs.sonarUrl) { gs.sonarUrl = it }
-        migrate(state.sourcegraphUrl, gs.sourcegraphUrl) { gs.sourcegraphUrl = it }
-        migrate(state.nexusUrl, gs.nexusUrl) { gs.nexusUrl = it }
-        if (!state.nexusUsername.isNullOrBlank() && gs.nexusUsername.isBlank()) {
-            gs.nexusUsername = state.nexusUsername ?: ""
-            migrated = true
-        }
-
-        if (migrated) {
-            // Clear per-project URL fields after migration
-            state.jiraUrl = ""
-            state.bambooUrl = ""
-            state.bitbucketUrl = ""
-            state.sonarUrl = ""
-            state.sourcegraphUrl = ""
-            state.nexusUrl = ""
-            state.nexusUsername = ""
-        }
-    }
 
     val isAnyServiceConfigured: Boolean
         get() {
@@ -203,41 +153,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
                     gs.bitbucketUrl.isNotBlank() ||
                     gs.sonarUrl.isNotBlank() ||
                     gs.sourcegraphUrl.isNotBlank() ||
-                    gs.nexusUrl.isNotBlank() ||
-                    // Fallback: check legacy per-project fields (pre-migration)
-                    !state.jiraUrl.isNullOrBlank() ||
-                    !state.bambooUrl.isNullOrBlank() ||
-                    !state.bitbucketUrl.isNullOrBlank() ||
-                    !state.sonarUrl.isNullOrBlank() ||
-                    !state.sourcegraphUrl.isNullOrBlank() ||
-                    !state.nexusUrl.isNullOrBlank()
+                    gs.nexusUrl.isNotBlank()
         }
-
-    override fun loadState(state: State) {
-        super.loadState(state)
-        migrateToMultiRepo(state)
-    }
-
-    /**
-     * Migrates existing scalar repo fields to a RepoConfig entry on first load.
-     * Scalar fields are kept for backward compatibility but new code should use [getRepos].
-     */
-    private fun migrateToMultiRepo(state: State) {
-        if (state.repos.isNotEmpty()) return  // already migrated
-
-        if (!state.bitbucketProjectKey.isNullOrBlank()) {
-            val config = RepoConfig()
-            config.name = state.bitbucketRepoSlug ?: ""
-            config.bitbucketProjectKey = state.bitbucketProjectKey ?: ""
-            config.bitbucketRepoSlug = state.bitbucketRepoSlug ?: ""
-            config.bambooPlanKey = state.bambooPlanKey ?: ""
-            config.sonarProjectKey = state.sonarProjectKey ?: ""
-            config.dockerTagKey = state.dockerTagKey ?: ""
-            config.defaultTargetBranch = state.defaultTargetBranch ?: "develop"
-            config.isPrimary = true
-            state.repos.add(config)
-        }
-    }
 
     // ---- Multi-repo convenience accessors ----
 

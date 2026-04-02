@@ -28,7 +28,7 @@ class GitBlameTool : AgentTool {
         ),
         required = listOf("path")
     )
-    override val allowedWorkers = setOf(WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.REVIEWER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content

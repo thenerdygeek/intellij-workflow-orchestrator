@@ -30,7 +30,7 @@ class DynamicToolSelectorTest {
         "jira", "bamboo_builds", "bamboo_plans", "sonar", "bitbucket_pr", "bitbucket_review", "bitbucket_repo",
         "debug_breakpoints", "debug_step", "debug_inspect", "git", "spring", "build", "runtime_config", "runtime_exec",
         // Meta
-        "request_tools"
+        "request_tools", "agent"
     ).map { stubTool(it) }
 
     @Test
@@ -145,16 +145,15 @@ class DynamicToolSelectorTest {
 
     @Test
     fun `skillAllowedTools restricts to whitelist only`() {
-        val toolsWithDelegate = allTools + listOf(stubTool("delegate_task"))
         val result = DynamicToolSelector.selectTools(
-            allTools = toolsWithDelegate,
+            allTools = allTools,
             conversationContext = "check jira ticket and build status",
             skillAllowedTools = setOf("read_file", "search_code")
         )
         val names = result.map { it.name }.toSet()
         assertTrue("read_file" in names, "allowed tool read_file should be present")
         assertTrue("search_code" in names, "allowed tool search_code should be present")
-        assertTrue("delegate_task" in names, "delegate_task always included as escape hatch")
+        assertTrue("agent" in names, "agent always included as escape hatch")
         assertFalse("request_tools" in names, "request_tools excluded to prevent whitelist bypass")
         assertFalse("edit_file" in names, "edit_file should be blocked")
         assertFalse("run_command" in names, "run_command should be blocked")

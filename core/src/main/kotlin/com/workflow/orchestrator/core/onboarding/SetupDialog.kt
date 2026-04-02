@@ -44,7 +44,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         connectionSection("Bamboo", ServiceType.BAMBOO) { settings.connections.bambooUrl = it }
         connectionSection("Bitbucket", ServiceType.BITBUCKET) { settings.connections.bitbucketUrl = it }
         connectionSection("SonarQube", ServiceType.SONARQUBE) { settings.connections.sonarUrl = it }
-        connectionSection("Cody Enterprise", ServiceType.SOURCEGRAPH) { settings.connections.sourcegraphUrl = it }
+        connectionSection("Sourcegraph", ServiceType.SOURCEGRAPH) { settings.connections.sourcegraphUrl = it }
         nexusConnectionSection()
     }
 

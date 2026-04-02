@@ -14,6 +14,7 @@ import com.workflow.orchestrator.core.model.bamboo.ArtifactData
 import com.workflow.orchestrator.core.model.bamboo.PlanBranchData
 import com.workflow.orchestrator.core.model.bamboo.PlanData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
+import com.workflow.orchestrator.core.model.bamboo.ProjectData
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
@@ -741,6 +742,40 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                 ToolResult(
                     data = emptyList(),
                     summary = "Error fetching build variables for $resultKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getProjects(): ToolResult<List<ProjectData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch projects.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getProjects()) {
+            is ApiResult.Success -> {
+                val data = result.data.map { dto ->
+                    ProjectData(
+                        key = dto.key,
+                        name = dto.name,
+                        description = dto.description
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Found ${data.size} project(s): ${data.joinToString { it.key }}"
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch projects: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching projects: ${result.message}",
                     isError = true,
                     hint = "Check Bamboo connection in Settings."
                 )

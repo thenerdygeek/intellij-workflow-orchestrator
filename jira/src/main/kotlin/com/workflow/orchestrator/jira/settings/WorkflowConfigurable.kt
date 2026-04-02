@@ -215,7 +215,7 @@ class WorkflowConfigurable(private val project: Project) : SearchableConfigurabl
                             { settings.state.branchPattern ?: "feature/{ticketId}-{summary}" },
                             { settings.state.branchPattern = it }
                         )
-                        .comment("Placeholders: {ticketId}, {summary}, {type}, {cody-summary}")
+                        .comment("Placeholders: {ticketId}, {summary}, {type}, {ai-summary}")
                 }
                 row("Max branch name length:") {
                     intTextField(range = 10..200)
@@ -269,11 +269,6 @@ class WorkflowConfigurable(private val project: Project) : SearchableConfigurabl
                             { settings.state.worklogIncrementHours.toString() },
                             { settings.state.worklogIncrementHours = it.toFloatOrNull() ?: 0.5f }
                         )
-                }
-                row {
-                    checkBox("Automatically log time on commit")
-                        .bindSelected(settings.state::autoLogTimeOnCommit)
-                        .comment("Log elapsed time to the active Jira ticket when you commit")
                 }
                 row {
                     checkBox("Automatically transition ticket on commit")

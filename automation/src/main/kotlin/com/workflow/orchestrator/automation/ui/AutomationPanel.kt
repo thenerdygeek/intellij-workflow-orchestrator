@@ -13,8 +13,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
-import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
-import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
@@ -36,6 +35,7 @@ class AutomationPanel(
 
     private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
     private val queueService by lazy { project.getService(QueueService::class.java) }
+    private val bambooService by lazy { project.getService(BambooService::class.java) }
 
     // Header components
     private val suiteCombo = JComboBox<SuiteComboItem>()
@@ -194,16 +194,15 @@ class AutomationPanel(
 
             currentTags = updatedTags
 
-            // Load plan variables
-            val bambooClient = BambooServiceImpl.getInstance(project).getApiClient()
-            val varsResult = bambooClient?.getVariables(planKey)
+            // Load plan variables via BambooService (core interface)
+            val varsResult = bambooService.getPlanVariables(planKey)
 
             invokeLater {
                 // Update tag table
                 tagStagingPanel.updateTags(updatedTags)
 
                 // Update variables panel
-                if (varsResult is ApiResult.Success) {
+                if (!varsResult.isError) {
                     val varKeys = varsResult.data.map { it.name }
                     val varValues = varsResult.data.associate { it.name to it.value }
                     suiteConfigPanel.setAvailableVariables(varKeys)
@@ -227,32 +226,20 @@ class AutomationPanel(
         statusLabel.text = "Triggering..."
 
         scope.launch {
-            val apiClient = BambooServiceImpl.getInstance(project).getApiClient()
-            if (apiClient == null) {
-                invokeLater {
-                    statusLabel.text = "Bamboo not configured"
-                    statusLabel.foreground = StatusColors.ERROR
-                }
-                return@launch
-            }
-
-            val result = apiClient.triggerBuild(currentSuitePlanKey, variables)
+            val result = bambooService.triggerBuild(currentSuitePlanKey, variables)
             invokeLater {
-                when (result) {
-                    is ApiResult.Success -> {
-                        val resultKey = result.data.buildResultKey
-                        log.info("[Automation:UI] Build triggered: $resultKey")
-                        statusLabel.text = "▶ Triggered — ${result.data.buildResultKey}"
-                        statusLabel.foreground = StatusColors.LINK
-                        // Switch to Monitor tab
-                        tabbedPane.selectedIndex = 1
-                        monitorPanel.addRun(currentSuitePlanKey, resultKey)
-                    }
-                    is ApiResult.Error -> {
-                        statusLabel.text = "Failed: ${result.message}"
-                        statusLabel.foreground = StatusColors.ERROR
-                        log.warn("[Automation:UI] Trigger failed: ${result.message}")
-                    }
+                if (!result.isError) {
+                    val resultKey = result.data.buildKey
+                    log.info("[Automation:UI] Build triggered: $resultKey")
+                    statusLabel.text = "▶ Triggered — $resultKey"
+                    statusLabel.foreground = StatusColors.LINK
+                    // Switch to Monitor tab
+                    tabbedPane.selectedIndex = 1
+                    monitorPanel.addRun(currentSuitePlanKey, resultKey)
+                } else {
+                    statusLabel.text = "Failed: ${result.summary}"
+                    statusLabel.foreground = StatusColors.ERROR
+                    log.warn("[Automation:UI] Trigger failed: ${result.summary}")
                 }
             }
         }

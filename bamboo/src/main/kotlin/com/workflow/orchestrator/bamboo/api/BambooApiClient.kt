@@ -193,11 +193,6 @@ class BambooApiClient(
         return put("/rest/api/latest/result/$resultKey/stop")
     }
 
-    /** Cancel or stop a build based on its state. */
-    suspend fun cancelOrStopBuild(resultKey: String, isRunning: Boolean): ApiResult<Unit> {
-        return if (isRunning) stopBuild(resultKey) else cancelBuild(resultKey)
-    }
-
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =
         withContext(Dispatchers.IO) {
             try {

@@ -111,12 +111,17 @@ class CreatePlanTool : AgentTool {
 
         return when (result) {
             is PlanApprovalResult.Approved -> {
+                val executionGuidance = if (steps.size > 2) {
+                    "Plan approved by user (${steps.size} steps). " +
+                        "Call Skill(skill=\"subagent-driven\") NOW to execute — it dispatches a fresh " +
+                        "subagent per task with two-stage review (spec compliance + code quality)."
+                } else {
+                    "Plan approved by user (${steps.size} steps). " +
+                        "This is a small plan — execute directly. Mark steps with update_plan_step " +
+                        "('running' when starting, 'done' when complete, 'failed' if it fails)."
+                }
                 ToolResult(
-                    content = "Plan approved by user. Execute the plan step by step. For simple steps " +
-                        "(1-2 files), handle them directly. For complex steps (3+ files, multi-step edits), " +
-                        "use agent(subagent_type=\"coder\") to spawn a focused worker. Update step status " +
-                        "with update_plan_step as you progress ('running' when starting, 'done' when " +
-                        "complete, 'failed' if it fails).",
+                    content = executionGuidance,
                     summary = "Plan approved (${steps.size} steps)",
                     tokenEstimate = 40
                 )

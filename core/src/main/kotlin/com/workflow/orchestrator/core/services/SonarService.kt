@@ -18,8 +18,8 @@ import com.workflow.orchestrator.core.model.sonar.SourceLineData
  * Implementations registered as project-level services by :sonar module.
  */
 interface SonarService {
-    /** Get open issues for a project, optionally filtered by file and/or branch. */
-    suspend fun getIssues(projectKey: String, filePath: String? = null, branch: String? = null, repoName: String? = null): ToolResult<List<SonarIssueData>>
+    /** Get open issues for a project, optionally filtered by file, branch, and/or new code period. */
+    suspend fun getIssues(projectKey: String, filePath: String? = null, branch: String? = null, repoName: String? = null, inNewCodePeriod: Boolean = false): ToolResult<List<SonarIssueData>>
 
     /** Get quality gate status, optionally for a specific branch. */
     suspend fun getQualityGateStatus(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<QualityGateData>
@@ -54,6 +54,6 @@ interface SonarService {
     /** Get code duplication details for a file — duplicate block locations across files. */
     suspend fun getDuplications(componentKey: String, branch: String? = null, repoName: String? = null): ToolResult<DuplicationData>
 
-    /** Get issues with paging metadata for pagination support, optionally for a specific branch. */
-    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null): ToolResult<PagedIssuesData>
+    /** Get issues with paging metadata for pagination support, optionally for a specific branch and/or new code period. */
+    suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null, inNewCodePeriod: Boolean = false): ToolResult<PagedIssuesData>
 }

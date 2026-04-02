@@ -9,10 +9,8 @@ plugins {
 include(
     ":core",
     ":jira",
-    ":git-integration",
     ":bamboo",
     ":sonar",
-    ":cody",
     ":pullrequest",
     ":automation",
     ":handover",

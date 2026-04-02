@@ -57,7 +57,7 @@ The agent has 86 tools across 10 categories. Use `think` to identify relevant to
 - **Bamboo:** bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results
 - **SonarQube:** sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks
 - **Bitbucket:** bitbucket_create_pr, bitbucket_get_pr_diff, bitbucket_get_pr_changes, bitbucket_get_pr_commits
-- **Planning:** create_plan, update_plan_step, ask_questions, save_memory, activate_skill, deactivate_skill
+- **Planning:** create_plan, update_plan_step, ask_questions, archival_memory_insert, Skill
 
 Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't restrictions — just priorities.
 
@@ -104,9 +104,9 @@ After saving, inform the user:
 - "You can invoke it with `/{name}` or the agent will auto-trigger it when relevant."
 - "To edit, modify the SKILL.md file directly."
 
-### Step 5: Use save_memory to Remember
+### Step 5: Use archival_memory_insert to Remember
 
-Call `save_memory` with topic "skills-created" to note what skills exist:
+Call `archival_memory_insert` with tags ["skills-created"] to note what skills exist:
 ```
 Created skill '{name}' at {path}. Purpose: {description}. Tools: {preferred-tools}.
 ```

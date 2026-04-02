@@ -9,7 +9,7 @@ class PreReviewServiceTest {
     private val service = PreReviewService()
 
     @Test
-    fun `parseFindings extracts structured findings from Cody response`() {
+    fun `parseFindings extracts structured findings from AI response`() {
         val response = """
             **HIGH** `UserService.kt:42` — Missing @Transactional on DB write method [missing-transactional]
             **MEDIUM** `ApiController.kt:15` — Unclosed HTTP connection [unclosed-resource]

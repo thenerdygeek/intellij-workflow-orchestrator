@@ -4,13 +4,13 @@ import app.cash.turbine.test
 import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.bamboo.api.dto.BambooQueueResponse
-import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
-import com.workflow.orchestrator.bamboo.api.dto.BambooStageCollection
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.bamboo.BuildResultData
+import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
+import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -34,7 +34,7 @@ class QueueServiceTest {
     @TempDir
     lateinit var tempDir: Path
 
-    private lateinit var bambooClient: BambooApiClient
+    private lateinit var bambooService: BambooService
     private lateinit var registryClient: DockerRegistryClient
     private lateinit var eventBus: EventBus
     private lateinit var tagHistory: TagHistoryService
@@ -43,14 +43,14 @@ class QueueServiceTest {
 
     @BeforeEach
     fun setUp() {
-        bambooClient = mockk(relaxed = true)
+        bambooService = mockk(relaxed = true)
         registryClient = mockk(relaxed = true)
         eventBus = EventBus()
         tagHistory = TagHistoryService(tempDir.resolve("test.db").toString())
         testScope = TestScope(StandardTestDispatcher())
 
         service = QueueService(
-            bambooClient = bambooClient,
+            bambooService = bambooService,
             registryClient = registryClient,
             eventBus = eventBus,
             tagHistoryService = tagHistory,
@@ -112,7 +112,7 @@ class QueueServiceTest {
     @Test
     fun `enqueue rejects when max depth exceeded`() = testScope.runTest {
         val smallService = QueueService(
-            bambooClient = bambooClient,
+            bambooService = bambooService,
             registryClient = registryClient,
             eventBus = eventBus,
             tagHistoryService = tagHistory,
@@ -173,18 +173,19 @@ class QueueServiceTest {
     fun `triggerNow bypasses queue and triggers immediately`() = testScope.runTest {
         val entry = makeEntry()
         coEvery { registryClient.tagExists(any(), any()) } returns ApiResult.Success(true)
-        coEvery { bambooClient.triggerBuild(any(), any(), any()) } returns ApiResult.Success(
-            BambooQueueResponse(
-                buildResultKey = "PROJ-AUTO-850",
+        coEvery { bambooService.triggerBuild(any(), any()) } returns ToolResult.success(
+            data = BuildTriggerData(
+                buildKey = "PROJ-AUTO-850",
                 buildNumber = 850,
-                planKey = "PROJ-AUTO"
-            )
+                link = ""
+            ),
+            summary = "Build triggered"
         )
 
         val result = service.triggerNow(entry)
 
-        assertTrue(result is ApiResult.Success)
-        assertEquals("PROJ-AUTO-850", (result as ApiResult.Success).data)
+        assertFalse(result.isError)
+        assertEquals("PROJ-AUTO-850", result.data)
     }
 
     @Test

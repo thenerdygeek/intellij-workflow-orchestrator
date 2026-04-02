@@ -21,6 +21,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * Spawns a subagent to handle a task autonomously, matching Claude Code's Agent tool design.
@@ -43,7 +45,7 @@ class SpawnAgentTool : AgentTool {
     companion object {
         private val LOG = Logger.getInstance(SpawnAgentTool::class.java)
         private const val MAX_CONCURRENT_WORKERS = 5
-        private const val DEFAULT_MAX_ITERATIONS = 10
+        private const val DEFAULT_MAX_ITERATIONS = 32
 
         data class BuiltInAgent(
             val workerType: WorkerType,
@@ -53,28 +55,34 @@ class SpawnAgentTool : AgentTool {
         val BUILT_IN_AGENTS = mapOf(
             "general-purpose" to BuiltInAgent(
                 WorkerType.ORCHESTRATOR,
-                "Full-capability agent for complex multi-step tasks that span research, implementation, and verification."
+                "Full-capability agent — can spawn its own sub-agents, use skills, and access all tools. " +
+                    "Use when a task requires orchestration (multi-step with dependencies between steps), " +
+                    "or when no specialist fits. Avoid for simple single-domain tasks where a specialist is better."
             ),
             "explorer" to BuiltInAgent(
                 WorkerType.ANALYZER,
-                "PREFERRED for codebase research. Runs parallel PSI-powered searches — faster than manual " +
-                    "search_code/read_file. Use proactively for: 'how does X work', 'where is Y', 'find all Z', " +
-                    "cross-module flows, inheritance chains, call graphs. Specify thoroughness: quick/medium/very thorough."
+                "PREFERRED for codebase research. PSI-powered: find_definition, find_references, call_hierarchy, " +
+                    "type_hierarchy — faster and more thorough than manual search_code/read_file. " +
+                    "Use for: 'how does X work', 'where is Y used', 'find all Z', cross-module flows, " +
+                    "scope investigation before planning. Specify thoroughness: quick/medium/very thorough."
             ),
             "coder" to BuiltInAgent(
                 WorkerType.CODER,
-                "Use for implementation tasks touching 3+ files or self-contained plan steps. " +
-                    "Has full edit/test/diagnostics capabilities in isolated context."
+                "Use for self-contained implementation tasks — plan steps, bug fixes, feature additions. " +
+                    "Has edit/create, run_command, diagnostics, debug, runtime, git, spring, and build tools " +
+                    "in isolated context. Each coder works independently — use one per plan task."
             ),
             "reviewer" to BuiltInAgent(
                 WorkerType.REVIEWER,
-                "Always use after completing multi-file edits to verify quality before reporting task complete. " +
-                    "Read-only analysis with code review expertise."
+                "Use after implementation to verify quality before completion. Read-only but with full PSI " +
+                    "(find_references, call_hierarchy, type_hierarchy), sonar, git_blame, inspections, " +
+                    "spring and build context. Can check callers, trace impact, and cross-reference SonarQube issues."
             ),
             "tooler" to BuiltInAgent(
                 WorkerType.TOOLER,
-                "Use for Jira, Bamboo, SonarQube, Bitbucket tasks that don't need code context. " +
-                    "Handles ticket queries, build status, PR management, quality checks."
+                "Use for Jira, Bamboo, SonarQube, Bitbucket, and database tasks that don't need code edits. " +
+                    "Handles ticket queries, build triggers, PR management, quality checks, DB schema/queries, " +
+                    "spring endpoints, and dependency analysis."
             )
         )
     }
@@ -115,6 +123,10 @@ class SpawnAgentTool : AgentTool {
                     "Built-in: general-purpose, explorer, coder, reviewer, tooler. " +
                     "Also accepts custom agent names from .workflow/agents/."
             ),
+            "name" to ParameterProperty(
+                type = "string",
+                description = "Optional name for the agent. Makes it addressable for resume/send. If omitted, a unique ID is generated."
+            ),
             "model" to ParameterProperty(
                 type = "string",
                 description = "Optional model override: sonnet, opus, haiku. If omitted, inherits from parent or agent definition."
@@ -146,6 +158,7 @@ class SpawnAgentTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
         // --- 0. Get services early (needed by all paths) ---
         val agentService: AgentService
         try {
@@ -206,6 +219,7 @@ class SpawnAgentTool : AgentTool {
         }
 
         val subagentType = params["subagent_type"]?.jsonPrimitive?.contentOrNull
+        val agentName = params["name"]?.jsonPrimitive?.contentOrNull
         val modelOverride = params["model"]?.jsonPrimitive?.contentOrNull
 
         // --- 2. Get remaining services ---
@@ -265,7 +279,7 @@ class SpawnAgentTool : AgentTool {
         val runInBackground = params["run_in_background"]?.jsonPrimitive?.booleanOrNull ?: false
         if (runInBackground) {
             return executeBackground(
-                agentId = WorkerTranscriptStore.generateAgentId(),
+                agentId = agentName ?: WorkerTranscriptStore.generateAgentId(),
                 description = description,
                 prompt = prompt,
                 subagentType = resolvedType,
@@ -279,7 +293,7 @@ class SpawnAgentTool : AgentTool {
         }
 
         // --- 5. Foreground spawn ---
-        val agentId = WorkerTranscriptStore.generateAgentId()
+        val agentId = agentName ?: WorkerTranscriptStore.generateAgentId()
         val sessionDir = agentService.currentSessionDir
         val transcriptStore = if (sessionDir != null) WorkerTranscriptStore(sessionDir) else null
         val uiCallbacks = agentService.subAgentCallbacks

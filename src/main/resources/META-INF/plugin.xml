@@ -3,7 +3,7 @@
     <name>Workflow Orchestrator</name>
     <vendor>Workflow Team</vendor>
     <description><![CDATA[
-        Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and Cody Enterprise
+        Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and AI agent
         by consolidating the entire Spring Boot development lifecycle into a single IDE interface.
     ]]></description>
 
@@ -165,15 +165,15 @@
         <externalAnnotator language="kotlin"
             implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
 
-        <!-- Cody Intention Action (Alt+Enter) — language-filtered to Java/Kotlin only -->
+        <!-- Sonar Fix Intention Action (Alt+Enter) — language-filtered to Java/Kotlin only -->
         <intentionAction>
             <language>JAVA</language>
-            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
             <category>Workflow Orchestrator</category>
         </intentionAction>
         <intentionAction>
             <language>kotlin</language>
-            <className>com.workflow.orchestrator.cody.editor.CodyIntentionAction</className>
+            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
             <category>Workflow Orchestrator</category>
         </intentionAction>
 
@@ -313,8 +313,8 @@
         <action
             id="Workflow.GenerateCommitMessage"
             text="Generate with Workflow"
-            description="Generate commit message using Cody AI"
-            class="com.workflow.orchestrator.cody.vcs.GenerateCommitMessageAction">
+            description="Generate commit message using AI"
+            class="com.workflow.orchestrator.core.vcs.GenerateCommitMessageAction">
             <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
         </action>
     </actions>

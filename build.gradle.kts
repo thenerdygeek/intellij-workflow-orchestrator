@@ -56,10 +56,8 @@ dependencies {
     // -- Submodule composition: flatten into a single plugin JAR --
     implementation(project(":core"))
     implementation(project(":jira"))
-    implementation(project(":git-integration"))
     implementation(project(":bamboo"))
     implementation(project(":sonar"))
-    implementation(project(":cody"))
     implementation(project(":pullrequest"))
     implementation(project(":automation"))
     implementation(project(":handover"))

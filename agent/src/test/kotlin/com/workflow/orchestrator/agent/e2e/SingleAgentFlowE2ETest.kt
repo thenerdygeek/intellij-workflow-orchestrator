@@ -215,10 +215,9 @@ class SingleAgentFlowE2ETest {
 
         server.dispatcher = sequentialDispatcher(responses)
 
-        // Create an approval gate that rejects all edits
+        // Create an approval gate that requires approval (async check handles rejection)
         val gate = ApprovalGate(
-            approvalRequired = true,
-            onApprovalNeeded = { _, _ -> ApprovalResult.Rejected() }
+            approvalRequired = true
         )
 
         val result = orchestrator.executeTask(

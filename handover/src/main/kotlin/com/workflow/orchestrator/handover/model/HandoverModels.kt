@@ -65,7 +65,7 @@ enum class CopyrightStatus {
     MISSING_HEADER
 }
 
-// Cody pre-review models
+// AI pre-review models
 data class ReviewFinding(
     val severity: FindingSeverity,
     val filePath: String,
