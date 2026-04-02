@@ -251,14 +251,6 @@ class ConversationSession private constructor(
                 RepoMapGenerator.generate(project, maxTokens = 1500)
             } catch (_: Exception) { "" }
 
-            // Load cross-session memories (legacy markdown files)
-            val memoryContext = try {
-                val basePath = project.basePath
-                if (basePath != null) {
-                    AgentMemoryStore(java.io.File(basePath)).loadMemories(maxLines = 200)
-                } else null
-            } catch (_: Exception) { null }
-
             // Load core memory (always-in-prompt, self-editable)
             val coreMemoryContext = try {
                 val basePath = project.basePath
@@ -347,7 +339,6 @@ class ConversationSession private constructor(
                 projectName = project.name,
                 projectPath = project.basePath,
                 repoMapContext = repoMap.ifBlank { null },
-                memoryContext = memoryContext,
                 coreMemoryContext = coreMemoryContext,
                 skillDescriptions = skillDescriptions.ifBlank { null },
                 agentDescriptions = agentDescriptions.ifBlank { null },

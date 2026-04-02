@@ -42,7 +42,6 @@ class PromptAssembler(
         frameworkInfo: String? = null,
         previousStepResults: List<String>? = null,
         repoMapContext: String? = null,
-        memoryContext: String? = null,
         coreMemoryContext: String? = null,
         skillDescriptions: String? = null,
         agentDescriptions: String? = null,
@@ -73,9 +72,6 @@ class PromptAssembler(
         }
         if (!coreMemoryContext.isNullOrBlank()) {
             sections.add("<core_memory>\n$coreMemoryContext\n</core_memory>")
-        }
-        if (!memoryContext.isNullOrBlank()) {
-            sections.add("<agent_memory>\n$memoryContext\n</agent_memory>")
         }
         if (!guardrailsContext.isNullOrBlank()) {
             sections.add(guardrailsContext)
