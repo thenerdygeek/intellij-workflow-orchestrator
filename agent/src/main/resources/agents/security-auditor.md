@@ -1,7 +1,7 @@
 ---
 name: security-auditor
 description: "Use for security audits — OWASP Top 10, dependency vulnerabilities, authentication/authorization review, sensitive data handling, and secure coding practices."
-tools: read_file, search_code, glob_files, file_structure, find_definition, find_references, run_command, diagnostics, run_inspections, think, git, spring, build
+tools: read_file, search_code, glob_files, file_structure, find_definition, find_references, run_command, diagnostics, run_inspections, sonar, think, git, spring, build
 max-turns: 25
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: architect-reviewer
 description: "Use for architecture review and validation — module boundaries, dependency patterns, API design, and scalability. Best before major refactoring or new module creation."
-tools: read_file, search_code, glob_files, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, diagnostics, think, git, spring, build
+tools: read_file, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, diagnostics, sonar, think, git, spring, build
 max-turns: 25
 ---
 

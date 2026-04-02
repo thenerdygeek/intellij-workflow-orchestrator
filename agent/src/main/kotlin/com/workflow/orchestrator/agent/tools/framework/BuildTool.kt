@@ -106,7 +106,7 @@ Actions and their parameters:
         required = listOf("action")
     )
 
-    override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.CODER)
+    override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER, WorkerType.REVIEWER, WorkerType.ORCHESTRATOR, WorkerType.CODER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()

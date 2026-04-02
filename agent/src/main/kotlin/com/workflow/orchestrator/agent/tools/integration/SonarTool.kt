@@ -105,7 +105,7 @@ Common optional: repo_name for multi-repo projects.
         required = listOf("action")
     )
 
-    override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR)
+    override val allowedWorkers = setOf(WorkerType.TOOLER, WorkerType.ANALYZER, WorkerType.REVIEWER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()

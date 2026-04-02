@@ -33,7 +33,7 @@ class ListQuickFixesTool : AgentTool {
         ),
         required = listOf("path", "line")
     )
-    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER, WorkerType.REVIEWER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content

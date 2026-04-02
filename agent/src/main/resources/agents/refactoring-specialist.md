@@ -1,7 +1,7 @@
 ---
 name: refactoring-specialist
 description: "Use for safe code refactoring — extract/inline, rename, move, simplify. Ensures tests pass before and after every change. Uses IntelliJ refactoring tools."
-tools: read_file, edit_file, search_code, glob_files, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, run_command, diagnostics, run_inspections, refactor_rename, format_code, optimize_imports, think, git
+tools: read_file, edit_file, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, run_command, diagnostics, run_inspections, problem_view, refactor_rename, format_code, optimize_imports, build, think, git
 max-turns: 32
 ---
 

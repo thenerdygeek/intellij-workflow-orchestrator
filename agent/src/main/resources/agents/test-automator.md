@@ -1,7 +1,7 @@
 ---
 name: test-automator
 description: "Use for writing comprehensive test suites — unit tests (JUnit 5 + MockK), Spring Boot slice tests (@WebMvcTest, @DataJpaTest), and integration tests (@SpringBootTest). Follows TDD principles."
-tools: read_file, edit_file, create_file, search_code, glob_files, file_structure, find_definition, find_references, run_command, diagnostics, think
+tools: read_file, edit_file, create_file, search_code, glob_files, file_structure, find_definition, find_references, test_finder, run_command, diagnostics, run_inspections, problem_view, build, think
 max-turns: 32
 ---
 

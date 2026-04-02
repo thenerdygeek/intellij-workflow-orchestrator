@@ -24,7 +24,7 @@ class FindDefinitionTool : AgentTool {
         ),
         required = listOf("symbol")
     )
-    override val allowedWorkers = setOf(WorkerType.ANALYZER)
+    override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.REVIEWER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()

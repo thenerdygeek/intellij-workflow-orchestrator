@@ -1,7 +1,7 @@
 ---
 name: spring-boot-engineer
 description: "Use for Spring Boot 3+ development — REST APIs, security config, JPA entities, testing with @WebMvcTest/@SpringBootTest, dependency injection, and configuration management."
-tools: read_file, edit_file, create_file, search_code, glob_files, file_structure, find_definition, find_references, run_command, diagnostics, think, spring, build
+tools: read_file, edit_file, create_file, search_code, glob_files, file_structure, find_definition, find_references, type_hierarchy, run_command, diagnostics, run_inspections, think, spring, build
 max-turns: 32
 ---
 

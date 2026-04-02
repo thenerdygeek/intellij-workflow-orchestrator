@@ -16,9 +16,9 @@ class TypeHierarchyToolTest {
     }
 
     @Test
-    fun `allowedWorkers is ANALYZER only`() {
+    fun `allowedWorkers includes ANALYZER and REVIEWER`() {
         val tool = TypeHierarchyTool()
-        assertEquals(setOf(WorkerType.ANALYZER), tool.allowedWorkers)
+        assertEquals(setOf(WorkerType.ANALYZER, WorkerType.REVIEWER), tool.allowedWorkers)
     }
 
     @Test
