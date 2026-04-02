@@ -125,6 +125,11 @@ class PlanManager {
     @Volatile
     private var approvalDeferred: CompletableDeferred<PlanApprovalResult>? = null
 
+    /** True when a plan has been submitted and is awaiting user approval/revision. */
+    val isAwaitingApproval: Boolean
+        get() = (approvalDeferred != null && approvalDeferred?.isCompleted == false)
+            || (approvalFuture != null && approvalFuture?.isDone == false)
+
     fun approvePlan() {
         currentPlan?.approved = true
         // Auto-exit plan mode: tools are restored on next LLM call

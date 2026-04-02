@@ -734,12 +734,21 @@ class AgentController(
             }
         }
 
-        // If agent is already running, queue the message as intervention
+        // If agent is already running AND actively working (not waiting for user input),
+        // queue the message as intervention
         if (currentOrchestrator != null && session != null) {
-            pendingUserMessages.add(task)
-            dashboard.appendUserMessage(task)
-            dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
-            return
+            val isWaitingForUser = pendingApprovalDeferred != null  // tool approval gate
+                || session?.planManager?.isAwaitingApproval == true  // plan approval
+                || session?.questionManager?.isAwaitingAnswers == true  // question wizard
+
+            if (!isWaitingForUser) {
+                pendingUserMessages.add(task)
+                dashboard.appendUserMessage(task)
+                dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
+                return
+            }
+            // Agent is suspended waiting for user — fall through to start a new turn
+            // (the pending approval/plan/question will be cancelled or resolved by the new turn)
         }
 
         // Helper: always push debug entries (not gated by showDebugLog setting)
