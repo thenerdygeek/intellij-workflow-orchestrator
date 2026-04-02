@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.ContextManagementConfig
 import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.runtime.SkillManager
 import com.workflow.orchestrator.agent.runtime.SkillRegistry
 import com.workflow.orchestrator.agent.runtime.WorkerSession
 import com.workflow.orchestrator.agent.runtime.WorkerType
@@ -19,21 +20,21 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class ActivateSkillTool : AgentTool {
-    override val name = "activate_skill"
-    override val description = "Activate a user-defined skill by name. Skills provide workflow instructions for specific tasks. Check the available skills listed in your context."
+class SkillTool : AgentTool {
+    override val name = "Skill"
+    override val description = "Load a skill definition and its instructions. Returns the full skill content for you to follow. Skills provide structured workflows for specific tasks — check the available skills listed in your context."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "name" to ParameterProperty(type = "string", description = "The skill name to activate"),
-            "arguments" to ParameterProperty(type = "string", description = "Optional arguments passed to the skill")
+            "skill" to ParameterProperty(type = "string", description = "The skill name to load"),
+            "args" to ParameterProperty(type = "string", description = "Optional arguments passed to the skill")
         ),
-        required = listOf("name")
+        required = listOf("skill")
     )
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        val skillName = params["name"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'name' parameter required", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        val skillName = params["skill"]?.jsonPrimitive?.content
+            ?: return ToolResult("Error: 'skill' parameter required", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val skillManager = AgentService.getInstance(project).currentSkillManager
             ?: return ToolResult("Error: no skill manager available", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -50,20 +51,22 @@ class ActivateSkillTool : AgentTool {
             )
         }
 
-        val arguments = params["arguments"]?.jsonPrimitive?.content
+        val arguments = params["args"]?.jsonPrimitive?.content
 
         // If skill has context: fork, execute in isolated WorkerSession
         if (entry.contextFork) {
             return executeForked(entry, arguments, project, skillManager)
         }
 
-        skillManager.activateSkill(skillName, arguments)
-            ?: return ToolResult("Error: failed to activate skill '$skillName'", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        // Activate the skill (sets compression-proof anchor via callback)
+        val activeSkill = skillManager.activateSkill(skillName, arguments)
+            ?: return ToolResult("Error: failed to load skill '$skillName'", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
+        // Return full skill content so the LLM sees it immediately in the tool result
         return ToolResult(
-            content = "Skill '$skillName' activated. Follow the skill instructions in your context.",
-            summary = "Activated skill: $skillName",
-            tokenEstimate = 5
+            content = activeSkill.content,
+            summary = "Loaded skill: $skillName",
+            tokenEstimate = TokenEstimator.estimate(activeSkill.content)
         )
     }
 
@@ -71,18 +74,15 @@ class ActivateSkillTool : AgentTool {
         entry: SkillRegistry.SkillEntry,
         arguments: String?,
         project: Project,
-        skillManager: com.workflow.orchestrator.agent.runtime.SkillManager
+        skillManager: SkillManager
     ): ToolResult {
-        // Load and preprocess skill content (substitutions + dynamic injection)
         val content = skillManager.loadAndPreprocessSkill(entry, arguments)
             ?: return ToolResult("Error: could not load skill content", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        // Get agent service for brain and tools
         val agentService = try { AgentService.getInstance(project) } catch (_: Exception) {
             return ToolResult("Error: agent service not available", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        // Determine tools for the worker
         val allTools = agentService.toolRegistry.allTools()
         val workerToolsList = if (entry.allowedTools != null) {
             allTools.filter { it.name in entry.allowedTools }
@@ -94,7 +94,6 @@ class ActivateSkillTool : AgentTool {
 
         val systemPrompt = "You are a specialized agent executing a skill. Follow the instructions precisely."
 
-        // Create fresh context manager for the worker
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
         val contextManager = EventSourcedContextBridge.create(
             sessionDir = null,
@@ -106,7 +105,7 @@ class ActivateSkillTool : AgentTool {
         val workerSession = WorkerSession(maxIterations = 10, parentJob = parentJob)
 
         return try {
-            val result = withTimeout(300_000) { // 5 min timeout
+            val result = withTimeout(300_000) {
                 workerSession.execute(
                     workerType = WorkerType.ORCHESTRATOR,
                     systemPrompt = systemPrompt,

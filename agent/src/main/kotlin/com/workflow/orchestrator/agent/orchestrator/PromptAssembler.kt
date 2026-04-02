@@ -88,7 +88,7 @@ class PromptAssembler(
         sections.add("<available_agents>\n$allAgentDescs\n\nTo delegate, call agent(subagent_type=\"name\", prompt=\"...\").\n</available_agents>")
 
         if (!skillDescriptions.isNullOrBlank()) {
-            sections.add("<available_skills>\n$skillDescriptions\n\nTo activate a skill, call activate_skill(name). Users can also type /skill-name in chat.\n</available_skills>")
+            sections.add("<available_skills>\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n</available_skills>")
         }
 
         if (!previousStepResults.isNullOrEmpty()) {
@@ -466,7 +466,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 
             <example name="skill-activation">
             User: "The UserService tests are failing with NPE"
-            Good approach: activate_skill(name="systematic-debugging") — this activates a structured debugging workflow that ensures root cause investigation before proposing fixes.
+            Good approach: Skill(skill="systematic-debugging") — this loads a structured debugging workflow that ensures root cause investigation before proposing fixes.
             Bad approach: Jumping straight to guessing the fix without investigating the root cause.
             </example>
             </examples>

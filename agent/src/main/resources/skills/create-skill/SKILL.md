@@ -57,7 +57,7 @@ The agent has 86 tools across 10 categories. Use `think` to identify relevant to
 - **Bamboo:** bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results
 - **SonarQube:** sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks
 - **Bitbucket:** bitbucket_create_pr, bitbucket_get_pr_diff, bitbucket_get_pr_changes, bitbucket_get_pr_commits
-- **Planning:** create_plan, update_plan_step, ask_questions, archival_memory_insert, activate_skill, deactivate_skill
+- **Planning:** create_plan, update_plan_step, ask_questions, archival_memory_insert, Skill
 
 Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't restrictions — just priorities.
 

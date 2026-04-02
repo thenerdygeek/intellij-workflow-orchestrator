@@ -84,7 +84,7 @@ object DynamicToolSelector {
         "archival_memory_insert", "archival_memory_search", "conversation_search"
     )
 
-    private val SKILL_TOOL_NAMES = setOf("activate_skill", "deactivate_skill")
+    private val SKILL_TOOL_NAMES = setOf("Skill")
 
     private val JPA_TOOL_NAMES = setOf("spring")
 

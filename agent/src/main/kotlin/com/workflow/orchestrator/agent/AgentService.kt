@@ -248,8 +248,7 @@ class AgentService(
             register(ArchivalMemoryInsertTool())
             register(ArchivalMemorySearchTool())
             register(ConversationSearchTool())
-            register(ActivateSkillTool())
-            register(DeactivateSkillTool())
+            register(SkillTool())
 
             // Change tracking tools
             register(ListChangesTool())

@@ -99,7 +99,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Quality — SonarQube | **sonar** (11 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications) |
 | Pull Requests — Bitbucket | **bitbucket_pr** (14 actions: create/approve/merge/decline_pr, get_pr_detail/commits/activities/changes/diff, check_merge_status, update_pr_title/description, get_my_prs, get_reviewing_prs), **bitbucket_review** (6 actions: add_pr_comment, add_inline_comment, reply_to_comment, add/remove_reviewer, set_reviewer_status), **bitbucket_repo** (6 actions: get_branches, create_branch, search_users, get_file_content, get_build_statuses, list_repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
-| Skills | activate_skill, deactivate_skill |
+| Skills | Skill |
 | Database | db_list_profiles, db_query, db_schema |
 | Planning | enable_plan_mode, create_plan, update_plan_step, ask_questions, attempt_completion |
 
@@ -280,7 +280,7 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 - User: `~/.workflow-orchestrator/skills/{name}/SKILL.md`
 - Project overrides user if same name
 - Discovery: descriptions loaded at session start, full content on activation
-- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `activate_skill`
+- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `Skill(skill="name")`
 - Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
 - Built-in skills: `systematic-debugging`, `interactive-debugging`, and `create-skill` ship with the plugin from resources
 - Supporting files: non-SKILL.md files in skill directory listed via `getSupportingFiles()`
