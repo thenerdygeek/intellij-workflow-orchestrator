@@ -63,13 +63,10 @@ class EnablePlanModeTool : AgentTool {
         // Set the mechanical enforcement flag — SingleAgentSession will filter tools on next iteration
         AgentService.planModeActive.set(true)
 
-        // Auto-activate the planning skill (compression-proof anchor with methodology)
-        agentService.currentSkillManager?.activateSkill("planning")
-
         // Notify the controller → sets planModeEnabled = true + highlights the UI button.
         agentService.onPlanModeEnabled?.invoke(true)
 
-        val result = "Plan mode enabled. Planning skill loaded — follow the structured planning workflow. Reason: $reason"
+        val result = "Plan mode enabled. You MUST call create_plan before any write operations. Reason: $reason"
         return ToolResult(
             content = result,
             summary = result,
