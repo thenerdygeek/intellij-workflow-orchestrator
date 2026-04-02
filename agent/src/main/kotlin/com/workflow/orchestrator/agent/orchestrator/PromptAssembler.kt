@@ -268,8 +268,9 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             1. If the user explicitly asks to "create a plan", "write a plan", or "plan this":
                → ALWAYS enable_plan_mode + Skill(skill="writing-plans"). No exceptions.
 
-            2. Otherwise, do a QUICK SCOPE CHECK first (read 1-2 key files, check file_structure)
-               to estimate how many files/modules the task touches. Then decide:
+            2. Otherwise, INVESTIGATE SCOPE first — use agent(subagent_type="explorer") to research
+               the codebase areas involved, or read key files/structure directly for smaller scopes.
+               Then decide based on what you find:
 
                PLAN (enable_plan_mode + Skill(skill="writing-plans")) when ANY of these are true:
                - Task touches 2+ files or crosses module boundaries
