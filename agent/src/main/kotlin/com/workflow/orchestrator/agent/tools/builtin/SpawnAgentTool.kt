@@ -43,7 +43,7 @@ class SpawnAgentTool : AgentTool {
     companion object {
         private val LOG = Logger.getInstance(SpawnAgentTool::class.java)
         private const val MAX_CONCURRENT_WORKERS = 5
-        private const val DEFAULT_MAX_ITERATIONS = 10
+        private const val DEFAULT_MAX_ITERATIONS = 32
 
         data class BuiltInAgent(
             val workerType: WorkerType,
@@ -114,6 +114,10 @@ class SpawnAgentTool : AgentTool {
                 description = "Which agent type to use. See available_agents in your context for descriptions. " +
                     "Built-in: general-purpose, explorer, coder, reviewer, tooler. " +
                     "Also accepts custom agent names from .workflow/agents/."
+            ),
+            "name" to ParameterProperty(
+                type = "string",
+                description = "Optional name for the agent. Makes it addressable for resume/send. If omitted, a unique ID is generated."
             ),
             "model" to ParameterProperty(
                 type = "string",
@@ -206,6 +210,7 @@ class SpawnAgentTool : AgentTool {
         }
 
         val subagentType = params["subagent_type"]?.jsonPrimitive?.contentOrNull
+        val agentName = params["name"]?.jsonPrimitive?.contentOrNull
         val modelOverride = params["model"]?.jsonPrimitive?.contentOrNull
 
         // --- 2. Get remaining services ---
@@ -265,7 +270,7 @@ class SpawnAgentTool : AgentTool {
         val runInBackground = params["run_in_background"]?.jsonPrimitive?.booleanOrNull ?: false
         if (runInBackground) {
             return executeBackground(
-                agentId = WorkerTranscriptStore.generateAgentId(),
+                agentId = agentName ?: WorkerTranscriptStore.generateAgentId(),
                 description = description,
                 prompt = prompt,
                 subagentType = resolvedType,
@@ -279,7 +284,7 @@ class SpawnAgentTool : AgentTool {
         }
 
         // --- 5. Foreground spawn ---
-        val agentId = WorkerTranscriptStore.generateAgentId()
+        val agentId = agentName ?: WorkerTranscriptStore.generateAgentId()
         val sessionDir = agentService.currentSessionDir
         val transcriptStore = if (sessionDir != null) WorkerTranscriptStore(sessionDir) else null
         val uiCallbacks = agentService.subAgentCallbacks

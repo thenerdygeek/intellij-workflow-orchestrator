@@ -43,8 +43,8 @@ AgentController (UI entry point)
 - **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. In normal mode, text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`. Implicit completion via CompletionGatekeeper is only allowed in `forceTextOnly` mode (activated after 4 nudges ignored, malformed retries exhausted, or iteration 95%+). Not available to WorkerSession — workers use `worker_complete` instead.
 - **WorkerCompleteTool** (`worker_complete`) — Lightweight completion signal for worker sessions (subagents). Analogous to `attempt_completion` but without CompletionGatekeeper dependency. Returns `isCompletion=true` to exit the WorkerSession ReAct loop immediately. Available to all WorkerTypes (ORCHESTRATOR, ANALYZER, CODER, REVIEWER, TOOLER). No collision with `attempt_completion` — that tool is injected directly into SingleAgentSession's tool set, not registered in ToolRegistry.
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
-- **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
-- **WorkerSession** — Scoped ReAct loop (max 10 iterations) with parent Job cancellation support.
+- **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
+- **WorkerSession** — Scoped ReAct loop (max 32 iterations) with parent Job cancellation support.
 
 ## System Prompt Structure (`PromptAssembler`)
 
@@ -341,7 +341,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 Coroutine context element (`AbstractCoroutineContextElement`) carrying `agentId`, `workerType`, `messageBus`, and `fileOwnership` to all tools within a worker's scope. Set via `withContext(WorkerContext(...))` in `WorkerSession.execute()`.
 
 ### No Wall-Clock Timeouts
-Workers are bounded by iteration limits (default 10) and context budget (150K), not wall-clock timeouts. This matches Claude Code, Codex CLI, Cursor, and Cline — no enterprise coding agent uses hard timeouts on sub-agents.
+Workers are bounded by iteration limits (default 32) and context budget (150K), not wall-clock timeouts. This matches Claude Code, Codex CLI, Cursor, and Cline — no enterprise coding agent uses hard timeouts on sub-agents.
 
 ## Custom Subagents
 
