@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.ensureActive
@@ -30,7 +31,7 @@ class SonarTool : AgentTool {
 SonarQube code quality — issues, coverage, quality gates, analysis, security hotspots.
 
 Actions and their parameters:
-- issues(project_key, file?, branch?) → Code issues (optionally filter by file path)
+- issues(project_key, file?, branch?, new_code_only?) → Code issues (optionally filter by file path; set new_code_only=true to see only issues in new code period)
 - quality_gate(project_key, branch?) → Quality gate status
 - coverage(project_key, branch?) → Code coverage metrics
 - search_projects(query) → Search SonarQube projects
@@ -38,7 +39,7 @@ Actions and their parameters:
 - branches(project_key) → Analyzed branches
 - project_measures(project_key, branch?) → All project metrics
 - source_lines(component_key, from?, to?, branch?) → Source code with metrics (from/to are line numbers)
-- issues_paged(project_key, page?, page_size?, branch?) → Paginated issues (default page 1, 100/page, max 500)
+- issues_paged(project_key, page?, page_size?, branch?, new_code_only?) → Paginated issues (default page 1, 100/page, max 500; set new_code_only=true for new code only)
 - security_hotspots(project_key, branch?) → Security hotspots
 - duplications(component_key, branch?) → Code duplications
 
@@ -92,6 +93,10 @@ Common optional: repo_name for multi-repo projects.
                 type = "string",
                 description = "Results per page max 500 (default 100) — for issues_paged"
             ),
+            "new_code_only" to ParameterProperty(
+                type = "boolean",
+                description = "When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged"
+            ),
             "repo_name" to ParameterProperty(
                 type = "string",
                 description = "Repository name for multi-repo projects"
@@ -121,7 +126,8 @@ Common optional: repo_name for multi-repo projects.
                 val file = params["file"]?.jsonPrimitive?.content
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getIssues(projectKey, file, branch = branch, repoName = repoName).toAgentToolResult()
+                val newCodeOnly = try { params["new_code_only"]?.jsonPrimitive?.boolean } catch (_: Exception) { null } ?: false
+                service.getIssues(projectKey, file, branch = branch, repoName = repoName, inNewCodePeriod = newCodeOnly).toAgentToolResult()
             }
 
             "quality_gate" -> {
@@ -181,7 +187,8 @@ Common optional: repo_name for multi-repo projects.
                 val pageSize = params["page_size"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getIssuesPaged(projectKey, page, pageSize, branch = branch, repoName = repoName).toAgentToolResult()
+                val newCodeOnly = try { params["new_code_only"]?.jsonPrimitive?.boolean } catch (_: Exception) { null } ?: false
+                service.getIssuesPaged(projectKey, page, pageSize, branch = branch, repoName = repoName, inNewCodePeriod = newCodeOnly).toAgentToolResult()
             }
 
             "security_hotspots" -> {

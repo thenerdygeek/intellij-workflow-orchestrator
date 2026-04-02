@@ -52,7 +52,8 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         projectKey: String,
         filePath: String?,
         branch: String?,
-        repoName: String?
+        repoName: String?,
+        inNewCodePeriod: Boolean
     ): ToolResult<List<SonarIssueData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
@@ -61,7 +62,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getIssues(projectKey, branch = branch, filePath = filePath)) {
+        return when (val result = api.getIssues(projectKey, branch = branch, filePath = filePath, inNewCodePeriod = inNewCodePeriod)) {
             is ApiResult.Success -> {
                 val issues = result.data.map { dto ->
                     SonarIssueData(
@@ -79,6 +80,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                 val bySeverity = issues.groupBy { it.severity }
                 val summary = buildString {
                     append("${issues.size} open issues for $projectKey")
+                    if (inNewCodePeriod) append(" (new code only)")
                     if (filePath != null) append(" (file: ${filePath.substringAfterLast("/")})")
                     if (bySeverity.isNotEmpty()) {
                         append("\n")
@@ -592,7 +594,8 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         page: Int,
         pageSize: Int,
         branch: String?,
-        repoName: String?
+        repoName: String?,
+        inNewCodePeriod: Boolean
     ): ToolResult<PagedIssuesData> {
         val api = client ?: return ToolResult(
             data = PagedIssuesData(emptyList(), 0, page, pageSize),
@@ -601,7 +604,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getIssuesWithPaging(projectKey, branch = branch)) {
+        return when (val result = api.getIssuesWithPaging(projectKey, branch = branch, inNewCodePeriod = inNewCodePeriod)) {
             is ApiResult.Success -> {
                 val allIssues = result.data.issues.map { dto ->
                     SonarIssueData(
@@ -630,7 +633,9 @@ class SonarServiceImpl(private val project: Project) : SonarService {
 
                 val bySeverity = pagedIssues.groupBy { it.severity }
                 val summary = buildString {
-                    append("$total total issues for $projectKey (page $page, showing ${pagedIssues.size})")
+                    append("$total total issues for $projectKey")
+                    if (inNewCodePeriod) append(" (new code only)")
+                    append(" (page $page, showing ${pagedIssues.size})")
                     if (bySeverity.isNotEmpty()) {
                         append("\n")
                         val counts = listOf("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")

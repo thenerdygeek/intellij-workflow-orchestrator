@@ -88,7 +88,7 @@ class PromptAssembler(
         sections.add("<available_agents>\n$allAgentDescs\n\nTo delegate, call agent(subagent_type=\"name\", prompt=\"...\").\n</available_agents>")
 
         if (!skillDescriptions.isNullOrBlank()) {
-            sections.add("<available_skills>\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n</available_skills>")
+            sections.add("<available_skills>\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n\nIMPORTANT: Before starting work, check if an available skill matches the task. Skills contain battle-tested workflows — always prefer them over ad-hoc approaches. In particular:\n- For planning multi-step tasks → Skill(skill=\"writing-plans\")\n- For brainstorming new features/architecture → Skill(skill=\"brainstorm\")\n- For executing an approved plan → Skill(skill=\"subagent-driven\")\n- For TDD workflow → Skill(skill=\"tdd\")\n- For debugging → Skill(skill=\"systematic-debugging\")\n</available_skills>")
         }
 
         if (!previousStepResults.isNullOrEmpty()) {
@@ -264,18 +264,24 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
         val PLANNING_RULES = """
             <planning>
             - For complex tasks involving 3+ files, refactoring, new features, or architectural changes:
-              call create_plan before making code changes.
+              1. Call enable_plan_mode to activate plan mode (blocks write tools until plan is approved).
+              2. Call Skill(skill="writing-plans") to activate the planning workflow — it produces
+                 structured plans with TDD steps, exact file paths, and code blocks.
+              3. Follow the skill's instructions to create the plan via create_plan.
             - For simple tasks (questions, single-file fixes, running commands, checking status):
               act directly without creating a plan.
-            - If you realize mid-task that thorough planning is required, call enable_plan_mode
-              with your reasoning before calling create_plan.
+            - If the user explicitly asks to "create a plan", "write a plan", or "plan this out",
+              ALWAYS activate enable_plan_mode + Skill(skill="writing-plans") even if the task seems simple.
             - create_plan takes two parameters:
               1. `title` — short title for the plan card header
               2. `markdown` — full plan as a markdown document. Structure it with:
                  ## Goal, ## Approach, ## Steps (use ### for each step), ## Testing.
                  Include code blocks, file paths, detailed explanations.
                  Steps are auto-extracted from ### headings for progress tracking.
-            - When executing an approved plan, call update_plan_step to mark each step as
+            - After the user approves a plan, execute it using Skill(skill="subagent-driven") —
+              this dispatches a fresh subagent per task with two-stage review (spec then quality).
+              For simple plans (1-2 tasks), direct execution with update_plan_step is also acceptable.
+            - When executing a plan directly, call update_plan_step to mark each step as
               'running' when you start it and 'done' when you complete it (or 'failed' if it fails).
             - If the user requests revision with comments, incorporate their feedback and
               call create_plan again with the updated markdown.
@@ -286,14 +292,16 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             <planning mode="required">
             - Plan mode is ACTIVE. Source code mutation tools (edit_file, create_file, format_code,
               optimize_imports, refactor_rename) are NOT available until you create a plan and the user approves it.
-            - First, analyze the task by reading relevant files using read_file, search_code, file_structure,
+            - Call Skill(skill="writing-plans") to activate the planning workflow, then follow its instructions.
+            - Analyze the task by reading relevant files using read_file, search_code, file_structure,
               diagnostics, run_command (for tests/builds), runtime, and debug tools.
             - Then produce a comprehensive implementation plan using create_plan with:
               1. `title` — short display title
               2. `markdown` — full plan as markdown (## Goal, ## Steps with ### per step, ## Testing)
               Steps are auto-extracted from ### headings — no separate JSON needed.
             - Once the user approves the plan, plan mode will automatically deactivate and all tools
-              will become available. Then execute step by step, calling update_plan_step to track progress.
+              will become available. Execute using Skill(skill="subagent-driven") for multi-task plans,
+              or directly with update_plan_step for simple 1-2 task plans.
             - If the user requests revision, incorporate their feedback and call create_plan again.
             </planning>
         """.trimIndent()
@@ -308,6 +316,9 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             For parallel independent tasks, launch multiple agents in one response.
             Use run_in_background=true for tasks that don't block your next step.
             Resume a completed agent: agent(resume="agentId", prompt="continue with...")
+
+            Plan execution: After a plan is approved, use Skill(skill="subagent-driven") to execute it.
+            This dispatches a fresh subagent per task with two-stage review (spec compliance + code quality).
             </delegation>
         """.trimIndent()
 
