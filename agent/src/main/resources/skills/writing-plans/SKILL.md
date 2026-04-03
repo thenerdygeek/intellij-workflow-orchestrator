@@ -47,7 +47,7 @@ Use `create_plan` with two parameters:
 **Every plan MUST use this structure:**
 
 ```markdown
-> **Execution:** Use Skill(skill="subagent-driven") to execute this plan — fresh subagent per task with two-stage review (spec compliance + code quality).
+> **Execution:** Use skill(skill="subagent-driven") to execute this plan — fresh subagent per task with two-stage review (spec compliance + code quality).
 
 ## Goal
 [One sentence describing what this builds]
@@ -131,7 +131,7 @@ After calling `create_plan`, once the user approves, offer execution choice:
 
 **"Plan approved. Two execution options:**
 
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task with two-stage review (spec compliance + code quality). Use: `Skill(skill="subagent-driven")`
+**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task with two-stage review (spec compliance + code quality). Use: `skill(skill="subagent-driven")`
 
 **2. Direct Execution** — I execute tasks in this session step by step, tracking progress with `update_plan_step`.
 

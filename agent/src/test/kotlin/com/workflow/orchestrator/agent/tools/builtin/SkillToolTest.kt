@@ -38,9 +38,9 @@ class SkillToolTest {
     }
 
     @Test
-    fun `tool name is Skill`() {
+    fun `tool name is skill`() {
         val tool = SkillTool()
-        assertEquals("Skill", tool.name)
+        assertEquals("skill", tool.name)
     }
 
     @Test
@@ -212,8 +212,9 @@ class SkillToolTest {
         every { registry.getSkill("forked-skill") } returns entry
         every { registry.getSkillContent("forked-skill") } returns "Forked content"
 
-        // Make AgentService.getInstance throw to simulate unavailability in forked path
-        every { AgentService.getInstance(project) } throws IllegalStateException("not available")
+        // First call to AgentService.getInstance succeeds (returns skillManager via agentService),
+        // second call in executeForked() throws to simulate unavailability in forked path
+        every { AgentService.getInstance(project) } returns agentService andThenThrows IllegalStateException("not available")
 
         val tool = SkillTool()
         val params = buildJsonObject { put("skill", "forked-skill") }

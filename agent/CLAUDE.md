@@ -18,7 +18,7 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 AgentController (UI entry point)
   → ConversationSession (long-lived, owns EventSourcedContextBridge + plan + question managers)
     → AgentOrchestrator.executeTask()
-      → SingleAgentSession.execute() (ReAct loop, max 50 iterations)
+      → SingleAgentSession.execute() (ReAct loop, no iteration limit — bounded by context budget)
         → EventSourcedContextBridge (EventStore + CondenserPipeline + ConversationMemory)
         → BudgetEnforcer (reads from bridge, COMPRESS/TERMINATE)
         → LoopGuard (loop detection, condensation loop detection)
@@ -28,7 +28,7 @@ AgentController (UI entry point)
 
 ## Key Components
 
-- **SingleAgentSession** — Core ReAct loop. Budget enforcement, nudge injection, tool call processing, context reduction on API errors. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Context budget awareness (system_warning at >50% fill). Graceful degradation (80% iterations = wrap-up nudge, 95% = force text-only). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
+- **SingleAgentSession** — Core ReAct loop. Budget enforcement, tool call processing, context reduction on API errors. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. No iteration limit — loop runs until task completion or context budget exhaustion (no nudging, no "hurry up" messages). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
 - **ConversationSession** — Long-lived session across user messages. Owns `EventSourcedContextBridge`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
 - **EventSourcedContextBridge** — The sole context management system. Owns `EventStore`, `CondenserPipeline`, `ConversationMemory`, all anchors (facts, skills, guardrails, mentions, plan, changeLedger), token tracking, and `ToolOutputStore`. Every mutation is recorded as a typed event in `EventStore`. Before each LLM call, `getMessagesViaCondenser()` runs the full `EventStore → View → CondenserPipeline → ConversationMemory → List<ChatMessage>` pipeline. Exposes `currentTokens`, `effectiveMaxInputTokens`, `updateTokensFromUsage()`, `updateReservedTokens()`, and all anchor slots.
 - **EventStore** — Append-only log of typed agent events (MessageAction, ToolAction, ToolResultObservation, SystemMessageAction, FactRecordedAction, PlanUpdatedAction, etc.). Persisted as JSONL under `{sessionDir}/events.jsonl`. Loaded and replayed on session resume. Single source of truth.
@@ -40,7 +40,7 @@ AgentController (UI entry point)
 - **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
 - **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
 - **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
-- **CompletionGatekeeper** — Orchestrates 3 completion gates before accepting task completion: Plan (blocks if plan has incomplete steps, escalates after 3 blocks without progress), SelfCorrectionGate (blocks if unverified edits), LoopGuard (blocks if unverified files). Force-accepts after 5 total blocked attempts. `attempt_completion` tool delegates to this.
+- **CompletionGatekeeper** — Orchestrates 3 completion gates before accepting task completion: Plan (blocks if plan has incomplete steps, escalates after 3 blocks without progress), SelfCorrectionGate (blocks if unverified edits), LoopGuard (blocks if unverified files). Force-accepts after 5 total blocked attempts. Never suggests marking steps as "skipped" — always directs agent to continue working. `attempt_completion` tool delegates to this.
 - **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. In normal mode, text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`. Implicit completion via CompletionGatekeeper is only allowed in `forceTextOnly` mode (activated after 4 nudges ignored, malformed retries exhausted, or iteration 95%+). Not available to WorkerSession — workers use `worker_complete` instead.
 - **WorkerCompleteTool** (`worker_complete`) — Lightweight completion signal for worker sessions (subagents). Analogous to `attempt_completion` but without CompletionGatekeeper dependency. Returns `isCompletion=true` to exit the WorkerSession ReAct loop immediately. Available to all WorkerTypes (ORCHESTRATOR, ANALYZER, CODER, REVIEWER, TOOLER). No collision with `attempt_completion` — that tool is injected directly into SingleAgentSession's tool set, not registered in ToolRegistry.
 - **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
@@ -101,7 +101,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Quality — SonarQube | **sonar** (12 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications, branch_quality_report) |
 | Pull Requests — Bitbucket | **bitbucket_pr** (14 actions: create/approve/merge/decline_pr, get_pr_detail/commits/activities/changes/diff, check_merge_status, update_pr_title/description, get_my_prs, get_reviewing_prs), **bitbucket_review** (6 actions: add_pr_comment, add_inline_comment, reply_to_comment, add/remove_reviewer, set_reviewer_status), **bitbucket_repo** (6 actions: get_branches, create_branch, search_users, get_file_content, get_build_statuses, list_repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
-| Skills | Skill |
+| Skills | skill |
 | Database | db_list_profiles, db_query, db_schema |
 | Planning | enable_plan_mode, create_plan, update_plan_step, ask_questions, attempt_completion |
 
@@ -320,7 +320,7 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 - User: `~/.workflow-orchestrator/skills/{name}/SKILL.md`
 - Project overrides user if same name
 - Discovery: descriptions loaded at session start, full content on activation
-- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `Skill(skill="name")`
+- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `skill(skill="name")`
 - Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
 - Built-in skills: `systematic-debugging`, `interactive-debugging`, `create-skill`, `git-workflow`, `brainstorm`, `writing-plans`, `tdd`, `subagent-driven` ship with the plugin from resources
 - Supporting files: non-SKILL.md files in skill directory listed via `getSupportingFiles()`
