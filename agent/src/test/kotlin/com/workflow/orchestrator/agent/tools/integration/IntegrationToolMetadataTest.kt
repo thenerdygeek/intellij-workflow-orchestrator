@@ -40,6 +40,17 @@ class IntegrationToolMetadataTest {
     }
 
     @Test
+    fun `sonar meta-tool includes branch_quality_report action`() {
+        val tool = SonarTool()
+        val actionParam = tool.parameters.properties["action"]!!
+        assertTrue(actionParam.enumValues!!.contains("branch_quality_report"))
+        // Has max_files parameter for the report
+        assertTrue(tool.parameters.properties.containsKey("max_files"))
+        // Description mentions the consolidated report
+        assertTrue(tool.description.contains("branch_quality_report"))
+    }
+
+    @Test
     fun `bitbucket_pr meta-tool has correct metadata`() {
         val tool = BitbucketPrTool()
         assertEquals("bitbucket_pr", tool.name)

@@ -79,7 +79,7 @@ object ToolCategoryRegistry {
             displayName = "Quality — SonarQube",
             color = "#EC4899",
             badgePrefix = "QA",
-            description = "Sonar meta-tool: issues, quality gate, coverage, projects, branches, measures, source lines",
+            description = "Sonar meta-tool: issues, quality gate, coverage, projects, branches, measures, source lines, branch quality report",
             tools = listOf("sonar")
         ),
         ToolCategory(

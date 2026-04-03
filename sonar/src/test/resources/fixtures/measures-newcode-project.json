@@ -1,0 +1,12 @@
+{
+  "component": {
+    "key": "proj",
+    "name": "proj",
+    "qualifier": "TRK",
+    "measures": [
+      { "metric": "new_line_coverage", "value": "72.5" },
+      { "metric": "new_branch_coverage", "value": "55.0" },
+      { "metric": "new_duplicated_lines_density", "value": "3.2" }
+    ]
+  }
+}

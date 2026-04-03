@@ -1,0 +1,32 @@
+{
+  "paging": { "pageIndex": 1, "pageSize": 500, "total": 2 },
+  "baseComponent": { "key": "proj", "name": "proj", "qualifier": "TRK" },
+  "components": [
+    {
+      "key": "proj:src/main/kotlin/Service.kt",
+      "name": "Service.kt",
+      "qualifier": "FIL",
+      "path": "src/main/kotlin/Service.kt",
+      "measures": [
+        { "metric": "new_uncovered_lines", "value": "5" },
+        { "metric": "new_uncovered_conditions", "value": "2" },
+        { "metric": "new_line_coverage", "value": "70.0" },
+        { "metric": "new_branch_coverage", "value": "50.0" },
+        { "metric": "new_duplicated_lines", "value": "8" }
+      ]
+    },
+    {
+      "key": "proj:src/main/kotlin/Controller.kt",
+      "name": "Controller.kt",
+      "qualifier": "FIL",
+      "path": "src/main/kotlin/Controller.kt",
+      "measures": [
+        { "metric": "new_uncovered_lines", "value": "3" },
+        { "metric": "new_uncovered_conditions", "value": "0" },
+        { "metric": "new_line_coverage", "value": "85.0" },
+        { "metric": "new_branch_coverage", "value": "100.0" },
+        { "metric": "new_duplicated_lines", "value": "0" }
+      ]
+    }
+  ]
+}

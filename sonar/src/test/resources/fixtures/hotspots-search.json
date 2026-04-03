@@ -1,0 +1,14 @@
+{
+  "paging": { "pageIndex": 1, "pageSize": 100, "total": 1 },
+  "hotspots": [
+    {
+      "key": "hs-1",
+      "message": "Make sure this hardcoded password is not used in production",
+      "component": "proj:src/main/kotlin/Config.kt",
+      "securityCategory": "insecure-conf",
+      "vulnerabilityProbability": "HIGH",
+      "status": "TO_REVIEW",
+      "line": 42
+    }
+  ]
+}

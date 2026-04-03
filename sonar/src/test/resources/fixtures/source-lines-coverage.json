@@ -1,0 +1,12 @@
+{
+  "sources": [
+    { "line": 1, "code": "package com.example", "lineHits": 1, "conditions": 0, "coveredConditions": 0 },
+    { "line": 2, "code": "", "lineHits": null },
+    { "line": 3, "code": "fun process(x: Int): Int {", "lineHits": 1, "conditions": 2, "coveredConditions": 1 },
+    { "line": 4, "code": "  if (x > 0) return x", "lineHits": 1, "conditions": 2, "coveredConditions": 2 },
+    { "line": 5, "code": "  if (x < -10) return -1", "lineHits": 0, "conditions": 2, "coveredConditions": 0 },
+    { "line": 6, "code": "  val result = x * 2", "lineHits": 0 },
+    { "line": 7, "code": "  return result", "lineHits": 0 },
+    { "line": 8, "code": "}", "lineHits": 1 }
+  ]
+}

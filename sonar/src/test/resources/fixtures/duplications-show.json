@@ -1,0 +1,14 @@
+{
+  "duplications": [
+    {
+      "blocks": [
+        { "ref": "1", "from": 10, "size": 5 },
+        { "ref": "2", "from": 30, "size": 5 }
+      ]
+    }
+  ],
+  "files": {
+    "1": { "key": "proj:src/main/kotlin/Service.kt", "name": "Service.kt", "projectName": "proj" },
+    "2": { "key": "proj:src/main/kotlin/Utils.kt", "name": "Utils.kt", "projectName": "proj" }
+  }
+}
