@@ -139,7 +139,7 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
                 is UserSteeringAction -> {
                     flushPending(pendingAssistant, messages)
                     pendingAssistant = null
-                    messages.add(ChatMessage(role = "user", content = event.content))
+                    messages.add(ChatMessage(role = "user", content = "<user_steering>\n${event.content}\n</user_steering>"))
                 }
 
                 is ToolAction -> {

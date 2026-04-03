@@ -202,6 +202,15 @@ class EventSourcedContextBridge(
     }
 
     /**
+     * Add a user steering message. These are mid-execution redirections from the user,
+     * injected at iteration boundaries. Recorded as [UserSteeringAction] so condensers
+     * can distinguish steering from initial task messages.
+     */
+    fun addSteeringMessage(content: String) {
+        eventStore.add(UserSteeringAction(content = content), EventSource.USER)
+    }
+
+    /**
      * Add an arbitrary ChatMessage (used by LoopGuard, BackpressureGate, etc.).
      * Routes to the appropriate event type based on role.
      */
