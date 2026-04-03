@@ -4,6 +4,10 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.runtime.RollbackEntry
+import com.workflow.orchestrator.agent.runtime.RollbackMechanism
+import com.workflow.orchestrator.agent.runtime.RollbackScope
+import com.workflow.orchestrator.agent.runtime.RollbackSource
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -79,24 +83,48 @@ Parameters:
                 isError = true
             )
 
-        val error = rollbackManager.rollbackToCheckpoint(checkpointId)
+        val result = rollbackManager.rollbackToCheckpoint(checkpointId)
 
-        return if (error == null) {
-            // Update the change ledger anchor after rollback so LLM sees current state
+        return if (result.success) {
+            // Record rollback in the change ledger
             val ledger = agentService.currentChangeLedger
             if (ledger != null) {
+                val rolledBackEntries = ledger.entriesAfterCheckpoint(checkpointId)
+                val rollbackEntry = RollbackEntry(
+                    id = "rollback-${System.currentTimeMillis()}",
+                    timestamp = System.currentTimeMillis(),
+                    checkpointId = checkpointId,
+                    description = description,
+                    source = RollbackSource.LLM_TOOL,
+                    mechanism = result.mechanism,
+                    affectedFiles = result.affectedFiles,
+                    rolledBackEntryIds = rolledBackEntries.map { it.id },
+                    scope = RollbackScope.FULL_CHECKPOINT
+                )
+                ledger.recordRollback(rollbackEntry)
+
+                // Update the change ledger anchor so LLM sees current state
                 agentService.currentContextBridge?.updateChangeLedgerAnchor(ledger)
             }
 
+            val mechanismNote = if (result.mechanism == RollbackMechanism.GIT_FALLBACK) {
+                " (used git fallback)"
+            } else ""
+            val fileCount = result.affectedFiles.size
+
             ToolResult(
-                content = "Successfully rolled back to checkpoint $checkpointId. Reason: $description\n\nAll file changes after this checkpoint have been reverted. Use list_changes to see the current state.",
-                summary = "Rolled back to checkpoint $checkpointId: $description",
-                tokenEstimate = 20
+                content = "Successfully rolled back to checkpoint $checkpointId$mechanismNote. " +
+                    "$fileCount file(s) reverted. Reason: $description\n\n" +
+                    "All file changes after this checkpoint have been reverted. " +
+                    "Use list_changes to see the current state.",
+                summary = "Rolled back to checkpoint $checkpointId ($fileCount files): $description",
+                tokenEstimate = 25
             )
         } else {
             ToolResult(
-                content = "Error: Failed to rollback to checkpoint '$checkpointId': $error. Use list_changes to see available checkpoints.",
-                summary = "Rollback failed: $error",
+                content = "Error: Failed to rollback to checkpoint '$checkpointId': ${result.error}. " +
+                    "Use list_changes to see available checkpoints.",
+                summary = "Rollback failed: ${result.error}",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
