@@ -23,6 +23,7 @@ AgentController (UI entry point)
         → BudgetEnforcer (reads from bridge, COMPRESS/TERMINATE)
         → LoopGuard (loop detection, condensation loop detection)
         → Tool execution with optional ApprovalGate
+        → SteeringChannel (boundary-aware user message injection)
 ```
 
 ## Key Components
@@ -139,6 +140,24 @@ The pipeline is: **EventStore → View → CondenserPipeline → ConversationMem
 - **Token reconciliation**: After each LLM call, `bridge.updateTokensFromUsage(promptTokens)` updates `lastReportedPromptTokens` (used by condenser for accurate utilization). API's `promptTokens` is authoritative.
 - **Middle-truncation**: Command and git output keeps first 60% + last 40%, truncating verbose middle.
 - **Re-read tracking**: Cleared after condensation events so agent can re-read condensed files.
+
+## Real-Time Steering
+
+Users can send messages while the agent is working. Messages are injected at iteration boundaries (between tool calls), not mid-tool — this is boundary-aware queuing, matching Claude Code's pattern.
+
+**Flow:**
+1. User types in chat input during agent execution (input stays enabled in "steering mode")
+2. `AgentController.executeTask()` routes message to `SteeringChannel.enqueue()`
+3. At the top of each ReAct loop iteration, `SingleAgentSession` calls `steeringChannel.drain()`
+4. Drained messages recorded as `UserSteeringAction` events in `EventSourcedContextBridge`
+5. `ConversationMemory` renders them as `<user_steering>` tagged user messages
+6. LLM sees the steering context on the next call and adjusts its approach
+
+**Key files:**
+- `SteeringChannel.kt` — Thread-safe ConcurrentLinkedQueue wrapper
+- `Actions.kt` — `UserSteeringAction` event type
+- `SingleAgentSession.kt` — Drain + inject at iteration boundary (after worker messages, before budget check)
+- `InputBar.tsx` — Input enabled during `steeringMode` with visual indicator
 
 ## Tool Execution
 
