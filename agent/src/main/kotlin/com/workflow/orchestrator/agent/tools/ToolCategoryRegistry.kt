@@ -104,8 +104,16 @@ object ToolCategoryRegistry {
             color = "#F59E0B",
             badgePrefix = "PLAN",
             description = "Create and update implementation plans",
-            tools = listOf("create_plan", "update_plan_step", "ask_questions", "skill",
-                "core_memory_read", "core_memory_append", "core_memory_replace", "archival_memory_insert", "archival_memory_search", "conversation_search")
+            tools = listOf("create_plan", "update_plan_step", "ask_questions", "skill")
+        ),
+        ToolCategory(
+            id = "memory",
+            displayName = "Memory",
+            color = "#8B5CF6",
+            badgePrefix = "MEM",
+            description = "Three-tier memory: core (always in prompt), archival (searchable, unlimited), conversation recall (past sessions)",
+            tools = listOf("core_memory_read", "core_memory_append", "core_memory_replace",
+                "archival_memory_insert", "archival_memory_search", "conversation_search")
         )
     )
 
@@ -151,7 +159,11 @@ object ToolCategoryRegistry {
         "inspection" to "ide",
         // planning aliases
         "plan" to "planning",
-        "memory" to "planning",
+        // memory aliases
+        "memory" to "memory",
+        "remember" to "memory",
+        "recall" to "memory",
+        "forget" to "memory",
     )
 
     /** Resolve a category ID, trying aliases if the exact ID doesn't match. */

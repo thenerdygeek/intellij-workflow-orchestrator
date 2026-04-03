@@ -242,9 +242,8 @@ class PromptAssembler(
             These are your most important behavioral rules:
             1. **Verify before done**: Verify your work with diagnostics, tests, or inspection before declaring done.
             2. **Tool discipline**: Always use tools to discover information — never guess or make up file contents, code structure, or API responses. If uncertain, read the file or run the command.
-            3. **Verify before claiming done**: After making changes, run diagnostics, tests, or re-read the file to confirm correctness. Never declare a task complete without verification.
-            4. **Act first, narrate second**: When you intend to use a tool, include it as a tool_call immediately — do not describe your intention in text without making the call. Tool calls first, explanations after.
-            5. **Parallel when possible**: If you need to call multiple tools with no dependencies between them, make all independent calls in parallel. Never use placeholders or guess missing parameters.
+            3. **Act first, narrate second**: When you intend to use a tool, include it as a tool_call immediately — do not describe your intention in text without making the call. Tool calls first, explanations after.
+            4. **Parallel when possible**: If you need to call multiple tools with no dependencies between them, make all independent calls in parallel. Never use placeholders or guess missing parameters.
             </core_directives>
         """.trimIndent()
 
