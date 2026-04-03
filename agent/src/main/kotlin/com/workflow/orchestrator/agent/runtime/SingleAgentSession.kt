@@ -86,7 +86,6 @@ sealed class SingleAgentResult {
  * Max iterations: 50 (higher than WorkerSession's 10, since this handles full tasks).
  */
 class SingleAgentSession(
-    private val maxIterations: Int = 50,
     val cancelled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false),
     /** Per-session metrics collector — records tool calls, circuit breaker, session counters. */
     val metrics: AgentMetrics = AgentMetrics(),
@@ -322,7 +321,9 @@ class SingleAgentSession(
         forceTextOnly = false
         consecutiveMalformedRetries = 0
 
-        for (iteration in 1..maxIterations) {
+        var iteration = 0
+        while (true) {
+            iteration++
             // Mid-loop cancellation check
             if (cancelled.get()) {
                 LOG.info("SingleAgentSession: cancelled at iteration $iteration")
@@ -368,7 +369,7 @@ class SingleAgentSession(
                 }
             }
 
-            LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
+            LOG.info("SingleAgentSession: iteration $iteration")
             val iterationStartMs = System.currentTimeMillis()
             metrics.turnCount = iteration
 
@@ -518,15 +519,6 @@ class SingleAgentSession(
                 }
             }
 
-            // Ask user to confirm continuing after iteration 25
-            if (iteration == 25) {
-                LOG.info("SingleAgentSession: reached iteration 25, continuing (budget: ${budgetEnforcer.utilizationPercent()}%)")
-                onProgress(AgentProgress(
-                    step = "Agent has been working for 25 iterations. Still making progress...",
-                    tokensUsed = bridge.currentTokens
-                ))
-            }
-
             // 5a: Inject context budget warning at 10% thresholds past 50% (50%, 60%, 70%, 80%, 90%)
             val maxInputTokens = bridge.effectiveMaxInputTokens
             val usedPercent = if (maxInputTokens > 0) ((bridge.currentTokens.toDouble() / maxInputTokens) * 100).toInt() else 0
@@ -541,30 +533,6 @@ class SingleAgentSession(
                 val remaining = maxInputTokens - bridge.currentTokens
                 val budgetWarningContent = "<system_warning>Context usage: ${bridge.currentTokens}/$maxInputTokens tokens ($usedPercent%). $remaining tokens remaining. Be efficient with remaining context.</system_warning>"
                 bridge.addSystemMessage(budgetWarningContent)
-            }
-
-            // 5b: Graceful degradation at high iterations
-            val iterationPercent = (iteration * 100) / maxIterations
-            when {
-                iterationPercent >= 95 -> {
-                    var removalAttempts95 = 0
-                    while (bridge.countSystemWarnings() >= 2 && removalAttempts95 < 10) {
-                        if (!bridge.removeOldestSystemWarning()) break
-                        removalAttempts95++
-                    }
-                    val finalIterContent = "<system_warning>CRITICAL: This is your final iteration. Tools are disabled after this response. Provide a complete summary of what you accomplished and what remains.</system_warning>"
-                    bridge.addSystemMessage(finalIterContent)
-                    forceTextOnly = true
-                }
-                iterationPercent >= 80 -> {
-                    var removalAttempts80 = 0
-                    while (bridge.countSystemWarnings() >= 2 && removalAttempts80 < 10) {
-                        if (!bridge.removeOldestSystemWarning()) break
-                        removalAttempts80++
-                    }
-                    val wrapUpContent = "<system_warning>IMPORTANT: You have used $iteration of $maxIterations iterations. Focus on completing the task. Avoid unnecessary exploration.</system_warning>"
-                    bridge.addSystemMessage(wrapUpContent)
-                }
             }
 
             // Use the condenser pipeline + ConversationMemory path for LLM calls.
