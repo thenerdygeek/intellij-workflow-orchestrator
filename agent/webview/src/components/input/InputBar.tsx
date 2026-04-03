@@ -226,6 +226,7 @@ function InputBarContent({
   ticketQuery,
   busy,
   steeringMode,
+  locked,
   planActive,
   ralphActive,
   model,
@@ -312,7 +313,7 @@ function InputBarContent({
         <RichInput
           ref={richInputRef}
           placeholder={busy && steeringMode ? 'Steer the agent...' : 'Ask anything... (@ context, # ticket, / skill)'}
-          disabled={false}
+          disabled={locked || (busy && !steeringMode)}
           onSubmit={onSend}
           onChange={onRichInputChange}
           onEscape={onDismissMentions}

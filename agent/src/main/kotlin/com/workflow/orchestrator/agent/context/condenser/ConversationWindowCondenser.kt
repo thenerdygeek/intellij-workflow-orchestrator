@@ -30,7 +30,9 @@ class ConversationWindowCondenser : RollingCondenser() {
 
         // Step 1: Find essential initial events
         val systemMessage = events.firstOrNull { it is SystemMessageAction }
-        val firstUserMsg = events.firstOrNull { it is MessageAction && it.source == EventSource.USER }
+        val firstUserMsg = events.firstOrNull {
+            (it is MessageAction || it is UserSteeringAction) && it.source == EventSource.USER
+        }
 
         // If no first user message, return no-op condensation (nothing to forget)
         if (firstUserMsg == null) {

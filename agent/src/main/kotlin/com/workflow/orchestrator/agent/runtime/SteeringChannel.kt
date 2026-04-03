@@ -33,8 +33,9 @@ class SteeringChannel {
     }
 
     /**
-     * Drain all pending messages atomically. Returns empty list if none.
+     * Drain all currently pending messages. Returns empty list if none.
      * Called from the ReAct loop coroutine at iteration boundaries.
+     * Not atomic — a concurrent enqueue during drain is picked up next iteration.
      */
     fun drain(): List<SteeringMessage> {
         val result = mutableListOf<SteeringMessage>()
