@@ -12,6 +12,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.core.model.ApiResult
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -131,6 +132,44 @@ class WorkerSession(
     }
 
     /**
+     * Call the LLM brain with exponential-backoff retry for transient errors (429, 5xx).
+     * Non-retryable errors are returned immediately.
+     */
+    /**
+     * Call the LLM brain with exponential-backoff retry for transient errors.
+     * Retries on RATE_LIMITED, SERVER_ERROR, NETWORK_ERROR, and TIMEOUT.
+     * Non-retryable errors are returned immediately.
+     */
+    private suspend fun callBrainWithRetry(
+        brain: LlmBrain,
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
+        maxOutputTokens: Int? = null
+    ): ApiResult<com.workflow.orchestrator.agent.api.dto.ChatCompletionResponse> {
+        val retryableTypes = setOf(
+            com.workflow.orchestrator.core.model.ErrorType.RATE_LIMITED,
+            com.workflow.orchestrator.core.model.ErrorType.SERVER_ERROR,
+            com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR,
+            com.workflow.orchestrator.core.model.ErrorType.TIMEOUT
+        )
+        var lastError: ApiResult.Error? = null
+        repeat(3) { attempt ->
+            when (val result = brain.chat(messages, tools, maxOutputTokens)) {
+                is ApiResult.Success -> return result
+                is ApiResult.Error -> {
+                    lastError = result
+                    if (result.type in retryableTypes) {
+                        val delayMs = (1000L * (1 shl attempt)) + (0L..500L).random()
+                        LOG.info("WorkerSession: retrying after ${delayMs}ms (attempt ${attempt + 1}/3, error=${result.type})")
+                        delay(delayMs)
+                    } else return result
+                }
+            }
+        }
+        return lastError!!
+    }
+
+    /**
      * Core ReAct loop shared by [execute] and [executeFromContext].
      */
     private suspend fun runReactLoop(
@@ -181,7 +220,7 @@ class WorkerSession(
             val messages = bridge.getMessages()
             val activeToolDefs = if (tools.isNotEmpty()) toolDefinitions else null
 
-            val result = brain.chat(messages, activeToolDefs, maxOutputTokens)
+            val result = callBrainWithRetry(brain, messages, activeToolDefs, maxOutputTokens)
 
             when (result) {
                 is ApiResult.Success -> {
