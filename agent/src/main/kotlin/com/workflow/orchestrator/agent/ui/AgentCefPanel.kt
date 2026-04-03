@@ -65,6 +65,7 @@ class AgentCefPanel(
     private var sendMessageQuery: JBCefJSQuery? = null
     private var changeModelQuery: JBCefJSQuery? = null
     private var togglePlanModeQuery: JBCefJSQuery? = null
+    private var toggleRalphLoopQuery: JBCefJSQuery? = null
     private var activateSkillQuery: JBCefJSQuery? = null
     private var requestFocusIdeQuery: JBCefJSQuery? = null
     private var openSettingsQuery: JBCefJSQuery? = null
@@ -135,6 +136,7 @@ class AgentCefPanel(
     var onSendMessage: ((String) -> Unit)? = null
     var onChangeModel: ((String) -> Unit)? = null
     var onTogglePlanMode: ((Boolean) -> Unit)? = null
+    var onToggleRalphLoop: ((Boolean) -> Unit)? = null
     var onActivateSkill: ((String) -> Unit)? = null
     var onRequestFocusIde: (() -> Unit)? = null
     var onOpenSettings: (() -> Unit)? = null
@@ -301,6 +303,9 @@ class AgentCefPanel(
         }
         togglePlanModeQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { enabled -> onTogglePlanMode?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
+        }
+        toggleRalphLoopQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { enabled -> onToggleRalphLoop?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
         }
         activateSkillQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
@@ -538,6 +543,10 @@ class AgentCefPanel(
                     togglePlanModeQuery?.let { q ->
                         val planJs = q.inject("String(enabled)")
                         js("window._togglePlanMode = function(enabled) { $planJs }")
+                    }
+                    toggleRalphLoopQuery?.let { q ->
+                        val ralphJs = q.inject("String(enabled)")
+                        js("window._toggleRalphLoop = function(enabled) { $ralphJs }")
                     }
                     activateSkillQuery?.let { q ->
                         val skillJs = q.inject("name")
@@ -783,6 +792,10 @@ class AgentCefPanel(
 
     fun setPlanMode(enabled: Boolean) {
         callJs("setPlanMode(${if (enabled) "true" else "false"})")
+    }
+
+    fun setRalphLoop(enabled: Boolean) {
+        callJs("setRalphLoop(${if (enabled) "true" else "false"})")
     }
 
     // ── Sub-Agent boundary card bridge methods ──

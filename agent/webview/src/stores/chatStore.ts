@@ -79,6 +79,7 @@ interface ChatState {
     mentions: Mention[];
     model: string;
     mode: 'agent' | 'plan';
+    ralph: boolean;
   };
   busy: boolean;
   showingToolsPanel: boolean;
@@ -124,6 +125,7 @@ interface ChatState {
   showQuestionSummary(summary: any): void;
   setInputLocked(locked: boolean): void;
   setInputMode(mode: 'agent' | 'plan'): void;
+  setRalphLoop(enabled: boolean): void;
   setBusy(busy: boolean): void;
   setModelName(model: string): void;
   updateTokenBudget(used: number, max: number): void;
@@ -193,6 +195,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     mentions: [],
     model: '',
     mode: 'agent',
+    ralph: false,
   },
   busy: false,
   showingToolsPanel: false,
@@ -483,6 +486,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setInputMode(mode: 'agent' | 'plan') {
     set(state => ({
       inputState: { ...state.inputState, mode },
+    }));
+  },
+
+  setRalphLoop(enabled: boolean) {
+    set(state => ({
+      inputState: { ...state.inputState, ralph: enabled },
     }));
   },
 

@@ -52,6 +52,10 @@ class AgentService(
         activeController?.resumeSession(sessionId)
     }
 
+    fun resumeRalphLoop(originalPrompt: String) {
+        activeController?.executeTask(originalPrompt)
+    }
+
     /** Plan manager for the current agent session, set by SingleAgentSession. */
     @Volatile var currentPlanManager: PlanManager? = null
 
@@ -69,7 +73,10 @@ class AgentService(
     @Volatile var currentRollbackManager: AgentRollbackManager? = null
 
     /** Ralph Loop orchestrator — manages iterative self-improvement loops. Wired by AgentController. */
-    @Volatile var ralphLoopActive: Boolean = false
+    @Volatile var ralphOrchestrator: com.workflow.orchestrator.agent.ralph.RalphLoopOrchestrator? = null
+
+    /** Ralph iteration context to inject into next session's system prompt. Set by AgentController, consumed by ConversationSession.create(). */
+    @Volatile var ralphIterationContext: String? = null
 
     /** Current iteration number in the ReAct loop. Set by SingleAgentSession. */
     @Volatile var currentIteration: Int? = null

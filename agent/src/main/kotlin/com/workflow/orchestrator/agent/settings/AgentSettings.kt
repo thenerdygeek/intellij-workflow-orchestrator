@@ -30,6 +30,11 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var maxStdinPerProcess by property(10)
         var askUserInputTimeoutMinutes by property(5)
         var powershellEnabled by property(true)
+
+        // Ralph Loop defaults
+        var ralphMaxIterations by property(10)
+        var ralphMaxCostUsd by string("10.0")
+        var ralphReviewerEnabled by property(true)
     }
 
     companion object {

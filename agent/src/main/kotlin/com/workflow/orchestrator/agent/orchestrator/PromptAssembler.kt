@@ -50,7 +50,8 @@ class PromptAssembler(
         guardrailsContext: String? = null,
         activeTools: Collection<AgentTool> = emptyList(),
         hasJcefUi: Boolean = true,
-        project: Project? = null
+        project: Project? = null,
+        ralphIterationContext: String? = null
     ): String {
         val sections = mutableListOf<String>()
 
@@ -94,6 +95,10 @@ class PromptAssembler(
         if (!previousStepResults.isNullOrEmpty()) {
             val prev = previousStepResults.joinToString("\n\n") { "- $it" }
             sections.add("<previous_results>\nContext from previous steps:\n$prev\n</previous_results>")
+        }
+
+        if (!ralphIterationContext.isNullOrBlank()) {
+            sections.add(ralphIterationContext)
         }
 
         // === RECENCY ZONE (highest recall) ===

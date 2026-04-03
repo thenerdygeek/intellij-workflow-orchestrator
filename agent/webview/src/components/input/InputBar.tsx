@@ -88,6 +88,35 @@ const PlanChip = memo(function PlanChip({ active }: { active: boolean }) {
   );
 });
 
+// ── RalphChip ──
+
+const RalphChip = memo(function RalphChip({ active }: { active: boolean }) {
+  const toggleRalph = useCallback(() => {
+    const store = useChatStore.getState();
+    store.setRalphLoop(!active);
+    window._toggleRalphLoop?.(!active);
+  }, [active]);
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 gap-1 px-1.5 text-[12px] font-medium"
+      style={{
+        color: active ? 'var(--success, #4ade80)' : undefined,
+        backgroundColor: active ? 'var(--hover-overlay-strong, rgba(255,255,255,0.05))' : undefined,
+      }}
+      onClick={toggleRalph}
+      title={active ? 'Disable Ralph Loop (iterative self-improvement)' : 'Enable Ralph Loop — agent iterates until reviewer accepts'}
+    >
+      <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M8 2v4l3 2M8 14a6 6 0 110-12 6 6 0 010 12z" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+      Ralph
+    </Button>
+  );
+});
+
 // ── SkillsChip ──
 
 const SkillsChip = memo(function SkillsChip() {
@@ -161,6 +190,7 @@ interface InputBarContentProps {
   busy: boolean;
   locked: boolean;
   planActive: boolean;
+  ralphActive: boolean;
   model: string;
   richInputRef: React.RefObject<RichInputHandle>;
   onMentionSelect: (result: MentionSearchResult) => void;
@@ -195,6 +225,7 @@ function InputBarContent({
   ticketQuery,
   busy,
   planActive,
+  ralphActive,
   model,
   richInputRef,
   onMentionSelect,
@@ -318,6 +349,7 @@ function InputBarContent({
 
           <ModelChip model={model} />
           <PlanChip active={planActive} />
+          <RalphChip active={ralphActive} />
           <SkillsChip />
           <MoreChip />
         </div>
@@ -568,6 +600,7 @@ export const InputBar = memo(function InputBar() {
 
   const canSend = hasText && !inputState.locked && !busy;
   const planActive = inputState.mode === 'plan';
+  const ralphActive = inputState.ralph ?? false;
 
   return (
     <div className="px-3 pb-3 pt-2">
@@ -586,6 +619,7 @@ export const InputBar = memo(function InputBar() {
           busy={busy}
           locked={inputState.locked}
           planActive={planActive}
+          ralphActive={ralphActive}
           model={inputState.model ?? ''}
           richInputRef={richInputRef}
           onMentionSelect={handleMentionSelect}

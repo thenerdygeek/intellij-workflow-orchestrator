@@ -218,6 +218,11 @@ export function installMockBridge(): void {
     console.log(`[bridge:dev] togglePlanMode(${enabled})`);
   };
 
+  // Mock _toggleRalphLoop for dev mode
+  w._toggleRalphLoop = (enabled: boolean) => {
+    console.log(`[bridge:dev] toggleRalphLoop(${enabled})`);
+  };
+
   // Mock _changeModel for dev mode — extract display name from the model ID
   w._changeModel = (modelId: string) => {
     console.log(`[bridge:dev] changeModel(${modelId})`);

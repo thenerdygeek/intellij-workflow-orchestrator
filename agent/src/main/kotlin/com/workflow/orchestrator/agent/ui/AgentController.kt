@@ -27,6 +27,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.tools.ToolCategoryRegistry
+import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.io.File
@@ -53,6 +54,7 @@ class AgentController(
     private var sessionAutoApprove = false
     private var currentPlanFile: com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile? = null
     private var planModeEnabled = false
+    private var ralphLoopToggled = false
     @Volatile
     private var pendingApprovalDeferred: CompletableDeferred<Boolean>? = null
     @Volatile private var currentApprovalGate: ApprovalGate? = null
@@ -63,6 +65,14 @@ class AgentController(
         project.basePath,
         System.getProperty("user.home")
     ).also { it.scan() }
+
+    // Ralph Loop orchestrator — lazy init to avoid file I/O at construction time
+    private val ralphOrchestrator: com.workflow.orchestrator.agent.ralph.RalphLoopOrchestrator by lazy {
+        val ralphDir = File(ProjectIdentifier.agentDir(project.basePath ?: ""), "ralph")
+        com.workflow.orchestrator.agent.ralph.RalphLoopOrchestrator(ralphDir = ralphDir).also {
+            try { AgentService.getInstance(project).ralphOrchestrator = it } catch (_: Exception) {}
+        }
+    }
 
     init {
         // Tie coroutine scope to project lifecycle — cancel when project closes
@@ -75,7 +85,13 @@ class AgentController(
         dashboard.setCefActionCallbacks(
             onCancel = { cancelTask() },
             onNewChat = { newChat() },
-            onSendMessage = { text -> executeTask(text) },
+            onSendMessage = { text ->
+                if (ralphLoopToggled && ralphOrchestrator.getCurrentState() == null) {
+                    startRalphLoop(text)
+                } else {
+                    executeTask(text)
+                }
+            },
             onChangeModel = { modelId ->
                 try {
                     val settings = AgentSettings.getInstance(project)
@@ -100,6 +116,10 @@ class AgentController(
                 } else {
                     dashboard.setPlanMode(false)
                 }
+            },
+            onToggleRalphLoop = { enabled ->
+                ralphLoopToggled = enabled
+                dashboard.setRalphLoop(enabled)
             },
             onActivateSkill = { name -> executeTask("/$name") },
             onRequestFocusIde = {
@@ -898,6 +918,27 @@ class AgentController(
         }
     }
 
+    /**
+     * Start a Ralph Loop — iterative self-improvement. The agent runs the task,
+     * a reviewer evaluates, and the loop continues until the reviewer accepts.
+     */
+    fun startRalphLoop(prompt: String, config: com.workflow.orchestrator.agent.ralph.RalphLoopConfig = com.workflow.orchestrator.agent.ralph.RalphLoopConfig()) {
+        val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+        val effectiveConfig = com.workflow.orchestrator.agent.ralph.RalphLoopConfig(
+            maxIterations = settings?.state?.ralphMaxIterations ?: config.maxIterations,
+            maxCostUsd = settings?.state?.ralphMaxCostUsd?.toDoubleOrNull() ?: config.maxCostUsd,
+            reviewerEnabled = settings?.state?.ralphReviewerEnabled ?: config.reviewerEnabled
+        )
+        val state = ralphOrchestrator.startLoop(prompt, effectiveConfig)
+        dashboard.appendStatus(
+            "Ralph Loop started — iteration 1/${state.maxIterations} | Budget: $${String.format("%.2f", state.maxCostUsd)}",
+            RichStreamingPanel.StatusType.INFO
+        )
+        // First iteration runs the task normally — no ralph context needed.
+        // Iteration 2+ gets context via handleRalphIteration() → Continue path.
+        executeTask(prompt)
+    }
+
     fun cancelTask() {
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
@@ -912,12 +953,20 @@ class AgentController(
         planModeEnabled = false
         AgentService.planModeActive.set(false)
         dashboard.setPlanMode(false)
+        // Cancel active Ralph Loop
+        ralphOrchestrator.cancel()?.let { finalState ->
+            dashboard.appendStatus(
+                "Ralph Loop cancelled at iteration ${finalState.iteration}",
+                RichStreamingPanel.StatusType.WARNING
+            )
+        }
         dashboard.appendStatus("Stopped.", RichStreamingPanel.StatusType.WARNING)
     }
 
     fun newChat() {
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
+        ralphOrchestrator.cancel() // Cancel Ralph Loop before clearing session
         currentOrchestrator?.cancelTask()
         ProcessRegistry.killAll()
         currentTaskJob?.cancel()
@@ -1332,6 +1381,25 @@ class AgentController(
         when (result) {
             is AgentResult.Completed -> {
                 dashboard.flushStreamBuffer()
+
+                // Ralph Loop interception: if a loop is active, don't end — run reviewer and iterate
+                val ralph = ralphOrchestrator.getCurrentState()
+                if (ralph != null && ralph.phase == com.workflow.orchestrator.agent.ralph.RalphPhase.EXECUTING) {
+                    scope.launch {
+                        try {
+                            handleRalphIteration(result, durationMs)
+                        } catch (e: Exception) {
+                            LOG.error("RalphLoop: error in loop", e)
+                            withContext(Dispatchers.EDT) {
+                                dashboard.appendError("Ralph Loop error: ${e.message}")
+                                dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.FAILED)
+                            }
+                        }
+                    }
+                    return
+                }
+
+                // Normal (non-Ralph) completion
                 dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
                 if (result.artifacts.isNotEmpty()) {
                     dashboard.appendStatus(
@@ -1721,6 +1789,158 @@ class AgentController(
         } catch (_: Exception) {
             // Notification group may not exist
         }
+    }
+
+    /**
+     * Handle Ralph Loop iteration: record iteration, run reviewer, decide next action.
+     * Called from a coroutine scope when the agent completes during an active Ralph loop.
+     */
+    private suspend fun handleRalphIteration(result: AgentResult.Completed, durationMs: Long) {
+        val ralph = ralphOrchestrator.getCurrentState() ?: return
+
+        // Create LocalHistory checkpoint for rollback (spec Section 4.9)
+        try {
+            AgentService.getInstance(project).currentRollbackManager
+                ?.createCheckpoint("Ralph iteration ${ralph.iteration}")
+        } catch (_: Exception) {}
+
+        // Step 1: Record iteration, check budget/limits
+        val iterDecision = ralphOrchestrator.onIterationCompleted(
+            costUsd = SessionScorecard.computeEstimatedCost(result.totalTokens.toLong(), 0),
+            tokensUsed = result.totalTokens.toLong(),
+            durationMs = durationMs,
+            filesChanged = result.artifacts,
+            completionSummary = result.summary,
+            sessionId = session?.sessionId ?: ""
+        )
+
+        // Budget/iterations already stopped it
+        if (iterDecision is com.workflow.orchestrator.agent.ralph.RalphLoopDecision.ForcedCompletion) {
+            withContext(Dispatchers.EDT) {
+                dashboard.appendStatus("Ralph Loop stopped: ${iterDecision.reason}", RichStreamingPanel.StatusType.WARNING)
+                dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
+            }
+            return
+        }
+
+        // Step 2: Run reviewer (if enabled)
+        val currentState = ralphOrchestrator.getCurrentState()!!
+        val decision: com.workflow.orchestrator.agent.ralph.RalphLoopDecision
+        if (currentState.reviewerEnabled && currentState.phase == com.workflow.orchestrator.agent.ralph.RalphPhase.AWAITING_REVIEW) {
+            withContext(Dispatchers.EDT) {
+                dashboard.appendStatus("Reviewing iteration ${currentState.iteration}...", RichStreamingPanel.StatusType.INFO)
+            }
+            val (reviewResult, reviewCost) = runRalphReviewer(currentState, result)
+            decision = ralphOrchestrator.onReviewerResult(reviewResult, reviewCost)
+        } else {
+            decision = iterDecision
+        }
+
+        // Step 3: Act on decision
+        withContext(Dispatchers.EDT) {
+            when (decision) {
+                is com.workflow.orchestrator.agent.ralph.RalphLoopDecision.Continue -> {
+                    session = null // Fresh session for next iteration
+                    val nextState = ralphOrchestrator.getCurrentState()!!
+                    dashboard.appendStatus(
+                        "Ralph iteration ${nextState.iteration} — reviewer requested improvements",
+                        RichStreamingPanel.StatusType.INFO
+                    )
+                    // Set iteration context BEFORE executeTask — consumed by ConversationSession.create()
+                    try { AgentService.getInstance(project).ralphIterationContext = decision.iterationContext } catch (_: Exception) {}
+                    executeTask(currentState.originalPrompt)
+                }
+                is com.workflow.orchestrator.agent.ralph.RalphLoopDecision.Completed -> {
+                    saveRalphScorecard()
+                    dashboard.appendStatus(
+                        "Ralph Loop completed after ${decision.iterations} iterations | Cost: $${String.format("%.2f", decision.totalCost)}",
+                        RichStreamingPanel.StatusType.SUCCESS
+                    )
+                    dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
+                }
+                is com.workflow.orchestrator.agent.ralph.RalphLoopDecision.ForcedCompletion -> {
+                    saveRalphScorecard()
+                    dashboard.appendStatus(
+                        "Ralph Loop stopped: ${decision.reason}",
+                        RichStreamingPanel.StatusType.WARNING
+                    )
+                    dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
+                }
+            }
+        }
+    }
+
+    /**
+     * Spawn a reviewer WorkerSession to evaluate the agent's work.
+     * Returns (ReviewResult, costUsd).
+     */
+    private suspend fun runRalphReviewer(
+        ralphState: com.workflow.orchestrator.agent.ralph.RalphLoopState,
+        completionResult: AgentResult.Completed
+    ): Pair<com.workflow.orchestrator.agent.ralph.ReviewResult, Double> {
+        val changedFiles = ralphState.iterationHistory.flatMap { it.filesChanged }.distinct()
+        val planStatus = try {
+            session?.planManager?.currentPlan?.let { plan ->
+                plan.steps.joinToString("\n") { "- ${it.title}: ${it.status}" }
+            }
+        } catch (_: Exception) { null }
+
+        val prompt = com.workflow.orchestrator.agent.ralph.RalphReviewer.buildReviewerPrompt(
+            originalTask = ralphState.originalPrompt,
+            iteration = ralphState.iteration,
+            maxIterations = ralphState.maxIterations,
+            completionSummary = completionResult.summary,
+            changedFiles = changedFiles,
+            planStatus = planStatus,
+            priorFeedback = ralphState.reviewerFeedback
+        )
+
+        return try {
+            val agentService = AgentService.getInstance(project)
+            val brain = agentService.brain
+            val allTools = agentService.toolRegistry.allTools().associateBy { it.name }
+            val reviewerTools = allTools.filterKeys { it in com.workflow.orchestrator.agent.ralph.RalphReviewer.REVIEWER_TOOLS }
+            val reviewerToolDefs = reviewerTools.values.map { it.toToolDefinition() }
+
+            val bridge = com.workflow.orchestrator.agent.context.EventSourcedContextBridge.create(
+                sessionDir = null,
+                config = com.workflow.orchestrator.agent.context.ContextManagementConfig.DEFAULT,
+                maxInputTokens = 100_000
+            )
+
+            val worker = WorkerSession(maxIterations = 10)
+            val workerResult = worker.execute(
+                workerType = WorkerType.REVIEWER,
+                systemPrompt = com.workflow.orchestrator.agent.ralph.RalphReviewer.SYSTEM_PROMPT,
+                task = prompt,
+                tools = reviewerTools,
+                toolDefinitions = reviewerToolDefs,
+                brain = brain,
+                bridge = bridge,
+                project = project
+            )
+
+            val costUsd = SessionScorecard.computeEstimatedCost(workerResult.tokensUsed.toLong(), 0)
+            Pair(com.workflow.orchestrator.agent.ralph.RalphReviewer.parseResponse(workerResult.content), costUsd)
+        } catch (e: Exception) {
+            LOG.warn("RalphLoop: reviewer failed — ${e.message}, treating as IMPROVE")
+            Pair(com.workflow.orchestrator.agent.ralph.ReviewResult(
+                com.workflow.orchestrator.agent.ralph.ReviewVerdict.IMPROVE,
+                "Reviewer error: ${e.message}"
+            ), 0.0)
+        }
+    }
+
+    private fun saveRalphScorecard() {
+        try {
+            val finalState = ralphOrchestrator.getCurrentState() ?: return
+            val scorecard = com.workflow.orchestrator.agent.ralph.RalphLoopScorecard.fromState(finalState)
+            val metricsDir = File(ProjectIdentifier.agentDir(project.basePath ?: ""), "metrics")
+            com.workflow.orchestrator.agent.ralph.RalphLoopScorecard.save(scorecard, metricsDir)
+            // Clean up state file now that metrics are saved
+            val stateDir = File(ProjectIdentifier.agentDir(project.basePath ?: ""), "ralph/${finalState.loopId}")
+            com.workflow.orchestrator.agent.ralph.RalphLoopState.delete(stateDir)
+        } catch (_: Exception) {}
     }
 
     fun dispose() { scope.cancel() }

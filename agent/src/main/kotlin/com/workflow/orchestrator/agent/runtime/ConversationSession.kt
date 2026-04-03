@@ -335,6 +335,10 @@ class ConversationSession private constructor(
 
             // Build system prompt
             val promptAssembler = PromptAssembler(agentService.toolRegistry)
+            // Pick up Ralph Loop iteration context if set (consumed once per session creation)
+            val ralphContext = agentService.ralphIterationContext
+            agentService.ralphIterationContext = null  // Consume — don't inject into subsequent sessions
+
             val systemPrompt = promptAssembler.buildSingleAgentPrompt(
                 projectName = project.name,
                 projectPath = project.basePath,
@@ -345,7 +349,8 @@ class ConversationSession private constructor(
                 guardrailsContext = guardrailsContext,
                 planMode = planMode,
                 repoContext = repoContext,
-                project = project
+                project = project,
+                ralphIterationContext = ralphContext
             )
             val systemPromptTokens = TokenEstimator.estimate(systemPrompt)
 

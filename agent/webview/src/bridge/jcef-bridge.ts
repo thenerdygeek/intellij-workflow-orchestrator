@@ -122,6 +122,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setPlanMode(enabled: boolean) {
     stores?.getChatStore().setInputMode(enabled ? 'plan' : 'agent');
   },
+  setRalphLoop(enabled: boolean) {
+    stores?.getChatStore().setRalphLoop(enabled);
+  },
   updateSkillsList(skillsJson: string) {
     const skills = JSON.parse(skillsJson);
     stores?.getChatStore().updateSkillsList(skills);
@@ -304,6 +307,7 @@ export const kotlinBridge = {
   sendMessage(text: string): void { callKotlin('_sendMessage', text); },
   changeModel(modelId: string): void { callKotlin('_changeModel', modelId); },
   togglePlanMode(enabled: boolean): void { callKotlin('_togglePlanMode', enabled); },
+  toggleRalphLoop(enabled: boolean): void { callKotlin('_toggleRalphLoop', enabled); },
   activateSkill(name: string): void { callKotlin('_activateSkill', name); },
   requestFocusIde(): void { callKotlin('_requestFocusIde'); },
   openSettings(): void { callKotlin('_openSettings'); },

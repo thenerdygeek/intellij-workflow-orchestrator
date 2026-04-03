@@ -15,6 +15,7 @@ declare global {
     _openToolsPanel?: () => void;
     _changeModel?: (modelId: string) => void;
     _togglePlanMode?: (enabled: boolean) => void;
+    _toggleRalphLoop?: (enabled: boolean) => void;
     _navigateToFile?: (path: string) => void;
     _requestFocusIde?: () => void;
     _submitPrompt?: (text: string) => void;

@@ -82,5 +82,49 @@ class AgentStartupActivity : ProjectActivity {
             // Also run periodic cleanup of stale sessions
             index.cleanup()
         } catch (_: Exception) { /* service not available */ }
+
+        // Check for interrupted Ralph loops
+        try {
+            val basePath = project.basePath ?: return
+            val ralphDir = File(com.workflow.orchestrator.core.util.ProjectIdentifier.agentDir(basePath), "ralph")
+            if (ralphDir.exists()) {
+                val terminalPhases = setOf(
+                    com.workflow.orchestrator.agent.ralph.RalphPhase.COMPLETED,
+                    com.workflow.orchestrator.agent.ralph.RalphPhase.FORCE_COMPLETED,
+                    com.workflow.orchestrator.agent.ralph.RalphPhase.CANCELLED
+                )
+                val activeLoops = ralphDir.listFiles()
+                    ?.filter { it.isDirectory }
+                    ?.mapNotNull { dir ->
+                        com.workflow.orchestrator.agent.ralph.RalphLoopState.load(dir)
+                            ?.takeIf { it.phase !in terminalPhases }
+                    }
+                    ?: emptyList()
+
+                for (loop in activeLoops) {
+                    NotificationGroupManager.getInstance()
+                        .getNotificationGroup("workflow.agent")
+                        .createNotification(
+                            "Ralph Loop Interrupted",
+                            "Ralph Loop was interrupted at iteration ${loop.iteration}/${loop.maxIterations}. " +
+                                "Cost so far: $${String.format("%.2f", loop.totalCostUsd)}",
+                            NotificationType.INFORMATION
+                        )
+                        .addAction(NotificationAction.createSimple("Resume") {
+                            try {
+                                val agentService = com.workflow.orchestrator.agent.AgentService.getInstance(project)
+                                agentService.ralphOrchestrator?.resumeInterrupted(loop)
+                                // Trigger actual execution via the agent tab
+                                agentService.resumeRalphLoop(loop.originalPrompt)
+                            } catch (_: Exception) {}
+                        })
+                        .addAction(NotificationAction.createSimple("Cancel") {
+                            val dir = File(ralphDir, loop.loopId)
+                            com.workflow.orchestrator.agent.ralph.RalphLoopState.delete(dir)
+                        })
+                        .notify(project)
+                }
+            }
+        } catch (_: Exception) { /* ralph not available */ }
     }
 }

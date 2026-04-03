@@ -68,6 +68,7 @@ class AgentDashboardPanel(
         onSendMessage: (String) -> Unit,
         onChangeModel: (String) -> Unit,
         onTogglePlanMode: (Boolean) -> Unit,
+        onToggleRalphLoop: (Boolean) -> Unit = {},
         onActivateSkill: (String) -> Unit,
         onRequestFocusIde: () -> Unit,
         onOpenSettings: () -> Unit,
@@ -78,6 +79,7 @@ class AgentDashboardPanel(
         cefPanel?.onSendMessage = onSendMessage
         cefPanel?.onChangeModel = onChangeModel
         cefPanel?.onTogglePlanMode = onTogglePlanMode
+        cefPanel?.onToggleRalphLoop = onToggleRalphLoop
         cefPanel?.onActivateSkill = onActivateSkill
         cefPanel?.onRequestFocusIde = onRequestFocusIde
         cefPanel?.onOpenSettings = onOpenSettings
@@ -412,6 +414,10 @@ class AgentDashboardPanel(
     fun setPlanMode(enabled: Boolean) {
         runOnEdt { cefPanel?.setPlanMode(enabled) }
         mirrors.forEach { it.setPlanMode(enabled) }
+    }
+
+    fun setRalphLoop(enabled: Boolean) {
+        runOnEdt { cefPanel?.setRalphLoop(enabled) }
     }
 
     // ── Sub-Agent boundary card delegation ──
