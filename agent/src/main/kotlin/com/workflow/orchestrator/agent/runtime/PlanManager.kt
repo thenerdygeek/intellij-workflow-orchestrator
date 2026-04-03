@@ -131,12 +131,35 @@ class PlanManager {
     @Volatile
     private var approvalDeferred: CompletableDeferred<PlanApprovalResult>? = null
 
+    /** True while the multi-hop revise flow is in flight (chat card → plan editor → bridge).
+     *  Prevents [resolveWithChatMessage] from racing with [revisePlanWithContext]. */
+    @Volatile
+    var isRevisionInProgress: Boolean = false
+        private set
+
+    /** Mark that a revision has been initiated from the UI. Call this BEFORE
+     *  the async hop chain begins (e.g., when the Revise button bridge fires). */
+    fun markRevisionStarted() {
+        isRevisionInProgress = true
+        LOG.info("PlanManager: revision flow started — chat messages will be queued as steering")
+    }
+
+    /** Cancel a pending revision (e.g., plan editor not available). Allows chat
+     *  messages to resolve the plan again. */
+    fun cancelRevision() {
+        if (isRevisionInProgress) {
+            isRevisionInProgress = false
+            LOG.info("PlanManager: revision flow cancelled")
+        }
+    }
+
     /** True when a plan has been submitted and is awaiting user approval/revision. */
     val isAwaitingApproval: Boolean
         get() = (approvalDeferred != null && approvalDeferred?.isCompleted == false)
             || (approvalFuture != null && approvalFuture?.isDone == false)
 
     fun approvePlan() {
+        isRevisionInProgress = false
         currentPlan?.approved = true
         // Auto-exit plan mode: tools are restored on next LLM call
         AgentService.planModeActive.set(false)
@@ -153,6 +176,7 @@ class PlanManager {
     }
 
     fun revisePlan(comments: Map<String, String>) {
+        isRevisionInProgress = false
         currentPlan?.steps?.forEach { step ->
             comments[step.id]?.let { step.userComment = it }
         }
@@ -166,6 +190,7 @@ class PlanManager {
 
     /** New revision method: carries the actual line content + full markdown for LLM context. */
     fun revisePlanWithContext(revisions: List<PlanRevisionComment>, fullMarkdown: String?) {
+        isRevisionInProgress = false
         LOG.info("PlanManager: contextual revision requested with ${revisions.size} comments")
         sessionDir?.let { dir -> currentPlan?.let { PlanPersistence.save(it, dir) } }
         val result = PlanApprovalResult.RevisedWithContext(revisions, fullMarkdown)
@@ -177,6 +202,7 @@ class PlanManager {
     /** Resolve pending plan approval with a free-form chat message.
      *  The agent decides whether this is a question, revision, or discussion. */
     fun resolveWithChatMessage(message: String) {
+        isRevisionInProgress = false
         LOG.info("PlanManager: chat message during plan approval — message length=${message.length}")
         val result = PlanApprovalResult.ChatMessage(message)
         approvalDeferred?.complete(result)
@@ -246,5 +272,6 @@ class PlanManager {
         currentPlan = null
         approvalFuture = null
         approvalDeferred = null
+        isRevisionInProgress = false
     }
 }

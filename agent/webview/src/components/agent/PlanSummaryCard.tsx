@@ -54,6 +54,14 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
   const planCommentCount = useChatStore(s => s.planCommentCount);
 
+  // Reset loading state when the plan is replaced (e.g., LLM calls create_plan
+  // again after a ChatMessage or revision). Without this, the Revise/Approve
+  // button stays stuck in loading if the plan resolves via a different path.
+  const planIdentity = `${plan.title}:${plan.steps.length}:${plan.approved}`;
+  useEffect(() => {
+    setPending(null);
+  }, [planIdentity]);
+
   const stepCount = plan.steps.length;
   const pendingCount = plan.steps.filter(s => s.status === 'pending').length;
   const hasComments = planCommentCount > 0;

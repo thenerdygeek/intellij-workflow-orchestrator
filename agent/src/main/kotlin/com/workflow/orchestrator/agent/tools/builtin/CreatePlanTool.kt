@@ -163,12 +163,9 @@ class CreatePlanTool : AgentTool {
                 )
             }
             is PlanApprovalResult.ChatMessage -> {
-                // Approve the plan and exit plan mode so the agent has full
-                // tool access. If the user was just asking a question, the agent
-                // will call create_plan again (which re-enters plan mode).
-                planManager.currentPlan?.approved = true
-                AgentService.planModeActive.set(false)
-
+                // Keep plan mode ACTIVE — do NOT auto-approve. The LLM stays constrained
+                // to read-only + plan tools, preventing accidental execution. If the user
+                // wants to approve, they should use the Approve button.
                 val planMarkdown = planManager.currentPlan?.markdown ?: ""
                 val stepCount = planManager.currentPlan?.steps?.size ?: 0
                 val planSection = if (planMarkdown.isNotBlank()) {
@@ -181,11 +178,14 @@ class CreatePlanTool : AgentTool {
                     append(planSection)
                     appendLine()
                     appendLine()
+                    appendLine("Plan mode is still active — you cannot edit files or run write operations.")
                     appendLine("Determine the user's intent and respond accordingly:")
-                    appendLine("- Approving / proceeding → begin execution immediately ($stepCount steps). Mark steps with update_plan_step as you go.")
                     appendLine("- Asking a question → answer it, then call create_plan again with the same plan to re-prompt for approval")
-                    appendLine("- Requesting changes but unclear → use ask_questions to gather clarification before revising")
                     appendLine("- Requesting changes with clear details → call create_plan again with a revised plan incorporating their feedback")
+                    appendLine("- Requesting changes but unclear → use ask_questions to gather clarification before revising")
+                    appendLine("- If the user explicitly says to proceed/approve → call create_plan again with the same plan (user can click Approve)")
+                    appendLine()
+                    appendLine("Do NOT attempt to execute the plan — plan mode is active and the user must click Approve first.")
                 }
                 ToolResult(
                     content = content,
