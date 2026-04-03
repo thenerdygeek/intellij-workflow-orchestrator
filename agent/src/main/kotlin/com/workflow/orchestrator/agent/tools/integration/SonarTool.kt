@@ -14,14 +14,14 @@ import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
 /**
- * Consolidated SonarQube meta-tool (11 actions).
+ * Consolidated SonarQube meta-tool (12 actions).
  *
  * Saves token budget per API call by collapsing all SonarQube operations into
  * a single tool definition with an `action` discriminator parameter.
  *
  * Actions: issues, quality_gate, coverage, search_projects, analysis_tasks,
  *          branches, project_measures, source_lines, issues_paged,
- *          security_hotspots, duplications
+ *          security_hotspots, duplications, branch_quality_report
  */
 class SonarTool : AgentTool {
 
@@ -42,6 +42,7 @@ Actions and their parameters:
 - issues_paged(project_key, page?, page_size?, branch?, new_code_only?) → Paginated issues (default page 1, 100/page, max 500; set new_code_only=true for new code only)
 - security_hotspots(project_key, branch?) → Security hotspots
 - duplications(component_key, branch?) → Code duplications
+- branch_quality_report(project_key, branch, max_files?) → **Consolidated new-code quality report** — one call gets: quality gate, all issues (bugs/smells/vulnerabilities), security hotspots, coverage summary, plus exact uncovered line numbers, uncovered branch line numbers, and duplicated line ranges per file. Default max_files=20. Use this instead of calling issues+quality_gate+coverage+hotspots separately.
 
 Common optional: repo_name for multi-repo projects.
 """.trimIndent()
@@ -54,7 +55,7 @@ Common optional: repo_name for multi-repo projects.
                 enumValues = listOf(
                     "issues", "quality_gate", "coverage", "search_projects",
                     "analysis_tasks", "branches", "project_measures", "source_lines", "issues_paged",
-                    "security_hotspots", "duplications"
+                    "security_hotspots", "duplications", "branch_quality_report"
                 )
             ),
             "project_key" to ParameterProperty(
@@ -96,6 +97,10 @@ Common optional: repo_name for multi-repo projects.
             "new_code_only" to ParameterProperty(
                 type = "boolean",
                 description = "When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged"
+            ),
+            "max_files" to ParameterProperty(
+                type = "string",
+                description = "Max files to drill down into for line-level details (default 20) — for branch_quality_report"
             ),
             "repo_name" to ParameterProperty(
                 type = "string",
@@ -203,6 +208,16 @@ Common optional: repo_name for multi-repo projects.
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getDuplications(componentKey, branch = branch, repoName = repoName).toAgentToolResult()
+            }
+
+            "branch_quality_report" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val branch = params["branch"]?.jsonPrimitive?.content ?: return missingParam("branch")
+                ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
+                ToolValidation.validateNotBlank(branch, "branch")?.let { return it }
+                val maxFiles = params["max_files"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getBranchQualityReport(projectKey, branch, maxFiles, repoName).toAgentToolResult()
             }
 
             else -> ToolResult(

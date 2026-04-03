@@ -20,9 +20,17 @@ import com.workflow.orchestrator.core.model.sonar.DuplicationBlock
 import com.workflow.orchestrator.core.model.sonar.DuplicationFragment
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
+import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData
+import com.workflow.orchestrator.core.model.sonar.IssueSummary
+import com.workflow.orchestrator.core.model.sonar.NewCodeCoverageSummary
+import com.workflow.orchestrator.core.model.sonar.FileQualityReport
+import com.workflow.orchestrator.core.model.sonar.LineRange
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.sonar.api.SonarApiClient
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * Unified SonarQube service implementation used by both UI panels and AI agent.
@@ -803,7 +811,373 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
+    override suspend fun getBranchQualityReport(
+        projectKey: String,
+        branch: String,
+        maxFiles: Int,
+        repoName: String?
+    ): ToolResult<BranchQualityReportData> {
+        val api = client ?: return ToolResult(
+            data = BranchQualityReportData(
+                branch = branch,
+                qualityGate = QualityGateData(status = "ERROR"),
+                issueSummary = IssueSummary(0, 0, 0, 0),
+                issues = emptyList(),
+                securityHotspots = emptyList(),
+                coverageSummary = NewCodeCoverageSummary(null, null, 0, 0, null),
+                fileReports = emptyList()
+            ),
+            summary = "SonarQube not configured. Cannot generate branch quality report.",
+            isError = true,
+            hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        // ── Phase 1: parallel project-level fetches ─────────────────────────
+        val newCodeMetrics = "new_uncovered_lines,new_line_coverage,new_branch_coverage," +
+            "new_uncovered_conditions,new_duplicated_lines,new_duplicated_lines_density"
+
+        val gate: ApiResult<com.workflow.orchestrator.sonar.api.dto.SonarQualityGateDto>
+        val issues: ApiResult<List<com.workflow.orchestrator.sonar.api.dto.SonarIssueDto>>
+        val hotspots: ApiResult<com.workflow.orchestrator.sonar.api.dto.SonarHotspotSearchResult>
+        val fileMeasures: ApiResult<List<com.workflow.orchestrator.sonar.api.dto.SonarMeasureComponentDto>>
+
+        coroutineScope {
+            val gateDeferred = async { api.getQualityGateStatus(projectKey, branch) }
+            val issuesDeferred = async { api.getIssues(projectKey, branch = branch, inNewCodePeriod = true) }
+            val hotspotsDeferred = async { api.getSecurityHotspots(projectKey, branch) }
+            val measuresDeferred = async { api.getMeasures(projectKey, branch, newCodeMetrics) }
+            gate = gateDeferred.await()
+            issues = issuesDeferred.await()
+            hotspots = hotspotsDeferred.await()
+            fileMeasures = measuresDeferred.await()
+        }
+
+        // Map quality gate
+        val qualityGate = when (gate) {
+            is ApiResult.Success -> QualityGateData(
+                status = gate.data.status,
+                conditions = gate.data.conditions.map { c ->
+                    QualityCondition(metric = c.metricKey, operator = c.comparator, value = c.actualValue, status = c.status)
+                }
+            )
+            is ApiResult.Error -> QualityGateData(status = "ERROR")
+        }
+
+        // Map issues
+        val mappedIssues = when (issues) {
+            is ApiResult.Success -> issues.data.map { dto ->
+                SonarIssueData(
+                    key = dto.key, rule = dto.rule, severity = dto.severity,
+                    message = dto.message, component = dto.component,
+                    line = dto.textRange?.startLine, status = "OPEN", type = dto.type
+                )
+            }
+            is ApiResult.Error -> emptyList()
+        }
+
+        val issueSummary = IssueSummary(
+            bugs = mappedIssues.count { it.type == "BUG" },
+            vulnerabilities = mappedIssues.count { it.type == "VULNERABILITY" },
+            codeSmells = mappedIssues.count { it.type == "CODE_SMELL" },
+            total = mappedIssues.size
+        )
+
+        // Map security hotspots
+        val mappedHotspots = when (hotspots) {
+            is ApiResult.Success -> hotspots.data.hotspots.map { dto ->
+                SecurityHotspotData(
+                    key = dto.key, message = dto.message, component = dto.component,
+                    line = dto.line, securityCategory = dto.securityCategory,
+                    probability = dto.vulnerabilityProbability, status = dto.status,
+                    resolution = dto.resolution
+                )
+            }
+            is ApiResult.Error -> emptyList()
+        }
+
+        // ── Phase 2: identify files needing drill-down ──────────────────────
+        data class FileMeasureInfo(
+            val componentKey: String,
+            val filePath: String,
+            val newUncoveredLines: Int,
+            val newUncoveredConditions: Int,
+            val newLineCoverage: Double?,
+            val newBranchCoverage: Double?,
+            val newDuplicatedLines: Int
+        )
+
+        val fileInfos = when (fileMeasures) {
+            is ApiResult.Success -> fileMeasures.data.mapNotNull { comp ->
+                val m = comp.measures.associate { it.metric to it.value }
+                val uncoveredLines = m["new_uncovered_lines"]?.toIntOrNull() ?: 0
+                val uncoveredConds = m["new_uncovered_conditions"]?.toIntOrNull() ?: 0
+                val dupLines = m["new_duplicated_lines"]?.toIntOrNull() ?: 0
+                // Only include files that have something to report
+                if (uncoveredLines > 0 || uncoveredConds > 0 || dupLines > 0) {
+                    FileMeasureInfo(
+                        componentKey = comp.key,
+                        filePath = comp.path ?: comp.name,
+                        newUncoveredLines = uncoveredLines,
+                        newUncoveredConditions = uncoveredConds,
+                        newLineCoverage = m["new_line_coverage"]?.toDoubleOrNull(),
+                        newBranchCoverage = m["new_branch_coverage"]?.toDoubleOrNull(),
+                        newDuplicatedLines = dupLines
+                    )
+                } else null
+            }.sortedByDescending { it.newUncoveredLines + it.newDuplicatedLines }
+            is ApiResult.Error -> emptyList()
+        }
+
+        val truncated = fileInfos.size > maxFiles
+        val filesToDrill = fileInfos.take(maxFiles)
+
+        // Coverage summary from aggregated file info
+        val totalNewUncoveredLines = fileInfos.sumOf { it.newUncoveredLines }
+        val totalNewUncoveredConditions = fileInfos.sumOf { it.newUncoveredConditions }
+
+        // Get project-level new code coverage from measures/component
+        val projectNewCodeMetrics = "new_line_coverage,new_branch_coverage,new_duplicated_lines_density"
+        val projectMeasures = api.getProjectMeasures(projectKey, branch, projectNewCodeMetrics)
+        val projM = when (projectMeasures) {
+            is ApiResult.Success -> projectMeasures.data.associate { it.metric to it.value }
+            is ApiResult.Error -> emptyMap()
+        }
+
+        val coverageSummary = NewCodeCoverageSummary(
+            lineCoverage = projM["new_line_coverage"]?.toDoubleOrNull(),
+            branchCoverage = projM["new_branch_coverage"]?.toDoubleOrNull(),
+            newUncoveredLines = totalNewUncoveredLines,
+            newUncoveredConditions = totalNewUncoveredConditions,
+            duplicatedLinesDensity = projM["new_duplicated_lines_density"]?.toDoubleOrNull()
+        )
+
+        // ── Phase 3: per-file drill-down for exact line numbers ─────────────
+        val fileReports = if (filesToDrill.isNotEmpty()) {
+            coroutineScope {
+                filesToDrill.map { info ->
+                    async {
+                        buildFileReport(
+                            api, info.componentKey, info.filePath, branch,
+                            FileQualityReportInfo(
+                                newUncoveredLines = info.newUncoveredLines,
+                                newUncoveredConditions = info.newUncoveredConditions,
+                                newLineCoverage = info.newLineCoverage,
+                                newBranchCoverage = info.newBranchCoverage,
+                                newDuplicatedLines = info.newDuplicatedLines
+                            )
+                        )
+                    }
+                }.awaitAll()
+            }
+        } else {
+            emptyList()
+        }
+
+        val data = BranchQualityReportData(
+            branch = branch,
+            qualityGate = qualityGate,
+            issueSummary = issueSummary,
+            issues = mappedIssues,
+            securityHotspots = mappedHotspots,
+            coverageSummary = coverageSummary,
+            fileReports = fileReports,
+            truncatedFiles = truncated
+        )
+
+        // ── Build LLM summary ───────────────────────────────────────────────
+        val summary = buildBranchQualityReportSummary(data, projectKey)
+        return ToolResult.success(data = data, summary = summary)
+    }
+
+    private suspend fun buildFileReport(
+        api: SonarApiClient,
+        componentKey: String,
+        filePath: String,
+        branch: String,
+        fileInfo: FileQualityReportInfo
+    ): FileQualityReport {
+
+        // Parallel: source lines (for coverage) + duplications
+        val (sourceResult, dupResult) = coroutineScope {
+            val src = async { api.getSourceLines(componentKey, branch = branch) }
+            val dup = if (fileInfo.newDuplicatedLines > 0) {
+                async { api.getDuplications(componentKey, branch) }
+            } else null
+            Pair(src.await(), dup?.await())
+        }
+
+        // Extract uncovered line numbers and uncovered branch line numbers
+        val uncoveredLines = mutableListOf<Int>()
+        val uncoveredBranchLines = mutableListOf<Int>()
+        when (sourceResult) {
+            is ApiResult.Success -> {
+                for (line in sourceResult.data) {
+                    if (line.lineHits != null && line.lineHits <= 0) {
+                        uncoveredLines.add(line.line)
+                    }
+                    if (line.conditions != null && line.conditions > 0) {
+                        val covered = line.coveredConditions ?: 0
+                        if (covered < line.conditions) {
+                            uncoveredBranchLines.add(line.line)
+                        }
+                    }
+                }
+            }
+            is ApiResult.Error -> { /* best-effort — skip this file's line details */ }
+        }
+
+        // Extract duplication ranges
+        val dupRanges = mutableListOf<LineRange>()
+        if (dupResult != null) {
+            when (dupResult) {
+                is ApiResult.Success -> {
+                    val fileMap = dupResult.data.files
+                    // Find the ref for this file
+                    val selfRef = fileMap.entries.find {
+                        it.value.key == componentKey || it.value.name == filePath.substringAfterLast('/')
+                    }?.key
+                    for (dup in dupResult.data.duplications) {
+                        for (block in dup.blocks) {
+                            if (block.ref == selfRef || selfRef == null) {
+                                dupRanges.add(LineRange(block.from, block.from + block.size - 1))
+                            }
+                        }
+                    }
+                }
+                is ApiResult.Error -> { /* best-effort */ }
+            }
+        }
+
+        return FileQualityReport(
+            filePath = filePath,
+            lineCoverage = fileInfo.newLineCoverage,
+            branchCoverage = fileInfo.newBranchCoverage,
+            uncoveredLineNumbers = uncoveredLines.sorted(),
+            uncoveredBranchLineNumbers = uncoveredBranchLines.sorted(),
+            duplicatedLineRanges = dupRanges.sortedBy { it.startLine }
+        )
+    }
+
+    /** Type-safe wrapper to pass file info through buildFileReport. */
+    private data class FileQualityReportInfo(
+        val newUncoveredLines: Int,
+        val newUncoveredConditions: Int,
+        val newLineCoverage: Double?,
+        val newBranchCoverage: Double?,
+        val newDuplicatedLines: Int
+    )
+
+    private fun buildBranchQualityReportSummary(data: BranchQualityReportData, projectKey: String): String = buildString {
+        append("Branch Quality Report: $projectKey (${data.branch}) — New Code\n")
+        append("═══════════════════════════════════════════════════\n\n")
+
+        // Quality gate
+        append("Quality Gate: ${data.qualityGate.status}")
+        val failedConds = data.qualityGate.conditions.filter { it.status == "ERROR" }
+        if (failedConds.isNotEmpty()) {
+            append(" (${failedConds.size} failed)")
+            failedConds.forEach { c -> append("\n  FAILED: ${c.metric} = ${c.value}") }
+        }
+        append("\n\n")
+
+        // Issue summary
+        val s = data.issueSummary
+        append("Issues: ${s.total} total")
+        if (s.total > 0) {
+            val parts = mutableListOf<String>()
+            if (s.bugs > 0) parts.add("${s.bugs} bugs")
+            if (s.vulnerabilities > 0) parts.add("${s.vulnerabilities} vulnerabilities")
+            if (s.codeSmells > 0) parts.add("${s.codeSmells} code smells")
+            append(" (${parts.joinToString(", ")})")
+        }
+        append("\n")
+
+        // Top issues
+        if (data.issues.isNotEmpty()) {
+            data.issues.take(10).forEach { issue ->
+                val file = issue.component.substringAfterLast(':').substringAfterLast('/')
+                val loc = issue.line?.let { "$file:$it" } ?: file
+                append("  [${issue.severity}/${issue.type}] $loc — ${issue.message.take(100)}\n")
+            }
+            if (data.issues.size > 10) append("  ... and ${data.issues.size - 10} more\n")
+        }
+        append("\n")
+
+        // Security hotspots
+        if (data.securityHotspots.isNotEmpty()) {
+            append("Security Hotspots: ${data.securityHotspots.size}\n")
+            data.securityHotspots.take(5).forEach { h ->
+                val file = h.component.substringAfterLast(':').substringAfterLast('/')
+                val loc = h.line?.let { "$file:$it" } ?: file
+                append("  [${h.probability}] $loc — ${h.message.take(100)} (${h.status})\n")
+            }
+            if (data.securityHotspots.size > 5) append("  ... and ${data.securityHotspots.size - 5} more\n")
+            append("\n")
+        }
+
+        // Coverage summary
+        val cov = data.coverageSummary
+        append("Coverage (new code):")
+        cov.lineCoverage?.let { append(" Line=${"%.1f".format(it)}%") }
+        cov.branchCoverage?.let { append(" | Branch=${"%.1f".format(it)}%") }
+        append("\n")
+        append("  Uncovered lines: ${cov.newUncoveredLines} | Uncovered conditions: ${cov.newUncoveredConditions}")
+        cov.duplicatedLinesDensity?.let { append(" | Duplication: ${"%.1f".format(it)}%") }
+        append("\n\n")
+
+        // Per-file details
+        if (data.fileReports.isNotEmpty()) {
+            append("File Details (${data.fileReports.size} files")
+            if (data.truncatedFiles) append(", showing top $maxFilesDefault")
+            append("):\n")
+            append("───────────────────────────────────────────────────\n")
+
+            for (fr in data.fileReports) {
+                val fileName = fr.filePath.substringAfterLast('/')
+                append("\n$fileName")
+                fr.lineCoverage?.let { append("  Line=${"%.1f".format(it)}%") }
+                fr.branchCoverage?.let { append("  Branch=${"%.1f".format(it)}%") }
+                append("\n")
+
+                if (fr.uncoveredLineNumbers.isNotEmpty()) {
+                    append("  Uncovered lines: ${compactLineNumbers(fr.uncoveredLineNumbers)}\n")
+                }
+                if (fr.uncoveredBranchLineNumbers.isNotEmpty()) {
+                    append("  Uncovered branches: ${compactLineNumbers(fr.uncoveredBranchLineNumbers)}\n")
+                }
+                if (fr.duplicatedLineRanges.isNotEmpty()) {
+                    append("  Duplicated: ${fr.duplicatedLineRanges.joinToString(", ")}\n")
+                }
+            }
+        }
+    }
+
+    /**
+     * Compact consecutive line numbers into ranges for readability.
+     * e.g. [1,2,3,5,7,8,9] → "1-3, 5, 7-9"
+     */
+    private fun compactLineNumbers(lines: List<Int>): String {
+        if (lines.isEmpty()) return ""
+        val sorted = lines.sorted()
+        val ranges = mutableListOf<String>()
+        var start = sorted[0]
+        var end = sorted[0]
+        for (i in 1 until sorted.size) {
+            if (sorted[i] == end + 1) {
+                end = sorted[i]
+            } else {
+                ranges.add(if (start == end) "$start" else "$start-$end")
+                start = sorted[i]
+                end = sorted[i]
+            }
+        }
+        ranges.add(if (start == end) "$start" else "$start-$end")
+        return ranges.joinToString(", ")
+    }
+
     companion object {
+        private const val maxFilesDefault = 20
+
         @JvmStatic
         fun getInstance(project: Project): SonarServiceImpl =
             project.getService(SonarService::class.java) as SonarServiceImpl

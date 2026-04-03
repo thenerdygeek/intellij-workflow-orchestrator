@@ -199,3 +199,67 @@ data class PagedIssuesData(
     val page: Int,
     val pageSize: Int
 )
+
+// ── Branch Quality Report (consolidated new-code report) ──────────────────
+
+/**
+ * A line range (inclusive) within a file.
+ */
+@Serializable
+data class LineRange(val startLine: Int, val endLine: Int) {
+    override fun toString(): String =
+        if (startLine == endLine) "$startLine" else "$startLine-$endLine"
+}
+
+/**
+ * Per-file quality details: exact uncovered lines, uncovered branches, and duplicated blocks.
+ */
+@Serializable
+data class FileQualityReport(
+    val filePath: String,
+    val lineCoverage: Double?,
+    val branchCoverage: Double?,
+    val uncoveredLineNumbers: List<Int>,
+    val uncoveredBranchLineNumbers: List<Int>,
+    val duplicatedLineRanges: List<LineRange>
+)
+
+/**
+ * Issue count breakdown by type.
+ */
+@Serializable
+data class IssueSummary(
+    val bugs: Int,
+    val vulnerabilities: Int,
+    val codeSmells: Int,
+    val total: Int
+)
+
+/**
+ * New-code coverage summary with uncovered counts.
+ */
+@Serializable
+data class NewCodeCoverageSummary(
+    val lineCoverage: Double?,
+    val branchCoverage: Double?,
+    val newUncoveredLines: Int,
+    val newUncoveredConditions: Int,
+    val duplicatedLinesDensity: Double?
+)
+
+/**
+ * Consolidated branch quality report — one tool call gives the LLM everything
+ * about new-code quality: quality gate, issues, hotspots, coverage gaps,
+ * duplications, with exact line numbers per file.
+ */
+@Serializable
+data class BranchQualityReportData(
+    val branch: String,
+    val qualityGate: QualityGateData,
+    val issueSummary: IssueSummary,
+    val issues: List<SonarIssueData>,
+    val securityHotspots: List<SecurityHotspotData>,
+    val coverageSummary: NewCodeCoverageSummary,
+    val fileReports: List<FileQualityReport>,
+    val truncatedFiles: Boolean = false
+)

@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.core.model.sonar.DuplicationData
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
+import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData
 
 /**
  * SonarQube operations used by both UI panels and AI agent.
@@ -60,4 +61,18 @@ interface SonarService {
 
     /** Get rule details (name, description, remediation) for a specific rule key. */
     suspend fun getRule(ruleKey: String, repoName: String? = null): ToolResult<SonarRuleData>
+
+    /**
+     * Consolidated branch quality report for new code.
+     *
+     * Fetches quality gate, issues, security hotspots, coverage, and duplications
+     * in parallel, then drills down into the top [maxFiles] files with coverage gaps
+     * or duplications to extract exact uncovered/duplicated line numbers.
+     */
+    suspend fun getBranchQualityReport(
+        projectKey: String,
+        branch: String,
+        maxFiles: Int = 20,
+        repoName: String? = null
+    ): ToolResult<BranchQualityReportData>
 }
