@@ -427,6 +427,103 @@ class LoopGuardTest {
         assertFalse(LoopGuard.isCondensationLooping(nineEvents))
     }
 
+    // --- Re-read blocking ---
+
+    @Test
+    fun `blocks read_file after 3 reads of same file`() {
+        val guard = LoopGuard()
+        // First read — allowed
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        // Interleave a different tool to avoid doom loop
+        assertNull(guard.checkDoomLoop("think", """{"thought": "analyzing"}"""))
+        // Second read — allowed
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "more analysis"}"""))
+        // Third read — BLOCKED
+        val result = guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        assertNotNull(result)
+        assertTrue(result!!.contains("3 times"), "Expected count in message, got: $result")
+        assertTrue(result.contains("search_code") || result.contains("offset"), "Expected guidance, got: $result")
+    }
+
+    @Test
+    fun `clearFileRead resets re-read count allowing fresh reads`() {
+        val guard = LoopGuard()
+        guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        // 2 reads — close to limit. Now simulate edit -> clear
+        guard.clearFileRead("/src/Main.kt")
+        // Break doom loop sequence with a different tool before resuming reads
+        assertNull(guard.checkDoomLoop("diagnostics", """{"path": "/src/Main.kt"}"""))
+        // After clear, count resets — next read is count=1 again
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "re-reading after edit"}"""))
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "still analyzing"}"""))
+        // Third read after clear — blocked again
+        val result = guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        assertNotNull(result)
+    }
+
+    @Test
+    fun `re-read count is per file not global`() {
+        val guard = LoopGuard()
+        guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}""")
+        // A at count 1, B at count 2 — neither blocked yet
+        // Third read of B — blocked
+        val result = guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}""")
+        assertNotNull(result)
+        // A still at count 1 — NOT blocked
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}"""))
+    }
+
+    // --- Normalized args hash ---
+
+    @Test
+    fun `doom loop detects identical calls with different JSON whitespace`() {
+        val guard = LoopGuard()
+        // Same logical args but different JSON formatting
+        assertNull(guard.checkDoomLoop("search_code", """{"query":"TODO","path":"/src"}"""))
+        assertNull(guard.checkDoomLoop("search_code", """{ "query": "TODO", "path": "/src" }"""))
+        // Third call with yet another whitespace variant — should trigger doom loop
+        val result = guard.checkDoomLoop("search_code", """{"query" : "TODO" , "path" : "/src"}""")
+        assertNotNull(result, "Expected doom loop detection with normalized args")
+        assertTrue(result!!.contains("same arguments"))
+    }
+
+    @Test
+    fun `normalizeArgs produces consistent output for different JSON formatting`() {
+        val a = LoopGuard.normalizeArgs("""{"path": "/src/Main.kt"}""")
+        val b = LoopGuard.normalizeArgs("""{"path":"/src/Main.kt"}""")
+        val c = LoopGuard.normalizeArgs("""{ "path" : "/src/Main.kt" }""")
+        assertEquals(a, b, "Different whitespace should normalize to same string")
+        assertEquals(b, c, "Different whitespace should normalize to same string")
+    }
+
+    @Test
+    fun `normalizeArgs handles invalid JSON gracefully`() {
+        val invalid = "not json at all"
+        assertEquals(invalid, LoopGuard.normalizeArgs(invalid), "Invalid JSON should return input unchanged")
+    }
+
+    // --- clearAllFileReads ---
+
+    @Test
+    fun `clearAllFileReads resets all re-read counts`() {
+        val guard = LoopGuard()
+        guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}""")
+        // Both at count 2. Clear all.
+        guard.clearAllFileReads()
+        // Both can be read again
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/A.kt"}"""))
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}"""))
+    }
+
     // --- Helper ---
 
     private var toolCallCounter = 0
