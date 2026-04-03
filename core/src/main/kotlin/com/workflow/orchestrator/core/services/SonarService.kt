@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.model.sonar.SonarProjectData
 import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.core.model.sonar.DuplicationData
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
+import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 
 /**
  * SonarQube operations used by both UI panels and AI agent.
@@ -56,4 +57,7 @@ interface SonarService {
 
     /** Get issues with paging metadata for pagination support, optionally for a specific branch and/or new code period. */
     suspend fun getIssuesPaged(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null, inNewCodePeriod: Boolean = false): ToolResult<PagedIssuesData>
+
+    /** Get rule details (name, description, remediation) for a specific rule key. */
+    suspend fun getRule(ruleKey: String, repoName: String? = null): ToolResult<SonarRuleData>
 }

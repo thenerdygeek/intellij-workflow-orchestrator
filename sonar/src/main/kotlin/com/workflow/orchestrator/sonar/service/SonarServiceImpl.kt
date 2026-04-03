@@ -19,6 +19,7 @@ import com.workflow.orchestrator.core.model.sonar.DuplicationData
 import com.workflow.orchestrator.core.model.sonar.DuplicationBlock
 import com.workflow.orchestrator.core.model.sonar.DuplicationFragment
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
+import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.sonar.api.SonarApiClient
@@ -765,6 +766,38 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     summary = "Error fetching duplications for $componentKey: ${result.message}",
                     isError = true,
                     hint = "Check SonarQube connection and component key."
+                )
+            }
+        }
+    }
+
+    override suspend fun getRule(ruleKey: String, repoName: String?): ToolResult<SonarRuleData> {
+        val api = client ?: return ToolResult(
+            data = SonarRuleData(ruleKey = ruleKey, name = "", description = "", remediation = null),
+            summary = "SonarQube not configured. Cannot fetch rule details.",
+            isError = true,
+            hint = "Configure SonarQube URL and token in Settings > CI/CD."
+        )
+
+        return when (val result = api.getRule(ruleKey)) {
+            is ApiResult.Success -> {
+                val dto = result.data
+                val data = SonarRuleData(
+                    ruleKey = dto.key,
+                    name = dto.name,
+                    description = dto.mdDesc ?: dto.htmlDesc ?: "",
+                    remediation = dto.remFnBaseEffort,
+                    tags = dto.tags
+                )
+                ToolResult.success(data = data, summary = "Rule ${dto.key}: ${dto.name}")
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch rule $ruleKey: ${result.message}")
+                ToolResult(
+                    data = SonarRuleData(ruleKey = ruleKey, name = "", description = "", remediation = null),
+                    summary = "Error fetching rule $ruleKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and token."
                 )
             }
         }

@@ -253,6 +253,23 @@ data class SonarDuplicationFileDto(
     val projectName: String = ""
 )
 
+// --- Rule Details ---
+
+@Serializable
+data class SonarRuleShowResponseDto(
+    val rule: SonarRuleDto
+)
+
+@Serializable
+data class SonarRuleDto(
+    val key: String,
+    val name: String,
+    val htmlDesc: String? = null,
+    val mdDesc: String? = null,
+    val remFnBaseEffort: String? = null,
+    val tags: List<String> = emptyList()
+)
+
 // --- Source Lines (per-line coverage) ---
 
 @Serializable

@@ -227,6 +227,12 @@ class SonarApiClient(
         return get<SonarDuplicationsResponse>(params)
     }
 
+    suspend fun getRule(ruleKey: String): ApiResult<SonarRuleDto> {
+        log.info("[Sonar:API] GET /api/rules/show for rule '$ruleKey'")
+        val encoded = URLEncoder.encode(ruleKey, "UTF-8")
+        return get<SonarRuleShowResponseDto>("/api/rules/show?key=$encoded").map { it.rule }
+    }
+
     suspend fun getSourceLines(
         componentKey: String,
         from: Int? = null,
