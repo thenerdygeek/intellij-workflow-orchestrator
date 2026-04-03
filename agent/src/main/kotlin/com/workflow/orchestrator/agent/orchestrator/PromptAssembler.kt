@@ -267,6 +267,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             - Use git_* tools for ALL git operations. NEVER use run_command for git.
             - ALWAYS fill the 'description' parameter on tools that have it — the user sees it in the approval dialog.
             - To CREATE a new file: use edit_file with old_string="" and new_string=<full content>. NEVER use run_command with cat/echo/heredoc to write files — shell-created files bypass IntelliJ's VFS and appear as untracked.
+            - Manage output size: for large files, use read_file with offset+limit to read only the relevant section. Use file_structure first to find target regions. For search_code, prefer output_mode="files" when you need file names, "content" for matching lines. For run_command, pipe through head/tail or use limit flags to avoid dumping large output into context.
             </tool_policy>
         """.trimIndent()
 
@@ -519,6 +520,8 @@ To invoke: call skill(skill="name"). Users can also type /skill-name in chat.
             - run_command requires a 'shell' parameter. Match command syntax to the shell: 'ls' in bash, 'dir' in cmd, 'Get-ChildItem' in powershell. Never mix syntax across shells.
             - If you call the same tool 3 times with identical arguments, try a different approach.
             - If a tool call returns an error, address the error before continuing. Do not retry with identical arguments.
+            - If an edit fails mid-sequence (old_string not found), re-read the file, assess remaining edits, and continue. Report any edits you could not apply in your completion summary.
+            - If the task is ambiguous and multiple valid interpretations would lead to significantly different implementations, ask the user to clarify before proceeding with major changes.
             - For IntelliJ plugin code: never block the EDT, use suspend functions for I/O.
             - After completing a task, suggest 1-3 concrete, contextual next steps the user might want to take.
             </rules>
