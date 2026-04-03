@@ -81,7 +81,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-## Tools (68 registered, 15 meta-tools consolidating 143 actions)
+## Tools (68 registered, 15 meta-tools consolidating 144 actions)
 
 | Category | Tools |
 |----------|-------|
@@ -98,7 +98,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Build Systems | **build** (11 actions: maven_dependencies/properties/plugins/profiles/dependency_tree/effective_pom, gradle_dependencies/tasks/properties, project_modules, module_dependency_graph) |
 | Jira | **jira** (17 actions: get_ticket, search_issues, search_tickets, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work, download_attachment) |
 | CI/CD — Bamboo | **bamboo_builds** (11 actions: build_status, get_build, trigger_build, stop_build, cancel_build, get_build_log, get_test_results, get_artifacts, download_artifact, recent_builds, get_running_builds), **bamboo_plans** (8 actions: get_plans, get_project_plans, search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage) |
-| Quality — SonarQube | **sonar** (11 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications) |
+| Quality — SonarQube | **sonar** (12 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications, branch_quality_report) |
 | Pull Requests — Bitbucket | **bitbucket_pr** (14 actions: create/approve/merge/decline_pr, get_pr_detail/commits/activities/changes/diff, check_merge_status, update_pr_title/description, get_my_prs, get_reviewing_prs), **bitbucket_review** (6 actions: add_pr_comment, add_inline_comment, reply_to_comment, add/remove_reviewer, set_reviewer_status), **bitbucket_repo** (6 actions: get_branches, create_branch, search_users, get_file_content, get_build_statuses, list_repos) |
 | Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
 | Skills | Skill |
