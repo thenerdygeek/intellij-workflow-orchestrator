@@ -156,6 +156,7 @@ class SingleAgentSession(
          */
         private val TEXT_TOOL_CALL_PATTERNS = listOf(
             Regex("""<tool_calls?>[\s\S]*?</tool_calls?>""", RegexOption.IGNORE_CASE),
+            Regex("""<tool_calls?\s*/>""", RegexOption.IGNORE_CASE), // self-closing: <tool_calls/> echo from placeholder
             Regex("""<function[_=][\s\S]*?</function>""", RegexOption.IGNORE_CASE),
             Regex("""<tool_use[\s>][\s\S]*?</tool_use>""", RegexOption.IGNORE_CASE),
             Regex(""""name"\s*:\s*"(read_file|edit_file|search_code|run_command|create_file|glob_files|diagnostics|attempt_completion|agent|think)"[\s\S]*?"arguments"\s*:"""),
@@ -164,7 +165,7 @@ class SingleAgentSession(
         )
 
         fun containsTextToolCalls(content: String): Boolean {
-            if (content.length < 20) return false
+            if (content.length < 5) return false
             return TEXT_TOOL_CALL_PATTERNS.any { it.containsMatchIn(content) }
         }
 

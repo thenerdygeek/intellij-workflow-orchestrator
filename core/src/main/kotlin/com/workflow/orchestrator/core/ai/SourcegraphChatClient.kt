@@ -221,16 +221,19 @@ class SourcegraphChatClient(
         }
         // Case 2: Assistant messages with tool calls but null/empty content → set placeholder
         // (LLM often returns content=null when making tool calls — this is normal)
-        // IMPORTANT: Do NOT use natural language like "Using tools." here — the LLM sees this
-        // placeholder in conversation history and learns to reproduce it verbatim as a text
-        // response when confused, causing a stuck loop. Use a structural XML marker instead:
-        // the LLM will never generate "<tool_calls/>" as natural conversational output.
+        // IMPORTANT: When the assistant makes tool calls, the API often returns content=null.
+        // But Anthropic/Sourcegraph rejects empty content in conversation history. We need a
+        // placeholder. Requirements:
+        // 1. Not natural language — LLM will echo it back as a response (known stuck loop)
+        // 2. Not XML that looks like tool syntax — LLM reproduces <tool_calls/> verbatim
+        // 3. Short and obviously structural — won't be mistaken for actual output
+        // Using a unicode marker that no LLM would generate as a natural response:
         for (i in merged.indices) {
             val msg = merged[i]
             if (msg.role == "assistant" && msg.content.isNullOrBlank() && !msg.toolCalls.isNullOrEmpty()) {
                 merged[i] = ChatMessage(
                     role = "assistant",
-                    content = "<tool_calls/>",
+                    content = "\u200B", // zero-width space — invisible, non-empty, impossible to echo
                     toolCalls = msg.toolCalls
                 )
             }
