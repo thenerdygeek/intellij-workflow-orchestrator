@@ -141,11 +141,25 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
                     val inWarningZone = cond.warningThreshold?.let { wt ->
                         isInWarningZone(cond.actualValue, wt, cond.threshold, cond.comparator)
                     } ?: false
-                    if (inWarningZone) StatusColors.WARNING else JBColor.GRAY
+                    if (inWarningZone) StatusColors.WARNING else StatusColors.SUCCESS
                 }
                 else -> StatusColors.ERROR
             }
             gateConditionsPanel.add(label)
+        }
+
+        // Widen gate card left accent border from 2px to 4px when FAILED
+        val gateCard = gateStatusLabel.parent?.parent
+        if (gateCard is JPanel && state.qualityGate.status == QualityGateStatus.FAILED) {
+            gateCard.border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 4, 0, 0, StatusColors.ERROR),
+                JBUI.Borders.empty(10)
+            )
+        } else if (gateCard is JPanel) {
+            gateCard.border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 2, 0, 0, ACCENT_GATE),
+                JBUI.Borders.empty(10)
+            )
         }
 
         // Coverage

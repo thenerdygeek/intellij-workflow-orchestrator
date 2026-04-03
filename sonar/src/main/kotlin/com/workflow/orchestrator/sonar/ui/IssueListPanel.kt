@@ -168,6 +168,22 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         })
     }
 
+    /**
+     * Applies a pre-filter to the issue list by selecting the appropriate type and resetting severity.
+     * Used by GateStatusBanner to navigate directly to failing issue types.
+     */
+    fun applyPreFilter(type: IssueType?, newCodeMode: Boolean?) {
+        val typeIndex = when (type) {
+            IssueType.BUG -> 1
+            IssueType.VULNERABILITY -> 2
+            IssueType.CODE_SMELL -> 3
+            IssueType.SECURITY_HOTSPOT -> 4
+            null -> 0
+        }
+        filterCombo.selectedIndex = typeIndex
+        severityCombo.selectedIndex = 0
+    }
+
     fun update(issues: List<MappedIssue>, totalCount: Int? = null) {
         allIssues = issues
         // Show pagination warning when results are truncated

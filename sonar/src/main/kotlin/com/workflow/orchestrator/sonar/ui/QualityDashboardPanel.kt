@@ -83,6 +83,9 @@ class QualityDashboardPanel(
     private val statusLabel = JBLabel("Loading...")
     private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
+    private val gateBanner = GateStatusBanner()
+    private lateinit var tabbedPane: JBTabbedPane
+
     // Tab-aware rendering: track which tab is visible and what state was last rendered per tab
     private var selectedTabIndex = 0
     private var lastRenderedState: SonarState? = null
@@ -144,7 +147,7 @@ class QualityDashboardPanel(
             add(newCodePeriodLabel)
         }
 
-        // Top section: toolbar + branch info
+        // Top section: toolbar + branch info + gate banner
         val topSection = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             val toolbarRow = JPanel(BorderLayout()).apply {
@@ -153,11 +156,23 @@ class QualityDashboardPanel(
             }
             add(toolbarRow)
             add(branchInfoPanel)
+            add(gateBanner)
         }
         add(topSection, BorderLayout.NORTH)
 
+        // Wire gate banner callback for cross-tab navigation
+        gateBanner.onShowBlockingIssues = { filter ->
+            if (filter.isCoverageCondition) {
+                tabbedPane.selectedIndex = 2  // Coverage tab
+            } else {
+                if (filter.newCodeMode) dataService.setNewCodeMode(true)
+                tabbedPane.selectedIndex = 1  // Issues tab
+                filter.issueType?.let { issueListPanel.applyPreFilter(it, filter.newCodeMode) }
+            }
+        }
+
         // Sub-tabbed pane — track selected tab for lazy rendering
-        val tabbedPane = JBTabbedPane().apply {
+        tabbedPane = JBTabbedPane().apply {
             addTab("Overview", overviewPanel)
             addTab("Issues", issueListPanel)
             addTab("Coverage", coverageTablePanel)
@@ -330,6 +345,9 @@ class QualityDashboardPanel(
             || prev.fileCoverage != state.fileCoverage
             || prev.newCodeMode != state.newCodeMode
             || prev.totalCoverageFileCount != state.totalCoverageFileCount
+
+        // Update gate banner
+        gateBanner.update(state.qualityGate)
 
         // Mark stale flags for tabs whose data changed
         if (overviewChanged) overviewStale = true
