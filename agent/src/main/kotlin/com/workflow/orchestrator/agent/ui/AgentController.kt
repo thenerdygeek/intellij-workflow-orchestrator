@@ -455,6 +455,9 @@ class AgentController(
             onViewTrace = { openLatestTrace() },
             onPromptSubmitted = { text -> executeTask(text) }
         )
+        panel.setCefSkillCallbacks(
+            onDismiss = { session?.skillManager?.deactivateSkill() }
+        )
         panel.setCefPlanCallbacks(
             onApprove = {
                 session?.planManager?.approvePlan()

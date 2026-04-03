@@ -270,6 +270,48 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   completeSubAgent(payload: string) {
     stores?.getChatStore().completeSubAgent(payload);
   },
+  loadChatSnapshot(snapshotJson: string) {
+    try {
+      const snapshot = JSON.parse(snapshotJson);
+      const store = stores?.getChatStore();
+      if (!store) return;
+      // Restore messages
+      if (snapshot.messages) {
+        for (const msg of snapshot.messages) {
+          if (msg.toolChain) {
+            store.addMessage('agent', '');
+            // Patch the last message to include the toolChain
+            const messages = store.messages ?? [];
+            if (messages.length > 0) {
+              messages[messages.length - 1].toolChain = msg.toolChain;
+            }
+          } else if (msg.subAgent) {
+            store.addMessage('agent', '');
+            const messages = store.messages ?? [];
+            if (messages.length > 0) {
+              messages[messages.length - 1].subAgent = msg.subAgent;
+            }
+          } else {
+            store.addMessage(msg.role, msg.content || '');
+          }
+        }
+      }
+      // Restore plan
+      if (snapshot.plan) store.setPlan(snapshot.plan);
+      // Restore session info
+      if (snapshot.session) {
+        store.session = snapshot.session;
+      }
+      // Restore token budget
+      if (snapshot.tokenBudget) {
+        store.updateTokenBudget(snapshot.tokenBudget.used, snapshot.tokenBudget.max);
+      }
+      // Restore busy state
+      if (snapshot.busy) store.setBusy(true);
+    } catch (e) {
+      console.error('[bridge] loadChatSnapshot error:', e);
+    }
+  },
 };
 
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
