@@ -29,7 +29,11 @@ Key endpoints:
 
 ## UI
 
-- `QualityDashboardPanel` — 3 sub-panels: overview, issue list, coverage table
+- `QualityDashboardPanel` — 3 sub-panels: overview, issue list (with detail split pane), coverage table (with preview pane). GateStatusBanner shown when gate fails.
+- `IssueDetailPanel` — Split pane detail view: code snippet, rule info, severity/type badges, Fix with AI Agent
+- `CoveragePreviewPanel` — Uncovered region preview with file metrics, Open in Editor action
+- `GateStatusBanner` — Full-width error banner for failed quality gate with Show Blocking Issues cross-tab action
+- `QualityListItem` — Sealed interface unifying MappedIssue and SecurityHotspotData for the issues list
 - `SonarIssueAnnotator` — `ExternalAnnotator` (3-phase async: collectInfo -> doAnnotate -> apply)
 - `CoverageLineMarkerProvider` — gutter markers for coverage (on-demand fetch via getSourceLines)
   - Colors: red (blocker/critical), yellow (major), grey (minor)
