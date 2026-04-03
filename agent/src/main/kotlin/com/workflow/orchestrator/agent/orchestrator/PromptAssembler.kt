@@ -62,7 +62,7 @@ class PromptAssembler(
 
         // Skill rules — primacy zone so LLM sees them before any context data
         if (!skillDescriptions.isNullOrBlank()) {
-            sections.add(SKILL_RULES_TEMPLATE.format(skillDescriptions))
+            sections.add(buildSkillRules(skillDescriptions))
         }
 
         // === CONTEXT ZONE (reference data) ===
@@ -81,6 +81,14 @@ class PromptAssembler(
         }
         if (!guardrailsContext.isNullOrBlank()) {
             sections.add(guardrailsContext)
+        }
+
+        // Moved from recency zone — reference data, not high-recall rules
+        sections.add(MEMORY_RULES)
+        sections.add(CONTEXT_MANAGEMENT_RULES)
+        sections.add(STEERING_RULES)
+        if (hasJcefUi) {
+            sections.add(RENDERING_RULES_COMPACT)
         }
 
         // Available Agents — ALWAYS inject built-in + specialist + custom
@@ -102,17 +110,11 @@ class PromptAssembler(
             sections.add(ralphIterationContext)
         }
 
-        // === RECENCY ZONE (highest recall) ===
+        // === RECENCY ZONE (highest recall — 7 sections) ===
         sections.add(if (planMode) FORCED_PLANNING_RULES else PLANNING_RULES)
         sections.add(DELEGATION_RULES)
-        sections.add(MEMORY_RULES)
-        sections.add(CONTEXT_MANAGEMENT_RULES)
-        if (hasJcefUi) {
-            sections.add(RENDERING_RULES_COMPACT)
-        }
         sections.add(FEW_SHOT_EXAMPLES)
         sections.add(RULES)
-        sections.add(STEERING_RULES)
 
         val activeToolNames = if (activeTools.isNotEmpty()) activeTools.map { it.name }.toSet() else null
         val integrationRules = buildIntegrationRules(activeToolNames)
@@ -238,7 +240,7 @@ class PromptAssembler(
 
             <core_directives>
             These are your most important behavioral rules:
-            1. **Persistence**: Keep working until the user's task is fully resolved. Do not stop early or yield partial results.
+            1. **Verify before done**: Verify your work with diagnostics, tests, or inspection before declaring done.
             2. **Tool discipline**: Always use tools to discover information — never guess or make up file contents, code structure, or API responses. If uncertain, read the file or run the command.
             3. **Verify before claiming done**: After making changes, run diagnostics, tests, or re-read the file to confirm correctness. Never declare a task complete without verification.
             4. **Act first, narrate second**: When you intend to use a tool, include it as a tool_call immediately — do not describe your intention in text without making the call. Tool calls first, explanations after.
@@ -268,13 +270,17 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             </tool_policy>
         """.trimIndent()
 
-        private const val SKILL_RULES_TEMPLATE = """
+        /**
+         * Build the skill rules section using Kotlin string templates instead of
+         * String.format() to avoid crashes when skill descriptions contain % characters.
+         */
+        fun buildSkillRules(skillDescriptions: String): String = """
 <skill_rules>
 You have access to skills — structured workflows that produce better results than ad-hoc approaches.
 
-CRITICAL RULE: If you think there is even a 1%% chance that a skill below applies to the current task, you MUST invoke it immediately using skill(skill="name") BEFORE doing any other work — including before exploring code, before asking clarifying questions, and before proposing solutions. This is not optional. Do not rationalize skipping a skill. If a skill exists for the kind of work you are about to do, load it first. The skill contains the full workflow — the descriptions below only tell you WHEN to use each skill, not HOW to execute the workflow.
+CRITICAL RULE: If you think there is even a 1% chance that a skill below applies to the current task, you MUST invoke it immediately using skill(skill="name") BEFORE doing any other work — including before exploring code, before asking clarifying questions, and before proposing solutions. This is not optional. Do not rationalize skipping a skill. If a skill exists for the kind of work you are about to do, load it first. The skill contains the full workflow — the descriptions below only tell you WHEN to use each skill, not HOW to execute the workflow.
 
-%s
+$skillDescriptions
 
 To invoke: call skill(skill="name"). Users can also type /skill-name in chat.
 </skill_rules>
