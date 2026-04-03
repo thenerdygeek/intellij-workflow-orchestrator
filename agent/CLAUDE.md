@@ -91,6 +91,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |
 | Runtime | **runtime_config** (4 actions: get_run_configurations, create/modify/delete_run_config), **runtime_exec** (5 actions: get_running_processes, get_run_output, get_test_results, run_tests, compile_module) |
+| Coverage | **coverage** (2 actions: run_with_coverage, get_file_coverage) |
 | Debug | **debug_breakpoints** (8 actions: add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process), **debug_step** (8 actions: get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop), **debug_inspect** (8 actions: evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame) |
 | VCS | **git** (11 actions: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
 | Spring & Framework | **spring** (15 actions: context, endpoints, bean_graph, config, version_info, profiles, repositories, security_config, scheduled_tasks, event_listeners, boot_endpoints/autoconfig/config_properties/actuator, jpa_entities) |
