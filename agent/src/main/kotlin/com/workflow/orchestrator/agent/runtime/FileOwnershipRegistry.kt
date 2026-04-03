@@ -34,15 +34,23 @@ class FileOwnershipRegistry {
     /**
      * Attempt to claim ownership of a file. Idempotent — claiming a file you already own returns GRANTED.
      * Returns DENIED with the owning agentId if the file is owned by another agent.
+     *
+     * Uses [ConcurrentHashMap.compute] to eliminate the TOCTOU race between reading
+     * the current owner and writing the new record.
      */
     fun claim(filePath: String, agentId: String, workerType: WorkerType): ClaimResponse {
         val canonical = canonicalize(filePath)
-        val existing = fileOwners[canonical]
-        if (existing != null && existing.agentId != agentId) {
-            return ClaimResponse(ClaimResult.DENIED, existing.agentId)
+        val newRecord = OwnershipRecord(agentId, workerType)
+        var denied: String? = null
+        fileOwners.compute(canonical) { _, existing ->
+            when {
+                existing == null -> newRecord
+                existing.agentId == agentId -> newRecord
+                else -> { denied = existing.agentId; existing }
+            }
         }
-        fileOwners[canonical] = OwnershipRecord(agentId, workerType)
-        return ClaimResponse(ClaimResult.GRANTED)
+        return if (denied != null) ClaimResponse(ClaimResult.DENIED, denied)
+        else ClaimResponse(ClaimResult.GRANTED)
     }
 
     /**

@@ -83,4 +83,26 @@ class FileOwnershipRegistryTest {
     fun `getOwner returns null for unclaimed file`() {
         assertNull(registry.getOwner("/src/Auth.kt"))
     }
+
+    @Test
+    fun `concurrent claims for same file grant exactly one agent`() {
+        val results = java.util.concurrent.ConcurrentHashMap<String, ClaimResult>()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val threads = (1..10).map { i ->
+            Thread {
+                latch.await() // Start all threads at the same time
+                val result = registry.claim("/src/Contested.kt", "agent-$i", WorkerType.CODER)
+                results["agent-$i"] = result.result
+            }
+        }
+        threads.forEach { it.start() }
+        latch.countDown()
+        threads.forEach { it.join() }
+
+        // Exactly one agent should be GRANTED, all others DENIED
+        val granted = results.values.count { it == ClaimResult.GRANTED }
+        val denied = results.values.count { it == ClaimResult.DENIED }
+        assertEquals(1, granted, "Exactly one agent should win the claim")
+        assertEquals(9, denied, "All other agents should be denied")
+    }
 }
