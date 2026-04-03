@@ -136,7 +136,7 @@ class SingleAgentSession(
         private const val MAX_BACKOFF_MS = 30000L
         /** Max consecutive malformed tool call retries before forcing text-only. */
         private const val MAX_MALFORMED_RETRIES = 3
-        /** Max consecutive no-tool-call nudges before switching to forceTextOnly and allowing implicit completion. */
+        /** Max consecutive no-tool-call nudges before suppressing tools and allowing implicit completion. */
         private const val MAX_NO_TOOL_NUDGES = 4
 
         /** Core tools kept during context reduction (when context_length_exceeded). */
@@ -842,6 +842,7 @@ class SingleAgentSession(
                 onDebugLog?.invoke("error", "malformed_tc", "0 valid tool calls (retry $consecutiveMalformedRetries/$MAX_MALFORMED_RETRIES) — name=$rawName args=${rawArgs.take(100)}", mapOf("iteration" to iteration, "rawCount" to rawCount))
 
                 if (consecutiveMalformedRetries >= MAX_MALFORMED_RETRIES) {
+                    // M2: shouldSuppressTools() will now return true — no sticky boolean needed
                     LOG.warn("SingleAgentSession: $MAX_MALFORMED_RETRIES consecutive malformed tool calls — forcing text-only response")
                     onDebugLog?.invoke("error", "force_text", "Forcing text-only after $MAX_MALFORMED_RETRIES failed tool call attempts", null)
                     onProgress(AgentProgress(step = "Tool calls failed $MAX_MALFORMED_RETRIES times — switching to text response", tokensUsed = bridge.currentTokens))
@@ -850,7 +851,6 @@ class SingleAgentSession(
                         "DO NOT attempt any more tool calls. Instead, respond with a TEXT message explaining what you were " +
                         "trying to do, and I will help you accomplish it another way."
                     bridge.addUserMessage(forceTextContent)
-                    forceTextOnly = true
                 } else {
                     onProgress(AgentProgress(step = "Tool call failed (malformed args, retry $consecutiveMalformedRetries/$MAX_MALFORMED_RETRIES)...", tokensUsed = bridge.currentTokens))
                     val malformedRetryContent = "Your previous response indicated tool calls (finish_reason=tool_calls) but the tool call " +
@@ -866,7 +866,7 @@ class SingleAgentSession(
             // No-tool-call nudge / implicit completion tracking
             consecutiveNoToolResponses++
 
-            if (!forceTextOnly) {
+            if (!shouldSuppressTools()) {
                 // Normal mode: always require explicit attempt_completion.
                 // Implicit completion is NOT allowed — keep nudging with escalating urgency.
                 metrics.nudgeCount++
@@ -879,11 +879,10 @@ class SingleAgentSession(
                         "Call attempt_completion now with your result summary, or continue working with tool calls. " +
                         "(Reminder $consecutiveNoToolResponses/$MAX_NO_TOOL_NUDGES)"
                 } else {
-                    // After MAX_NO_TOOL_NUDGES, switch to forceTextOnly to allow implicit completion
-                    LOG.warn("SingleAgentSession: $MAX_NO_TOOL_NUDGES consecutive no-tool responses — switching to forceTextOnly")
+                    // M2: shouldSuppressTools() will return true on next check — no sticky flag
+                    LOG.warn("SingleAgentSession: $MAX_NO_TOOL_NUDGES consecutive no-tool responses — allowing implicit completion")
                     onDebugLog?.invoke("warn", "force_text", "$MAX_NO_TOOL_NUDGES no-tool responses — allowing implicit completion", null)
-                    forceTextOnly = true
-                    // Fall through to the forceTextOnly gatekeeper path below
+                    // Fall through to the gatekeeper path below
                     null
                 }
                 if (nudgeMessage != null) {
@@ -893,8 +892,8 @@ class SingleAgentSession(
                 }
             }
 
-            // forceTextOnly mode: tools are disabled (malformed retries exhausted
-            // or MAX_NO_TOOL_NUDGES exceeded). Allow implicit completion via gatekeeper.
+            // Tools suppressed (malformed retries exhausted or MAX_NO_TOOL_NUDGES exceeded).
+            // Allow implicit completion via gatekeeper.
             val gateBlock = completionGatekeeper?.checkCompletion()
             if (gateBlock != null) {
                 val blockedGate = completionGatekeeper?.lastBlockedGate ?: "unknown"
@@ -907,7 +906,7 @@ class SingleAgentSession(
                 metrics.forcedCompletionCount++
             }
 
-            // All gates passed (or no gatekeeper) — accept implicit completion (forceTextOnly mode only)
+            // All gates passed (or no gatekeeper) — accept implicit completion (tools suppressed)
             // Validate output for sensitive data and redact if needed
             val securityIssues = OutputValidator.validate(content)
             val sanitizedContent = if (securityIssues.isNotEmpty()) {
