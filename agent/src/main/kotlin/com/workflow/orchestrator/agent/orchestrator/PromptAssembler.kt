@@ -262,6 +262,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             - Make independent tool calls in parallel. Never guess — use tools to discover information.
             - For targeted lookups (known file/class/method): use read_file, search_code, find_definition directly.
             - Use the think tool before complex multi-step reasoning. Skip for simple actions.
+            - Use the current_time tool when you need to know the current date/time for deadlines, sprint dates, time tracking, or time-sensitive decisions.
             - @ mentioned content is already in context — do not re-read mentioned files.
             - Use git_* tools for ALL git operations. NEVER use run_command for git.
             - ALWAYS fill the 'description' parameter on tools that have it — the user sees it in the approval dialog.
