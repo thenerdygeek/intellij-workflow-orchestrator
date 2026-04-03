@@ -263,7 +263,9 @@ class SingleAgentSession(
         onStreamChunk: (String) -> Unit = {},
         onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
         /** Called after each iteration to persist checkpoint + messages. */
-        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null
+        onCheckpoint: ((IterationCheckpointData) -> Unit)? = null,
+        /** Optional steering channel for mid-execution user messages. */
+        steeringChannel: SteeringChannel? = null
     ): SingleAgentResult {
         currentTask = task
         LOG.info("SingleAgentSession: starting with ${tools.size} tools for task: ${task.take(100)}")
@@ -349,6 +351,21 @@ class SingleAgentSession(
                     }
                 }
             } catch (_: Exception) { /* service not available in tests */ }
+
+            // Drain steering messages from user (mid-execution redirections)
+            if (steeringChannel != null) {
+                val steeringMessages = steeringChannel.drain()
+                if (steeringMessages.isNotEmpty()) {
+                    for (msg in steeringMessages) {
+                        bridge.addSteeringMessage(msg.content)
+                    }
+                    LOG.info("SingleAgentSession: injected ${steeringMessages.size} steering message(s) at iteration $iteration")
+                    onProgress(AgentProgress(
+                        step = "Received steering from user",
+                        tokensUsed = bridge.currentTokens
+                    ))
+                }
+            }
 
             LOG.info("SingleAgentSession: iteration $iteration/$maxIterations")
             val iterationStartMs = System.currentTimeMillis()
