@@ -267,6 +267,7 @@ class AgentService(
             register(RequestToolsTool())
             register(SpawnAgentTool())
             register(ThinkTool())
+            register(CurrentTimeTool())
             register(WorkerCompleteTool())
             register(SendMessageToParentTool())
             register(CoreMemoryReadTool())
