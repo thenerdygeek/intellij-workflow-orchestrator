@@ -32,12 +32,38 @@ interface LineBlock {
   type: 'normal' | 'code' | 'table';
 }
 
+/**
+ * Returns true if the line is a "block-start" that should begin a new block.
+ * Headings, HRs, and blank lines break the flow.
+ */
+function isBlockBreaker(line: string): boolean {
+  return /^#{1,6}\s/.test(line) || /^---+$/.test(line) || /^===+$/.test(line);
+}
+
+/**
+ * Returns true if the line is a continuation of the previous content block
+ * (i.e., NOT a heading, NOT a blank line, NOT a fence/table start).
+ */
+function isContinuation(line: string): boolean {
+  if (line.trim() === '') return false;
+  if (isBlockBreaker(line)) return false;
+  if (/^(`{3,}|~{3,})/.test(line)) return false;
+  if (/^\|/.test(line)) return false;
+  return true;
+}
+
 function groupLinesIntoBlocks(lines: string[]): LineBlock[] {
   const blocks: LineBlock[] = [];
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i]!;
+
+    // Skip blank lines — they act as separators, don't create blocks
+    if (line.trim() === '') {
+      i++;
+      continue;
+    }
 
     // Fenced code block: ``` or ~~~
     if (/^(`{3,}|~{3,})/.test(line)) {
@@ -75,14 +101,31 @@ function groupLinesIntoBlocks(lines: string[]): LineBlock[] {
       continue;
     }
 
-    // Normal line (including empty lines, headings, paragraphs, list items)
+    // Heading — always its own block
+    if (isBlockBreaker(line)) {
+      blocks.push({
+        startLine: i + 1,
+        endLine: i + 1,
+        content: line,
+        type: 'normal',
+      });
+      i++;
+      continue;
+    }
+
+    // Content block: group consecutive non-blank, non-heading, non-fence lines
+    // This keeps paragraphs, list items, and multi-line descriptions together.
+    const start = i;
+    i++;
+    while (i < lines.length && isContinuation(lines[i]!)) {
+      i++;
+    }
     blocks.push({
-      startLine: i + 1,
-      endLine: i + 1,
-      content: line,
+      startLine: start + 1,
+      endLine: i,
+      content: lines.slice(start, i).join('\n'),
       type: 'normal',
     });
-    i++;
   }
 
   return blocks;

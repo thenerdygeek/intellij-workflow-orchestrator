@@ -75,72 +75,41 @@ let triggerReviseInternal: (() => void) | null = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function statusEmoji(status?: string): string {
-  switch (status) {
-    case 'completed':
-    case 'done':
-      return '\u2705';  // green check
-    case 'running':
-    case 'in_progress':
-      return '\u23f3';  // hourglass
-    case 'failed':
-      return '\u274c';  // red x
-    case 'skipped':
-      return '\u23ed\ufe0f';  // skip
-    default:
-      return '\u2b55';  // hollow circle
-  }
-}
-
-function statusLabel(status?: string): string {
-  switch (status) {
-    case 'completed':
-    case 'done':
-      return 'Completed';
-    case 'running':
-    case 'in_progress':
-      return 'Running';
-    case 'failed':
-      return 'Failed';
-    case 'skipped':
-      return 'Skipped';
-    default:
-      return 'Pending';
-  }
-}
-
 /** Convert plan data into a markdown string for rendering (backward compat). */
 function planToMarkdown(plan: AgentPlanData): string {
   const lines: string[] = [];
 
   lines.push(`## Goal`);
+  lines.push('');
   lines.push(plan.goal);
   lines.push('');
 
   if (plan.approach) {
     lines.push(`## Approach`);
+    lines.push('');
     lines.push(plan.approach);
     lines.push('');
   }
 
   lines.push(`## Steps`);
   lines.push('');
+
   plan.steps.forEach((step, idx) => {
-    const emoji = statusEmoji(step.status);
     lines.push(`### ${idx + 1}. ${step.title}`);
+    lines.push('');
     if (step.description) {
       lines.push(step.description);
+      lines.push('');
     }
     if (step.files && step.files.length > 0) {
-      lines.push('');
       lines.push(`**Files:** ${step.files.map(f => `\`${f}\``).join(', ')}`);
+      lines.push('');
     }
-    lines.push(`**Status:** ${emoji} ${statusLabel(step.status)}`);
-    lines.push('');
   });
 
   if (plan.testing) {
     lines.push(`## Testing & Verification`);
+    lines.push('');
     lines.push(plan.testing);
     lines.push('');
   }

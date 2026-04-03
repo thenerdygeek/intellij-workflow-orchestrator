@@ -56,55 +56,205 @@
 .plan-block-content > :last-child { margin-bottom: 0; }
 
 /* ── Heading hierarchy ── */
-.plan-document-body h1 { font-size: 2em; font-weight: 700; margin: 2rem 0 1rem; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
-.plan-document-body h2 { font-size: 1.5em; font-weight: 600; margin: 1.75rem 0 0.75rem; padding-bottom: 0.25em; border-bottom: 1px solid var(--divider-subtle); }
-.plan-document-body h3 { font-size: 1.25em; font-weight: 600; margin: 1.5rem 0 0.5rem; }
-.plan-document-body h4 { font-size: 1em; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+.plan-document-body h1 {
+  font-size: 1.75em;
+  font-weight: 700;
+  margin: 2rem 0 1rem;
+  padding-bottom: 0.5em;
+  border-bottom: 2px solid var(--accent, #6366f1);
+  letter-spacing: -0.01em;
+}
 
-/* Paragraphs */
-.plan-document-body p { margin: 0.75em 0; }
+.plan-document-body h2 {
+  font-size: 1.3em;
+  font-weight: 600;
+  margin: 2rem 0 0.75rem;
+  padding: 0.4em 0;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--divider-subtle, var(--border));
+  color: var(--accent, #6366f1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.85em;
+}
 
-/* Lists */
-.plan-document-body ul, .plan-document-body ol { padding-left: 2em; margin: 0.5em 0; }
-.plan-document-body li { margin: 0.25em 0; }
+.plan-document-body h3 {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 1.75rem 0 0.5rem;
+  padding: 0.5em 0.75em;
+  background: var(--code-bg, rgba(128, 128, 128, 0.06));
+  border-left: 3px solid var(--accent, #6366f1);
+  border-radius: 0 6px 6px 0;
+}
 
-/* Task list checkboxes */
-.task-checkbox { font-size: 1.1em; margin-right: 0.3em; cursor: default; }
-.plan-task-item { list-style: none; margin-left: -1.5em; }
+/* First h3 needs less top margin */
+.plan-document-body h2 + * h3:first-child,
+.plan-block-row:first-child h3 {
+  margin-top: 0.75rem;
+}
 
-/* Inline code */
+.plan-document-body h4 {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+  color: var(--fg-secondary);
+}
+
+/* ── Paragraphs ── */
+.plan-document-body p {
+  margin: 0.6em 0;
+  line-height: 1.75;
+}
+
+/* ── Lists — enhanced visual distinction ── */
+.plan-document-body ul {
+  padding-left: 1.5em;
+  margin: 0.6em 0;
+  list-style: none;
+}
+
+.plan-document-body ul > li {
+  position: relative;
+  margin: 0.4em 0;
+  padding-left: 0.75em;
+}
+
+/* Custom bullet: small colored dot */
+.plan-document-body ul > li::before {
+  content: '';
+  position: absolute;
+  left: -0.75em;
+  top: 0.65em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  opacity: 0.7;
+}
+
+/* Nested lists: dimmer bullets */
+.plan-document-body ul ul > li::before {
+  background: var(--fg-muted);
+  opacity: 0.4;
+  width: 4px;
+  height: 4px;
+}
+
+.plan-document-body ol {
+  padding-left: 1.5em;
+  margin: 0.6em 0;
+  counter-reset: plan-counter;
+  list-style: none;
+}
+
+.plan-document-body ol > li {
+  position: relative;
+  margin: 0.5em 0;
+  padding-left: 0.75em;
+  counter-increment: plan-counter;
+}
+
+/* Custom number badge */
+.plan-document-body ol > li::before {
+  content: counter(plan-counter);
+  position: absolute;
+  left: -1.5em;
+  top: 0.15em;
+  width: 1.3em;
+  height: 1.3em;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  color: var(--bg, #fff);
+  font-size: 0.7em;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+/* ── Task list checkboxes ── */
+.task-checkbox {
+  font-size: 1.1em;
+  margin-right: 0.3em;
+  cursor: default;
+}
+
+.plan-task-item {
+  list-style: none;
+  margin-left: -1.5em;
+  padding-left: 0;
+}
+
+/* Remove custom bullet for task items */
+.plan-task-item::before {
+  display: none !important;
+}
+
+/* ── Inline code ── */
 .plan-inline-code {
   background: var(--code-bg);
   padding: 0.15em 0.4em;
   border-radius: 4px;
-  font-size: 0.9em;
+  font-size: 0.88em;
   font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  border: 1px solid rgba(128, 128, 128, 0.12);
 }
 
-/* Blockquotes */
+/* ── Blockquotes ── */
 .plan-document-body blockquote {
   border-left: 3px solid var(--accent);
   padding: 0.5em 1em;
   margin: 1em 0;
   color: var(--fg-secondary);
   font-style: italic;
+  background: rgba(128, 128, 128, 0.03);
+  border-radius: 0 6px 6px 0;
 }
 
-/* Tables — GitHub style */
+/* ── Tables — GitHub style ── */
 .plan-document-body table {
   border-collapse: collapse;
   width: 100%;
   margin: 1em 0;
+  font-size: 0.92em;
 }
+
 .plan-document-body th, .plan-document-body td {
   border: 1px solid var(--border);
   padding: 0.5em 1em;
   text-align: left;
 }
-.plan-document-body th { background: var(--toolbar-bg); font-weight: 600; font-size: 0.9em; }
 
-/* HR */
-.plan-document-body hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+.plan-document-body th {
+  background: var(--toolbar-bg);
+  font-weight: 600;
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ── HR — section divider ── */
+.plan-document-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+
+/* ── Bold text — subtle emphasis ── */
+.plan-document-body strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Status-like bold labels: "**Status:**", "**Files:**" */
+.plan-document-body p > strong:first-child {
+  color: var(--fg-secondary);
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
 
 /* ── Line number ── */
 .plan-line-number {
@@ -114,11 +264,11 @@
   width: 2rem;
   font-family: var(--font-mono);
   user-select: none;
-  opacity: 0.5;
+  opacity: 0.35;
 }
 
 .plan-block-row:hover .plan-line-number {
-  opacity: 1;
+  opacity: 0.8;
 }
 
 /* ── Comment button (appears on hover) ── */
