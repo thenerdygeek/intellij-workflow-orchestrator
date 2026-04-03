@@ -191,19 +191,24 @@ Actions and their parameters:
                                 } else if (handler != null) {
                                     handler.addProcessListener(object : ProcessAdapter() {
                                         override fun processTerminated(event: ProcessEvent) {
-                                            if (continuation.isActive) {
-                                                val root = TestConsoleUtils.findTestRoot(descriptor)
-                                                if (root != null) {
-                                                    continuation.resume(formatTestResults(root, testTarget))
-                                                } else {
-                                                    continuation.resume(
-                                                        CoverageRunResult(
-                                                            "Tests completed for $testTarget but no structured results available.",
-                                                            "Tests completed"
-                                                        )
-                                                    )
+                                            // Delay to let the test tree finalize (matches RuntimeExecTool pattern)
+                                            java.util.Timer().schedule(object : java.util.TimerTask() {
+                                                override fun run() {
+                                                    if (continuation.isActive) {
+                                                        val root = TestConsoleUtils.findTestRoot(descriptor)
+                                                        if (root != null) {
+                                                            continuation.resume(formatTestResults(root, testTarget))
+                                                        } else {
+                                                            continuation.resume(
+                                                                CoverageRunResult(
+                                                                    "Tests completed for $testTarget but no structured results available.",
+                                                                    "Tests completed"
+                                                                )
+                                                            )
+                                                        }
+                                                    }
                                                 }
-                                            }
+                                            }, 2000)
                                         }
                                     })
                                 } else {
@@ -529,9 +534,6 @@ Actions and their parameters:
             }
 
             settings.isTemporary = true
-            runManager.addConfiguration(settings)
-            runManager.selectedConfiguration = settings
-
             settings
         } catch (_: Exception) { null }
     }
@@ -610,7 +612,7 @@ Actions and their parameters:
 // ══════════════════════════════════════════════════════════════════════════
 
 /** Internal result holder for test output + summary from a coverage run. */
-data class CoverageRunResult(
+internal data class CoverageRunResult(
     val testResult: String,
     val testSummary: String
 )
