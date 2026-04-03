@@ -55,29 +55,30 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 1. `CORE_IDENTITY` — role, capabilities, persona
 2. `PERSISTENCE_AND_COMPLETION` — session durability, `attempt_completion` requirement
 3. `TOOL_POLICY` — tool usage rules, read-before-edit, verification
+4. `<skill_rules>` — **skill-first behavioral rule**: skill list with trigger descriptions + mandatory loading rule. Positioned in primacy zone so LLM sees skills before context data and can't bypass them with inline instructions.
 
 **Context zone** (reference data, conditionally included):
-4. `<project_context>` — name, path, framework
-5. `<project_repositories>` — repo info
-6. `<repo_map>` — file structure
-7. `<core_memory>` — tier-1 memory (always if non-empty)
-8. `<agent_memory>` — legacy markdown memory
-9. Guardrails context
-10. `<available_agents>` — **always injected**: built-in agents (general-purpose, explorer, coder, reviewer, tooler) + any custom agents from `.workflow/agents/`
-11. `<available_skills>` — skill descriptions (if any)
+5. `<project_context>` — name, path, framework
+6. `<project_repositories>` — repo info
+7. `<repo_map>` — file structure
+8. `<core_memory>` — tier-1 memory (always if non-empty)
+9. `<agent_memory>` — legacy markdown memory
+10. Guardrails context
+11. `<available_agents>` — **always injected**: built-in agents (general-purpose, explorer, coder, reviewer, tooler) + any custom agents from `.workflow/agents/`
 12. `<previous_results>` — orchestration step context
 
 **Recency zone** (highest recall):
-13. `PLANNING_RULES` (or `FORCED_PLANNING_RULES` in plan mode)
+13. `PLANNING_RULES` (or `FORCED_PLANNING_RULES` in plan mode) — decision tree only: when to plan vs act directly. No inline workflow details — defers to skills.
 14. `DELEGATION_RULES` — when/how to spawn subagents
 15. `MEMORY_RULES` — when to save to each memory tier
 16. `CONTEXT_MANAGEMENT_RULES` — budget awareness
 17. `RENDERING_RULES_COMPACT` — rich UI formatting (skipped in plain-text mode)
-18. `FEW_SHOT_EXAMPLES` — concrete tool call examples
+18. `FEW_SHOT_EXAMPLES` — concrete tool call examples including skill-matching patterns
 19. `RULES` — general behavioral rules
-20. `<integration_rules>` — **conditional**: niche tips for Jira/Bamboo/Sonar/Bitbucket/PSI/Debug tools, only included when those tools are active
-21. `COMMUNICATION` — response style guidelines
-22. `BOOKEND` — closing reinforcement of identity + key constraints
+20. `STEERING_RULES` — real-time user steering protocol
+21. `<integration_rules>` — **conditional**: niche tips for Jira/Bamboo/Sonar/Bitbucket/PSI/Debug tools, only included when those tools are active
+22. `COMMUNICATION` — response style guidelines
+23. `BOOKEND` — closing reinforcement of identity + key constraints
 
 **Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
