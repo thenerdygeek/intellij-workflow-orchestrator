@@ -173,7 +173,7 @@ class ObservationMaskingCondenserTest {
             assertContains(masked.content, "[Tool result masked to save context]")
             assertContains(masked.content, "Tool: read_file")
             assertContains(masked.content, "Preview: file content here")
-            assertContains(masked.content, "Recovery: re-run read_file to get current content")
+            assertContains(masked.content, "Recovery: content was compressed")
         }
 
         @Test
@@ -185,7 +185,7 @@ class ObservationMaskingCondenserTest {
 
             val result = condenser.condense(contextOf(View(events = events)))
             val masked = (result as CondenserView).view.events[0] as CondensationObservation
-            assertContains(masked.content, "Recovery: re-run search_code with the same query")
+            assertContains(masked.content, "Recovery: re-run search_code with the same query if needed")
         }
 
         @Test
@@ -197,7 +197,7 @@ class ObservationMaskingCondenserTest {
 
             val result = condenser.condense(contextOf(View(events = events)))
             val masked = (result as CondenserView).view.events[0] as CondensationObservation
-            assertContains(masked.content, "Recovery: re-run glob_files with the same pattern")
+            assertContains(masked.content, "Recovery: re-run glob_files with the same pattern if needed")
         }
 
         @Test
@@ -233,7 +233,7 @@ class ObservationMaskingCondenserTest {
 
             val result = condenser.condense(contextOf(View(events = events)))
             val masked = (result as CondenserView).view.events[0] as CondensationObservation
-            assertContains(masked.content, "Recovery: re-run the tool if the result is needed")
+            assertContains(masked.content, "Recovery: result was compressed to save context")
         }
 
         @Test
