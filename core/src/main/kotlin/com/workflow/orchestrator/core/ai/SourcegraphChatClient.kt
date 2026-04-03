@@ -73,8 +73,12 @@ class SourcegraphChatClient(
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.
     // RetryInterceptor handles 429/5xx with exponential backoff (1s, 2s, 4s).
     // Auth uses TOKEN scheme: "Authorization: token TOKEN_VALUE" per Sourcegraph spec.
+    // Force HTTP/1.1 to avoid HTTP/2 RST_STREAM (CANCEL) errors from corporate proxies
+    // and Sourcegraph gateway timeouts. HTTP/2 stream multiplexing isn't needed here
+    // since we make one LLM call at a time per session.
     private val httpClient: OkHttpClient by lazy {
         httpClientOverride ?: OkHttpClient.Builder()
+            .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))

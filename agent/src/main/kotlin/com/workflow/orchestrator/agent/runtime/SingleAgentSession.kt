@@ -1655,25 +1655,29 @@ class SingleAgentSession(
                     // If cancelled and we got a network error, that's the abort — exit cleanly
                     if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
                     when (result.type) {
-                        ErrorType.RATE_LIMITED, ErrorType.SERVER_ERROR -> {
+                        ErrorType.RATE_LIMITED, ErrorType.SERVER_ERROR, ErrorType.NETWORK_ERROR -> {
+                            // Network errors (stream reset, connection closed) are transient —
+                            // HTTP/2 RST_STREAM from proxies, corporate firewalls, or
+                            // Sourcegraph gateway timeouts. Retry with backoff.
+                            if (result.type == ErrorType.NETWORK_ERROR && cancelled.get()) {
+                                return LlmCallResult.Failed("Cancelled by user")
+                            }
                             lastError = result.message
                             if (attempt < MAX_RETRIES) {
-                                // Exponential backoff with random jitter (±50%)
                                 val backoff = minOf(BASE_BACKOFF_MS * (1L shl (attempt - 1)), MAX_BACKOFF_MS)
                                 val jitter = (backoff * 0.5 * kotlin.random.Random.nextDouble()).toLong()
                                 val delayMs = backoff + jitter
-                                val reason = if (result.type == ErrorType.RATE_LIMITED) "rate limited" else "server error"
+                                val reason = when (result.type) {
+                                    ErrorType.RATE_LIMITED -> "rate limited"
+                                    ErrorType.NETWORK_ERROR -> "network error"
+                                    else -> "server error"
+                                }
                                 LOG.info("SingleAgentSession: retry $attempt/$MAX_RETRIES after ${delayMs}ms ($reason)")
                                 eventLog?.log(AgentEventType.RATE_LIMITED_RETRY, "Attempt $attempt, backoff ${delayMs}ms ($reason)")
                                 onDebugLog?.invoke("warn", "retry", "$reason — attempt $attempt/$MAX_RETRIES, backoff ${delayMs}ms", mapOf("iteration" to iteration))
-                                delay(delayMs) // delay() is cancellable — Job.cancel() will interrupt this
+                                delay(delayMs)
                             }
-                            continue // retry with backoff
-                        }
-                        ErrorType.NETWORK_ERROR -> {
-                            // Network error during cancellation = expected (socket closed by cancelActiveRequest)
-                            if (cancelled.get()) return LlmCallResult.Failed("Cancelled by user")
-                            return LlmCallResult.Failed(result.message)
+                            continue
                         }
                         ErrorType.CONTEXT_LENGTH_EXCEEDED -> {
                             // Reduce tools to core set and retry once
