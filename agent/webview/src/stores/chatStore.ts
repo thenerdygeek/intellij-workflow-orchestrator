@@ -442,6 +442,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ plan, planCommentCount: 0 });
   },
 
+  updatePlanSummary(summary: string) {
+    set(state => {
+      if (!state.plan) return {};
+      return { plan: { ...state.plan, summary } };
+    });
+  },
+
   setPlanCommentCount(count: number) {
     set({ planCommentCount: count });
   },

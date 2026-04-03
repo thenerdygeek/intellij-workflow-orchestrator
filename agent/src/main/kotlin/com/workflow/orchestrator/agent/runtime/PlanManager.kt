@@ -33,7 +33,10 @@ data class AgentPlan(
     /** Raw markdown document from the LLM. When present, the plan editor
      *  renders this directly instead of synthesizing from structured fields.
      *  Null for backward compat with old plans that only have structured data. */
-    val markdown: String? = null
+    val markdown: String? = null,
+    /** LLM-generated short summary for the plan card preview. Set asynchronously
+     *  after plan creation via a cheap model call. */
+    var summary: String? = null
 )
 
 /** A single user comment on a specific line of the plan. */

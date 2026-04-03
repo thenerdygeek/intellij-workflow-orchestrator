@@ -71,6 +71,23 @@ object ModelCache {
         return models.maxByOrNull { it.created }
     }
 
+    /** Pick the cheapest available model (Haiku > Sonnet > anything) for lightweight tasks. */
+    fun pickCheapest(models: List<ModelInfo>): ModelInfo? {
+        if (models.isEmpty()) return null
+        val anthropic = models.filter { it.provider == "anthropic" }
+
+        // 1. Haiku (cheapest Anthropic)
+        anthropic.filter { it.modelName.lowercase().contains("haiku") }
+            .maxByOrNull { it.created }?.let { return it }
+
+        // 2. Sonnet (mid-tier)
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") }
+            .maxByOrNull { it.created }?.let { return it }
+
+        // 3. Anything
+        return anthropic.maxByOrNull { it.created } ?: models.maxByOrNull { it.created }
+    }
+
     fun reset() {
         models = emptyList()
         lastFetchMs = 0

@@ -311,6 +311,17 @@ class AgentService(
         )
     }
 
+    /** Create a lightweight brain using the cheapest available model (Haiku preferred). */
+    fun cheapBrain(): LlmBrain? {
+        val connections = ConnectionSettings.getInstance()
+        val cheapModel = ModelCache.pickCheapest(ModelCache.getCached())?.id ?: return null
+        return OpenAiCompatBrain(
+            sourcegraphUrl = connections.state.sourcegraphUrl.trimEnd('/'),
+            tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) },
+            model = cheapModel
+        )
+    }
+
     fun isConfigured(): Boolean {
         val agentSettings = AgentSettings.getInstance(project)
         val connections = ConnectionSettings.getInstance()

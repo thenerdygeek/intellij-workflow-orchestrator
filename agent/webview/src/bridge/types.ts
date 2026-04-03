@@ -59,6 +59,7 @@ export interface Plan {
   steps: PlanStep[];
   approved: boolean;
   markdown?: string;
+  summary?: string;
 }
 
 // ── Question types ──

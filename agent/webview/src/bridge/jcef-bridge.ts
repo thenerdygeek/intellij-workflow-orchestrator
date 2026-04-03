@@ -93,6 +93,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setPlanCommentCount(count: number) {
     stores?.getChatStore().setPlanCommentCount(count);
   },
+  updatePlanSummary(summary: string) {
+    stores?.getChatStore().updatePlanSummary(summary);
+  },
   showQuestions(questionsJson: string) {
     const questions = JSON.parse(questionsJson);
     stores?.getChatStore().showQuestions(questions);

@@ -187,6 +187,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.setPlanCommentCount(count) }
     }
 
+    fun updatePlanSummary(summary: String) {
+        cefPanel?.updatePlanSummary(summary)
+        mirrors.forEach { it.updatePlanSummary(summary) }
+    }
+
     // ── Question wizard delegation ──
 
     fun showQuestions(questionsJson: String) {

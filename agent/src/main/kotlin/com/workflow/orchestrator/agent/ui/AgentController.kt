@@ -1022,6 +1022,24 @@ class AgentController(
             val json = PlanManager.json.encodeToString(AgentPlan.serializer(), plan)
             dashboard.renderPlan(json)
             dashboard.setBusy(false)  // Agent is now waiting for user input, not working
+
+            // Async: generate a short summary via cheap model (Haiku) for the plan card
+            if (plan.markdown != null && plan.summary == null) {
+                scope.launch {
+                    try {
+                        val summary = generatePlanSummary(plan)
+                        if (summary != null) {
+                            plan.summary = summary
+                            ApplicationManager.getApplication().invokeLater {
+                                dashboard.updatePlanSummary(summary)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        LOG.debug("Plan summary generation failed (non-critical): ${e.message}")
+                    }
+                }
+            }
+
             // Open full-screen plan in editor tab (don't steal focus from chat)
             ApplicationManager.getApplication().invokeLater {
                 val virtualFile = com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile(plan, currentSession.sessionId)
@@ -1470,6 +1488,31 @@ class AgentController(
             append(toolName)
             val path = params["path"] as? String ?: params["file_path"] as? String
             if (path != null) append(" — $path")
+        }
+    }
+
+    /**
+     * Generate a short plan summary using the cheapest available model (Haiku).
+     * Returns null on failure — callers should fall back to truncated markdown.
+     */
+    private suspend fun generatePlanSummary(plan: AgentPlan): String? {
+        val agentService = try { AgentService.getInstance(project) } catch (_: Exception) { return null }
+        val brain = agentService.cheapBrain() ?: return null
+        val markdown = plan.markdown ?: return null
+
+        val messages = listOf(
+            com.workflow.orchestrator.core.ai.dto.ChatMessage(
+                role = "user",
+                content = "Summarize this implementation plan in 2-3 concise sentences. " +
+                    "Focus on what will be built and the key approach. No markdown, no bullet points, just plain text.\n\n$markdown"
+            )
+        )
+        val result = brain.chat(messages, maxTokens = 150)
+        return when (result) {
+            is com.workflow.orchestrator.core.model.ApiResult.Success -> {
+                result.data.choices.firstOrNull()?.message?.content?.trim()?.takeIf { it.isNotBlank() }
+            }
+            else -> null
         }
     }
 

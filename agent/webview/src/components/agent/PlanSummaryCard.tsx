@@ -95,7 +95,14 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
 
       {/* Content preview */}
       <CardContent className="px-4 py-3">
-        {plan.markdown ? (
+        {plan.summary ? (
+          <div
+            className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
+            style={{ color: 'var(--fg-secondary)' }}
+          >
+            {plan.summary}
+          </div>
+        ) : plan.markdown ? (
           <div
             className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
             style={{ color: 'var(--fg-secondary)' }}

@@ -754,6 +754,10 @@ class AgentCefPanel(
         callJs("setPlanCommentCount($count)")
     }
 
+    fun updatePlanSummary(summary: String) {
+        callJs("updatePlanSummary(${jsonStr(summary)})")
+    }
+
     // ── Question wizard rendering ──
 
     fun showQuestions(questionsJson: String) {
