@@ -345,6 +345,13 @@ class SingleAgentSession(
         val loopGuard = LoopGuard()
         val backpressureGate = BackpressureGate(editThreshold = 3)
         val selfCorrectionGate = SelfCorrectionGate(maxRetriesPerFile = 3)
+        // H1: Restore edit-verification state from ChangeLedger on session resume
+        try {
+            val ledger = com.workflow.orchestrator.agent.AgentService.getInstance(project).currentChangeLedger
+            if (ledger != null && ledger.allEntries().isNotEmpty()) {
+                selfCorrectionGate.restoreFromLedger(ledger)
+            }
+        } catch (_: Exception) { /* AgentService not available in tests */ }
 
         // Initialize CompletionGatekeeper (option b: created here where gates are available)
         val planManager = try {

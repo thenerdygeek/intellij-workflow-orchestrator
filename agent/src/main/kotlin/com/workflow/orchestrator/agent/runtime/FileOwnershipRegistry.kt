@@ -59,10 +59,12 @@ class FileOwnershipRegistry {
      */
     fun release(filePath: String, agentId: String): Boolean {
         val canonical = canonicalize(filePath)
-        val existing = fileOwners[canonical] ?: return false
-        if (existing.agentId != agentId) return false
-        fileOwners.remove(canonical)
-        return true
+        var released = false
+        fileOwners.computeIfPresent(canonical) { _, existing ->
+            if (existing.agentId == agentId) { released = true; null }
+            else existing
+        }
+        return released
     }
 
     /**
@@ -71,7 +73,7 @@ class FileOwnershipRegistry {
      */
     fun releaseAll(agentId: String): Int {
         val toRemove = fileOwners.entries.filter { it.value.agentId == agentId }.map { it.key }
-        toRemove.forEach { fileOwners.remove(it) }
+        toRemove.forEach { key -> fileOwners.computeIfPresent(key) { _, v -> if (v.agentId == agentId) null else v } }
         return toRemove.size
     }
 
