@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent — ReAct loop, 110 tools (68 registered, 16 meta-tools), agent tool for subagent spawning, plan persistence, JCEF chat UI, real-time steering, code coverage |
+| `:agent` | AI coding agent — ReAct loop, 68 registered tools (15 meta-tools, 144 actions), event-sourced context management (4-stage condenser pipeline), sub-agent orchestration with file ownership, plan lifecycle, JCEF chat UI, real-time steering, Ralph Loop self-improvement, 3-tier memory, compression-proof anchors |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
