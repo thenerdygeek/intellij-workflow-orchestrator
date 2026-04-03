@@ -9,6 +9,8 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.context.ContextManagementConfig
 import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
+import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.agent.context.condenser.LlmBrainSummarizationClient
 import com.workflow.orchestrator.agent.orchestrator.OrchestratorPrompts
 import com.workflow.orchestrator.agent.runtime.*
 import com.workflow.orchestrator.agent.settings.AgentSettings
@@ -474,16 +476,40 @@ class SpawnAgentTool : AgentTool {
 
         // Reconstruct context from transcript
         val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+        val workerMaxTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
         val contextManager = EventSourcedContextBridge.create(
             sessionDir = null,
             config = ContextManagementConfig.WORKER,
-            maxInputTokens = settings?.state?.maxInputTokens ?: AgentSettings.DEFAULTS.maxInputTokens
+            maxInputTokens = workerMaxTokens
         )
 
-        // Replay previous messages into context
+        // M17: Budget check — if transcript is too large, summarize instead of full replay
         val chatMessages = transcriptStore.toChatMessages(transcript)
-        for (msg in chatMessages) {
-            contextManager.addMessage(msg)
+        val transcriptTokens = chatMessages.sumOf { TokenEstimator.estimate(it.content ?: "") }
+        val workerBudget = workerMaxTokens
+        if (transcriptTokens > (workerBudget * 0.8).toInt()) {
+            // Transcript would consume >80% of worker budget — summarize instead
+            LOG.info("SpawnAgentTool: resume transcript ($transcriptTokens tokens) exceeds 80% of worker budget ($workerBudget) — summarizing")
+            val summarizer = LlmBrainSummarizationClient(agentService.brain)
+            val summary = try { summarizer.summarize(chatMessages) } catch (_: Exception) { null }
+            if (summary != null) {
+                // Inject summary as a single context message instead of full replay
+                contextManager.addMessage(ChatMessage(
+                    role = "user",
+                    content = "<previous_session_summary>\n$summary\n</previous_session_summary>"
+                ))
+            } else {
+                // Summarization failed — fall back to full replay
+                LOG.warn("SpawnAgentTool: summarization failed, falling back to full transcript replay")
+                for (msg in chatMessages) {
+                    contextManager.addMessage(msg)
+                }
+            }
+        } else {
+            // Normal replay — transcript fits within budget
+            for (msg in chatMessages) {
+                contextManager.addMessage(msg)
+            }
         }
 
         // Add the new prompt as a user message
