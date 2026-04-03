@@ -218,11 +218,67 @@ const WORKING_PHRASES = [
   'Rome wasn\'t built in a sprint. Maybe two sprints...',
 ];
 
+/**
+ * Typewriter hook — animates text transitions with a backspace-then-type effect.
+ * When `targetText` changes, the displayed text deletes character-by-character,
+ * then types out the new text. A blinking cursor appears during animation.
+ */
+function useTypewriter(targetText: string, backspaceMs = 20, typeMs = 30) {
+  const [display, setDisplay] = useState(targetText);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const prevTarget = useRef(targetText);
+
+  useEffect(() => {
+    // Skip animation on first mount or if text hasn't changed
+    if (prevTarget.current === targetText) return;
+    const oldText = prevTarget.current;
+    prevTarget.current = targetText;
+
+    setIsAnimating(true);
+    let cancelled = false;
+    let activeInterval: ReturnType<typeof setInterval> | null = null;
+    let pos = oldText.length;
+
+    // Phase 1: backspace the old text
+    activeInterval = setInterval(() => {
+      if (cancelled) return;
+      pos--;
+      if (pos <= 0) {
+        clearInterval(activeInterval!);
+        setDisplay('');
+        // Phase 2: type the new text
+        let tPos = 0;
+        activeInterval = setInterval(() => {
+          if (cancelled) return;
+          tPos++;
+          setDisplay(targetText.slice(0, tPos));
+          if (tPos >= targetText.length) {
+            clearInterval(activeInterval!);
+            activeInterval = null;
+            setIsAnimating(false);
+          }
+        }, typeMs);
+      } else {
+        setDisplay(oldText.slice(0, pos));
+      }
+    }, backspaceMs);
+
+    return () => {
+      cancelled = true;
+      if (activeInterval) clearInterval(activeInterval);
+      setIsAnimating(false);
+    };
+  }, [targetText, backspaceMs, typeMs]);
+
+  return { display, isAnimating };
+}
+
 export function WorkingIndicator() {
-  // Pick one phrase per mount — stays fixed for the entire busy duration.
   const [fallbackPhrase] = useState(() => WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
   const smartPhrase = useChatStore(s => s.smartWorkingPhrase);
   const phrase = smartPhrase || fallbackPhrase;
+  const { display, isAnimating } = useTypewriter(phrase);
+
   return (
     <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
       <Loader variant="wave" size="md" />
@@ -233,7 +289,10 @@ export function WorkingIndicator() {
           backgroundImage: `linear-gradient(to right, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 30%, var(--accent-write, #22C55E) 50%, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 70%)`,
         }}
       >
-        {phrase}
+        {display}
+        {isAnimating && (
+          <span className="inline-block w-[2px] h-[1em] ml-0.5 align-middle animate-pulse" style={{ background: 'var(--accent-write, #22C55E)' }} />
+        )}
       </TextShimmer>
     </div>
   );
