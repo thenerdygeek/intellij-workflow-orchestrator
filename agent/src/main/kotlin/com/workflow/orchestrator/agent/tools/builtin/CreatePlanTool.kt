@@ -184,7 +184,8 @@ class CreatePlanTool : AgentTool {
                     appendLine("Determine the user's intent and respond accordingly:")
                     appendLine("- Approving / proceeding → begin execution immediately ($stepCount steps). Mark steps with update_plan_step as you go.")
                     appendLine("- Asking a question → answer it, then call create_plan again with the same plan to re-prompt for approval")
-                    appendLine("- Requesting changes → call create_plan again with a revised plan incorporating their feedback")
+                    appendLine("- Requesting changes but unclear → use ask_questions to gather clarification before revising")
+                    appendLine("- Requesting changes with clear details → call create_plan again with a revised plan incorporating their feedback")
                 }
                 ToolResult(
                     content = content,
