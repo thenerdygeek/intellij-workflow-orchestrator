@@ -123,10 +123,14 @@ class CoreMemory(
     private fun save() {
         try {
             storePath.parentFile?.mkdirs()
-            // Atomic write: write to temp file, then rename
+            // Atomic write: write to temp file, then move atomically
             val tmp = File(storePath.parentFile, "${storePath.name}.tmp")
             tmp.writeText(json.encodeToString(state))
-            tmp.renameTo(storePath)
+            java.nio.file.Files.move(
+                tmp.toPath(), storePath.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
         } catch (e: Exception) {
             LOG.warn("CoreMemory: failed to save to ${storePath.name}", e)
         }

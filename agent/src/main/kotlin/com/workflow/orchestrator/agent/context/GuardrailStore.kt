@@ -72,7 +72,14 @@ class GuardrailStore(
                     appendLine("- $c")
                 }
             }
-            file.writeText(content)
+            // Atomic write: write to temp file, then move atomically
+            val tmp = File(dir, "${GUARDRAILS_FILE}.tmp")
+            tmp.writeText(content)
+            java.nio.file.Files.move(
+                tmp.toPath(), file.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
             LOG.info("GuardrailStore: saved ${constraints.size} constraints to ${file.path}")
         } catch (e: Exception) {
             LOG.warn("GuardrailStore: failed to save guardrails", e)
