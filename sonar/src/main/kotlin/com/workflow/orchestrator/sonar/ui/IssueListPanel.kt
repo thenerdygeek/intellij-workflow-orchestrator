@@ -10,6 +10,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
+import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
@@ -23,7 +24,7 @@ import javax.swing.*
 
 class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
-    private val listModel = DefaultListModel<MappedIssue>()
+    private val listModel = DefaultListModel<QualityListItem>()
     private val issueList = JBList(listModel).apply {
         cellRenderer = IssueListCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
@@ -33,6 +34,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     private val countLabel = JBLabel("0 issues")
 
     private var allIssues: List<MappedIssue> = emptyList()
+    private var allHotspots: List<SecurityHotspotData> = emptyList()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val paginationWarning = JBLabel().apply {
@@ -90,8 +92,8 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         issueList.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
-                    val issue = issueList.selectedValue ?: return
-                    navigateToIssue(issue)
+                    val item = issueList.selectedValue ?: return
+                    navigateToItem(item)
                 }
             }
         })
@@ -105,19 +107,27 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
                 if (!e.isPopupTrigger) return
                 val index = issueList.locationToIndex(e.point) ?: return
                 issueList.selectedIndex = index
-                val issue = issueList.selectedValue ?: return
-
-                val agentAvailable = AgentChatRedirect.getInstance() != null || LlmBrainFactory.isAvailable()
+                val item = issueList.selectedValue ?: return
 
                 val menu = JPopupMenu()
-                menu.add(JMenuItem("Navigate to Issue").apply {
-                    addActionListener { navigateToIssue(issue) }
-                })
-                menu.add(JMenuItem("Fix with AI Agent").apply {
-                    isEnabled = agentAvailable
-                    toolTipText = if (!agentAvailable) "AI Agent is not available" else null
-                    addActionListener { fixWithAgent(issue) }
-                })
+                when (item) {
+                    is QualityListItem.IssueItem -> {
+                        val agentAvailable = AgentChatRedirect.getInstance() != null || LlmBrainFactory.isAvailable()
+                        menu.add(JMenuItem("Navigate to Issue").apply {
+                            addActionListener { navigateToItem(item) }
+                        })
+                        menu.add(JMenuItem("Fix with AI Agent").apply {
+                            isEnabled = agentAvailable
+                            toolTipText = if (!agentAvailable) "AI Agent is not available" else null
+                            addActionListener { fixWithAgent(item.issue) }
+                        })
+                    }
+                    is QualityListItem.HotspotItem -> {
+                        menu.add(JMenuItem("Navigate to Hotspot").apply {
+                            addActionListener { navigateToItem(item) }
+                        })
+                    }
+                }
                 menu.show(issueList, e.x, e.y)
             }
         })
@@ -135,28 +145,30 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         applyFilters()
     }
 
+    fun updateHotspots(hotspots: List<SecurityHotspotData>) {
+        allHotspots = hotspots
+        applyFilters()
+    }
+
     private fun applyFilters() {
-        var filtered = allIssues
+        val typeFilter = filterCombo.selectedItem as? String ?: "All"
+        val severityFilter = severityCombo.selectedItem as? String ?: "All"
 
-        when (filterCombo.selectedIndex) {
-            1 -> filtered = filtered.filter { it.type == IssueType.BUG }
-            2 -> filtered = filtered.filter { it.type == IssueType.VULNERABILITY }
-            3 -> filtered = filtered.filter { it.type == IssueType.CODE_SMELL }
-            4 -> filtered = filtered.filter { it.type == IssueType.SECURITY_HOTSPOT }
+        // Merge issues and hotspots, then apply filters
+        val merged = QualityListItem.merge(allIssues, allHotspots)
+        val filtered = merged.filter { item ->
+            item.matchesTypeFilter(typeFilter) && item.matchesSeverityFilter(severityFilter)
         }
 
-        when (severityCombo.selectedIndex) {
-            1 -> filtered = filtered.filter { it.severity == IssueSeverity.BLOCKER }
-            2 -> filtered = filtered.filter { it.severity == IssueSeverity.CRITICAL }
-            3 -> filtered = filtered.filter { it.severity == IssueSeverity.MAJOR }
-            4 -> filtered = filtered.filter { it.severity == IssueSeverity.MINOR }
-            5 -> filtered = filtered.filter { it.severity == IssueSeverity.INFO }
-        }
-
-        val sorted = filtered.sortedBy { it.severity.ordinal }
+        // Sort: IssueItems by severity ordinal first, HotspotItems by probability after
+        val sorted = filtered.sortedWith(Comparator { a, b ->
+            val orderA = sortOrder(a)
+            val orderB = sortOrder(b)
+            orderA.compareTo(orderB)
+        })
 
         // Preserve selection across update
-        val selectedIssue = issueList.selectedValue
+        val selectedItem = issueList.selectedValue
         val scrollPosition = scrollPane.verticalScrollBar.value
 
         // Only update if data actually changed
@@ -165,9 +177,9 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
             listModel.clear()
             sorted.forEach { listModel.addElement(it) }
 
-            // Restore selection if the same issue is still present
-            if (selectedIssue != null) {
-                val newIndex = sorted.indexOf(selectedIssue)
+            // Restore selection if the same item is still present
+            if (selectedItem != null) {
+                val newIndex = sorted.indexOf(selectedItem)
                 if (newIndex >= 0) {
                     issueList.selectedIndex = newIndex
                 }
@@ -181,10 +193,11 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
 
         // Update count label — show "Showing X of Y" when filters are active
         val filtersActive = filterCombo.selectedIndex != 0 || severityCombo.selectedIndex != 0
-        countLabel.text = if (filtersActive && allIssues.isNotEmpty()) {
-            "Showing ${filtered.size} of ${allIssues.size} issues"
+        val totalItems = merged.size
+        countLabel.text = if (filtersActive && totalItems > 0) {
+            "Showing ${filtered.size} of $totalItems items"
         } else {
-            "${filtered.size} issue(s)"
+            "${filtered.size} item(s)"
         }
 
         // Show empty state or list
@@ -192,7 +205,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         remove(emptyLabel)
         remove(filteredEmptyLabel)
         if (sorted.isEmpty()) {
-            if (filtersActive && allIssues.isNotEmpty()) {
+            if (filtersActive && totalItems > 0) {
                 add(filteredEmptyLabel, BorderLayout.CENTER)
             } else {
                 add(emptyLabel, BorderLayout.CENTER)
@@ -204,10 +217,36 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         repaint()
     }
 
+    /** Sort order: IssueItems by severity ordinal (0-4), HotspotItems by probability (5-7). */
+    private fun sortOrder(item: QualityListItem): Int = when (item) {
+        is QualityListItem.IssueItem -> item.issue.severity.ordinal
+        is QualityListItem.HotspotItem -> when (item.hotspot.probability) {
+            "HIGH" -> 5
+            "MEDIUM" -> 6
+            else -> 7 // LOW
+        }
+    }
+
+    private fun navigateToItem(item: QualityListItem) {
+        when (item) {
+            is QualityListItem.IssueItem -> navigateToIssue(item.issue)
+            is QualityListItem.HotspotItem -> navigateToHotspot(item.hotspot)
+        }
+    }
+
     private fun navigateToIssue(issue: MappedIssue) {
         val basePath = project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, issue.filePath).path) ?: return
         OpenFileDescriptor(project, vf, issue.startLine - 1, issue.startOffset).navigate(true)
+    }
+
+    private fun navigateToHotspot(hotspot: SecurityHotspotData) {
+        val basePath = project.basePath ?: return
+        // Extract file path from component: "project-key:src/main/java/Foo.java" -> "src/main/java/Foo.java"
+        val filePath = hotspot.component.substringAfterLast(':')
+        val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, filePath).path) ?: return
+        val line = hotspot.line?.let { it - 1 } ?: 0
+        OpenFileDescriptor(project, vf, line, 0).navigate(true)
     }
 
     override fun dispose() {
@@ -243,7 +282,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     }
 }
 
-private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
+private class IssueListCellRenderer : JPanel(), ListCellRenderer<QualityListItem> {
     private val mainLabel = JBLabel()
     private val detailLabel = JBLabel()
 
@@ -258,18 +297,32 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
     }
 
     override fun getListCellRendererComponent(
-        list: JList<out MappedIssue>, value: MappedIssue,
+        list: JList<out QualityListItem>, value: QualityListItem,
         index: Int, isSelected: Boolean, cellHasFocus: Boolean
     ): Component {
+        when (value) {
+            is QualityListItem.IssueItem -> renderIssue(list, value, isSelected)
+            is QualityListItem.HotspotItem -> renderHotspot(list, value, isSelected)
+        }
+
+        // Selection background
+        isOpaque = true
+        background = if (isSelected) list.selectionBackground else list.background
+
+        return this
+    }
+
+    private fun renderIssue(list: JList<out QualityListItem>, item: QualityListItem.IssueItem, isSelected: Boolean) {
+        val issue = item.issue
         // Severity color — htmlColor resolves JBColor for current theme at render time
-        val severityColor = when (value.severity) {
+        val severityColor = when (issue.severity) {
             IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> StatusColors.ERROR
             IssueSeverity.MAJOR, IssueSeverity.MINOR -> StatusColors.WARNING
             IssueSeverity.INFO -> StatusColors.INFO
         }
         val htmlColor = StatusColors.htmlColor(severityColor as JBColor)
-        val typeStr = value.type.name.replace("_", " ")
-        val fileName = java.io.File(value.filePath).name
+        val typeStr = issue.type.name.replace("_", " ")
+        val fileName = item.displayFileName
 
         // Left accent border by severity (2px) + inner padding (Stitch design)
         border = javax.swing.BorderFactory.createCompoundBorder(
@@ -279,13 +332,13 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
 
         // Main line: type + severity label in color + message + file:line
         mainLabel.text = "<html>$typeStr " +
-            "<font color='$htmlColor'><b>[${value.severity}]</b></font>" +
-            "  ${value.message} \u2014 $fileName:${value.startLine}</html>"
+            "<font color='$htmlColor'><b>[${issue.severity}]</b></font>" +
+            "  ${issue.message} \u2014 $fileName:${issue.startLine}</html>"
         mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
 
         // Detail line: effort + age
-        val effort = value.effort
-        val creationDate = value.creationDate
+        val effort = issue.effort
+        val creationDate = issue.creationDate
         if (effort != null || creationDate != null) {
             val sb = StringBuilder("  ")
             if (effort != null) sb.append(effort).append(" to fix")
@@ -307,17 +360,55 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<MappedIssue> {
             detailLabel.isVisible = false
         }
 
-        // Selection background
-        isOpaque = true
-        background = if (isSelected) list.selectionBackground else list.background
+        // Tooltip
+        toolTipText = buildString {
+            append("[${issue.rule}] ${issue.message} \u2014 ${issue.filePath}:${issue.startLine}")
+            issue.effort?.let { append(" | Effort: $it") }
+            append(" | Status: ${issue.status}")
+        }
+    }
+
+    private fun renderHotspot(list: JList<out QualityListItem>, item: QualityListItem.HotspotItem, isSelected: Boolean) {
+        val hotspot = item.hotspot
+        // Probability color badge
+        val probabilityColor = when (hotspot.probability) {
+            "HIGH" -> StatusColors.ERROR
+            "MEDIUM" -> StatusColors.WARNING
+            else -> StatusColors.INFO // LOW
+        }
+        val htmlColor = StatusColors.htmlColor(probabilityColor as JBColor)
+        val fileName = item.displayFileName
+        val lineStr = hotspot.line?.toString() ?: "?"
+
+        // Left accent border by probability (2px) + inner padding
+        border = javax.swing.BorderFactory.createCompoundBorder(
+            javax.swing.BorderFactory.createMatteBorder(0, 2, 0, 0, probabilityColor),
+            JBUI.Borders.empty(4, 8)
+        )
+
+        // Main line: SECURITY HOTSPOT + probability badge + message + file:line
+        mainLabel.text = "<html>SECURITY HOTSPOT " +
+            "<font color='$htmlColor'><b>[${hotspot.probability}]</b></font>" +
+            "  ${hotspot.message} \u2014 $fileName:$lineStr</html>"
+        mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
+
+        // Detail line: review status + security category
+        val statusText = when (hotspot.status) {
+            "TO_REVIEW" -> "To Review"
+            "REVIEWED" -> hotspot.resolution?.let { "Reviewed ($it)" } ?: "Reviewed"
+            else -> hotspot.status
+        }
+        detailLabel.text = "  $statusText \u2022 ${hotspot.securityCategory.replace("-", " ")}"
+        detailLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+        detailLabel.isVisible = true
 
         // Tooltip
         toolTipText = buildString {
-            append("[${value.rule}] ${value.message} \u2014 ${value.filePath}:${value.startLine}")
-            value.effort?.let { append(" | Effort: $it") }
-            append(" | Status: ${value.status}")
+            append("[${hotspot.securityCategory}] ${hotspot.message}")
+            append(" \u2014 ${hotspot.component}")
+            hotspot.line?.let { append(":$it") }
+            append(" | Probability: ${hotspot.probability}")
+            append(" | Status: $statusText")
         }
-
-        return this
     }
 }

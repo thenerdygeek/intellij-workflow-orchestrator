@@ -169,7 +169,11 @@ class QualityDashboardPanel(
                     val currentState = lastRenderedState ?: return@addChangeListener
                     when (newIndex) {
                         0 -> if (overviewStale) { overviewPanel.update(currentState); overviewStale = false }
-                        1 -> if (issuesStale) { issueListPanel.update(currentState.activeIssues, currentState.activeTotalIssueCount); issuesStale = false }
+                        1 -> if (issuesStale) {
+                            issueListPanel.update(currentState.activeIssues, currentState.activeTotalIssueCount)
+                            issueListPanel.updateHotspots(currentState.securityHotspots)
+                            issuesStale = false
+                        }
                         2 -> if (coverageStale) {
                             val coverageData = currentState.activeFileCoverage.ifEmpty { currentState.fileCoverage }
                             coverageTablePanel.update(coverageData, currentState.newCodeMode && currentState.activeFileCoverage.isNotEmpty(), currentState.totalCoverageFileCount)
@@ -314,10 +318,12 @@ class QualityDashboardPanel(
             || prev.activeIssues != state.activeIssues
             || prev.newCodeMode != state.newCodeMode
             || prev.projectHealth != state.projectHealth
+            || prev.securityHotspots != state.securityHotspots
 
         val issuesChanged = prev == null
             || prev.activeIssues != state.activeIssues
             || prev.activeTotalIssueCount != state.activeTotalIssueCount
+            || prev.securityHotspots != state.securityHotspots
 
         val coverageChanged = prev == null
             || prev.activeFileCoverage != state.activeFileCoverage
@@ -333,7 +339,11 @@ class QualityDashboardPanel(
         // Only update the CURRENTLY VISIBLE sub-tab; others will update on tab switch
         when (selectedTabIndex) {
             0 -> if (overviewStale) { overviewPanel.update(state); overviewStale = false }
-            1 -> if (issuesStale) { issueListPanel.update(state.activeIssues, state.activeTotalIssueCount); issuesStale = false }
+            1 -> if (issuesStale) {
+                issueListPanel.update(state.activeIssues, state.activeTotalIssueCount)
+                issueListPanel.updateHotspots(state.securityHotspots)
+                issuesStale = false
+            }
             2 -> if (coverageStale) {
                 val coverageData = state.activeFileCoverage.ifEmpty { state.fileCoverage }
                 coverageTablePanel.update(coverageData, state.newCodeMode && state.activeFileCoverage.isNotEmpty(), state.totalCoverageFileCount)

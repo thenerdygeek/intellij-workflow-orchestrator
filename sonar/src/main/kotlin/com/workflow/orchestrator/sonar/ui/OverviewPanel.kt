@@ -166,7 +166,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val bugs = state.activeIssues.count { it.type == IssueType.BUG }
         val vulns = state.activeIssues.count { it.type == IssueType.VULNERABILITY }
         val smells = state.activeIssues.count { it.type == IssueType.CODE_SMELL }
-        val hotspots = state.activeIssues.count { it.type == IssueType.SECURITY_HOTSPOT }
+        val hotspots = state.securityHotspots.size
         // Calculate total effort from all active issues
         val totalEffortMinutes = state.activeIssues.mapNotNull { it.effort?.let { e -> parseEffortToMinutes(e) } }.sum()
         val effortText = formatEffortMinutes(totalEffortMinutes)
