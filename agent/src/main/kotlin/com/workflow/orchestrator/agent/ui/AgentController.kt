@@ -50,7 +50,7 @@ class AgentController(
     private var currentOrchestrator: AgentOrchestrator? = null
     private var sessionStartMs = 0L
     private var session: ConversationSession? = null
-    private val pendingUserMessages = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private val steeringChannel = com.workflow.orchestrator.agent.runtime.SteeringChannel()
     private var sessionAutoApprove = false
     private var currentPlanFile: com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile? = null
     private var planModeEnabled = false
@@ -765,9 +765,9 @@ class AgentController(
                 || session?.questionManager?.isAwaitingAnswers == true  // question wizard
 
             if (!isWaitingForUser) {
-                pendingUserMessages.add(task)
+                steeringChannel.enqueue(task)
                 dashboard.appendUserMessage(task)
-                dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
+                dashboard.appendStatus("Message sent — agent will see it after the current step completes.", RichStreamingPanel.StatusType.INFO)
                 return
             }
 
@@ -897,7 +897,8 @@ class AgentController(
                     approvalGate = approvalGate,
                     onProgress = { handleProgress(it) },
                     onStreamChunk = { dashboard.appendStreamToken(it) },
-                    onDebugLog = onDebugLog
+                    onDebugLog = onDebugLog,
+                    steeringChannel = steeringChannel
                 )
                 debugLog("info", "result", "Orchestrator returned: ${result::class.simpleName}")
                 reaperJob.cancel()
@@ -956,6 +957,7 @@ class AgentController(
     }
 
     fun cancelTask() {
+        steeringChannel.clear()
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
         currentOrchestrator?.cancelTask()
@@ -980,6 +982,7 @@ class AgentController(
     }
 
     fun newChat() {
+        steeringChannel.clear()
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
         ralphOrchestrator.cancel() // Cancel Ralph Loop before clearing session
@@ -1404,14 +1407,6 @@ class AgentController(
     }
 
     private fun handleResult(result: AgentResult, durationMs: Long) {
-        // Process any queued user messages after the current task completes
-        val pending = pendingUserMessages.poll()
-        if (pending != null) {
-            LOG.info("AgentController: processing queued user intervention: ${pending.take(100)}")
-            // Schedule follow-up execution after current result is handled
-            invokeLater { executeTask(pending) }
-        }
-
         when (result) {
             is AgentResult.Completed -> {
                 dashboard.flushStreamBuffer()
@@ -1789,6 +1784,8 @@ class AgentController(
                 if (result is com.workflow.orchestrator.core.model.ApiResult.Success) {
                     val models = result.data.data
                         .sortedWith(compareBy<com.workflow.orchestrator.agent.api.dto.ModelInfo> { it.tier }.thenBy { it.displayName })
+                    // Populate the global model cache so cheapBrain() can pick Haiku for plan summaries
+                    com.workflow.orchestrator.core.ai.ModelCache.populateFromExternal(models)
                     val json = kotlinx.serialization.json.Json.encodeToString(
                         kotlinx.serialization.builtins.ListSerializer(
                             kotlinx.serialization.serializer<ModelListEntry>()
