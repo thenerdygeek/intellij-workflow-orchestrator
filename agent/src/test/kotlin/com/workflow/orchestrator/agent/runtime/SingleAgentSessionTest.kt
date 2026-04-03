@@ -449,10 +449,10 @@ class SingleAgentSessionTest {
             project = project
         )
 
-        // LoopGuard should have skipped execution and returned a doom loop tool result
-        // checkDoomLoop detects re-reads first ("already read"), then doom loops on 3rd identical call
+        // LoopGuard should have blocked the 3rd read_file call (re-read count >= 3)
+        // or detected a doom loop (3 consecutive identical calls)
         verify(atLeast = 1) {
-            bridge.addToolError(any(), match { it.contains("already read") || it.contains("same arguments") }, any(), any())
+            bridge.addToolError(any(), match { it.contains("read") && (it.contains("times") || it.contains("same arguments")) }, any(), any())
         }
     }
 
