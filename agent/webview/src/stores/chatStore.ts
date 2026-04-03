@@ -17,6 +17,7 @@ import type {
   SubAgentState,
   EditStats,
   CheckpointInfo,
+  RollbackInfo,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
@@ -100,6 +101,7 @@ interface ChatState {
   toolOutputStreams: Record<string, string>;
   editStats: EditStats | null;
   checkpoints: CheckpointInfo[];
+  rollbackEvents: RollbackInfo[];
   planPending: 'approve' | 'revise' | null;
   planCompletedPendingClear: boolean;
 
@@ -161,9 +163,10 @@ interface ChatState {
   appendToolOutput(toolCallId: string, chunk: string): void;
   killToolCall(toolCallId: string): void;
 
-  // Edit Stats + Checkpoint Actions
+  // Edit Stats + Checkpoint + Rollback Actions
   updateEditStats(stats: EditStats): void;
   updateCheckpoints(checkpoints: CheckpointInfo[]): void;
+  applyRollback(rollback: RollbackInfo): void;
 
   // Sub-Agent Actions
   spawnSubAgent(payload: string): void;
@@ -218,6 +221,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolOutputStreams: {},
   editStats: null,
   checkpoints: [],
+  rollbackEvents: [],
   planPending: null,
   planCompletedPendingClear: false,
 
@@ -748,6 +752,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateCheckpoints(checkpoints: CheckpointInfo[]) {
     set({ checkpoints });
+  },
+
+  applyRollback(rollback: RollbackInfo) {
+    set((state) => ({
+      rollbackEvents: [...state.rollbackEvents, rollback],
+    }));
   },
 
   // ── Sub-Agent Actions ──

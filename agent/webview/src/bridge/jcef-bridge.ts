@@ -253,6 +253,12 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       stores?.getChatStore().updateCheckpoints(checkpoints);
     } catch { /* ignore malformed JSON */ }
   },
+  notifyRollback(json: string) {
+    try {
+      const rollback = JSON.parse(json);
+      stores?.getChatStore().applyRollback(rollback);
+    } catch { /* ignore malformed JSON */ }
+  },
 
   // Sub-Agent methods from Kotlin
   spawnSubAgent(payload: string) {

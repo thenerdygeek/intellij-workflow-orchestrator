@@ -191,9 +191,10 @@ function parseExitCode(result?: string): number | undefined {
 interface ToolCallViewProps {
   toolCall: ToolCall;
   isLatest: boolean;
+  rolledBack?: boolean;
 }
 
-export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
+export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewProps) {
   const { name, status, durationMs } = toolCall;
   const category = getCategory(name);
   const catStyle = CATEGORY_STYLES[category];
@@ -246,7 +247,10 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
       </Badge>
       {target && (
         <span
-          className="truncate text-[11px] font-mono text-[var(--fg-muted)]"
+          className={cn(
+            'truncate text-[11px] font-mono text-[var(--fg-muted)]',
+            rolledBack && 'line-through',
+          )}
           style={{ maxWidth: '200px' }}
         >
           {target}
@@ -294,8 +298,20 @@ export function ToolCallView({ toolCall, isLatest }: ToolCallViewProps) {
         'group relative',
         isRunning && 'ring-1 ring-[var(--accent)] rounded-lg',
         isError && 'ring-1 ring-[var(--error)] rounded-lg',
+        rolledBack && 'opacity-40',
       )}
     >
+      {rolledBack && (
+        <span
+          className="absolute -top-1 -right-1 z-10 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider"
+          style={{
+            background: 'var(--warning, #e5a100)',
+            color: 'var(--bg, #1e1e1e)',
+          }}
+        >
+          reverted
+        </span>
+      )}
       <Tool
         toolPart={effectiveToolPart}
         open={isOpen}

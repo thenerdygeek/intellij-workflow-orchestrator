@@ -222,6 +222,24 @@ export interface CheckpointInfo {
   totalLinesRemoved: number;
 }
 
+// ── Rollback types ──
+
+export type RollbackSource = 'LLM_TOOL' | 'USER_BUTTON' | 'USER_UNDO';
+export type RollbackMechanism = 'LOCAL_HISTORY' | 'GIT_FALLBACK';
+export type RollbackScope = 'FULL_CHECKPOINT' | 'SINGLE_FILE';
+
+export interface RollbackInfo {
+  id: string;
+  timestamp: number;
+  checkpointId: string;
+  description: string;
+  source: RollbackSource;
+  mechanism: RollbackMechanism;
+  affectedFiles: string[];
+  rolledBackEntryIds: string[];
+  scope: RollbackScope;
+}
+
 // ── Visualization settings ──
 
 export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline' | 'image';
