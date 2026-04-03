@@ -394,11 +394,12 @@ class ContextManagementFeatureTest {
     // ── Scenario 6: ObservationMasking With Rich Placeholders ────────────────
 
     @Test
-    fun `scenario 6 - ObservationMaskingCondenser masks old observations and preserves attention window`() {
+    fun `scenario 6 - ObservationMaskingCondenser masks old observations with token-based tiering`() {
         // ASSERTIONS FIRST:
-        // 40 events. attentionWindow=10, so threshold=30.
-        // Observations at index < 30 → replaced with CondensationObservation containing "Tool result masked"
-        // Observations at index >= 30 → untouched
+        // Token-utilization-gated condenser with small windows.
+        // At 70% utilization (above 60% threshold), masking activates.
+        // Observations far from tail (beyond outerWindow) → METADATA (masked placeholder)
+        // Observations near tail (within innerWindow) → FULL (untouched)
         // Existing CondensationObservation entries → NEVER masked
 
         val store = store()
@@ -408,46 +409,41 @@ class ContextManagementFeatureTest {
         store.add(userMsg("work"), EventSource.USER)
 
         // Add 38 more events (mix of tool calls and results), to total 40
+        // Use large content to create clear token distance between events
         for (i in 1..19) {
             val tc = "tc-obs$i"
             store.add(readAction("/src/File$i.kt", tc, "rg$i"), EventSource.AGENT)
-            store.add(toolResult(tc, "content of file $i " + "x".repeat(200), toolName = "read_file"), src)
+            store.add(toolResult(tc, "content of file $i " + "x".repeat(2000), toolName = "read_file"), src)
         }
 
         assertEquals(40, store.size())
 
         val view = View.fromEvents(store.all())
-        val attentionWindow = 10
-        val condenser = ObservationMaskingCondenser(attentionWindow = attentionWindow)
-        val result = condenser.condense(context(view)) as CondenserView
+        // Token utilization above threshold (0.70 > 0.60), small windows for testing
+        val condenser = ObservationMaskingCondenser(
+            threshold = 0.60,
+            innerWindowTokens = 2_000,   // recent events stay FULL
+            outerWindowTokens = 4_000    // older events compressed or masked
+        )
+        val result = condenser.condense(context(view, tokenUtilization = 0.70)) as CondenserView
 
         val maskedEvents = result.view.events
-        val threshold = maskedEvents.size - attentionWindow
 
-        // Assert: all Observations at index < threshold are masked (replaced with CondensationObservation)
-        for (i in 0 until threshold) {
-            val event = maskedEvents[i]
-            if (event is ToolResultObservation) {
-                fail<Unit>("ToolResultObservation at index $i (below threshold $threshold) should have been masked")
-            }
-        }
+        // Assert: some old observations are masked/compressed (not all kept as FULL)
+        val maskedOrCompressed = maskedEvents.filterIsInstance<CondensationObservation>()
+            .filter { it.content.contains("masked") || it.content.contains("compressed") }
+        assertTrue(maskedOrCompressed.isNotEmpty(), "Some old observations should be masked or compressed")
 
-        // Assert: observations in last 10 events (index >= threshold) are untouched ToolResultObservation
-        val lastTenEvents = maskedEvents.drop(threshold)
-        val untouchedToolResults = lastTenEvents.filterIsInstance<ToolResultObservation>()
-        assertTrue(untouchedToolResults.isNotEmpty(), "Events in attention window should remain as ToolResultObservation")
-
-        // Assert: masked events contain "Tool result masked" text
-        val maskedPlaceholders = maskedEvents.take(threshold).filterIsInstance<CondensationObservation>()
-            .filter { it.content.contains("Tool result masked") || it.content.contains("masked") }
-        assertTrue(maskedPlaceholders.isNotEmpty(), "Masked observations should contain placeholder text")
+        // Assert: recent observations near tail are untouched ToolResultObservation
+        val lastFew = maskedEvents.takeLast(6)
+        val untouchedToolResults = lastFew.filterIsInstance<ToolResultObservation>()
+        assertTrue(untouchedToolResults.isNotEmpty(), "Recent events (FULL tier) should remain as ToolResultObservation")
 
         // Assert: CondensationObservation (summaries) are NEVER masked
-        // Insert a condensation observation and verify it is not re-masked
         val summaryObs = CondensationObservation(content = "IMPORTANT SUMMARY", id = -1)
         val eventsWithSummary = listOf(summaryObs) + view.events
         val viewWithSummary = View(events = eventsWithSummary)
-        val resultWithSummary = condenser.condense(context(viewWithSummary)) as CondenserView
+        val resultWithSummary = condenser.condense(context(viewWithSummary, tokenUtilization = 0.70)) as CondenserView
 
         val survivingObservation = resultWithSummary.view.events.firstOrNull {
             it is CondensationObservation && (it as CondensationObservation).content == "IMPORTANT SUMMARY"

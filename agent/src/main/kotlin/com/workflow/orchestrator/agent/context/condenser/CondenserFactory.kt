@@ -7,9 +7,9 @@ import com.workflow.orchestrator.agent.context.ContextManagementConfig
  *
  * The pipeline stages are ordered from cheapest to most expensive:
  * 1. [SmartPrunerCondenser] — zero-loss deduplication and pruning (if enabled)
- * 2. [ObservationMaskingCondenser] — replaces old observations with placeholders
- * 3. [ConversationWindowCondenser] — reactive window trimming on overflow
- * 4. [LLMSummarizingCondenser] — LLM-powered summarization (if client provided)
+ * 2. [ObservationMaskingCondenser] — token-gated 3-tier observation compression (>=60%)
+ * 3. [ConversationWindowCondenser] — proactive sliding-window trimming (>=75%)
+ * 4. [LLMSummarizingCondenser] — LLM-powered summarization (>=85%, if client provided)
  *
  * If [llmClient] is null, the LLM summarization stage is omitted.
  * If [ContextManagementConfig.smartPrunerEnabled] is false, the SmartPruner stage is omitted.
@@ -34,11 +34,17 @@ object CondenserFactory {
             condensers.add(SmartPrunerCondenser())
         }
 
-        // Stage 2: ObservationMasking (cheap placeholder replacement)
-        condensers.add(ObservationMaskingCondenser(attentionWindow = config.observationMaskingWindow))
+        // Stage 2: ObservationMasking (token-gated, 3-tier compression)
+        condensers.add(
+            ObservationMaskingCondenser(
+                threshold = config.observationMaskingThreshold,
+                innerWindowTokens = config.observationMaskingInnerWindowTokens,
+                outerWindowTokens = config.observationMaskingOuterWindowTokens
+            )
+        )
 
-        // Stage 3: ConversationWindow (reactive overflow trimming)
-        condensers.add(ConversationWindowCondenser())
+        // Stage 3: ConversationWindow (proactive sliding-window trimming)
+        condensers.add(ConversationWindowCondenser(threshold = config.conversationWindowThreshold))
 
         // Stage 4: LLM Summarization (most expensive, only if client available)
         if (llmClient != null) {

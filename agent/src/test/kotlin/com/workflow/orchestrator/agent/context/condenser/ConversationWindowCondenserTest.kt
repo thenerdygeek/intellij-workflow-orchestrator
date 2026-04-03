@@ -36,11 +36,24 @@ class ConversationWindowCondenserTest {
     }
 
     @Test
-    fun `shouldCondense returns false when unhandledCondensationRequest is false`() {
-        // Even with a huge view, it should not trigger
+    fun `shouldCondense returns false when below threshold and no request`() {
         val events = (1..1000).map { MessageAction(content = "msg-$it", id = it) }
         val view = View(events = events, unhandledCondensationRequest = false)
-        assertFalse(condenser.shouldCondense(contextOf(view, utilization = 0.99)))
+        assertFalse(condenser.shouldCondense(contextOf(view, utilization = 0.50)))
+    }
+
+    @Test
+    fun `shouldCondense returns true when above threshold even without request`() {
+        val events = (1..100).map { MessageAction(content = "msg-$it", id = it) }
+        val view = View(events = events, unhandledCondensationRequest = false)
+        assertTrue(condenser.shouldCondense(contextOf(view, utilization = 0.80)))
+    }
+
+    @Test
+    fun `shouldCondense returns true at exact threshold boundary`() {
+        val events = (1..10).map { MessageAction(content = "msg-$it", id = it) }
+        val view = View(events = events, unhandledCondensationRequest = false)
+        assertTrue(condenser.shouldCondense(contextOf(view, utilization = 0.75)))
     }
 
     @Test

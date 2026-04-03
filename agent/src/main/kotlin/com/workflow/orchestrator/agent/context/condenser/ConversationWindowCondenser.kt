@@ -3,14 +3,12 @@ package com.workflow.orchestrator.agent.context.condenser
 import com.workflow.orchestrator.agent.context.events.*
 
 /**
- * Reactive fallback condenser that only triggers when a context window overflow
- * error has been reported via [CondensationRequestAction].
+ * Proactive sliding-window condenser that trims old conversation events.
  *
- * This condenser does NOT monitor token utilization or view size. It fires only
- * when [View.unhandledCondensationRequest] is true (i.e., the LLM returned a
- * ContextWindowExceededError and the controller injected a condensation request).
+ * Triggers when token utilization exceeds [threshold] OR when an explicit
+ * condensation request is pending (context window overflow from the API).
  *
- * Algorithm (matching OpenHands ConversationWindowCondenser):
+ * Algorithm (matching OpenHands ConversationWindowCondenser, enhanced with proactive trigger):
  * 1. Identify essential events (system message + first user message)
  * 2. Keep roughly half of the non-essential events from the tail
  * 3. Skip dangling observations at the slice boundary
@@ -18,10 +16,13 @@ import com.workflow.orchestrator.agent.context.events.*
  * 5. Use range mode for contiguous forgotten IDs, explicit list otherwise
  * 6. No LLM call, no summary
  */
-class ConversationWindowCondenser : RollingCondenser() {
+class ConversationWindowCondenser(
+    private val threshold: Double = 0.75
+) : RollingCondenser() {
 
     override fun shouldCondense(context: CondenserContext): Boolean {
-        return context.view.unhandledCondensationRequest
+        return context.tokenUtilization >= threshold
+            || context.view.unhandledCondensationRequest
     }
 
     override fun getCondensation(context: CondenserContext): Condensation {
