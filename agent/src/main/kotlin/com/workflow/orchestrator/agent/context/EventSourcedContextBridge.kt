@@ -7,6 +7,9 @@ import com.workflow.orchestrator.agent.context.condenser.*
 import com.workflow.orchestrator.agent.context.events.*
 import com.workflow.orchestrator.agent.runtime.ChangeLedger
 import com.workflow.orchestrator.core.model.ApiResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.UUID
 
@@ -90,6 +93,23 @@ class EventSourcedContextBridge(
 
     /** Disk spillover for full tool outputs. */
     var toolOutputStore: ToolOutputStore? = null
+
+    // =========================================================================
+    // C6: Anchor token tracking — anchors are appended AFTER the condenser runs,
+    // so this estimate is included in estimateCurrentTokens() and passed to the
+    // condenser pipeline via CondenserContext.anchorTokens.
+    // =========================================================================
+
+    /** Estimated tokens consumed by all compression-proof anchors. */
+    @Volatile private var anchorTokenEstimate: Int = 0
+
+    // =========================================================================
+    // M12: View caching — View.fromEvents() is O(N) and was called 3-6 times
+    // per ReAct iteration. Cache is invalidated when eventStore grows.
+    // =========================================================================
+
+    @Volatile private var cachedView: View? = null
+    @Volatile private var cachedViewEventCount: Int = -1
 
     // =========================================================================
     // System prompt and initialization
@@ -338,8 +358,7 @@ class EventSourcedContextBridge(
      * Infinite condensation loops are guarded by [condensationLoopCount].
      */
     fun getMessagesViaCondenser(): CondenserOutcome {
-        val allEvents = eventStore.all()
-        val view = View.fromEvents(allEvents)
+        val view = getView()
 
         // Use the API-authoritative token count when available; fall back to heuristic
         val currentTokens = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
@@ -348,11 +367,15 @@ class EventSourcedContextBridge(
         val tokenUtilization = if (effectiveBudget > 0) currentTokens.toDouble() / effectiveBudget.toDouble()
                                else 0.0
 
+        // C6: Pass anchorTokens so the pipeline can include them in inter-stage
+        // token recalculation (M18). This ensures condensers don't undercompress
+        // because they don't see the 3-8K tokens that anchors will add.
         val condenserContext = CondenserContext(
             view = view,
             tokenUtilization = tokenUtilization,
             effectiveBudget = effectiveBudget,
-            currentTokens = currentTokens
+            currentTokens = currentTokens,
+            anchorTokens = anchorTokenEstimate
         )
 
         return when (val result = condenserPipeline.condense(condenserContext)) {
@@ -416,8 +439,7 @@ class EventSourcedContextBridge(
      * @return true if condensation occurred, false if the view was passed through
      */
     fun runCondensation(): Boolean {
-        val allEvents = eventStore.all()
-        val view = View.fromEvents(allEvents)
+        val view = getView()
 
         val currentTokens = if (lastReportedPromptTokens > 0) lastReportedPromptTokens
                             else estimateCurrentTokens()
@@ -428,7 +450,8 @@ class EventSourcedContextBridge(
             view = view,
             tokenUtilization = utilizationPercent,
             effectiveBudget = budget,
-            currentTokens = currentTokens
+            currentTokens = currentTokens,
+            anchorTokens = anchorTokenEstimate
         )
 
         when (val result = condenserPipeline.condense(condenserContext)) {
@@ -473,8 +496,7 @@ class EventSourcedContextBridge(
      * This is the primary path for LLM calls.
      */
     fun getMessages(): List<ChatMessage> {
-        val allEvents = eventStore.all()
-        val view = View.fromEvents(allEvents)
+        val view = getView()
         val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
         val messages = conversationMemory.processEvents(
             view.events,
@@ -523,7 +545,7 @@ class EventSourcedContextBridge(
 
     /** Count system warnings that are still visible (not forgotten by condensation). */
     fun countSystemWarnings(): Int {
-        val view = View.fromEvents(eventStore.all())
+        val view = getView()
         return view.events.count { event ->
             event is SystemMessageAction && event.content.contains("system_warning")
         }
@@ -532,7 +554,7 @@ class EventSourcedContextBridge(
     /** Remove oldest system warning by forgetting it via CondensationAction. */
     fun removeOldestSystemWarning(): Boolean {
         // Build a View to find the oldest WARNING that is still visible (not already forgotten).
-        val view = View.fromEvents(eventStore.all())
+        val view = getView()
         val warningEvent = view.events.firstOrNull { event ->
             event is SystemMessageAction && event.content.contains("system_warning")
         }
@@ -558,18 +580,45 @@ class EventSourcedContextBridge(
     /** Effective budget after subtracting reserved tokens. */
     private val effectiveBudget: Int get() = maxInputTokens - reservedTokens
 
-    /** Estimate current tokens from events (heuristic fallback). */
+    /**
+     * Estimate current tokens from events (heuristic fallback).
+     * C6: Includes anchor tokens so the condenser sees the full budget picture.
+     */
     private fun estimateCurrentTokens(): Int {
         val messages = getMessagesRaw()
-        return TokenEstimator.estimate(messages)
+        return TokenEstimator.estimate(messages) + anchorTokenEstimate
     }
 
     /** Get messages without anchors (to avoid recursion in token estimation). */
     private fun getMessagesRaw(): List<ChatMessage> {
-        val allEvents = eventStore.all()
-        val view = View.fromEvents(allEvents)
+        val view = getView()
         val initial = initialUserAction ?: MessageAction(content = "[No initial message]")
         return conversationMemory.processEvents(view.events, initial, view.forgottenEventIds)
+    }
+
+    /**
+     * M12: Cached view construction. [View.fromEvents] is O(N) per call and was
+     * invoked 3-6 times per ReAct iteration. The cache is invalidated when the
+     * event store grows (new events appended).
+     */
+    private fun getView(): View {
+        val currentSize = eventStore.size()
+        val cached = cachedView
+        if (cached != null && cachedViewEventCount == currentSize) return cached
+        val view = View.fromEvents(eventStore.all())
+        cachedView = view
+        cachedViewEventCount = currentSize
+        return view
+    }
+
+    /**
+     * C6: Recalculate the estimated token count for all compression-proof anchors.
+     * Called after every anchor setter to keep [anchorTokenEstimate] current.
+     */
+    private fun recalculateAnchorTokens() {
+        anchorTokenEstimate = getAnchorMessages().sumOf {
+            TokenEstimator.estimate(it.content ?: "")
+        }
     }
 
     // =========================================================================
@@ -578,18 +627,22 @@ class EventSourcedContextBridge(
 
     fun setPlanAnchor(message: ChatMessage?) {
         planAnchor = message
+        recalculateAnchorTokens()
     }
 
     fun setSkillAnchor(message: ChatMessage?) {
         skillAnchor = message
+        recalculateAnchorTokens()
     }
 
     fun setMentionAnchor(message: ChatMessage?) {
         mentionAnchor = message
+        recalculateAnchorTokens()
     }
 
     fun setGuardrailsAnchor(message: ChatMessage?) {
         guardrailsAnchor = message
+        recalculateAnchorTokens()
     }
 
     /**
@@ -601,6 +654,7 @@ class EventSourcedContextBridge(
         factsAnchor = if (contextStr.isNotEmpty()) {
             ChatMessage(role = "system", content = contextStr)
         } else null
+        recalculateAnchorTokens()
     }
 
     /**
@@ -611,6 +665,7 @@ class EventSourcedContextBridge(
         changeLedgerAnchor = if (contextStr.isNotEmpty()) {
             ChatMessage(role = "system", content = "<change_ledger>\n$contextStr\n</change_ledger>")
         } else null
+        recalculateAnchorTokens()
     }
 
     /**
@@ -682,13 +737,12 @@ class EventSourcedContextBridge(
     }
 
     /**
-     * Simple JSON string extraction without pulling in a JSON library.
-     * Handles: "key":"value" and "key": "value"
+     * Extract a string value from JSON using proper parsing.
+     * Handles escaped quotes, unicode, and all valid JSON string content.
      */
-    private fun extractJsonString(json: String, key: String): String? {
-        val regex = Regex(""""$key"\s*:\s*"([^"]*?)"""")
-        return regex.find(json)?.groupValues?.get(1)
-    }
+    private fun extractJsonString(json: String, key: String): String? = try {
+        Json.parseToJsonElement(json).jsonObject[key]?.jsonPrimitive?.content
+    } catch (_: Exception) { null }
 
     companion object {
         /**
