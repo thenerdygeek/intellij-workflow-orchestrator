@@ -82,6 +82,7 @@ interface ChatState {
     ralph: boolean;
   };
   busy: boolean;
+  steeringMode: boolean;
   showingToolsPanel: boolean;
   toolsPanelData: string | null;
   showingSkeleton: boolean;
@@ -127,6 +128,7 @@ interface ChatState {
   setInputMode(mode: 'agent' | 'plan'): void;
   setRalphLoop(enabled: boolean): void;
   setBusy(busy: boolean): void;
+  setSteeringMode(enabled: boolean): void;
   setModelName(model: string): void;
   updateTokenBudget(used: number, max: number): void;
   updateSkillsList(skills: Skill[]): void;
@@ -198,6 +200,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ralph: false,
   },
   busy: false,
+  steeringMode: false,
   showingToolsPanel: false,
   toolsPanelData: null,
   showingSkeleton: false,
@@ -235,6 +238,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questions: null,
       questionSummary: null,
       busy: true,
+      steeringMode: true,
       retryMessage: null,
       editStats: null,
       checkpoints: [],
@@ -258,6 +262,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       session: info,
       busy: false,
+      steeringMode: false,
       activeStream: null,
       activeToolCalls: new Map(),
       messages,
@@ -504,6 +509,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setBusy(busy: boolean) {
     set({ busy });
+  },
+
+  setSteeringMode(enabled: boolean) {
+    set({ steeringMode: enabled });
   },
 
   setModelName(model: string) {

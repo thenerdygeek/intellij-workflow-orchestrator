@@ -820,6 +820,7 @@ class AgentController(
         }
 
         dashboard.setBusy(true)
+        dashboard.setSteeringMode(true)
 
         sessionStartMs = System.currentTimeMillis()
 
@@ -920,6 +921,7 @@ class AgentController(
             } finally {
                 currentOrchestrator = null
                 dashboard.setBusy(false)
+                dashboard.setSteeringMode(false)
                 // Persist conversation state after each turn (best effort)
                 session?.let { s ->
                     try {
@@ -957,6 +959,7 @@ class AgentController(
     }
 
     fun cancelTask() {
+        dashboard.setSteeringMode(false)
         steeringChannel.clear()
         pendingApprovalDeferred?.complete(false)
         pendingApprovalDeferred = null
@@ -1429,6 +1432,7 @@ class AgentController(
                 }
 
                 // Normal (non-Ralph) completion
+                dashboard.setSteeringMode(false)
                 dashboard.completeSession(result.totalTokens, 0, result.artifacts, durationMs, RichStreamingPanel.SessionStatus.SUCCESS)
                 if (result.artifacts.isNotEmpty()) {
                     dashboard.appendStatus(
@@ -1438,6 +1442,7 @@ class AgentController(
                 }
             }
             is AgentResult.Failed -> {
+                dashboard.setSteeringMode(false)
                 dashboard.appendError(result.error)
                 dashboard.completeSession(0, 0, emptyList(), durationMs, RichStreamingPanel.SessionStatus.FAILED)
                 showFailureNotification(result.error)
@@ -1462,10 +1467,12 @@ class AgentController(
                 }
             }
             is AgentResult.Cancelled -> {
+                dashboard.setSteeringMode(false)
                 dashboard.appendStatus("Cancelled after ${result.completedSteps} steps.", RichStreamingPanel.StatusType.WARNING)
                 dashboard.completeSession(0, result.completedSteps, emptyList(), durationMs, RichStreamingPanel.SessionStatus.CANCELLED)
             }
             is AgentResult.ContextRotated -> {
+                dashboard.setSteeringMode(false)
                 dashboard.appendStatus(
                     "Context full — rotating to fresh session. ${result.summary}",
                     RichStreamingPanel.StatusType.WARNING

@@ -782,6 +782,10 @@ class AgentCefPanel(
         callJs("setBusy(${if (busy) "true" else "false"})")
     }
 
+    fun setSteeringMode(enabled: Boolean) {
+        callJs("setSteeringMode(${if (enabled) "true" else "false"})")
+    }
+
     fun setInputLocked(locked: Boolean) {
         callJs("setInputLocked(${if (locked) "true" else "false"})")
     }

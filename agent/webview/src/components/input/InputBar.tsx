@@ -188,6 +188,7 @@ interface InputBarContentProps {
   skillQuery: string;
   ticketQuery: string;
   busy: boolean;
+  steeringMode: boolean;
   locked: boolean;
   planActive: boolean;
   ralphActive: boolean;
@@ -224,6 +225,7 @@ function InputBarContent({
   skillQuery,
   ticketQuery,
   busy,
+  steeringMode,
   planActive,
   ralphActive,
   model,
@@ -294,12 +296,23 @@ function InputBarContent({
         />
       )}
 
+      {/* Steering mode indicator */}
+      {busy && steeringMode && (
+        <div
+          className="text-xs px-3 pt-2 pb-0 flex items-center gap-1.5"
+          style={{ color: 'var(--fg-muted)' }}
+        >
+          <span style={{ color: 'var(--accent-blue, #60a5fa)', fontSize: '8px' }}>&#9650;</span>
+          <span>Type to steer — message arrives after current step</span>
+        </div>
+      )}
+
       {/* Rich contenteditable input — chips render inline with text */}
       <div className="px-3 pt-2 pb-1">
         <RichInput
           ref={richInputRef}
-          placeholder="Ask anything... (@ context, # ticket, / skill)"
-          disabled={busy}
+          placeholder={busy && steeringMode ? 'Steer the agent...' : 'Ask anything... (@ context, # ticket, / skill)'}
+          disabled={false}
           onSubmit={onSend}
           onChange={onRichInputChange}
           onEscape={onDismissMentions}
@@ -579,7 +592,9 @@ export const InputBar = memo(function InputBar() {
     const text = ri.getText();
     const mentions = ri.getMentions();
     if (!text.trim() && mentions.length === 0) return;
-    if (useChatStore.getState().inputState.locked || useChatStore.getState().busy) return;
+    const state = useChatStore.getState();
+    if (state.inputState.locked) return;
+    if (state.busy && !state.steeringMode) return;
     useChatStore.getState().sendMessage(text.trim(), mentions);
     ri.clear();
     setHasText(false);
@@ -598,7 +613,8 @@ export const InputBar = memo(function InputBar() {
     setTicketItems(results);
   }, []);
 
-  const canSend = hasText && !inputState.locked && !busy;
+  const steeringMode = useChatStore(s => s.steeringMode);
+  const canSend = hasText && !inputState.locked && (!busy || steeringMode);
   const planActive = inputState.mode === 'plan';
   const ralphActive = inputState.ralph ?? false;
 
@@ -617,6 +633,7 @@ export const InputBar = memo(function InputBar() {
           skillQuery={skillQuery}
           ticketQuery={ticketQuery}
           busy={busy}
+          steeringMode={steeringMode}
           locked={inputState.locked}
           planActive={planActive}
           ralphActive={ralphActive}

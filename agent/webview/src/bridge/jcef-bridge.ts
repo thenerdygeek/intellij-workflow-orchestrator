@@ -113,6 +113,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setBusy(busy: boolean) {
     stores?.getChatStore().setBusy(busy);
   },
+  setSteeringMode(enabled: boolean) {
+    stores?.getChatStore().setSteeringMode(enabled);
+  },
   setInputLocked(locked: boolean) {
     stores?.getChatStore().setInputLocked(locked);
   },

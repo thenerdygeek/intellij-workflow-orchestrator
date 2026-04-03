@@ -146,6 +146,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.setBusy(busy) }
     }
 
+    fun setSteeringMode(enabled: Boolean) {
+        runOnEdt { cefPanel?.setSteeringMode(enabled) }
+        mirrors.forEach { it.setSteeringMode(enabled) }
+    }
+
     fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) {
         runOnEdt { cefPanel?.updateTokenBudget(tokensUsed, maxTokens) }
         mirrors.forEach { it.updateProgress(step, tokensUsed, maxTokens) }
