@@ -82,3 +82,9 @@ fun `tool returns correct result`() = runTest {
 - Coverage: [areas covered]
 - Run command: ./gradlew :module:test
 ```
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.

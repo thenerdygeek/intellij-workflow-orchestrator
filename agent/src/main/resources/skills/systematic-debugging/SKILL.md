@@ -1,7 +1,7 @@
 ---
 name: systematic-debugging
 description: Structured root-cause investigation that must be loaded before attempting any fix. Use this whenever you encounter any bug, test failure, build failure, runtime error, or unexpected behavior — trigger phrases include "failing", "broken", "NPE", "exception", "not working", "error", "bug", "wrong output", "unexpected", "why does this", "crash", "null pointer", as well as test failures, build failures, stack traces, CI failures, and flaky tests. You must always load this skill before proposing or attempting fixes, even if the fix seems obvious, because guessing at solutions without investigation leads to wasted iterations and incomplete fixes. For example, if the user says "Tests are failing", "This returns wrong results", or "Build broke after my change", load this skill immediately before doing anything else. It walks you through a structured investigate-hypothesize-verify workflow that uses IDE diagnostics, call hierarchy analysis, dataflow tracing, and git blame to systematically identify the actual root cause rather than treating symptoms.
-preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, call_hierarchy, git_status, git_blame, think, run_tests, compile_module, get_test_results, get_run_output, get_running_processes]
+preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, call_hierarchy, git, think, runtime_exec, coverage]
 ---
 
 # Systematic Debugging
@@ -58,8 +58,8 @@ Complete each phase before proceeding to the next.
    - Can you trigger it reliably? What are the exact steps?
 
 3. **Check Recent Changes**
-   - Use `git_status` to see uncommitted changes
-   - Use `git_blame` on the failing file to see who changed what and when
+   - Use `git(action="status")` to see uncommitted changes
+   - Use `git(action="blame")` on the failing file to see who changed what and when
    - What changed that could cause this?
 
 4. **Use `think` Tool to Reason**
@@ -153,7 +153,7 @@ you genuinely need to observe runtime state.
 4. **When You Don't Know**
    - Say "I don't understand X"
    - Use `agent` to spawn an explorer subagent to investigate a specific aspect while you continue
-   - Check SonarQube for related issues: use `sonar_issues` filtered to the affected file
+   - Check SonarQube for related issues: use `sonar(action="issues")` filtered to the affected file
 
 ### Phase 4: Implementation
 
@@ -174,7 +174,7 @@ you genuinely need to observe runtime state.
    - Use `run_tests` — test passes now?
    - Use `compile_module` — no compilation errors?
    - Use `diagnostics` — no new issues introduced?
-   - Use `sonar_issues` on the file — no new code smells?
+   - Use `sonar(action="issues")` on the file — no new code smells?
 
 4. **If Fix Doesn't Work**
    - STOP
@@ -211,10 +211,10 @@ If you catch yourself thinking:
 
 | Phase | Primary Tools | Purpose |
 |-------|--------------|---------|
-| 1. Root Cause | `get_test_results`, `get_run_output`, `diagnostics`, `git_blame`, `find_references`, `search_code`, `think` | Understand WHAT and WHY |
+| 1. Root Cause | `runtime_exec(action="get_test_results")`, `runtime_exec(action="get_run_output")`, `diagnostics`, `git(action="blame")`, `find_references`, `search_code`, `think` | Understand WHAT and WHY |
 | 2. Pattern | `search_code`, `read_file`, `find_definition`, `type_hierarchy`, `think` | Find working patterns |
 | 3. Hypothesis | `think`, `run_tests`, `compile_module`, `diagnostics` | Test theory minimally |
-| 4. Implementation | `edit_file`, `run_tests`, `compile_module`, `diagnostics`, `sonar_issues` | Fix and verify |
+| 4. Implementation | `edit_file`, `runtime_exec(action="run_tests")`, `runtime_exec(action="compile_module")`, `diagnostics`, `sonar(action="issues")` | Fix and verify |
 
 ## Defense-in-Depth
 

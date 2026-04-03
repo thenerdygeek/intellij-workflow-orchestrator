@@ -87,3 +87,9 @@ For each optimization:
 
 ### Assessment: OPTIMAL | NEEDS OPTIMIZATION | CRITICAL BOTTLENECK
 ```
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.

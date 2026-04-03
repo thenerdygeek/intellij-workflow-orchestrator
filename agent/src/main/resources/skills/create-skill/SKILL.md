@@ -45,19 +45,19 @@ Questions:
 
 ### Step 2: Identify Tools
 
-Use `think` to analyze which of the 86 available tools are relevant to this workflow.
+Use `think` to analyze which of the 68 registered tools (15 meta-tools with 144 actions) are relevant to this workflow.
 
-The agent has 86 tools across 10 categories. Use `think` to identify relevant tools, or refer to the tool list in the system prompt. Key categories:
+The agent has 68 registered tools across 10 categories. Use `think` to identify relevant tools, or refer to the tool list in the system prompt. Key categories:
 - **Core:** read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, agent, think
-- **IDE Intelligence:** run_inspections, refactor_rename, list_quickfixes, compile_module, run_tests, find_implementations
-- **Runtime & Debug:** add_breakpoint, start_debug_session, get_debug_state, debug_step_over, evaluate_expression, get_variables, create_run_config, run_tests, get_test_results
-- **VCS:** git_status, git_blame, git_diff, git_log, git_branches, git_show_file, git_show_commit, git_merge_base, git_file_history, git_stash_list
-- **Spring & Framework:** spring_context, spring_endpoints, spring_bean_graph, spring_config, jpa_entities, project_modules
-- **Jira:** jira_get_ticket, jira_get_transitions, jira_transition, jira_comment, jira_get_comments, jira_log_work
-- **Bamboo:** bamboo_build_status, bamboo_get_build, bamboo_trigger_build, bamboo_get_build_log, bamboo_get_test_results
-- **SonarQube:** sonar_issues, sonar_quality_gate, sonar_coverage, sonar_search_projects, sonar_analysis_tasks
-- **Bitbucket:** bitbucket_create_pr, bitbucket_get_pr_diff, bitbucket_get_pr_changes, bitbucket_get_pr_commits
-- **Planning:** create_plan, update_plan_step, ask_questions, archival_memory_insert, Skill
+- **IDE Intelligence:** run_inspections, refactor_rename, list_quickfixes, find_implementations, semantic_diagnostics
+- **Runtime & Debug:** runtime_config (get/create/modify/delete run configs), runtime_exec (run_tests, compile_module, get_test_results, get_run_output), debug_breakpoints, debug_step, debug_inspect
+- **VCS:** git (actions: status, blame, diff, log, branches, show_file, show_commit, merge_base, file_history, stash_list, shelve)
+- **Spring & Framework:** spring (actions: context, endpoints, bean_graph, config, jpa_entities, etc.), build (actions: maven_dependencies, gradle_dependencies, etc.)
+- **Jira:** jira (actions: get_ticket, get_transitions, transition, comment, log_work, get_worklogs, search_issues, etc.)
+- **Bamboo:** bamboo_builds (actions: build_status, get_build, trigger_build, get_build_log, get_test_results, etc.), bamboo_plans
+- **SonarQube:** sonar (actions: issues, quality_gate, coverage, search_projects, analysis_tasks, etc.)
+- **Bitbucket:** bitbucket_pr (actions: create_pr, get_pr_diff, get_pr_changes, get_pr_commits, etc.), bitbucket_review, bitbucket_repo
+- **Planning:** create_plan, update_plan_step, ask_questions, archival_memory_insert, skill
 
 Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't restrictions — just priorities.
 
@@ -66,7 +66,7 @@ Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't
 **Key principles:**
 - Keep the main file under 500 lines (ideally under 200)
 - Use imperative form ("Do X", not "You should do X")
-- Include specific tool names in instructions (e.g., "Use `sonar_issues` to check for blockers")
+- Include specific tool names in instructions (e.g., "Use `sonar(action=\"issues\")` to check for blockers")
 - Be explicit about the workflow steps
 - Include `$ARGUMENTS` placeholder if the skill accepts input (e.g., ticket ID)
 - Explain WHY steps matter, not just WHAT to do
@@ -120,15 +120,15 @@ This helps the agent remember available skills across sessions.
 ---
 name: hotfix
 description: Create and deploy a hotfix for production issues. Use when the user mentions hotfix, production bug, urgent fix, P0, or emergency patch.
-preferred-tools: [jira_get_ticket, jira_transition, git_status, bamboo_trigger_build, bitbucket_create_pr]
+preferred-tools: [jira, git, bamboo_builds, bitbucket_pr]
 ---
 ## Hotfix Workflow
-1. Get the ticket details: use `jira_get_ticket` with $ARGUMENTS (ticket ID)
-2. Use `git_status` to check current branch state
-3. Transition ticket to "In Progress": use `jira_transition`
+1. Get the ticket details: use `jira(action="get_ticket")` with $ARGUMENTS (ticket ID)
+2. Use `git(action="status")` to check current branch state
+3. Transition ticket to "In Progress": use `jira(action="transition")`
 4. Guide the user through the fix
-5. Verify the build: use `bamboo_trigger_build`
-6. Create PR targeting master: use `bitbucket_create_pr`
+5. Verify the build: use `bamboo_builds(action="trigger_build")`
+6. Create PR targeting master: use `bitbucket_pr(action="create_pr")`
 ```
 
 ### Pre-Review Checklist
@@ -136,13 +136,13 @@ preferred-tools: [jira_get_ticket, jira_transition, git_status, bamboo_trigger_b
 ---
 name: review-prep
 description: Prepare code for review — quality checks, fix blockers, verify coverage. Use when the user says review prep, prepare for PR, ready for review, or code quality before merging.
-preferred-tools: [sonar_issues, sonar_coverage, sonar_project_measures, run_tests, compile_module, diagnostics]
+preferred-tools: [sonar, runtime_exec, diagnostics]
 ---
 ## Pre-Review Checklist
-1. Run `compile_module` to verify clean compilation
-2. Run `run_tests` for the affected module
-3. Check `sonar_issues` for any blocker/critical issues on changed files
-4. Check `sonar_coverage` meets the project threshold
+1. Run `runtime_exec(action="compile_module")` to verify clean compilation
+2. Run `runtime_exec(action="run_tests")` for the affected module
+3. Check `sonar(action="issues")` for any blocker/critical issues on changed files
+4. Check `sonar(action="coverage")` meets the project threshold
 5. Run `diagnostics` on changed files for IDE-level warnings
 6. Summarize findings and suggest fixes
 ```
@@ -154,11 +154,11 @@ name: standup
 description: Gather context for daily standup — current ticket, recent commits, build status. Use when the user asks about their work, standup, or what they did yesterday.
 user-invocable: true
 disable-model-invocation: false
-preferred-tools: [jira_get_ticket, git_status, git_blame, bamboo_build_status]
+preferred-tools: [jira, git, bamboo_builds]
 ---
 ## Standup Context
-1. Use `jira_get_ticket` to get the active ticket details
-2. Use `git_status` to see current branch and recent changes
-3. Use `bamboo_build_status` to check if the latest build passed
+1. Use `jira(action="get_ticket")` to get the active ticket details
+2. Use `git(action="status")` to see current branch and recent changes
+3. Use `bamboo_builds(action="build_status")` to check if the latest build passed
 4. Summarize: what was done, what's in progress, any blockers
 ```

@@ -69,3 +69,9 @@ Use `build` meta-tool for build system analysis:
 
 Use `git` for version control:
 - `git(action="status")`, `git(action="diff")`, `git(action="log")`
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.

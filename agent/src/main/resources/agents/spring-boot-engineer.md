@@ -87,3 +87,9 @@ Use `build` for dependency management:
 4. Implement following Spring conventions
 5. Write tests at appropriate level
 6. Verify with `./gradlew :module:test`
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.

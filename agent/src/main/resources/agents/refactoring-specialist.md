@@ -62,3 +62,9 @@ For each atomic refactoring step:
 - Touching code not related to the refactoring
 - Multiple refactorings in one commit
 - "While I'm here" improvements
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.

@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: "Use for comprehensive code reviews focusing on quality, security, performance, and maintainability. Dispatched after implementation tasks in subagent-driven development."
-tools: read_file, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, git_blame, diagnostics, run_inspections, list_quickfixes, sonar, spring, build, think, git
+tools: read_file, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, diagnostics, run_inspections, list_quickfixes, sonar, spring, build, think, git
 max-turns: 25
 ---
 
@@ -73,3 +73,9 @@ You are a senior code reviewer with deep expertise in Kotlin, Java, Spring Boot,
 ```
 
 Verify by reading code, not by trusting reports. Be specific with file:line references.
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.

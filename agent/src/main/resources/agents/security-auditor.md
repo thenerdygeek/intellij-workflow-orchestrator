@@ -98,3 +98,9 @@ You are a security auditor specializing in JVM/Spring Boot application security.
 - Critical: N, High: N, Medium: N, Low: N
 - Recommendation: PASS | CONDITIONAL PASS | FAIL
 ```
+
+## Completion
+
+When your task is complete, call `worker_complete` with your full findings.
+The parent agent ONLY sees your worker_complete output — tool call history is not visible.
+Include all relevant details, file paths, and recommendations in your result.
