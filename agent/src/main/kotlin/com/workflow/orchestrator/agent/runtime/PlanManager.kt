@@ -7,7 +7,6 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import com.workflow.orchestrator.agent.AgentService
-import java.util.concurrent.CompletableFuture
 
 @Serializable
 data class PlanStep(
@@ -71,8 +70,6 @@ class PlanManager {
     var currentPlan: AgentPlan? = null
         private set
 
-    private var approvalFuture: CompletableFuture<PlanApprovalResult>? = null
-
     var onPlanCreated: ((AgentPlan) -> Unit)? = null
     var onStepUpdated: ((String, String) -> Unit)? = null
 
@@ -84,16 +81,6 @@ class PlanManager {
 
     /** Callback fired after the plan is approved — carries the approved plan for UI re-render. */
     var onPlanApproved: ((AgentPlan) -> Unit)? = null
-
-    fun submitPlan(plan: AgentPlan): CompletableFuture<PlanApprovalResult> {
-        currentPlan = plan
-        approvalFuture = CompletableFuture()
-        LOG.info("PlanManager: plan submitted with ${plan.steps.size} steps")
-        onPlanCreated?.invoke(plan)
-        sessionDir?.let { PlanPersistence.save(plan, it) }
-        onPlanAnchorUpdate?.invoke(plan)
-        return approvalFuture!!
-    }
 
     /**
      * Submit a plan and suspend until the user approves or revises it.
@@ -155,20 +142,15 @@ class PlanManager {
 
     /** True when a plan has been submitted and is awaiting user approval/revision. */
     val isAwaitingApproval: Boolean
-        get() = (approvalDeferred != null && approvalDeferred?.isCompleted == false)
-            || (approvalFuture != null && approvalFuture?.isDone == false)
+        get() = approvalDeferred != null && approvalDeferred?.isCompleted == false
 
     fun approvePlan() {
         isRevisionInProgress = false
         currentPlan?.approved = true
         // Auto-exit plan mode: tools are restored on next LLM call
         AgentService.planModeActive.set(false)
-        // Resolve the async deferred if using submitPlanAndWait
         approvalDeferred?.complete(PlanApprovalResult.Approved)
         approvalDeferred = null
-        // Complete the legacy CompletableFuture if using submitPlan
-        approvalFuture?.complete(PlanApprovalResult.Approved)
-        approvalFuture = null
         currentPlan?.let {
             onPlanAnchorUpdate?.invoke(it)
             onPlanApproved?.invoke(it)
