@@ -4,6 +4,8 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
+import com.intellij.ui.JBSplitter
+import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
@@ -13,10 +15,14 @@ import com.workflow.orchestrator.sonar.model.FileCoverageData
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Font
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JPanel
 import javax.swing.JTable
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
+import javax.swing.event.ListSelectionListener
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 
@@ -44,6 +50,24 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     private val scrollPane = JBScrollPane(table)
+
+    private val summaryLabel = JBLabel().apply {
+        font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+        border = JBUI.Borders.empty(4, 8)
+    }
+
+    private val searchField = SearchTextField(false).apply {
+        textEditor.emptyText.text = "Filter files..."
+    }
+
+    private val previewPanel = CoveragePreviewPanel(project)
+
+    private val splitter = JBSplitter(true, 0.6f).apply {
+        dividerWidth = 3
+    }
+
+    private var allCoverageData: List<FileCoverageData> = emptyList()
+    private var currentNewCodeMode: Boolean = false
 
     /** Cell renderer that color-codes complexity values: >threshold1 orange, >threshold2 red. */
     private class ComplexityCellRenderer(
@@ -115,6 +139,29 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
                 }
             }
         })
+
+        // Single-click selection -> update preview panel
+        table.selectionModel.addListSelectionListener(ListSelectionListener { e ->
+            if (e.valueIsAdjusting) return@ListSelectionListener
+            val row = table.selectedRow
+            if (row >= 0) {
+                val modelRow = table.convertRowIndexToModel(row)
+                val filePath = tableModel.getFilePath(modelRow)
+                val coverageData = tableModel.getFileCoverageData(modelRow)
+                if (coverageData != null) {
+                    previewPanel.showFile(filePath, coverageData)
+                }
+            } else {
+                previewPanel.showEmptyState()
+            }
+        })
+
+        // Search field listener
+        searchField.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent?) = filterTable()
+            override fun removeUpdate(e: DocumentEvent?) = filterTable()
+            override fun changedUpdate(e: DocumentEvent?) = filterTable()
+        })
     }
 
     /** Apply complexity cell renderers to the last two columns. Called after structure changes. */
@@ -129,9 +176,13 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
     }
 
     fun update(fileCoverage: Map<String, FileCoverageData>, newCodeMode: Boolean = false, totalFileCount: Int? = null) {
-        val data = fileCoverage.values.toList().sortedBy {
+        allCoverageData = fileCoverage.values.toList().sortedBy {
             if (newCodeMode) it.newCoverage ?: 0.0 else it.lineCoverage
         }
+        currentNewCodeMode = newCodeMode
+
+        // Apply any active search filter
+        val data = filterData(allCoverageData)
 
         // Preserve selected row
         val selectedRow = table.selectedRow
@@ -167,15 +218,29 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
             paginationWarning.isVisible = false
         }
 
+        // Update summary bar
+        updateSummaryLabel(allCoverageData)
+
         removeAll()
-        if (data.isEmpty()) {
+        if (allCoverageData.isEmpty()) {
             add(emptyLabel, BorderLayout.CENTER)
         } else {
-            val contentPanel = JPanel(BorderLayout()).apply {
-                add(paginationWarning, BorderLayout.NORTH)
+            // Header panel with summary + search
+            val headerPanel = JPanel(BorderLayout()).apply {
+                add(summaryLabel, BorderLayout.NORTH)
+                add(searchField, BorderLayout.SOUTH)
+            }
+
+            // Table content panel
+            val tableContentPanel = JPanel(BorderLayout()).apply {
+                add(headerPanel, BorderLayout.NORTH)
+                add(paginationWarning, BorderLayout.SOUTH)
                 add(scrollPane, BorderLayout.CENTER)
             }
-            add(contentPanel, BorderLayout.CENTER)
+
+            splitter.firstComponent = tableContentPanel
+            splitter.secondComponent = previewPanel
+            add(splitter, BorderLayout.CENTER)
         }
 
         // Restore selection by file path
@@ -191,6 +256,28 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
         revalidate()
         repaint()
+    }
+
+    private fun filterTable() {
+        val filtered = filterData(allCoverageData)
+        tableModel.setData(filtered, currentNewCodeMode)
+        previewPanel.showEmptyState()
+    }
+
+    private fun filterData(data: List<FileCoverageData>): List<FileCoverageData> {
+        val query = searchField.text.orEmpty().trim().lowercase()
+        if (query.isEmpty()) return data
+        return data.filter { it.filePath.lowercase().contains(query) }
+    }
+
+    private fun updateSummaryLabel(data: List<FileCoverageData>) {
+        if (data.isEmpty()) {
+            summaryLabel.text = ""
+            return
+        }
+        val avgCoverage = data.map { it.lineCoverage }.average()
+        val belowThreshold = data.count { it.lineCoverage < 80.0 }
+        summaryLabel.text = "${data.size} files | %.1f%% avg coverage | $belowThreshold files below 80%%".format(avgCoverage)
     }
 
     private fun navigateToFile(filePath: String) {
@@ -223,6 +310,8 @@ private class CoverageTableModel : AbstractTableModel() {
     fun isNewCodeMode(): Boolean = newCodeMode
 
     fun getFilePath(row: Int): String = data[row].filePath
+
+    fun getFileCoverageData(row: Int): FileCoverageData? = data.getOrNull(row)
 
     override fun getRowCount() = data.size
     override fun getColumnCount() = if (newCodeMode) newCodeColumns.size else overallColumns.size
