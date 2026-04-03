@@ -361,9 +361,10 @@ class SingleAgentSession(
                         bridge.addSteeringMessage(msg.content)
                         eventLog?.log(AgentEventType.STEERING_RECEIVED, "User steering: ${msg.content.take(200)}")
                     }
+                    val drainedIds = steeringMessages.joinToString(",") { it.id }
                     LOG.info("SingleAgentSession: injected ${steeringMessages.size} steering message(s) at iteration $iteration")
                     onProgress(AgentProgress(
-                        step = "Received steering from user",
+                        step = "Received steering from user:$drainedIds",
                         tokensUsed = bridge.currentTokens
                     ))
                 }

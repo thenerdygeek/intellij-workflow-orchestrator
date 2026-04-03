@@ -1402,9 +1402,10 @@ class AgentController(
                 dashboard.flushStreamBuffer()
                 return
             }
-            progress.step == "Received steering from user" -> {
-                // All queued messages have been drained — promote them to normal user messages
-                invokeLater { dashboard.promoteQueuedSteeringMessages() }
+            progress.step.startsWith("Received steering from user:") -> {
+                // Promote only the specific messages that were drained (not all queued)
+                val drainedIds = progress.step.removePrefix("Received steering from user:").split(",").filter { it.isNotBlank() }
+                invokeLater { dashboard.promoteQueuedSteeringMessages(drainedIds) }
                 return
             }
             progress.step == "__completion__" && toolInfo != null -> {

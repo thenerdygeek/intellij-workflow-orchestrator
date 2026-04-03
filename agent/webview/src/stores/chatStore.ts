@@ -175,7 +175,7 @@ interface ChatState {
   // Queued Steering Actions
   addQueuedSteeringMessage(id: string, text: string): void;
   removeQueuedSteeringMessage(id: string): void;
-  promoteQueuedSteeringMessages(): void;
+  promoteQueuedSteeringMessages(ids: string[]): void;
   restoreInputText(text: string): void;
   clearRestoredInputText(): void;
 
@@ -828,10 +828,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  promoteQueuedSteeringMessages() {
-    // Move all queued messages to normal chat messages, then clear the queue
+  promoteQueuedSteeringMessages(ids: string[]) {
+    // Promote only the specific messages that were drained by the agent
     set((state) => {
-      const newMessages = state.queuedSteeringMessages.map(m => ({
+      const idSet = new Set(ids);
+      const toPromote = state.queuedSteeringMessages.filter(m => idSet.has(m.id));
+      const remaining = state.queuedSteeringMessages.filter(m => !idSet.has(m.id));
+      const newMessages = toPromote.map(m => ({
         id: nextId('msg'),
         role: 'user' as const,
         content: m.text,
@@ -839,7 +842,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
       return {
         messages: [...state.messages, ...newMessages],
-        queuedSteeringMessages: [],
+        queuedSteeringMessages: remaining,
       };
     });
   },

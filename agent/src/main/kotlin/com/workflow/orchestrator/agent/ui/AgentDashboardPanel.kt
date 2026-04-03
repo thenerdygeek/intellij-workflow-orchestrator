@@ -570,9 +570,9 @@ class AgentDashboardPanel(
         mirrors.forEach { it.removeQueuedSteeringMessage(id) }
     }
 
-    fun promoteQueuedSteeringMessages() {
-        runOnEdt { cefPanel?.promoteQueuedSteeringMessages() }
-        mirrors.forEach { it.promoteQueuedSteeringMessages() }
+    fun promoteQueuedSteeringMessages(ids: List<String>) {
+        runOnEdt { cefPanel?.promoteQueuedSteeringMessages(ids) }
+        mirrors.forEach { it.promoteQueuedSteeringMessages(ids) }
     }
 
     fun restoreInputText(text: String) {

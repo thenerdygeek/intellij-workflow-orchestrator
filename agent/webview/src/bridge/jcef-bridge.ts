@@ -270,8 +270,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   removeQueuedSteeringMessage(id: string) {
     stores?.getChatStore().removeQueuedSteeringMessage(id);
   },
-  promoteQueuedSteeringMessages() {
-    stores?.getChatStore().promoteQueuedSteeringMessages();
+  promoteQueuedSteeringMessages(ids: string[]) {
+    stores?.getChatStore().promoteQueuedSteeringMessages(ids);
   },
   restoreInputText(text: string) {
     stores?.getChatStore().restoreInputText(text);

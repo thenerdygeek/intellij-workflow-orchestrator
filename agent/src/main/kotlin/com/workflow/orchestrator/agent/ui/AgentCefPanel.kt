@@ -1023,8 +1023,9 @@ class AgentCefPanel(
         callJs("removeQueuedSteeringMessage(${jsonStr(id)})")
     }
 
-    fun promoteQueuedSteeringMessages() {
-        callJs("promoteQueuedSteeringMessages()")
+    fun promoteQueuedSteeringMessages(ids: List<String>) {
+        val idsJson = ids.joinToString(",") { jsonStr(it) }
+        callJs("promoteQueuedSteeringMessages([$idsJson])")
     }
 
     fun restoreInputText(text: String) {
