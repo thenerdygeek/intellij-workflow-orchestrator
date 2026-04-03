@@ -58,6 +58,9 @@ object EventSerializer {
             is SystemMessageAction -> {
                 map["content"] = JsonPrimitive(event.content)
             }
+            is UserSteeringAction -> {
+                map["content"] = JsonPrimitive(event.content)
+            }
             is AgentThinkAction -> {
                 map["thought"] = JsonPrimitive(event.thought)
             }
@@ -187,6 +190,10 @@ object EventSerializer {
                 id = id, timestamp = timestamp, source = source
             )
             "system_message_action" -> SystemMessageAction(
+                content = obj.str("content"),
+                id = id, timestamp = timestamp, source = source
+            )
+            "user_steering" -> UserSteeringAction(
                 content = obj.str("content"),
                 id = id, timestamp = timestamp, source = source
             )
@@ -324,6 +331,7 @@ object EventSerializer {
     private fun typeDiscriminator(event: Event): String = when (event) {
         is MessageAction -> "message_action"
         is SystemMessageAction -> "system_message_action"
+        is UserSteeringAction -> "user_steering"
         is AgentThinkAction -> "agent_think_action"
         is AgentFinishAction -> "agent_finish_action"
         is DelegateAction -> "delegate_action"

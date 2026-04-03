@@ -152,6 +152,7 @@ class EventStore(private val sessionDir: File? = null) {
         when (event) {
             is MessageAction -> event.copy(id = id, timestamp = timestamp, source = source)
             is SystemMessageAction -> event.copy(id = id, timestamp = timestamp, source = source)
+            is UserSteeringAction -> event.copy(id = id, timestamp = timestamp, source = source)
             is AgentThinkAction -> event.copy(id = id, timestamp = timestamp, source = source)
             is AgentFinishAction -> event.copy(id = id, timestamp = timestamp, source = source)
             is DelegateAction -> event.copy(id = id, timestamp = timestamp, source = source)

@@ -169,6 +169,7 @@ class LLMSummarizingCondenser(
     internal fun formatEvent(event: Event): String = when (event) {
         is MessageAction -> "[Message from ${event.source}] ${event.content}"
         is SystemMessageAction -> "[System] ${event.content}"
+        is UserSteeringAction -> "[Steering] ${event.content}"
         is AgentThinkAction -> "[Think] ${event.thought}"
         is AgentFinishAction -> "[Finish] ${event.finalThought}"
         is DelegateAction -> "[Delegate to ${event.agentType}] ${event.prompt}"

@@ -43,6 +43,18 @@ data class SystemMessageAction(
 ) : Action
 
 /**
+ * A steering message from the user, sent mid-execution while the agent was working.
+ * Injected at iteration boundaries (between tool calls) to redirect the agent.
+ * Distinct from [MessageAction] so condensers can identify steering context.
+ */
+data class UserSteeringAction(
+    val content: String,
+    override val id: Int = -1,
+    override val timestamp: Instant = Instant.EPOCH,
+    override val source: EventSource = EventSource.USER
+) : Action
+
+/**
  * The agent's internal reasoning step (think tool).
  */
 data class AgentThinkAction(
