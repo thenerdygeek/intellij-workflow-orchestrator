@@ -221,6 +221,28 @@ class PromptAssemblerTest {
         assertTrue(prompt.contains("bitbucket(action=\"list_repos\")"), "Should mention bitbucket(action=\"list_repos\") for discovery")
     }
 
+    // --- Skill rules ---
+
+    @Test
+    fun `skill descriptions appear in primacy zone as skill_rules`() {
+        val prompt = assembler.buildSingleAgentPrompt(
+            skillDescriptions = "- /writing-plans — Plan this\n- /brainstorm — Design this"
+        )
+        assertTrue(prompt.contains("<skill_rules>"), "Should contain skill_rules section")
+        assertFalse(prompt.contains("<available_skills>"), "Should NOT contain old available_skills section")
+
+        // Verify primacy positioning: skill_rules before context zone
+        val skillRulesPos = prompt.indexOf("<skill_rules>")
+        val agentsPos = prompt.indexOf("<available_agents>")
+        assertTrue(skillRulesPos < agentsPos, "skill_rules should appear before context zone")
+    }
+
+    @Test
+    fun `skill_rules not included when skillDescriptions is null`() {
+        val prompt = assembler.buildSingleAgentPrompt(skillDescriptions = null)
+        assertFalse(prompt.contains("<skill_rules>"), "Should not contain skill_rules when null")
+    }
+
     // --- Few-shot examples ---
 
     @Test

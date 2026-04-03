@@ -62,7 +62,7 @@ class PromptAssembler(
 
         // Skill rules — primacy zone so LLM sees them before any context data
         if (!skillDescriptions.isNullOrBlank()) {
-            sections.add("<skill_rules>\nYou have access to skills — structured workflows that produce better results than ad-hoc approaches.\n\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n\nRULE: When a skill matches the task, load it BEFORE starting work.\nDo NOT attempt planning, debugging, brainstorming, or TDD workflows without the corresponding skill.\nThe skill contains the detailed workflow — the system prompt only tells you WHEN to use it, not HOW.\n</skill_rules>")
+            sections.add(SKILL_RULES_TEMPLATE.format(skillDescriptions))
         }
 
         // === CONTEXT ZONE (reference data) ===
@@ -267,6 +267,20 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             - To CREATE a new file: use edit_file with old_string="" and new_string=<full content>. NEVER use run_command with cat/echo/heredoc to write files — shell-created files bypass IntelliJ's VFS and appear as untracked.
             </tool_policy>
         """.trimIndent()
+
+        private const val SKILL_RULES_TEMPLATE = """
+<skill_rules>
+You have access to skills — structured workflows that produce better results than ad-hoc approaches.
+
+%s
+
+To use a skill, call Skill(skill="name"). Users can also type /skill-name in chat.
+
+RULE: When a skill matches the task, load it BEFORE starting work.
+Do NOT attempt planning, debugging, brainstorming, or TDD workflows without the corresponding skill.
+The skill contains the detailed workflow — the system prompt only tells you WHEN to use it, not HOW.
+</skill_rules>
+"""
 
         val PLANNING_RULES = """
             <planning>
