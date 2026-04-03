@@ -94,8 +94,15 @@ class SingleAgentSession(
 ) {
     /** Tracks consecutive iterations where tool calls were malformed/empty. Reset on success. */
     private var consecutiveMalformedRetries = 0
-    /** Set to true after MAX_MALFORMED_RETRIES to force text-only response from LLM. */
-    private var forceTextOnly = false
+
+    /**
+     * M2: Whether tools should be suppressed for the next LLM call.
+     * Derived from malformed retry count and no-tool nudge count — no longer a sticky boolean
+     * that requires manual reset. Automatically reverses when retry counts are reset.
+     */
+    private fun shouldSuppressTools(): Boolean =
+        consecutiveMalformedRetries >= MAX_MALFORMED_RETRIES ||
+        consecutiveNoToolResponses > MAX_NO_TOOL_NUDGES
 
     // --- Completion gatekeeper state ---
     /** Tracks consecutive iterations with no tool calls (for nudge / implicit completion). */
@@ -216,6 +223,55 @@ class SingleAgentSession(
         }
     }
 
+    // =========================================================================
+    // C5: Response classification — foundation for processLlmSuccess decomposition
+    // =========================================================================
+
+    /**
+     * Classify an LLM response into a [ParsedResponse] variant.
+     *
+     * This is the first step of processLlmSuccess decomposition — it separates
+     * the "what did the LLM return?" question from "what do we do about it?",
+     * making the branching logic explicit and exhaustive.
+     *
+     * @param message The LLM's response message (after filtering blank tool call names)
+     * @param validToolCalls Tool calls with non-blank names, or null if none
+     * @param finishReason The finish_reason from the API (tool_calls, stop, length, etc.)
+     */
+    fun parseResponse(
+        message: ChatMessage,
+        validToolCalls: List<ToolCall>?,
+        finishReason: String?
+    ): ParsedResponse {
+        val content = message.content
+        val hasContent = !content.isNullOrBlank()
+        val hasToolCalls = !validToolCalls.isNullOrEmpty()
+
+        return when {
+            // LLM indicated tool_calls but they were all filtered out (malformed)
+            !hasToolCalls && finishReason == "tool_calls" -> {
+                ParsedResponse.Malformed(
+                    content = content,
+                    rawToolCalls = message.toolCalls ?: emptyList(),
+                    finishReason = finishReason
+                )
+            }
+            // Valid tool calls present
+            hasToolCalls -> {
+                val completionCall = validToolCalls!!.find { it.function.name == "attempt_completion" }
+                ParsedResponse.WithToolCalls(
+                    content = content,
+                    toolCalls = validToolCalls,
+                    completionCall = completionCall
+                )
+            }
+            // Text only
+            hasContent -> ParsedResponse.TextOnly(content = content!!)
+            // Nothing at all
+            else -> ParsedResponse.Empty(content = content)
+        }
+    }
+
     /**
      * Execute the single-agent ReAct loop.
      *
@@ -318,7 +374,6 @@ class SingleAgentSession(
 
 
         var verificationPending = false
-        forceTextOnly = false
         consecutiveMalformedRetries = 0
 
         var iteration = 0
@@ -537,7 +592,7 @@ class SingleAgentSession(
             val planMode = AgentService.planModeActive.get()
             val effectiveToolDefs = if (planMode) filterToolDefsForPlanMode(activeToolDefs) else activeToolDefs
             val effectiveTools = if (planMode) filterToolsForPlanMode(activeTools) else activeTools
-            val toolDefsForCall = if (forceTextOnly) null else if (effectiveTools.isNotEmpty()) effectiveToolDefs else null
+            val toolDefsForCall = if (shouldSuppressTools()) null else if (effectiveTools.isNotEmpty()) effectiveToolDefs else null
 
             // LLM call with retry logic for rate limits and context length exceeded
             val result = callLlmWithRetry(
