@@ -188,13 +188,22 @@ class AgentController(
 
         // Wire "Revise" on chat card — triggers revise on the plan editor tab
         dashboard.setCefRevisePlanFromEditorCallback {
+            // Mark revision started IMMEDIATELY (before async hops) to prevent
+            // chat messages from racing with the multi-hop revise flow.
+            session?.planManager?.markRevisionStarted()
             ApplicationManager.getApplication().invokeLater {
                 currentPlanFile?.let { file ->
-                    FileEditorManager.getInstance(project)
+                    val editor = FileEditorManager.getInstance(project)
                         .getEditors(file)
                         .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
-                        .firstOrNull()?.triggerRevise()
-                }
+                        .firstOrNull()
+                    if (editor != null) {
+                        editor.triggerRevise()
+                    } else {
+                        // Plan editor not open — cancel so chat messages aren't blocked
+                        session?.planManager?.cancelRevision()
+                    }
+                } ?: session?.planManager?.cancelRevision()
             }
         }
 
@@ -547,13 +556,19 @@ class AgentController(
             }
         }
         panel.setCefRevisePlanFromEditorCallback {
+            session?.planManager?.markRevisionStarted()
             ApplicationManager.getApplication().invokeLater {
                 currentPlanFile?.let { file ->
-                    FileEditorManager.getInstance(project)
+                    val editor = FileEditorManager.getInstance(project)
                         .getEditors(file)
                         .filterIsInstance<com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor>()
-                        .firstOrNull()?.triggerRevise()
-                }
+                        .firstOrNull()
+                    if (editor != null) {
+                        editor.triggerRevise()
+                    } else {
+                        session?.planManager?.cancelRevision()
+                    }
+                } ?: session?.planManager?.cancelRevision()
             }
         }
         panel.setCefEditorTabCallback { payload ->
@@ -776,6 +791,17 @@ class AgentController(
             // this is a question, revision feedback, or general discussion.
             // This avoids orphaning the suspended coroutine and starting a duplicate turn.
             if (session?.planManager?.isAwaitingApproval == true) {
+                // If a revision is already in flight (multi-hop async: chat card → plan editor → bridge),
+                // queue the chat message as steering instead of racing with the revision flow.
+                if (session?.planManager?.isRevisionInProgress == true) {
+                    steeringChannel.enqueue(task)
+                    dashboard.appendUserMessage(task)
+                    dashboard.appendStatus(
+                        "Message queued — plan revision in progress. The agent will see it after the revision completes.",
+                        RichStreamingPanel.StatusType.INFO
+                    )
+                    return
+                }
                 dashboard.appendUserMessage(task)
                 session?.bridge?.addUserMessage(task)
                 session?.recordUserMessage(task)
@@ -1232,18 +1258,30 @@ class AgentController(
                 return@setCefRevertCheckpointCallback
             }
             invokeLater {
-                val error = manager.rollbackToCheckpoint(checkpointId)
-                if (error == null) {
-                    // Refresh VFS after revert
-                    try {
-                        com.intellij.openapi.vfs.LocalFileSystem.getInstance()
-                            .findFileByPath(project.basePath ?: "")?.refresh(true, true)
-                    } catch (_: Exception) { }
+                val result = manager.rollbackToCheckpoint(checkpointId)
+                if (result.success) {
+                    val ledger = session?.changeLedger
+                    val entriesAfter = ledger?.entriesAfterCheckpoint(checkpointId) ?: emptyList()
+                    val rollbackEntry = RollbackEntry(
+                        id = "revert-${System.currentTimeMillis()}",
+                        timestamp = System.currentTimeMillis(),
+                        checkpointId = checkpointId,
+                        description = "User reverted to checkpoint",
+                        source = RollbackSource.USER_BUTTON,
+                        mechanism = result.mechanism,
+                        affectedFiles = result.affectedFiles,
+                        rolledBackEntryIds = entriesAfter.map { it.id },
+                        scope = RollbackScope.FULL_CHECKPOINT
+                    )
+                    ledger?.recordRollback(rollbackEntry)
+                    if (ledger != null) {
+                        try { AgentService.getInstance(project).currentContextBridge?.updateChangeLedgerAnchor(ledger) } catch (_: Exception) {}
+                    }
                     dashboard.appendStatus("Reverted to checkpoint $checkpointId.", RichStreamingPanel.StatusType.SUCCESS)
-                    // Push updated stats after revert
                     pushEditStatsToUi()
+                    pushRollbackToUi(rollbackEntry)
                 } else {
-                    dashboard.appendStatus("Failed to revert: $error", RichStreamingPanel.StatusType.ERROR)
+                    dashboard.appendStatus("Failed to revert: ${result.error}", RichStreamingPanel.StatusType.ERROR)
                 }
             }
         }
@@ -1269,11 +1307,30 @@ class AgentController(
                 Messages.getWarningIcon()
             )
             if (answer == Messages.YES) {
-                val error = manager.rollbackToCheckpoint(checkpointId)
-                if (error == null) {
+                val result = manager.rollbackToCheckpoint(checkpointId)
+                if (result.success) {
+                    val ledger = session?.changeLedger
+                    val entriesAfter = ledger?.entriesAfterCheckpoint(checkpointId) ?: emptyList()
+                    val rollbackEntry = RollbackEntry(
+                        id = "undo-${System.currentTimeMillis()}",
+                        timestamp = System.currentTimeMillis(),
+                        checkpointId = checkpointId,
+                        description = "User undid all agent changes",
+                        source = RollbackSource.USER_UNDO,
+                        mechanism = result.mechanism,
+                        affectedFiles = result.affectedFiles,
+                        rolledBackEntryIds = entriesAfter.map { it.id },
+                        scope = RollbackScope.FULL_CHECKPOINT
+                    )
+                    ledger?.recordRollback(rollbackEntry)
+                    if (ledger != null) {
+                        try { AgentService.getInstance(project).currentContextBridge?.updateChangeLedgerAnchor(ledger) } catch (_: Exception) {}
+                    }
                     dashboard.appendStatus("All agent changes have been undone.", RichStreamingPanel.StatusType.SUCCESS)
+                    pushEditStatsToUi()
+                    pushRollbackToUi(rollbackEntry)
                 } else {
-                    dashboard.appendError("Rollback failed: $error. Try Edit > Undo or LocalHistory.")
+                    dashboard.appendError("Rollback failed: ${result.error}. Try Edit > Undo or LocalHistory.")
                 }
             }
         }
@@ -1371,9 +1428,17 @@ class AgentController(
                     }
                 }
 
-                // Push edit stats to UI after file-modifying tool calls
-                if (toolInfo.toolName.contains("edit") || toolInfo.toolName.contains("create")) {
+                // Push edit stats to UI after file-modifying or rollback tool calls
+                if (toolInfo.toolName in setOf("edit_file", "create_file", "rollback_changes", "revert_file")) {
                     pushEditStatsToUi()
+                }
+
+                // For rollback tools, also push the rollback event for visual feedback
+                if (toolInfo.toolName in setOf("rollback_changes", "revert_file")) {
+                    val latestRollback = session?.changeLedger?.allRollbacks()?.lastOrNull()
+                    if (latestRollback != null) {
+                        pushRollbackToUi(latestRollback)
+                    }
                 }
             }
             progress.step.startsWith("Used tool:") -> {
@@ -1406,6 +1471,17 @@ class AgentController(
             dashboard.updateCheckpoints(checkpointsJson)
         } catch (e: Exception) {
             LOG.debug("AgentController: failed to push checkpoints to UI", e)
+        }
+    }
+
+    private fun pushRollbackToUi(entry: RollbackEntry) {
+        try {
+            val json = kotlinx.serialization.json.Json.encodeToString(
+                RollbackEntry.serializer(), entry
+            )
+            dashboard.notifyRollback(json)
+        } catch (e: Exception) {
+            LOG.debug("AgentController: failed to push rollback to UI", e)
         }
     }
 
