@@ -32,6 +32,8 @@ export interface RichInputHandle {
   /** Remove a chip by label, replacing it with raw #label text (for failed validation) */
   removeChipByLabel: (label: string) => void;
   clear: () => void;
+  /** Set the input text content (replaces existing text, clears mentions) */
+  setText: (text: string) => void;
   getText: () => string;
   getMentions: () => Mention[];
 }
@@ -118,6 +120,20 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         editorRef.current.dataset.empty = 'true';
         mentionsRef.current = [];
       }
+    },
+    setText: (text: string) => {
+      const el = editorRef.current;
+      if (!el) return;
+      el.textContent = text;
+      el.dataset.empty = text ? 'false' : 'true';
+      mentionsRef.current = [];
+      // Move cursor to end
+      const range = document.createRange();
+      const sel = window.getSelection();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
     },
     getText: () => extractText(),
     getMentions: () => {

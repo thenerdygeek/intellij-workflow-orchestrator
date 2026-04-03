@@ -312,6 +312,7 @@ export const ChatView = memo(function ChatView() {
   const resolveProcessInput = useChatStore(s => s.resolveProcessInput);
   const retryMessage = useChatStore(s => s.retryMessage);
   const rollbackEvents = useChatStore(s => s.rollbackEvents);
+  const queuedSteeringMessages = useChatStore(s => s.queuedSteeringMessages);
 
   const approvalRef = useRef<HTMLDivElement>(null);
 
@@ -406,6 +407,44 @@ export const ChatView = memo(function ChatView() {
         {questions && questions.length > 0 && (
           <QuestionView questions={questions} activeIndex={activeQuestionIndex} />
         )}
+
+        {/* Queued steering messages — shown above the working indicator */}
+        {queuedSteeringMessages.map((msg) => (
+          <div
+            key={msg.id}
+            className="mx-3 my-1.5 flex items-start gap-2 animate-[fade-in_200ms_ease-out]"
+          >
+            <div
+              className="flex-1 rounded-xl px-4 py-2.5 text-[13px] border"
+              style={{
+                background: 'color-mix(in srgb, var(--user-bg) 60%, transparent)',
+                borderColor: 'var(--border)',
+                color: 'var(--fg-secondary)',
+              }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
+                  style={{ background: 'var(--accent-blue, #60a5fa)' }}
+                />
+                <span className="text-[10px] font-medium" style={{ color: 'var(--accent-blue, #60a5fa)' }}>
+                  Queued
+                </span>
+              </div>
+              <span>{msg.text}</span>
+            </div>
+            <button
+              onClick={() => (window as any)._cancelSteering?.(msg.id)}
+              className="flex-shrink-0 mt-2 p-1 rounded hover:opacity-80 transition-opacity"
+              style={{ color: 'var(--fg-muted)' }}
+              title="Cancel and return to input"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        ))}
 
         {/* Working indicator — always visible at bottom while agent is active */}
         {showWorkingIndicator && <WorkingIndicator />}

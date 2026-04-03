@@ -25,7 +25,7 @@ class SingleAgentSessionTest {
 
     @BeforeEach
     fun setup() {
-        session = SingleAgentSession(maxIterations = 5)
+        session = SingleAgentSession()
         brain = mockk()
         bridge = mockk(relaxed = true)
         project = mockk()

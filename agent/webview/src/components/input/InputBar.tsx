@@ -615,6 +615,18 @@ export const InputBar = memo(function InputBar() {
   }, []);
 
   const steeringMode = useChatStore(s => s.steeringMode);
+
+  // Restore text when a queued steering message is cancelled
+  const restoredInputText = useChatStore(s => s.restoredInputText);
+  useEffect(() => {
+    if (restoredInputText) {
+      richInputRef.current?.setText(restoredInputText);
+      setHasText(true);
+      useChatStore.getState().clearRestoredInputText();
+      richInputRef.current?.focus();
+    }
+  }, [restoredInputText]);
+
   const canSend = hasText && !inputState.locked && (!busy || steeringMode);
   const planActive = inputState.mode === 'plan';
   const ralphActive = inputState.ralph ?? false;

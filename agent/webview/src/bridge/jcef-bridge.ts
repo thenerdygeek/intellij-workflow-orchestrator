@@ -263,6 +263,20 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().setSmartWorkingPhrase(phrase);
   },
 
+  // Queued steering message methods from Kotlin
+  addQueuedSteeringMessage(id: string, text: string) {
+    stores?.getChatStore().addQueuedSteeringMessage(id, text);
+  },
+  removeQueuedSteeringMessage(id: string) {
+    stores?.getChatStore().removeQueuedSteeringMessage(id);
+  },
+  promoteQueuedSteeringMessages() {
+    stores?.getChatStore().promoteQueuedSteeringMessages();
+  },
+  restoreInputText(text: string) {
+    stores?.getChatStore().restoreInputText(text);
+  },
+
   // Sub-Agent methods from Kotlin
   spawnSubAgent(payload: string) {
     stores?.getChatStore().spawnSubAgent(payload);

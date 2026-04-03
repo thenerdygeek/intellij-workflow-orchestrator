@@ -780,9 +780,8 @@ class AgentController(
                 || session?.questionManager?.isAwaitingAnswers == true  // question wizard
 
             if (!isWaitingForUser) {
-                steeringChannel.enqueue(task)
-                dashboard.appendUserMessage(task)
-                dashboard.appendStatus("Message sent — agent will see it after the current step completes.", RichStreamingPanel.StatusType.INFO)
+                val steeringId = steeringChannel.enqueue(task)
+                dashboard.addQueuedSteeringMessage(steeringId, task)
                 return
             }
 
@@ -794,12 +793,8 @@ class AgentController(
                 // If a revision is already in flight (multi-hop async: chat card → plan editor → bridge),
                 // queue the chat message as steering instead of racing with the revision flow.
                 if (session?.planManager?.isRevisionInProgress == true) {
-                    steeringChannel.enqueue(task)
-                    dashboard.appendUserMessage(task)
-                    dashboard.appendStatus(
-                        "Message queued — plan revision in progress. The agent will see it after the revision completes.",
-                        RichStreamingPanel.StatusType.INFO
-                    )
+                    val steeringId = steeringChannel.enqueue(task)
+                    dashboard.addQueuedSteeringMessage(steeringId, task)
                     return
                 }
                 dashboard.appendUserMessage(task)
@@ -1291,6 +1286,15 @@ class AgentController(
                 }
             }
         }
+
+        // Wire cancel-steering button: JS → Kotlin → remove from channel + restore input
+        dashboard.setCefCancelSteeringCallback { steeringId ->
+            val removed = steeringChannel.remove(steeringId)
+            if (removed != null) {
+                dashboard.removeQueuedSteeringMessage(steeringId)
+                dashboard.restoreInputText(removed.content)
+            }
+        }
     }
 
     /**
@@ -1396,6 +1400,11 @@ class AgentController(
             progress.step == "__flush_stream__" -> {
                 // Text-only response: flush so the next iteration starts a fresh message
                 dashboard.flushStreamBuffer()
+                return
+            }
+            progress.step == "Received steering from user" -> {
+                // All queued messages have been drained — promote them to normal user messages
+                invokeLater { dashboard.promoteQueuedSteeringMessages() }
                 return
             }
             progress.step == "__completion__" && toolInfo != null -> {

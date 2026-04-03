@@ -19,6 +19,7 @@ class SteeringChannel {
      * A steering message from the user, sent while the agent was working.
      */
     data class SteeringMessage(
+        val id: String = java.util.UUID.randomUUID().toString().take(8),
         val content: String,
         val timestampMs: Long = System.currentTimeMillis()
     )
@@ -27,9 +28,28 @@ class SteeringChannel {
 
     /**
      * Enqueue a steering message. Called from UI thread — must be non-blocking.
+     * Returns the message ID for UI tracking (queued → delivered promotion).
      */
-    fun enqueue(content: String) {
-        queue.add(SteeringMessage(content = content))
+    fun enqueue(content: String): String {
+        val msg = SteeringMessage(content = content)
+        queue.add(msg)
+        return msg.id
+    }
+
+    /**
+     * Remove a specific queued message by ID (e.g. user cancelled a queued steering message).
+     * Returns the removed message, or null if not found (already drained or invalid ID).
+     */
+    fun remove(id: String): SteeringMessage? {
+        val iterator = queue.iterator()
+        while (iterator.hasNext()) {
+            val msg = iterator.next()
+            if (msg.id == id) {
+                iterator.remove()
+                return msg
+            }
+        }
+        return null
     }
 
     /**

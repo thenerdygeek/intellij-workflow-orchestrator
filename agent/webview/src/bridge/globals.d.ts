@@ -40,6 +40,7 @@ declare global {
     _rejectDiffHunk?: (filePath: string, hunkIndex: number) => void;
     _killToolCall?: (toolCallId: string) => void;
     _revertCheckpoint?: (checkpointId: string) => void;
+    _cancelSteering?: (steeringId: string) => void;
     __mock?: Record<string, (...args: any[]) => any>;
     // Debug log panel — pushed from Kotlin via AgentCefPanel.updateDebugLogVisibility()
     setDebugLogVisible?: (visible: boolean) => void;

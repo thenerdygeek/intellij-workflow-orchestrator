@@ -24,7 +24,7 @@ class SingleAgentSessionSteeringTest {
     @BeforeEach
     fun setup() {
         steeringChannel = SteeringChannel()
-        session = SingleAgentSession(maxIterations = 5)
+        session = SingleAgentSession()
         brain = mockk()
         bridge = mockk(relaxed = true)
         project = mockk()

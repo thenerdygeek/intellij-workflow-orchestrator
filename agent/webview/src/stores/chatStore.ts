@@ -105,6 +105,8 @@ interface ChatState {
   smartWorkingPhrase: string | null;
   planPending: 'approve' | 'revise' | null;
   planCompletedPendingClear: boolean;
+  queuedSteeringMessages: { id: string; text: string; timestamp: number }[];
+  restoredInputText: string | null;
 
   // Actions
   startSession(task: string): void;
@@ -170,6 +172,13 @@ interface ChatState {
   applyRollback(rollback: RollbackInfo): void;
   setSmartWorkingPhrase(phrase: string): void;
 
+  // Queued Steering Actions
+  addQueuedSteeringMessage(id: string, text: string): void;
+  removeQueuedSteeringMessage(id: string): void;
+  promoteQueuedSteeringMessages(): void;
+  restoreInputText(text: string): void;
+  clearRestoredInputText(): void;
+
   // Sub-Agent Actions
   spawnSubAgent(payload: string): void;
   updateSubAgentIteration(payload: string): void;
@@ -227,6 +236,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   smartWorkingPhrase: null,
   planPending: null,
   planCompletedPendingClear: false,
+  queuedSteeringMessages: [],
+  restoredInputText: null,
 
   // Actions
   startSession(task: string) {
@@ -250,6 +261,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       smartWorkingPhrase: null,
       editStats: null,
       checkpoints: [],
+      queuedSteeringMessages: [],
+      restoredInputText: null,
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -274,6 +287,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeStream: null,
       activeToolCalls: new Map(),
       messages,
+      queuedSteeringMessages: [],
       // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
       ...(state.planCompletedPendingClear ? { plan: null, planCompletedPendingClear: false } : {}),
     });
@@ -799,6 +813,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSmartWorkingPhrase(phrase: string) {
     set({ smartWorkingPhrase: phrase });
+  },
+
+  // ── Queued Steering Actions ──
+  addQueuedSteeringMessage(id: string, text: string) {
+    set((state) => ({
+      queuedSteeringMessages: [...state.queuedSteeringMessages, { id, text, timestamp: Date.now() }],
+    }));
+  },
+
+  removeQueuedSteeringMessage(id: string) {
+    set((state) => ({
+      queuedSteeringMessages: state.queuedSteeringMessages.filter(m => m.id !== id),
+    }));
+  },
+
+  promoteQueuedSteeringMessages() {
+    // Move all queued messages to normal chat messages, then clear the queue
+    set((state) => {
+      const newMessages = state.queuedSteeringMessages.map(m => ({
+        id: nextId('msg'),
+        role: 'user' as const,
+        content: m.text,
+        timestamp: m.timestamp,
+      }));
+      return {
+        messages: [...state.messages, ...newMessages],
+        queuedSteeringMessages: [],
+      };
+    });
+  },
+
+  restoreInputText(text: string) {
+    set({ restoredInputText: text });
+  },
+
+  clearRestoredInputText() {
+    set({ restoredInputText: null });
   },
 
   // ── Sub-Agent Actions ──

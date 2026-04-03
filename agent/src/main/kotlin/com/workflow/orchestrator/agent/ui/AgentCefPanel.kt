@@ -87,6 +87,7 @@ class AgentCefPanel(
     private var killToolCallQuery: JBCefJSQuery? = null
     private var killSubAgentQuery: JBCefJSQuery? = null
     private var revertCheckpointQuery: JBCefJSQuery? = null
+    private var cancelSteeringQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
@@ -173,6 +174,8 @@ class AgentCefPanel(
     var onProcessInputResolved: ((String) -> Unit)? = null
     /** Callback when user clicks "Revert" on a checkpoint in the timeline. Param: checkpointId. */
     var onRevertCheckpoint: ((String) -> Unit)? = null
+    /** Callback when user clicks "Cancel" on a queued steering message. Param: steeringId. */
+    var onCancelSteering: ((String) -> Unit)? = null
 
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
@@ -453,6 +456,9 @@ class AgentCefPanel(
         revertCheckpointQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { checkpointId -> onRevertCheckpoint?.invoke(checkpointId); JBCefJSQuery.Response("ok") }
         }
+        cancelSteeringQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
+        }
         processInputQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
         }
@@ -636,6 +642,10 @@ class AgentCefPanel(
                     revertCheckpointQuery?.let { q ->
                         val revertJs = q.inject("id")
                         js("window._revertCheckpoint = function(id) { $revertJs }")
+                    }
+                    cancelSteeringQuery?.let { q ->
+                        val cancelJs = q.inject("id")
+                        js("window._cancelSteering = function(id) { $cancelJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -1003,6 +1013,24 @@ class AgentCefPanel(
         callJs("setSmartWorkingPhrase(${jsonStr(phrase)})")
     }
 
+    // ── Queued steering message rendering ──
+
+    fun addQueuedSteeringMessage(id: String, text: String) {
+        callJs("addQueuedSteeringMessage(${jsonStr(id)},${jsonStr(text)})")
+    }
+
+    fun removeQueuedSteeringMessage(id: String) {
+        callJs("removeQueuedSteeringMessage(${jsonStr(id)})")
+    }
+
+    fun promoteQueuedSteeringMessages() {
+        callJs("promoteQueuedSteeringMessages()")
+    }
+
+    fun restoreInputText(text: String) {
+        callJs("restoreInputText(${jsonStr(text)})")
+    }
+
     // ═══════════════════════════════════════════════════
     //  Theme
     // ═══════════════════════════════════════════════════
@@ -1155,6 +1183,7 @@ class AgentCefPanel(
         killToolCallQuery?.dispose()
         killSubAgentQuery?.dispose()
         revertCheckpointQuery?.dispose()
+        cancelSteeringQuery?.dispose()
         processInputQuery?.dispose()
         browser?.dispose()
         undoQuery = null
@@ -1197,6 +1226,7 @@ class AgentCefPanel(
         killToolCallQuery = null
         killSubAgentQuery = null
         revertCheckpointQuery = null
+        cancelSteeringQuery = null
         processInputQuery = null
         browser = null
     }

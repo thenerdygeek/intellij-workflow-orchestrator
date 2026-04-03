@@ -122,7 +122,7 @@ class SteeringIntegrationTest {
 
         val readTool = buildReadTool()
 
-        val session = SingleAgentSession(maxIterations = 5)
+        val session = SingleAgentSession()
         session.execute(
             task = "Fix the migration",
             tools = mapOf("read_file" to readTool),
@@ -148,7 +148,7 @@ class SteeringIntegrationTest {
             textResponse("done", "Adjusting approach.")
         )
 
-        val session = SingleAgentSession(maxIterations = 3)
+        val session = SingleAgentSession()
         session.execute(
             task = "Do work",
             tools = emptyMap(),
@@ -185,7 +185,7 @@ class SteeringIntegrationTest {
 
         val readTool = buildReadTool()
 
-        val session = SingleAgentSession(maxIterations = 5)
+        val session = SingleAgentSession()
         session.execute(
             task = "Do work",
             tools = mapOf("read_file" to readTool),

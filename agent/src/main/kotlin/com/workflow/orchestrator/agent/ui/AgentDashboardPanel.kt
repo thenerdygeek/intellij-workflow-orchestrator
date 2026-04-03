@@ -558,6 +558,32 @@ class AgentDashboardPanel(
         cefPanel?.onRevertCheckpoint = onRevert
     }
 
+    // ── Queued steering message delegation ──
+
+    fun addQueuedSteeringMessage(id: String, text: String) {
+        runOnEdt { cefPanel?.addQueuedSteeringMessage(id, text) }
+        mirrors.forEach { it.addQueuedSteeringMessage(id, text) }
+    }
+
+    fun removeQueuedSteeringMessage(id: String) {
+        runOnEdt { cefPanel?.removeQueuedSteeringMessage(id) }
+        mirrors.forEach { it.removeQueuedSteeringMessage(id) }
+    }
+
+    fun promoteQueuedSteeringMessages() {
+        runOnEdt { cefPanel?.promoteQueuedSteeringMessages() }
+        mirrors.forEach { it.promoteQueuedSteeringMessages() }
+    }
+
+    fun restoreInputText(text: String) {
+        runOnEdt { cefPanel?.restoreInputText(text) }
+        mirrors.forEach { it.restoreInputText(text) }
+    }
+
+    fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
+        cefPanel?.onCancelSteering = onCancel
+    }
+
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else invokeLater { action() }
