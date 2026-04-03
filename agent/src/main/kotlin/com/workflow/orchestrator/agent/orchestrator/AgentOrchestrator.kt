@@ -112,7 +112,8 @@ class AgentOrchestrator(
         onProgress: (AgentProgress) -> Unit = {},
         onStreamChunk: (String) -> Unit = {},
         approvalGate: ApprovalGate? = null,
-        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null
+        onDebugLog: ((String, String, String, Map<String, Any?>?) -> Unit)? = null,
+        steeringChannel: SteeringChannel? = null
     ): AgentResult {
         cancelled.set(false)
 
@@ -323,7 +324,8 @@ class AgentOrchestrator(
                     hasPlan = data.hasPlan,
                     lastActivity = data.lastActivity
                 )
-            }
+            },
+            steeringChannel = steeringChannel
         )
 
         // Persist scorecard for trend analysis
