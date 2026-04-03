@@ -2,8 +2,10 @@ package com.workflow.orchestrator.sonar.ui
 
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
+import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -59,6 +61,10 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     }
 
     private val scrollPane = JBScrollPane(issueList)
+    private val detailPanel = IssueDetailPanel(project).also { Disposer.register(this, it) }
+
+    /** Container for the list side (filter + scroll/empty). Used by applyFilters() for add/remove. */
+    private val listContent = JPanel(BorderLayout())
 
     init {
         border = JBUI.Borders.empty(8)
@@ -82,11 +88,40 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
             add(filterRow)
             add(paginationWarning)
         }
-        add(filterPanel, BorderLayout.NORTH)
-        add(scrollPane, BorderLayout.CENTER)
+        listContent.add(filterPanel, BorderLayout.NORTH)
+        listContent.add(scrollPane, BorderLayout.CENTER)
+
+        // Wrap list and detail in a horizontal splitter (false = horizontal split)
+        val splitter = JBSplitter(false, 0.4f).apply {
+            firstComponent = listContent
+            secondComponent = detailPanel
+        }
+        add(splitter, BorderLayout.CENTER)
 
         filterCombo.addActionListener { applyFilters() }
         severityCombo.addActionListener { applyFilters() }
+
+        // Selection listener drives detail panel
+        issueList.addListSelectionListener { e ->
+            if (!e.valueIsAdjusting) {
+                val selected = issueList.selectedValue
+                if (selected != null) {
+                    detailPanel.showItem(selected)
+                } else {
+                    detailPanel.showEmptyState()
+                }
+            }
+        }
+
+        // Wire prev/next navigation
+        detailPanel.onNavigatePrev = {
+            val idx = issueList.selectedIndex
+            if (idx > 0) issueList.selectedIndex = idx - 1
+        }
+        detailPanel.onNavigateNext = {
+            val idx = issueList.selectedIndex
+            if (idx < listModel.size - 1) issueList.selectedIndex = idx + 1
+        }
 
         // Double-click navigates to file
         issueList.addMouseListener(object : MouseAdapter() {
@@ -200,21 +235,21 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
             "${filtered.size} item(s)"
         }
 
-        // Show empty state or list
-        remove(scrollPane)
-        remove(emptyLabel)
-        remove(filteredEmptyLabel)
+        // Show empty state or list — operate on listContent, not this (splitter owns this)
+        listContent.remove(scrollPane)
+        listContent.remove(emptyLabel)
+        listContent.remove(filteredEmptyLabel)
         if (sorted.isEmpty()) {
             if (filtersActive && totalItems > 0) {
-                add(filteredEmptyLabel, BorderLayout.CENTER)
+                listContent.add(filteredEmptyLabel, BorderLayout.CENTER)
             } else {
-                add(emptyLabel, BorderLayout.CENTER)
+                listContent.add(emptyLabel, BorderLayout.CENTER)
             }
         } else {
-            add(scrollPane, BorderLayout.CENTER)
+            listContent.add(scrollPane, BorderLayout.CENTER)
         }
-        revalidate()
-        repaint()
+        listContent.revalidate()
+        listContent.repaint()
     }
 
     /** Sort order: IssueItems by severity ordinal (0-4), HotspotItems by probability (5-7). */
