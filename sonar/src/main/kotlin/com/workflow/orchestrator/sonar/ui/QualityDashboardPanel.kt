@@ -5,6 +5,7 @@ import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.icons.AllIcons
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -272,7 +273,7 @@ class QualityDashboardPanel(
 
     private fun createToolbar(): javax.swing.JComponent {
         val group = DefaultActionGroup()
-        group.add(object : AnAction("Refresh", "Refresh SonarQube data", null) {
+        group.add(object : AnAction("Refresh", "Refresh SonarQube data", AllIcons.Actions.Refresh) {
             override fun actionPerformed(e: AnActionEvent) {
                 refreshData()
             }

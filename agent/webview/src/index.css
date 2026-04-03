@@ -41,6 +41,51 @@ code, pre, .font-mono {
 }
 
 /* ============================================================
+   SCROLLBAR — themed, slim, unobtrusive
+   Uses IDE theme variables for seamless dark/light integration.
+   ============================================================ */
+
+/* Webkit / Chromium (JCEF) */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg, #ccc) 15%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg, #ccc) 30%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--fg, #ccc) 40%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox fallback */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg, #ccc) 15%, transparent) transparent;
+}
+
+/* ============================================================
    CODE BLOCK LINE HIGHLIGHTS & ANNOTATIONS
    ============================================================ */
 

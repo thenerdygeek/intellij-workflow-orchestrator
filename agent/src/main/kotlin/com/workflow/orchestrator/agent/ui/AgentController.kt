@@ -1833,11 +1833,11 @@ class AgentController(
                 "Agent Task Failed",
                 error.take(200),
                 NotificationType.ERROR
-            ).addAction(object : com.intellij.openapi.actionSystem.AnAction("View Trace") {
+            ).addAction(object : com.intellij.openapi.actionSystem.AnAction("View Trace", "View the latest agent trace", com.intellij.icons.AllIcons.FileTypes.Text) {
                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                     openLatestTrace()
                 }
-            }).addAction(object : com.intellij.openapi.actionSystem.AnAction("Open Traces Folder") {
+            }).addAction(object : com.intellij.openapi.actionSystem.AnAction("Open Traces Folder", "Open the traces directory", com.intellij.icons.AllIcons.Nodes.Folder) {
                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                     openTracesDirectory()
                 }

@@ -190,7 +190,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             },
 
             // Open settings
-            object : DumbAwareAction("Settings", "Open Workflow Orchestrator settings", AllIcons.General.GearPlain) {
+            object : DumbAwareAction("Settings", "Open Workflow Orchestrator settings", AllIcons.General.Settings) {
                 override fun actionPerformed(e: AnActionEvent) {
                     ShowSettingsUtil.getInstance().showSettingsDialog(project, "Workflow Orchestrator")
                 }
@@ -217,7 +217,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             // Settings shortcut
             add(object : DumbAwareAction("Settings", "Configure Workflow Orchestrator", AllIcons.General.Settings) {
                 override fun actionPerformed(e: AnActionEvent) {
-                    ShowSettingsUtil.getInstance().showSettingsDialog(project, "General")
+                    ShowSettingsUtil.getInstance().showSettingsDialog(project, "Workflow Orchestrator")
                 }
             })
 

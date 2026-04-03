@@ -10,9 +10,20 @@ import git4idea.repo.GitRepositoryManager
 class RepoContextResolver(private val project: Project) {
 
     fun resolveFromFile(file: VirtualFile): RepoConfig? {
-        val gitRepo = GitRepositoryManager.getInstance(project).getRepositoryForFile(file)
-            ?: return getPrimary()
+        // Use cached repositories list instead of getRepositoryForFile() which triggers
+        // a synchronous repository update that is forbidden on EDT (IntelliJ 2025.1+)
+        val gitRepo = findRepositoryForFile(file) ?: return getPrimary()
         return resolveFromGitRepo(gitRepo)
+    }
+
+    private fun findRepositoryForFile(file: VirtualFile): GitRepository? {
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        if (repos.isEmpty()) return null
+        if (repos.size == 1) return repos.first()
+        // Find the repo whose root is an ancestor of the file, preferring the deepest match
+        return repos
+            .filter { file.path.startsWith(it.root.path + "/") || file.path == it.root.path }
+            .maxByOrNull { it.root.path.length }
     }
 
     fun resolveFromGitRepo(gitRepo: GitRepository): RepoConfig? {
@@ -34,9 +45,15 @@ class RepoContextResolver(private val project: Project) {
         return getPrimary()
     }
 
+    /**
+     * Gets the currently selected editor file. Must be called on EDT or inside a read action.
+     * Use this to get the file first, then call [resolveFromFile] on a background thread.
+     */
+    fun getCurrentEditorFile(): VirtualFile? =
+        com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
+
     fun resolveFromCurrentEditor(): RepoConfig? {
-        val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor
-        val file = editor?.file ?: return getPrimary()
+        val file = getCurrentEditorFile() ?: return getPrimary()
         return resolveFromFile(file)
     }
 
