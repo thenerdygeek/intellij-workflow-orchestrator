@@ -1,6 +1,9 @@
 ---
 name: tdd
-description: Use when implementing any feature or bugfix, before writing implementation code
+description: >
+  Red-green-refactor TDD workflow. Write the test first, watch it fail, write minimal code to pass.
+  Triggers on: "TDD", "test first", "test-driven", "write tests for", or when the user explicitly
+  requests test-first development.
 preferred-tools: [read_file, edit_file, search_code, run_command, diagnostics, think, find_definition, find_references]
 ---
 

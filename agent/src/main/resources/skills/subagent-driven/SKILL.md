@@ -1,6 +1,9 @@
 ---
 name: subagent-driven
-description: Use when executing implementation plans with independent tasks in the current session
+description: >
+  Execute approved plans by dispatching a fresh subagent per task with two-stage review
+  (spec compliance + code quality). Triggers on: plan approved with 3+ tasks, "execute the plan",
+  "start implementing". Always load after plan approval for multi-task plans.
 preferred-tools: [agent, read_file, search_code, think, create_plan, update_plan_step, diagnostics, run_command]
 ---
 

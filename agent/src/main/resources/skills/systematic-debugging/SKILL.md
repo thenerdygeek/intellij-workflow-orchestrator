@@ -1,6 +1,10 @@
 ---
 name: systematic-debugging
-description: Use when encountering any bug, test failure, build failure, or unexpected behavior — before proposing fixes. Enforces root-cause investigation with IDE-level diagnostics.
+description: >
+  Use when encountering any bug, test failure, build failure, or unexpected behavior — before
+  proposing fixes. Enforces root-cause investigation with IDE-level diagnostics. Triggers on:
+  "failing", "broken", "NPE", "exception", "not working", "error", test failures, build failures,
+  stack traces. Always load before attempting any fix.
 preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, call_hierarchy, git_status, git_blame, think, run_tests, compile_module, get_test_results, get_run_output, get_running_processes]
 ---
 
