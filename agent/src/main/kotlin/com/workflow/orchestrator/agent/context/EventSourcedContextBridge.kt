@@ -512,25 +512,33 @@ class EventSourcedContextBridge(
         reservedTokens = newReserved
     }
 
-    /** Count system warnings. */
+    /** Count system warnings that are still visible (not forgotten by condensation). */
     fun countSystemWarnings(): Int {
-        return eventStore.all().count { event ->
+        val view = View.fromEvents(eventStore.all())
+        return view.events.count { event ->
             event is SystemMessageAction && event.content.contains("system_warning")
         }
     }
 
-    /** Remove oldest system warning. */
+    /** Remove oldest system warning by forgetting it via CondensationAction. */
     fun removeOldestSystemWarning(): Boolean {
-        // System warnings are in the event store but we can't remove events from an append-only store.
-        // Instead, we add a forget action that masks the oldest warning.
-        val events = eventStore.all()
-        val warningEvent = events.firstOrNull { event ->
+        // Build a View to find the oldest WARNING that is still visible (not already forgotten).
+        val view = View.fromEvents(eventStore.all())
+        val warningEvent = view.events.firstOrNull { event ->
             event is SystemMessageAction && event.content.contains("system_warning")
         }
-        if (warningEvent != null) {
-            // Record a "forget" action to mask this event in subsequent views
+        if (warningEvent != null && warningEvent.id >= 0) {
+            // Add a CondensationAction that forgets this specific event by ID.
+            // This is the proper append-only mechanism — View.fromEvents will
+            // exclude the forgotten event on subsequent builds.
             eventStore.add(
-                SystemMessageAction(content = "[Warning dismissed]"),
+                CondensationAction(
+                    forgottenEventIds = listOf(warningEvent.id),
+                    forgottenEventsStartId = null,
+                    forgottenEventsEndId = null,
+                    summary = null,
+                    summaryOffset = null
+                ),
                 EventSource.SYSTEM
             )
             return true

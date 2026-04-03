@@ -404,4 +404,73 @@ class EventSourcedContextBridgeTest {
             assertTrue(utilization < 1.0)
         }
     }
+
+    @Nested
+    inner class SystemWarningManagement {
+
+        @Test
+        fun `countSystemWarnings counts only system_warning messages`() {
+            bridge.addSystemMessage("<system_warning>Warning 1</system_warning>")
+            bridge.addSystemMessage("<system_warning>Warning 2</system_warning>")
+            bridge.addSystemMessage("Not a warning")
+
+            assertEquals(2, bridge.countSystemWarnings())
+        }
+
+        @Test
+        fun `removeOldestSystemWarning actually reduces count`() {
+            bridge.addSystemMessage("<system_warning>Warning 1</system_warning>")
+            bridge.addSystemMessage("<system_warning>Warning 2</system_warning>")
+            bridge.addSystemMessage("<system_warning>Warning 3</system_warning>")
+
+            assertEquals(3, bridge.countSystemWarnings())
+
+            assertTrue(bridge.removeOldestSystemWarning())
+            assertEquals(2, bridge.countSystemWarnings())
+
+            assertTrue(bridge.removeOldestSystemWarning())
+            assertEquals(1, bridge.countSystemWarnings())
+        }
+
+        @Test
+        fun `removeOldestSystemWarning removes oldest first`() {
+            bridge.addSystemMessage("<system_warning>Old warning</system_warning>")
+            bridge.addSystemMessage("<system_warning>New warning</system_warning>")
+
+            bridge.removeOldestSystemWarning()
+
+            // Only the newer warning should remain
+            val view = View.fromEvents(bridge.eventStore.all())
+            val remaining = view.events.filter {
+                it is SystemMessageAction && it.content.contains("system_warning")
+            }
+            assertEquals(1, remaining.size)
+            assertTrue((remaining[0] as SystemMessageAction).content.contains("New warning"))
+        }
+
+        @Test
+        fun `while loop to cap warnings terminates`() {
+            // Regression test: this loop was infinite before the fix
+            bridge.addSystemMessage("<system_warning>W1</system_warning>")
+            bridge.addSystemMessage("<system_warning>W2</system_warning>")
+            bridge.addSystemMessage("<system_warning>W3</system_warning>")
+            bridge.addSystemMessage("<system_warning>W4</system_warning>")
+            bridge.addSystemMessage("<system_warning>W5</system_warning>")
+
+            var iterations = 0
+            while (bridge.countSystemWarnings() >= 2 && iterations < 10) {
+                if (!bridge.removeOldestSystemWarning()) break
+                iterations++
+            }
+
+            assertTrue(iterations < 10, "Loop should terminate well before safety limit")
+            assertTrue(bridge.countSystemWarnings() < 2, "Should have reduced to fewer than 2 warnings")
+        }
+
+        @Test
+        fun `removeOldestSystemWarning returns false when no warnings exist`() {
+            bridge.addSystemMessage("Not a warning")
+            assertFalse(bridge.removeOldestSystemWarning())
+        }
+    }
 }

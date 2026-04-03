@@ -515,8 +515,10 @@ class SingleAgentSession(
             if (usedPercent > 50 && usedPercent / 10 > lastWarningPercent / 10) {
                 lastWarningPercent = usedPercent
                 // Cap system warnings at 2 — remove oldest before adding new one
-                while (bridge.countSystemWarnings() >= 2) {
-                    bridge.removeOldestSystemWarning()
+                var warningRemovalAttempts = 0
+                while (bridge.countSystemWarnings() >= 2 && warningRemovalAttempts < 10) {
+                    if (!bridge.removeOldestSystemWarning()) break
+                    warningRemovalAttempts++
                 }
                 val remaining = maxInputTokens - bridge.currentTokens
                 val budgetWarningContent = "<system_warning>Context usage: ${bridge.currentTokens}/$maxInputTokens tokens ($usedPercent%). $remaining tokens remaining. Be efficient with remaining context.</system_warning>"
@@ -527,16 +529,20 @@ class SingleAgentSession(
             val iterationPercent = (iteration * 100) / maxIterations
             when {
                 iterationPercent >= 95 -> {
-                    while (bridge.countSystemWarnings() >= 2) {
-                        bridge.removeOldestSystemWarning()
+                    var removalAttempts95 = 0
+                    while (bridge.countSystemWarnings() >= 2 && removalAttempts95 < 10) {
+                        if (!bridge.removeOldestSystemWarning()) break
+                        removalAttempts95++
                     }
                     val finalIterContent = "<system_warning>CRITICAL: This is your final iteration. Tools are disabled after this response. Provide a complete summary of what you accomplished and what remains.</system_warning>"
                     bridge.addSystemMessage(finalIterContent)
                     forceTextOnly = true
                 }
                 iterationPercent >= 80 -> {
-                    while (bridge.countSystemWarnings() >= 2) {
-                        bridge.removeOldestSystemWarning()
+                    var removalAttempts80 = 0
+                    while (bridge.countSystemWarnings() >= 2 && removalAttempts80 < 10) {
+                        if (!bridge.removeOldestSystemWarning()) break
+                        removalAttempts80++
                     }
                     val wrapUpContent = "<system_warning>IMPORTANT: You have used $iteration of $maxIterations iterations. Focus on completing the task. Avoid unnecessary exploration.</system_warning>"
                     bridge.addSystemMessage(wrapUpContent)
