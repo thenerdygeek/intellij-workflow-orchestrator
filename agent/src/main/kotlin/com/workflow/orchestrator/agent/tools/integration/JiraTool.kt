@@ -37,18 +37,19 @@ Actions and their parameters:
 - comment(key, body) → Add comment to ticket
 - get_comments(key) → List comments
 - log_work(key, time_spent, comment?) → Log time (format: '2h', '30m', '1h 30m')
-- get_worklogs(key) → List work logs (also accepts issue_key)
+- get_worklogs(key) → List work logs
 - get_sprints(board_id) → List sprints for board
 - get_boards(type?, name_filter?) → List boards (type: scrum|kanban)
 - get_sprint_issues(sprint_id) → Issues in sprint
 - get_board_issues(board_id) → Issues on board
 - search_issues(text, max_results?) → JQL/text search (default 20 results)
 - search_tickets(jql, max_results?) → Run raw JQL query
-- get_linked_prs(issue_id) → PRs linked to issue
-- get_dev_branches(issue_id) → Dev branches for issue
-- start_work(issue_key, branch_name, source_branch) → Create branch and start work (also accepts key)
+- get_linked_prs(key) → PRs linked to issue
+- get_dev_branches(key) → Dev branches for issue
+- start_work(key, branch_name, source_branch) → Create branch and start work
 - download_attachment(key, attachment_id) → Download attachment content
 
+key: Jira issue key (e.g. PROJ-123) — used across all actions that operate on a single issue.
 description optional: for approval dialog on write actions.
 """.trimIndent()
 
@@ -66,15 +67,7 @@ description optional: for approval dialog on write actions.
             ),
             "key" to ParameterProperty(
                 type = "string",
-                description = "Jira issue key (e.g. PROJ-123) — for get_ticket, get_transitions, transition, comment, get_comments, log_work"
-            ),
-            "issue_key" to ParameterProperty(
-                type = "string",
-                description = "Jira issue key — for get_worklogs, start_work"
-            ),
-            "issue_id" to ParameterProperty(
-                type = "string",
-                description = "Jira issue ID or key — for get_linked_prs, get_dev_branches"
+                description = "Jira issue key (e.g. PROJ-123) — used across all actions that operate on a single issue"
             ),
             "transition_id" to ParameterProperty(
                 type = "string",
@@ -274,6 +267,7 @@ description optional: for approval dialog on write actions.
             "get_worklogs" -> {
                 val issueKey = params["key"]?.jsonPrimitive?.content
                     ?: params["issue_key"]?.jsonPrimitive?.content
+                    ?: params["issue_id"]?.jsonPrimitive?.content
                     ?: return missingParam("key")
                 ToolValidation.validateJiraKey(issueKey)?.let { return it }
                 service.getWorklogs(issueKey).toAgentToolResult()
@@ -288,10 +282,12 @@ description optional: for approval dialog on write actions.
             }
 
             "get_linked_prs" -> {
-                val issueId = params["issue_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("issue_id")
-                ToolValidation.validateNotBlank(issueId, "issue_id")?.let { return it }
-                service.getLinkedPullRequests(issueId).toAgentToolResult()
+                val issueKey = params["key"]?.jsonPrimitive?.content
+                    ?: params["issue_key"]?.jsonPrimitive?.content
+                    ?: params["issue_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
+                service.getLinkedPullRequests(issueKey).toAgentToolResult()
             }
 
             "get_boards" -> {
@@ -325,16 +321,19 @@ description optional: for approval dialog on write actions.
             }
 
             "get_dev_branches" -> {
-                val issueId = params["issue_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("issue_id")
-                ToolValidation.validateNotBlank(issueId, "issue_id")?.let { return it }
-                service.getDevStatusBranches(issueId).toAgentToolResult()
+                val issueKey = params["key"]?.jsonPrimitive?.content
+                    ?: params["issue_key"]?.jsonPrimitive?.content
+                    ?: params["issue_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
+                ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
+                service.getDevStatusBranches(issueKey).toAgentToolResult()
             }
 
             "start_work" -> {
-                val issueKey = params["issue_key"]?.jsonPrimitive?.content
-                    ?: params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("issue_key")
+                val issueKey = params["key"]?.jsonPrimitive?.content
+                    ?: params["issue_key"]?.jsonPrimitive?.content
+                    ?: params["issue_id"]?.jsonPrimitive?.content
+                    ?: return missingParam("key")
                 val branchName = params["branch_name"]?.jsonPrimitive?.content
                     ?: return missingParam("branch_name")
                 val sourceBranch = params["source_branch"]?.jsonPrimitive?.content

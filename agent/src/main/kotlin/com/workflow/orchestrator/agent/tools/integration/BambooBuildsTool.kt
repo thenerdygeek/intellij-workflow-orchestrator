@@ -35,13 +35,14 @@ Actions and their parameters:
 - trigger_build(plan_key, variables?) → Trigger new build (variables: JSON {"key":"value"})
 - get_build_log(build_key) → Build log output
 - get_test_results(build_key) → Test results for build
-- stop_build(result_key) → Stop running build
-- cancel_build(result_key) → Cancel queued build
-- get_artifacts(result_key) → List build artifacts
+- stop_build(build_key) → Stop running build
+- cancel_build(build_key) → Cancel queued build
+- get_artifacts(build_key) → List build artifacts
 - download_artifact(artifact_url, target_path?) → Download build artifact to local file
 - recent_builds(plan_key, branch?, repo_name?, max_results?) → Recent builds (default 10)
 - get_running_builds(plan_key, repo_name?) → Currently running builds
 
+build_key: Bamboo build result key (e.g. PROJ-PLAN-123) — used across all actions that operate on a single build.
 description optional: for approval dialog on trigger/stop/cancel.
 """.trimIndent()
 
@@ -62,11 +63,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             ),
             "build_key" to ParameterProperty(
                 type = "string",
-                description = "Bamboo build result key e.g. PROJ-PLAN-123 — for get_build, get_build_log, get_test_results"
-            ),
-            "result_key" to ParameterProperty(
-                type = "string",
-                description = "Bamboo build result key e.g. PROJ-PLAN-123 — for stop_build, cancel_build, get_artifacts"
+                description = "Bamboo build result key e.g. PROJ-PLAN-123 — used across all actions that operate on a single build"
             ),
             "branch" to ParameterProperty(
                 type = "string",
@@ -163,21 +160,27 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "stop_build" -> {
-                val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return missingParam("result_key")
-                ToolValidation.validateBambooBuildKey(resultKey)?.let { return it }
-                service.stopBuild(resultKey).toAgentToolResult()
+                val buildKey = params["build_key"]?.jsonPrimitive?.content
+                    ?: params["result_key"]?.jsonPrimitive?.content
+                    ?: return missingParam("build_key")
+                ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
+                service.stopBuild(buildKey).toAgentToolResult()
             }
 
             "cancel_build" -> {
-                val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return missingParam("result_key")
-                ToolValidation.validateBambooBuildKey(resultKey)?.let { return it }
-                service.cancelBuild(resultKey).toAgentToolResult()
+                val buildKey = params["build_key"]?.jsonPrimitive?.content
+                    ?: params["result_key"]?.jsonPrimitive?.content
+                    ?: return missingParam("build_key")
+                ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
+                service.cancelBuild(buildKey).toAgentToolResult()
             }
 
             "get_artifacts" -> {
-                val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return missingParam("result_key")
-                ToolValidation.validateBambooBuildKey(resultKey)?.let { return it }
-                service.getArtifacts(resultKey).toAgentToolResult()
+                val buildKey = params["build_key"]?.jsonPrimitive?.content
+                    ?: params["result_key"]?.jsonPrimitive?.content
+                    ?: return missingParam("build_key")
+                ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
+                service.getArtifacts(buildKey).toAgentToolResult()
             }
 
             "download_artifact" -> {
