@@ -35,12 +35,18 @@ data class Condensation(val action: CondensationAction) : CondenserResult
  * @property tokenUtilization Fraction of budget used (0.0-1.0), API-reconciled
  * @property effectiveBudget Total token budget available
  * @property currentTokens Current token count in the context
+ * @property anchorTokens Estimated tokens consumed by compression-proof anchors
+ *                        (plan, facts, guardrails, skills, mentions, changeLedger).
+ *                        Included in [currentTokens] but tracked separately so the
+ *                        pipeline can account for them when recalculating utilization
+ *                        between stages.
  */
 data class CondenserContext(
     val view: View,
     val tokenUtilization: Double,
     val effectiveBudget: Int,
-    val currentTokens: Int
+    val currentTokens: Int,
+    val anchorTokens: Int = 0
 )
 
 /**
