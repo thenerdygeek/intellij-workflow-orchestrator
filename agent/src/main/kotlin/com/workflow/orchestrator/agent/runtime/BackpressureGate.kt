@@ -17,7 +17,7 @@ class BackpressureGate(
 ) {
     companion object {
         /** Tools that count as verification (reset the edit counter). */
-        val VERIFICATION_TOOLS = setOf("diagnostics", "runtime_config", "runtime_exec", "run_inspections")
+        val VERIFICATION_TOOLS = VerificationConstants.VERIFICATION_TOOLS
     }
 
     private val pendingEdits = mutableListOf<String>()

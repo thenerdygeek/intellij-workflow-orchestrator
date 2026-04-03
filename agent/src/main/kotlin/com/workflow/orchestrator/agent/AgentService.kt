@@ -58,6 +58,13 @@ class AgentService(
         activeController?.executeTask(originalPrompt)
     }
 
+    /**
+     * Cohesive session state — groups all per-session managers into one object.
+     * New code should prefer reading from this; old @Volatile fields below are
+     * kept for backward compatibility until all consumers are migrated.
+     */
+    @Volatile var activeScope: com.workflow.orchestrator.agent.runtime.SessionScope? = null
+
     /** Plan manager for the current agent session, set by SingleAgentSession. */
     @Volatile var currentPlanManager: PlanManager? = null
 

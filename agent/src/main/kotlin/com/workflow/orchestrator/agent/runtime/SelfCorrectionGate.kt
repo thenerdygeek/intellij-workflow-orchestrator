@@ -22,7 +22,7 @@ class SelfCorrectionGate(
 ) {
     companion object {
         /** Tools that count as verification for a specific file. */
-        val VERIFICATION_TOOLS = setOf("diagnostics", "runtime_config", "runtime_exec", "run_inspections")
+        val VERIFICATION_TOOLS = VerificationConstants.VERIFICATION_TOOLS
 
         /** File extensions that support semantic verification (diagnostics/inspections). */
         private val VERIFIABLE_EXTENSIONS = setOf("kt", "java")
