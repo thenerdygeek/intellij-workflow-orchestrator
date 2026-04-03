@@ -98,7 +98,7 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
   // Start loading immediately (not just in useEffect) so JCEF has max time to fetch the chunk.
   // If the module is already cached from a preloadDiff2Html() call, this is a no-op.
   loadDiff2Html();
-  const [isLoading, setIsLoading] = useState(() => diff2htmlResolved === null);
+  const [isReady, setIsReady] = useState(() => diff2htmlResolved !== null);
   const [error, setError] = useState<Error | null>(null);
   const renderIdRef = useRef(0);
 
@@ -107,10 +107,6 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
 
   const renderDiff = useCallback(async () => {
     const currentRender = ++renderIdRef.current;
-    // Only show loading state if the module isn't already in memory.
-    if (!diff2htmlResolved) {
-      setIsLoading(true);
-    }
     setError(null);
 
     try {
@@ -176,11 +172,11 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
         });
       }
 
-      setIsLoading(false);
+      setIsReady(true);
     } catch (err) {
       if (currentRender !== renderIdRef.current) return;
       setError(err instanceof Error ? err : new Error(String(err)));
-      setIsLoading(false);
+      setIsReady(true); // Show fallback, not skeleton
     }
   }, [diffSource, onAcceptHunk, onRejectHunk]);
 
@@ -300,7 +296,29 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
     void renderDiff();
   }, [renderDiff]);
 
-  // Fallback: render raw diff with color-coded lines when diff2html fails to load
+  // Inline raw diff renderer — shown immediately while diff2html loads (no skeleton)
+  const rawDiff = (
+    <pre className="overflow-auto px-3 py-2 text-[12px] leading-relaxed font-mono" style={{ maxHeight: '400px' }}>
+      {diffSource.split('\n').map((line, i) => {
+        let color = 'var(--fg)';
+        let bg = 'transparent';
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          color = 'var(--diff-add-fg, #b5cea8)';
+          bg = 'var(--diff-add-bg, rgba(106,153,85,0.15))';
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          color = 'var(--diff-rem-fg, #f4a5a5)';
+          bg = 'var(--diff-rem-bg, rgba(244,71,71,0.15))';
+        } else if (line.startsWith('@@')) {
+          color = 'var(--fg-muted)';
+        }
+        return (
+          <div key={i} style={{ color, backgroundColor: bg }}>{line}</div>
+        );
+      })}
+    </pre>
+  );
+
+  // On error, show raw diff permanently (not a skeleton)
   if (error) {
     return (
       <div className="my-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--code-bg)]">
@@ -309,24 +327,7 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
             {filePath}
           </div>
         )}
-        <pre className="overflow-auto px-3 py-2 text-[12px] leading-relaxed font-mono" style={{ maxHeight: '400px' }}>
-          {diffSource.split('\n').map((line, i) => {
-            let color = 'var(--fg)';
-            let bg = 'transparent';
-            if (line.startsWith('+') && !line.startsWith('+++')) {
-              color = 'var(--diff-add-fg, #b5cea8)';
-              bg = 'var(--diff-add-bg, rgba(106,153,85,0.15))';
-            } else if (line.startsWith('-') && !line.startsWith('---')) {
-              color = 'var(--diff-rem-fg, #f4a5a5)';
-              bg = 'var(--diff-rem-bg, rgba(244,71,71,0.15))';
-            } else if (line.startsWith('@@')) {
-              color = 'var(--fg-muted)';
-            }
-            return (
-              <div key={i} style={{ color, backgroundColor: bg }}>{line}</div>
-            );
-          })}
-        </pre>
+        {rawDiff}
       </div>
     );
   }
@@ -335,7 +336,7 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
     <RichBlock
       type="diff"
       source={diffSource}
-      isLoading={isLoading}
+      isLoading={false}
       error={null}
       onRetry={() => void renderDiff()}
     >
@@ -370,9 +371,12 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
         .diff-container td { border-color: var(--border, #333) !important; }
         .diff-container .d2h-diff-table { border-collapse: collapse; }
       `}</style>
+      {/* Show raw diff immediately, replaced by diff2html once loaded */}
+      {!isReady && rawDiff}
       <div
         ref={containerRef}
         className="diff-container overflow-auto text-[12px]"
+        style={!isReady ? { display: 'none' } : undefined}
       />
     </RichBlock>
   );
