@@ -999,6 +999,10 @@ class AgentCefPanel(
         callJs("notifyRollback(${jsonStr(rollbackJson)})")
     }
 
+    fun setSmartWorkingPhrase(phrase: String) {
+        callJs("setSmartWorkingPhrase(${jsonStr(phrase)})")
+    }
+
     // ═══════════════════════════════════════════════════
     //  Theme
     // ═══════════════════════════════════════════════════

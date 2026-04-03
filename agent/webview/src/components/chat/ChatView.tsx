@@ -220,7 +220,9 @@ const WORKING_PHRASES = [
 
 export function WorkingIndicator() {
   // Pick one phrase per mount — stays fixed for the entire busy duration.
-  const [phrase] = useState(() => WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
+  const [fallbackPhrase] = useState(() => WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
+  const smartPhrase = useChatStore(s => s.smartWorkingPhrase);
+  const phrase = smartPhrase || fallbackPhrase;
   return (
     <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
       <Loader variant="wave" size="md" />

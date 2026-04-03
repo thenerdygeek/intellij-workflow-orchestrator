@@ -549,6 +549,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.notifyRollback(rollbackJson) }
     }
 
+    fun setSmartWorkingPhrase(phrase: String) {
+        runOnEdt { cefPanel?.setSmartWorkingPhrase(phrase) }
+        mirrors.forEach { it.setSmartWorkingPhrase(phrase) }
+    }
+
     fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
         cefPanel?.onRevertCheckpoint = onRevert
     }

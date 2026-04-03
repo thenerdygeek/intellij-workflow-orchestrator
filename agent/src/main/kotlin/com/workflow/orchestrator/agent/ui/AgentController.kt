@@ -848,6 +848,12 @@ class AgentController(
         dashboard.setBusy(true)
         dashboard.setSteeringMode(true)
 
+        // Experimental: fire a quick Haiku call for a contextual working indicator phrase
+        val settings = try { AgentSettings.getInstance(project) } catch (_: Exception) { null }
+        if (settings?.state?.smartWorkingIndicator == true) {
+            generateSmartWorkingPhrase(task)
+        }
+
         sessionStartMs = System.currentTimeMillis()
 
         currentTaskJob = scope.launch {
@@ -1895,8 +1901,72 @@ class AgentController(
     private data class ModelListEntry(val id: String, val name: String, val description: String)
 
     /**
-     * Show a notification with action to view the trace file.
+     * Experimental: fire a quick Haiku call to pick/generate a contextual working phrase.
+     * Non-blocking — result pushed to UI via bridge callback. Falls back silently on failure.
      */
+    private fun generateSmartWorkingPhrase(userMessage: String) {
+        scope.launch {
+            try {
+                val connections = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
+                val url = connections.state.sourcegraphUrl.trimEnd('/')
+                val token = credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.SOURCEGRAPH)
+                if (url.isBlank() || token.isNullOrBlank()) return@launch
+
+                // Use cheapest model (Haiku preferred)
+                val models = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+                val cheapModel = com.workflow.orchestrator.core.ai.ModelCache.pickCheapest(models)?.id ?: return@launch
+
+                val client = com.workflow.orchestrator.agent.api.SourcegraphChatClient(
+                    baseUrl = url,
+                    tokenProvider = { token },
+                    model = cheapModel,
+                    connectTimeoutSeconds = 3,
+                    readTimeoutSeconds = 5
+                )
+
+                val prompt = buildString {
+                    appendLine("You are a witty loading screen message generator for a coding AI agent.")
+                    appendLine("The user just asked the agent: \"${userMessage.take(200)}\"")
+                    appendLine()
+                    appendLine("Write a single short, funny loading message (max 10 words, ending with '...'). The humor should be:")
+                    appendLine("- Related to what the user is asking about")
+                    appendLine("- In the style of a sarcastic developer, self-aware AI, or office humor")
+                    appendLine("- Similar tone to these examples:")
+                    appendLine("  - 'git blame says it was me all along...'")
+                    appendLine("  - 'Hallucinating responsibly...'")
+                    appendLine("  - 'The tests pass. I don't know why. Don't ask...'")
+                    appendLine("  - 'It's giving... undefined...'")
+                    appendLine()
+                    appendLine("Reply with ONLY the message text. Nothing else. No quotes.")
+                }
+
+                val messages = listOf(
+                    com.workflow.orchestrator.core.ai.dto.ChatMessage(
+                        role = "user",
+                        content = prompt
+                    )
+                )
+
+                val result = client.sendMessage(
+                    messages = messages,
+                    tools = null,
+                    maxTokens = 60,
+                    temperature = 1.0
+                )
+
+                if (result is com.workflow.orchestrator.core.model.ApiResult.Success) {
+                    val phrase = result.data.choices.firstOrNull()?.message?.content?.trim()
+                    if (!phrase.isNullOrBlank() && phrase.length < 100) {
+                        invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                    }
+                }
+            } catch (_: Exception) {
+                // Silent fallback — random phrase stays
+            }
+        }
+    }
+
     /** Check if a message is an internally-injected nudge/warning (not an actual user message). */
     private fun isInternalNudge(content: String?): Boolean {
         if (content == null) return false

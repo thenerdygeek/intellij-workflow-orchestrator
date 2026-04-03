@@ -102,6 +102,7 @@ interface ChatState {
   editStats: EditStats | null;
   checkpoints: CheckpointInfo[];
   rollbackEvents: RollbackInfo[];
+  smartWorkingPhrase: string | null;
   planPending: 'approve' | 'revise' | null;
   planCompletedPendingClear: boolean;
 
@@ -167,6 +168,7 @@ interface ChatState {
   updateEditStats(stats: EditStats): void;
   updateCheckpoints(checkpoints: CheckpointInfo[]): void;
   applyRollback(rollback: RollbackInfo): void;
+  setSmartWorkingPhrase(phrase: string): void;
 
   // Sub-Agent Actions
   spawnSubAgent(payload: string): void;
@@ -222,6 +224,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   editStats: null,
   checkpoints: [],
   rollbackEvents: [],
+  smartWorkingPhrase: null,
   planPending: null,
   planCompletedPendingClear: false,
 
@@ -244,6 +247,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       busy: true,
       steeringMode: true,
       retryMessage: null,
+      smartWorkingPhrase: null,
       editStats: null,
       checkpoints: [],
       session: {
@@ -512,7 +516,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setBusy(busy: boolean) {
-    set({ busy });
+    set({ busy, ...(busy ? {} : { smartWorkingPhrase: null }) });
   },
 
   setSteeringMode(enabled: boolean) {
@@ -791,6 +795,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         rollbackEvents: [...state.rollbackEvents, rollback],
       };
     });
+  },
+
+  setSmartWorkingPhrase(phrase: string) {
+    set({ smartWorkingPhrase: phrase });
   },
 
   // ── Sub-Agent Actions ──

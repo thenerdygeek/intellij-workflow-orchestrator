@@ -52,6 +52,7 @@ class AgentSettingsConfigurable(
     private var approvalRequiredForEdits = settings.state.approvalRequiredForEdits
     private var showDebugLog = settings.state.showDebugLog
     private var powershellEnabled = settings.state.powershellEnabled
+    private var smartWorkingIndicator = settings.state.smartWorkingIndicator
 
     // Model dropdown state
     private var modelComboBox: JComboBox<ModelItem>? = null
@@ -145,6 +146,11 @@ class AgentSettingsConfigurable(
                     checkBox("Show debug log panel (displays real-time agent activity in chat)")
                         .bindSelected(::showDebugLog)
                         .comment("Enables an expandable debug panel in the chat view showing tool events, context usage, and loop diagnostics")
+                }
+                row {
+                    checkBox("Smart working indicator (experimental)")
+                        .bindSelected(::smartWorkingIndicator)
+                        .comment("Uses a lightweight AI model to generate contextual loading messages")
                 }
             }
 
@@ -382,6 +388,7 @@ class AgentSettingsConfigurable(
         settings.state.approvalRequiredForEdits = approvalRequiredForEdits
         settings.state.showDebugLog = showDebugLog
         settings.state.powershellEnabled = powershellEnabled
+        settings.state.smartWorkingIndicator = smartWorkingIndicator
 
         // Save database profiles
         val profiles = (0 until dbProfileModel.size).map { dbProfileModel.getElementAt(it) }
@@ -396,6 +403,7 @@ class AgentSettingsConfigurable(
         approvalRequiredForEdits = settings.state.approvalRequiredForEdits
         showDebugLog = settings.state.showDebugLog
         powershellEnabled = settings.state.powershellEnabled
+        smartWorkingIndicator = settings.state.smartWorkingIndicator
         dialogPanel?.reset()
 
         // Reload database profiles from saved state

@@ -259,6 +259,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       stores?.getChatStore().applyRollback(rollback);
     } catch { /* ignore malformed JSON */ }
   },
+  setSmartWorkingPhrase(phrase: string) {
+    stores?.getChatStore().setSmartWorkingPhrase(phrase);
+  },
 
   // Sub-Agent methods from Kotlin
   spawnSubAgent(payload: string) {
