@@ -132,7 +132,6 @@ object DynamicToolSelector {
             "vcs",
             setOf("git", "commit", "diff", "blame", "who changed", "log", "stash",
                 "rebase", "branch", "cherry", "changed files", "history",
-                "implement", "implementation", "override",
                 "shelve", "unshelve", "changelist"),
             VCS_TOOL_NAMES + setOf("find_implementations")
         ),
@@ -162,8 +161,8 @@ object DynamicToolSelector {
         ),
         ToolGroup(
             "runtime",
-            setOf("run", "execute", "process", "launch", "test result", "test output",
-                "test fail", "run config", "run configuration", "test", "tests", "run test"),
+            setOf("execute", "process", "launch", "test result", "test output",
+                "test fail", "run config", "run configuration", "run test"),
             RUNTIME_TOOL_NAMES
         ),
         ToolGroup(
