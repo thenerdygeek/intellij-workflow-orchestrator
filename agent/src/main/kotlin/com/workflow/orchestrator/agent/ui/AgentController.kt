@@ -767,8 +767,21 @@ class AgentController(
                 dashboard.appendStatus("Message queued — will be sent to the agent after the current step.", RichStreamingPanel.StatusType.INFO)
                 return
             }
-            // Agent is suspended waiting for user — fall through to start a new turn
-            // (the pending approval/plan/question will be cancelled or resolved by the new turn)
+
+            // Plan awaiting approval — resolve it with the user's message so the
+            // existing create_plan coroutine resumes. The agent decides whether
+            // this is a question, revision feedback, or general discussion.
+            // This avoids orphaning the suspended coroutine and starting a duplicate turn.
+            if (session?.planManager?.isAwaitingApproval == true) {
+                dashboard.appendUserMessage(task)
+                session?.bridge?.addUserMessage(task)
+                session?.recordUserMessage(task)
+                session?.planManager?.resolveWithChatMessage(task)
+                return
+            }
+
+            // Agent is suspended waiting for user (tool approval or question wizard) —
+            // fall through to start a new turn
         }
 
         // Helper: always push debug entries (not gated by showDebugLog setting)

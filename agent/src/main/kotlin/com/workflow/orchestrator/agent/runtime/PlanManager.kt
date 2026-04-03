@@ -51,6 +51,9 @@ sealed class PlanApprovalResult {
         val revisions: List<PlanRevisionComment>,
         val fullMarkdown: String?
     ) : PlanApprovalResult()
+    /** User typed a message in chat while the plan was awaiting approval.
+     *  Could be a question, revision feedback, or general discussion — the agent decides. */
+    data class ChatMessage(val message: String) : PlanApprovalResult()
 }
 
 class PlanManager {
@@ -163,6 +166,16 @@ class PlanManager {
         LOG.info("PlanManager: contextual revision requested with ${revisions.size} comments")
         sessionDir?.let { dir -> currentPlan?.let { PlanPersistence.save(it, dir) } }
         val result = PlanApprovalResult.RevisedWithContext(revisions, fullMarkdown)
+        approvalDeferred?.complete(result)
+        approvalDeferred = null
+        approvalFuture?.complete(result)
+    }
+
+    /** Resolve pending plan approval with a free-form chat message.
+     *  The agent decides whether this is a question, revision, or discussion. */
+    fun resolveWithChatMessage(message: String) {
+        LOG.info("PlanManager: chat message during plan approval — message length=${message.length}")
+        val result = PlanApprovalResult.ChatMessage(message)
         approvalDeferred?.complete(result)
         approvalDeferred = null
         approvalFuture?.complete(result)

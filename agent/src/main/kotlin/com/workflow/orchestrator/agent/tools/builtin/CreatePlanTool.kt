@@ -162,6 +162,36 @@ class CreatePlanTool : AgentTool {
                     isError = true
                 )
             }
+            is PlanApprovalResult.ChatMessage -> {
+                // Approve the plan and exit plan mode so the agent has full
+                // tool access. If the user was just asking a question, the agent
+                // will call create_plan again (which re-enters plan mode).
+                planManager.currentPlan?.approved = true
+                AgentService.planModeActive.set(false)
+
+                val planMarkdown = planManager.currentPlan?.markdown ?: ""
+                val stepCount = planManager.currentPlan?.steps?.size ?: 0
+                val planSection = if (planMarkdown.isNotBlank()) {
+                    "\n\n<current_plan_markdown>\n$planMarkdown\n</current_plan_markdown>"
+                } else ""
+                val content = buildString {
+                    appendLine("User sent a message while the plan was awaiting approval:")
+                    appendLine()
+                    appendLine("\"${result.message}\"")
+                    append(planSection)
+                    appendLine()
+                    appendLine()
+                    appendLine("Determine the user's intent and respond accordingly:")
+                    appendLine("- Approving / proceeding → begin execution immediately ($stepCount steps). Mark steps with update_plan_step as you go.")
+                    appendLine("- Asking a question → answer it, then call create_plan again with the same plan to re-prompt for approval")
+                    appendLine("- Requesting changes → call create_plan again with a revised plan incorporating their feedback")
+                }
+                ToolResult(
+                    content = content,
+                    summary = "User message during plan approval",
+                    tokenEstimate = TokenEstimator.estimate(content)
+                )
+            }
         }
     }
 
