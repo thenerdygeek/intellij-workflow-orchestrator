@@ -77,14 +77,14 @@ class ObservationMaskingCondenser(
 
     companion object {
         private val RECOVERY_HINTS = mapOf(
-            "read_file" to "re-run read_file to get current content",
-            "search_code" to "re-run search_code with the same query",
-            "glob_files" to "re-run glob_files with the same pattern",
+            "read_file" to "content was compressed — use search_code to find specific content, or read_file with offset+limit for a specific section. Do NOT re-read the entire file.",
+            "search_code" to "re-run search_code with the same query if needed",
+            "glob_files" to "re-run glob_files with the same pattern if needed",
             "run_command" to "re-run the command if output is needed",
             "diagnostics" to "re-run diagnostics for current results"
         )
 
         internal fun getRecoveryHint(toolName: String): String =
-            RECOVERY_HINTS[toolName] ?: "re-run the tool if the result is needed"
+            RECOVERY_HINTS[toolName] ?: "result was compressed to save context"
     }
 }
