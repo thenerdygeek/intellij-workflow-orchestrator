@@ -142,6 +142,32 @@ class SingleAgentSession(
         /** Core tools kept during context reduction (when context_length_exceeded). */
         val CORE_TOOL_NAMES = setOf("read_file", "edit_file", "search_code", "run_command", "diagnostics", "agent", "think", "attempt_completion")
 
+        /**
+         * Detect when the LLM writes tool calls as text in the content field instead of
+         * using the structured tool_calls API mechanism. Known failure mode with:
+         * - OpenAI-compatible proxy APIs (Sourcegraph)
+         * - Long contexts (40K+ tokens)
+         * - High tool counts
+         * - Models without tool_choice support
+         *
+         * Patterns detected: XML tool tags, JSON tool call objects, markdown tool blocks.
+         * Requires at least 2 signals to avoid false positives on normal text that
+         * mentions tool names (e.g., "I'll use read_file to check the contents").
+         */
+        private val TEXT_TOOL_CALL_PATTERNS = listOf(
+            Regex("""<tool_calls?>[\s\S]*?</tool_calls?>""", RegexOption.IGNORE_CASE),
+            Regex("""<function[_=][\s\S]*?</function>""", RegexOption.IGNORE_CASE),
+            Regex("""<tool_use[\s>][\s\S]*?</tool_use>""", RegexOption.IGNORE_CASE),
+            Regex(""""name"\s*:\s*"(read_file|edit_file|search_code|run_command|create_file|glob_files|diagnostics|attempt_completion|agent|think)"[\s\S]*?"arguments"\s*:"""),
+            Regex("""```(?:tool_call|function_call|tool_use)[\s\S]*?```"""),
+            Regex("""\[Tool call:\s*\w+""", RegexOption.IGNORE_CASE),
+        )
+
+        fun containsTextToolCalls(content: String): Boolean {
+            if (content.length < 20) return false
+            return TEXT_TOOL_CALL_PATTERNS.any { it.containsMatchIn(content) }
+        }
+
 
         /** Read-only tools safe to execute in parallel (no side effects on project state).
          *  Note: Meta-tools (sonar, spring, build) included here because ALL their actions are read-only.
@@ -869,6 +895,25 @@ class SingleAgentSession(
 
             // No tool calls — about to return final response
             val content = message.content ?: ""
+
+            // Detect tool calls written as text instead of using the API mechanism.
+            // Known LLM failure mode: model outputs <tool_calls>, <function_call>, JSON tool
+            // invocations, or similar patterns in the content field instead of using the
+            // structured tool_calls response field. This happens with proxy APIs (Sourcegraph),
+            // long contexts (~40K+ tokens), and when tool_choice is not available.
+            val hasTextToolCalls = containsTextToolCalls(content)
+            if (hasTextToolCalls && !shouldSuppressTools()) {
+                metrics.nudgeCount++
+                consecutiveNoToolResponses++
+                val correction = "You wrote tool calls as TEXT in your response instead of using the function calling API. " +
+                    "The system cannot execute tool calls from text — they must be actual function calls in your response. " +
+                    "Do NOT write tool names, arguments, or XML tags describing tool usage in your text. " +
+                    "Instead, make a real tool_call. Try again now."
+                bridge.addUserMessage(correction)
+                onDebugLog?.invoke("warn", "text_tool_call", "Detected tool calls written as text — sending targeted correction (×$consecutiveNoToolResponses)", null)
+                LOG.warn("SingleAgentSession: LLM wrote tool calls as text instead of API mechanism (×$consecutiveNoToolResponses)")
+                return null // continue loop with targeted correction
+            }
 
             // No-tool-call nudge / implicit completion tracking
             consecutiveNoToolResponses++
