@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.settings
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.progress.runBackgroundableTask
@@ -267,7 +268,7 @@ class GeneralConfigurable(
                         val result = runBlocking {
                             authTestService.testConnection(serviceType, url, token)
                         }
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             statusLabel.text = when (result) {
                                 is ApiResult.Success -> "\u2713 Connected successfully"
                                 is ApiResult.Error -> "\u2717 ${result.message}"
@@ -284,7 +285,7 @@ class GeneralConfigurable(
             val existingToken = credentialStore.getToken(serviceType) ?: ""
             if (existingToken.isNotBlank()) {
                 currentToken = existingToken
-                SwingUtilities.invokeLater {
+                invokeLater {
                     tokenField?.text = existingToken
                 }
             }
@@ -365,7 +366,7 @@ class GeneralConfigurable(
                         if (result is ApiResult.Success) {
                             val detectedUsername = authTestService.fetchBitbucketUsername(url, token)
                             if (!detectedUsername.isNullOrBlank()) {
-                                SwingUtilities.invokeLater {
+                                invokeLater {
                                     usernameField?.text = detectedUsername
                                     pendingBitbucketUsername = detectedUsername
                                     statusLabel.text = "\u2713 Connected as $detectedUsername"
@@ -374,7 +375,7 @@ class GeneralConfigurable(
                             }
                         }
 
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             statusLabel.text = when (result) {
                                 is ApiResult.Success -> "\u2713 Connected successfully"
                                 is ApiResult.Error -> "\u2717 ${result.message}"
@@ -390,7 +391,7 @@ class GeneralConfigurable(
             val existingToken = credentialStore.getToken(ServiceType.BITBUCKET) ?: ""
             if (existingToken.isNotBlank()) {
                 currentToken = existingToken
-                SwingUtilities.invokeLater { tokenField?.text = existingToken }
+                invokeLater { tokenField?.text = existingToken }
             }
         }
     }
@@ -466,7 +467,7 @@ class GeneralConfigurable(
                         val result = runBlocking {
                             authTestService.testConnection(ServiceType.NEXUS, url, pass, username = user)
                         }
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             statusLabel.text = when (result) {
                                 is ApiResult.Success -> "\u2713 Connected successfully"
                                 is ApiResult.Error -> "\u2717 ${result.message}"
@@ -483,7 +484,7 @@ class GeneralConfigurable(
             val existingPassword = credentialStore.getNexusPassword() ?: ""
             if (existingPassword.isNotBlank()) {
                 currentPassword = existingPassword
-                SwingUtilities.invokeLater {
+                invokeLater {
                     passwordField?.text = existingPassword
                 }
             }
@@ -599,7 +600,7 @@ class GeneralConfigurable(
         ApplicationManager.getApplication().executeOnPooledThread {
             val resolver = RepoContextResolver.getInstance(project)
             val detected = resolver.autoDetectRepos()
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (detected.isEmpty()) {
                     repoStatusLabel.text = "No repositories detected from git remotes"
                     return@invokeLater

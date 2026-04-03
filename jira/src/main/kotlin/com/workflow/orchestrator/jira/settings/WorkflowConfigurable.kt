@@ -19,7 +19,7 @@ import com.workflow.orchestrator.jira.workflow.TransitionMappingStore
 import kotlinx.coroutines.runBlocking
 import javax.swing.JComponent
 import javax.swing.JLabel
-import javax.swing.SwingUtilities
+import com.intellij.openapi.application.invokeLater
 
 /** Wrapper for JiraBoard to customize toString for the combo box. */
 private data class WorkflowBoardItem(val board: JiraBoard) {
@@ -129,7 +129,7 @@ class WorkflowConfigurable(private val project: Project) : SearchableConfigurabl
                             val result = runBlocking {
                                 apiClient.getBoards(nameFilter = searchText)
                             }
-                            SwingUtilities.invokeLater {
+                            invokeLater {
                                 when (result) {
                                     is ApiResult.Success -> {
                                         val boards = result.data

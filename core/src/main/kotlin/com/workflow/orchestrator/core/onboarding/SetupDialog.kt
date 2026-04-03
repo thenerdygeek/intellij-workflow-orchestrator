@@ -14,7 +14,7 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
 import javax.swing.JTextField
-import javax.swing.SwingUtilities
+import com.intellij.openapi.application.invokeLater
 
 class SetupDialog(private val project: Project) : DialogWrapper(project) {
 
@@ -77,7 +77,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                         val result = runBlocking {
                             authTestService.testConnection(serviceType, url, token)
                         }
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> {
                                     statusLabel.text = "Connected!"
@@ -128,7 +128,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                         val result = runBlocking {
                             authTestService.testConnection(ServiceType.NEXUS, url, password, username = username)
                         }
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> {
                                     statusLabel.text = "Connected!"

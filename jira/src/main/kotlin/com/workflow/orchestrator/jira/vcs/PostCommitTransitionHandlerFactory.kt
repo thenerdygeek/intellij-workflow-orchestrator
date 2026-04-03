@@ -11,7 +11,10 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * After a successful commit, suggests transitioning the Jira ticket
@@ -40,8 +43,6 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         if (baseUrl.isBlank()) return
 
         // Fire-and-forget: post-commit transition check must not block the commit flow.
-        // Guard against project disposal to prevent accessing disposed services.
-        @Suppress("RAW_SCOPE")
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             if (project.isDisposed) return@launch
             try {
@@ -70,7 +71,6 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                                             notification.addAction(object : com.intellij.notification.NotificationAction("Transition") {
                                                 override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
                                                     notification.expire()
-                                                    @Suppress("RAW_SCOPE")
                                                     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                                                         if (project.isDisposed) return@launch
                                                         try {

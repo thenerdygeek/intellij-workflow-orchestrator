@@ -3,6 +3,7 @@ package com.workflow.orchestrator.jira.ui
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
@@ -572,7 +573,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 }
             }
 
-            javax.swing.SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentIssueKey != issueKey) return@invokeLater
                 renderComments(comments)
             }

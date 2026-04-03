@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -103,7 +104,7 @@ class SonarProjectPickerDialog(
         searchJob?.cancel()
         val query = searchField.text.trim()
         if (query.length < 2) {
-            SwingUtilities.invokeLater {
+            invokeLater {
                 listModel.clear()
                 loadingIcon.isVisible = false
                 statusLabel.text = "Type at least 2 characters to search..."
@@ -113,7 +114,7 @@ class SonarProjectPickerDialog(
 
         searchJob = scope.launch {
             delay(300) // debounce 300ms
-            SwingUtilities.invokeLater {
+            invokeLater {
                 loadingIcon.isVisible = true
                 statusLabel.text = "Searching..."
             }
@@ -121,7 +122,7 @@ class SonarProjectPickerDialog(
             val sonarService = project.getService(SonarService::class.java)
             val result = sonarService.searchProjects(query)
 
-            SwingUtilities.invokeLater {
+            invokeLater {
                 listModel.clear()
                 loadingIcon.isVisible = false
                 if (!result.isError) {

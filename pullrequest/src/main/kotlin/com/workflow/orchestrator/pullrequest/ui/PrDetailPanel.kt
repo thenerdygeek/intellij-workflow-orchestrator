@@ -7,6 +7,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -302,14 +303,14 @@ class PrDetailPanel(
             val prDetail = detailService.getDetail(prId)
 
             if (prDetail == null) {
-                SwingUtilities.invokeLater {
+                invokeLater {
                     if (currentPrId != prId) return@invokeLater
                     showEmpty()
                 }
                 return@launch
             }
 
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != prId) return@invokeLater
                 currentPr = prDetail
                 renderPrHeader(prId, prDetail.title, prDetail.state,
@@ -322,21 +323,21 @@ class PrDetailPanel(
 
             // Load activities in background
             val activities = detailService.getActivities(prId)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != prId) return@invokeLater
                 activitySubPanel.showActivities(activities)
             }
 
             // Load changes in background
             val changes = detailService.getChanges(prId)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != prId) return@invokeLater
                 filesSubPanel.showChanges(changes)
             }
 
             // Check merge preconditions in background
             val mergeStatus = PrActionService.getInstance(project).checkMergeStatus(prId)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != prId) return@invokeLater
                 currentMergeStatus = mergeStatus
                 updateMergeButtonState(mergeStatus)
@@ -346,7 +347,7 @@ class PrDetailPanel(
             val commitId = prDetail.fromRef?.latestCommit
             if (!commitId.isNullOrBlank()) {
                 val statuses = detailService.getBuildStatus(commitId)
-                SwingUtilities.invokeLater {
+                invokeLater {
                     if (currentPrId != prId) return@invokeLater
                     updateBuildStatusBadge(statuses)
                 }
@@ -362,7 +363,7 @@ class PrDetailPanel(
         currentPr = pr
         loadJob?.cancel()
 
-        SwingUtilities.invokeLater {
+        invokeLater {
             renderPrHeader(pr.id, pr.title, pr.state, pr.fromRef, pr.toRef)
             renderReviewers(pr)
             descriptionSubPanel.showDescription(pr.description)
@@ -375,20 +376,20 @@ class PrDetailPanel(
             val detailService = PrDetailService.getInstance(project)
 
             val activities = detailService.getActivities(pr.id)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != pr.id) return@invokeLater
                 activitySubPanel.showActivities(activities)
             }
 
             val changes = detailService.getChanges(pr.id)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != pr.id) return@invokeLater
                 filesSubPanel.showChanges(changes)
             }
 
             // Check merge preconditions in background
             val mergeStatus = PrActionService.getInstance(project).checkMergeStatus(pr.id)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (currentPrId != pr.id) return@invokeLater
                 currentMergeStatus = mergeStatus
                 updateMergeButtonState(mergeStatus)
@@ -398,7 +399,7 @@ class PrDetailPanel(
             val commitId = pr.fromRef?.latestCommit
             if (!commitId.isNullOrBlank()) {
                 val statuses = detailService.getBuildStatus(commitId)
-                SwingUtilities.invokeLater {
+                invokeLater {
                     if (currentPrId != pr.id) return@invokeLater
                     updateBuildStatusBadge(statuses)
                 }
@@ -456,7 +457,7 @@ class PrDetailPanel(
             val connSettings = ConnectionSettings.getInstance().state
             val url = connSettings.bitbucketUrl.trimEnd('/')
             if (url.isBlank()) {
-                SwingUtilities.invokeLater {
+                invokeLater {
                     createTargetBranchCombo.removeAllItems()
                     createTargetBranchCombo.addItem(defaultTarget)
                 }
@@ -467,7 +468,7 @@ class PrDetailPanel(
             val repoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
                 ?: settings.bitbucketRepoSlug.orEmpty()
             if (projectKey.isBlank() || repoSlug.isBlank()) {
-                SwingUtilities.invokeLater {
+                invokeLater {
                     createTargetBranchCombo.removeAllItems()
                     createTargetBranchCombo.addItem(defaultTarget)
                 }
@@ -481,7 +482,7 @@ class PrDetailPanel(
             )
             when (val result = client.getBranches(projectKey, repoSlug)) {
                 is ApiResult.Success -> {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         val branches = result.data.map { it.displayId }
                         createTargetBranchCombo.removeAllItems()
                         // Put default target first if it exists
@@ -496,7 +497,7 @@ class PrDetailPanel(
                     }
                 }
                 is ApiResult.Error -> {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         createTargetBranchCombo.removeAllItems()
                         createTargetBranchCombo.addItem(defaultTarget)
                     }
@@ -692,7 +693,7 @@ class PrDetailPanel(
                     // Refresh PR list
                     PrListService.getInstance(project).refresh()
 
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         createButton.isEnabled = true
                         createButton.text = "Create Pull Request"
                         // Show the newly created PR by loading it
@@ -707,7 +708,7 @@ class PrDetailPanel(
                     }
                 }
                 is ApiResult.Error -> {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         createButton.isEnabled = true
                         createButton.text = "Create Pull Request"
                         showNotification("Failed to create PR: ${result.message}")
@@ -814,7 +815,7 @@ class PrDetailPanel(
                     )
                     when (val result = client.getUsers(query)) {
                         is ApiResult.Success -> {
-                            SwingUtilities.invokeLater {
+                            invokeLater {
                                 userListModel.clear()
                                 result.data
                                     .filter { it.name !in selectedReviewerUsernames }
@@ -1008,7 +1009,7 @@ class PrDetailPanel(
                     if (currentUserApproved) {
                         // Unapprove
                         val result = actionService.unapprove(prId)
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> {
                                     currentUserApproved = false
@@ -1022,7 +1023,7 @@ class PrDetailPanel(
                     } else {
                         // Approve
                         val result = actionService.approve(prId)
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> {
                                     currentUserApproved = true
@@ -1035,7 +1036,7 @@ class PrDetailPanel(
                         }
                     }
                 } catch (e: Exception) {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         com.intellij.notification.NotificationGroupManager.getInstance()
                             .getNotificationGroup("workflow.build")
                             .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
@@ -1053,7 +1054,7 @@ class PrDetailPanel(
             // Show merge options dialog
             scope.launch {
                 val strategies = PrActionService.getInstance(project).getMergeStrategies()
-                SwingUtilities.invokeLater {
+                invokeLater {
                     val dialog = MergeOptionsDialog(
                         project = project,
                         prId = prId,
@@ -1071,14 +1072,14 @@ class PrDetailPanel(
                                 deleteSourceBranch = dialog.deleteSourceBranch,
                                 commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
                             )
-                            SwingUtilities.invokeLater {
+                            invokeLater {
                                 mergeButton.isEnabled = false
                                 approveButton.isEnabled = false
                                 needsWorkButton.isEnabled = false
                                 declineButton.isEnabled = false
                             }
                         } catch (e: Exception) {
-                            SwingUtilities.invokeLater {
+                            invokeLater {
                                 com.intellij.notification.NotificationGroupManager.getInstance()
                                     .getNotificationGroup("workflow.build")
                                     .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
@@ -1103,14 +1104,14 @@ class PrDetailPanel(
             scope.launch {
                 try {
                     PrActionService.getInstance(project).decline(prId, version)
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         mergeButton.isEnabled = false
                         approveButton.isEnabled = false
                         needsWorkButton.isEnabled = false
                         declineButton.isEnabled = false
                     }
                 } catch (e: Exception) {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         com.intellij.notification.NotificationGroupManager.getInstance()
                             .getNotificationGroup("workflow.build")
                             .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
@@ -1127,14 +1128,14 @@ class PrDetailPanel(
                 // Resolve the actual authenticated user, not the PR author
                 val currentUser = resolveCurrentUsername()
                 if (currentUser.isNullOrBlank()) {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         showNotification("Cannot determine current user for Needs Work")
                     }
                     return@launch
                 }
                 try {
                     val result = PrActionService.getInstance(project).setNeedsWork(prId, currentUser)
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         when (result) {
                             is ApiResult.Success -> {
                                 needsWorkButton.text = "Needs Work Set"
@@ -1145,7 +1146,7 @@ class PrDetailPanel(
                         }
                     }
                 } catch (e: Exception) {
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         showNotification("Needs Work failed: ${e.message}")
                     }
                 }
@@ -1254,7 +1255,7 @@ class PrDetailPanel(
                 val approved = if (currentUsername != null && pr != null) {
                     pr.reviewers.any { it.user.name == currentUsername && it.approved }
                 } else false
-                SwingUtilities.invokeLater {
+                invokeLater {
                     currentUserApproved = approved
                     if (approved) {
                         approveButton.text = "Unapprove"
@@ -1347,7 +1348,7 @@ class PrDetailPanel(
                         val prId = currentPrId ?: return
                         scope.launch {
                             val result = PrActionService.getInstance(project).removeReviewer(prId, reviewerUsername)
-                            SwingUtilities.invokeLater {
+                            invokeLater {
                                 when (result) {
                                     is ApiResult.Success -> refreshCurrentPr()
                                     is ApiResult.Error -> showNotification("Failed to remove reviewer: ${result.message}")
@@ -1390,7 +1391,7 @@ class PrDetailPanel(
         titleLabel.text = newTitle
         scope.launch {
             val result = PrActionService.getInstance(project).updateTitle(prId, newTitle)
-            SwingUtilities.invokeLater {
+            invokeLater {
                 when (result) {
                     is ApiResult.Success -> {
                         // Refresh to get updated version
@@ -1415,7 +1416,7 @@ class PrDetailPanel(
             val detailService = PrDetailService.getInstance(project)
             val prDetail = detailService.getDetail(prId)
             if (prDetail != null) {
-                SwingUtilities.invokeLater {
+                invokeLater {
                     if (currentPrId != prId) return@invokeLater
                     currentPr = prDetail
                     renderReviewers(prDetail)
@@ -1500,7 +1501,7 @@ class PrDetailPanel(
                     )
                     when (val result = client.getUsers(query)) {
                         is ApiResult.Success -> {
-                            SwingUtilities.invokeLater {
+                            invokeLater {
                                 userListModel.clear()
                                 result.data.forEach { userListModel.addElement(it) }
                             }
@@ -1520,7 +1521,7 @@ class PrDetailPanel(
                     popup.cancel()
                     scope.launch {
                         val result = PrActionService.getInstance(project).addReviewer(prId, selected.name)
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> refreshCurrentPr()
                                 is ApiResult.Error -> showNotification("Failed to add reviewer: ${result.message}")
@@ -1800,7 +1801,7 @@ class PrDetailPanel(
 
             scope.launch {
                 PrActionService.getInstance(project).updateDescription(prId, newDescription, version)
-                SwingUtilities.invokeLater {
+                invokeLater {
                     updateButton.isEnabled = true
                     currentDescription = newDescription
                     showDescription(newDescription)
@@ -1830,7 +1831,7 @@ class PrDetailPanel(
                     val textGen = com.workflow.orchestrator.core.ai.TextGenerationService.getInstance()
                     log.info("[PR:AI] TextGenerationService: ${textGen?.javaClass?.simpleName ?: "NULL"}")
                     if (textGen == null) {
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             enhanceWithAiButton.isEnabled = true
                             enhanceWithAiButton.text = "Enhance with AI"
                             enhanceWithAiButton.toolTipText = "AI service is not available — configure Sourcegraph in Settings"
@@ -1842,7 +1843,7 @@ class PrDetailPanel(
                     val diff = PrDetailService.getInstance(project).getDiff(prId)
                     log.info("[PR:AI] Diff result: ${if (diff == null) "NULL" else "${diff.length} chars"}")
                     if (diff.isNullOrBlank()) {
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             enhanceWithAiButton.isEnabled = true
                             enhanceWithAiButton.text = "Enhance with AI"
                             enhanceWithAiButton.toolTipText = "Could not fetch PR diff from Bitbucket"
@@ -1869,7 +1870,7 @@ class PrDetailPanel(
                     )
 
                     log.info("[PR:AI] generatePrDescription result: ${if (enhanced == null) "NULL" else "${enhanced.length} chars"}")
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         enhanceWithAiButton.isEnabled = true
                         enhanceWithAiButton.text = "Enhance with AI"
                         if (!enhanced.isNullOrBlank()) {
@@ -1885,7 +1886,7 @@ class PrDetailPanel(
                     }
                 } catch (e: Exception) {
                     log.warn("[PR:AI] Exception: ${e::class.simpleName}: ${e.message}", e)
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         enhanceWithAiButton.isEnabled = true
                         enhanceWithAiButton.text = "Enhance with AI"
                         enhanceWithAiButton.toolTipText = "Failed: ${e.message}"
@@ -1938,7 +1939,7 @@ class PrDetailPanel(
                     sendCommentButton.isEnabled = false
                     scope.launch {
                         val result = PrActionService.getInstance(project).addComment(prId, text)
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> {
                                     commentField.text = ""
@@ -1981,7 +1982,7 @@ class PrDetailPanel(
                 log.warn("[PR:Activity] File not found locally: $fullPath")
                 return
             }
-            com.intellij.openapi.application.invokeLater {
+            invokeLater {
                 val editor = com.intellij.openapi.fileEditor.FileEditorManager
                     .getInstance(project).openFile(vf, true).firstOrNull()
                 if (line > 0 && editor is com.intellij.openapi.fileEditor.TextEditor) {
@@ -2257,7 +2258,7 @@ class PrDetailPanel(
                     replyField.isEnabled = false
                     scope.launch {
                         val result = PrActionService.getInstance(project).replyToComment(prId, commentId, text)
-                        SwingUtilities.invokeLater {
+                        invokeLater {
                             when (result) {
                                 is ApiResult.Success -> {
                                     replyField.text = ""
@@ -2300,7 +2301,7 @@ class PrDetailPanel(
             scope.launch {
                 val detailService = PrDetailService.getInstance(project)
                 val activities = detailService.getActivities(prId)
-                SwingUtilities.invokeLater {
+                invokeLater {
                     if (currentPrId == prId) {
                         showActivities(activities)
                     }
@@ -2639,7 +2640,7 @@ class PrDetailPanel(
                     val detailService = PrDetailService.getInstance(project)
                     val diff = detailService.getDiff(prId)
 
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         runReviewButton.isEnabled = true
                         removeAll()
                         add(topPanel, BorderLayout.NORTH)

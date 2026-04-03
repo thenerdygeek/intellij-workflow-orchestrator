@@ -238,20 +238,20 @@ class SourcegraphChatClient(
         }
 
         // Phase 5: ensure no two consecutive same-role messages after removals
-        val final = mutableListOf<ChatMessage>()
+        val result = mutableListOf<ChatMessage>()
         for (msg in merged) {
-            val last = final.lastOrNull()
+            val last = result.lastOrNull()
             if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
-                final[final.size - 1] = ChatMessage(
+                result[result.size - 1] = ChatMessage(
                     role = msg.role,
                     content = "${last.content ?: ""}\n\n${msg.content ?: ""}"
                 )
             } else {
-                final.add(msg)
+                result.add(msg)
             }
         }
 
-        return final
+        return result
     }
 
     /**
@@ -326,9 +326,7 @@ class SourcegraphChatClient(
                         val chunkJson = line.removePrefix("data: ")
                         try {
                             val chunk = json.decodeFromString<StreamChunk>(chunkJson)
-                            // Use runBlocking here because readLine loop is not a suspend context.
-                            // This is safe because we are already on Dispatchers.IO.
-                            kotlinx.coroutines.runBlocking { onChunk(chunk) }
+                            onChunk(chunk)
 
                             chunk.choices.firstOrNull()?.let { choice ->
                                 // Capture finish_reason from the final chunk

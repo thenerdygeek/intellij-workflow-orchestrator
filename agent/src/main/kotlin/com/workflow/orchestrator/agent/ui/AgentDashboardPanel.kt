@@ -6,6 +6,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.JPanel
+import com.intellij.openapi.application.invokeLater
 import javax.swing.SwingUtilities
 
 /**
@@ -474,6 +475,6 @@ class AgentDashboardPanel(
 
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
-        else SwingUtilities.invokeLater(action)
+        else invokeLater { action() }
     }
 }

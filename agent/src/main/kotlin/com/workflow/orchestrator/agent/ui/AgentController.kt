@@ -28,10 +28,10 @@ import kotlinx.serialization.json.contentOrNull
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.tools.ToolCategoryRegistry
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.invokeLater
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.io.File
-import javax.swing.SwingUtilities
 
 /**
  * Controller bridging AgentOrchestrator (backend) ↔ AgentDashboardPanel (UI).
@@ -274,7 +274,7 @@ class AgentController(
                 session?.planManager?.approvePlan()
                 // Auto-exit plan mode: unclick the Plan button
                 planModeEnabled = false
-                SwingUtilities.invokeLater { dashboard.setPlanMode(false) }
+                invokeLater { dashboard.setPlanMode(false) }
             },
             onRevise = { revisionJson ->
                 try {
@@ -460,7 +460,7 @@ class AgentController(
                 session?.planManager?.approvePlan()
                 // Auto-exit plan mode: unclick the Plan button
                 planModeEnabled = false
-                SwingUtilities.invokeLater { panel.setPlanMode(false) }
+                invokeLater { panel.setPlanMode(false) }
             },
             onRevise = { revisionJson ->
                 try {
@@ -685,7 +685,7 @@ class AgentController(
                 } else {
                     session?.bridge?.setMentionAnchor(null)
                 }
-                SwingUtilities.invokeLater {
+                invokeLater {
                     executeTask(text)
                 }
             }
@@ -716,7 +716,7 @@ class AgentController(
                     )
                     session?.bridge?.recordMention(filePaths, context)
                 }
-                SwingUtilities.invokeLater { executeTask(prompt) }
+                invokeLater { executeTask(prompt) }
             }
         } else {
             executeTask(prompt)
@@ -1150,12 +1150,12 @@ class AgentController(
         agentSvc?.onPlanModeEnabled = { enabled ->
             planModeEnabled = enabled
             AgentService.planModeActive.set(enabled)
-            SwingUtilities.invokeLater { dashboard.setPlanMode(enabled) }
+            invokeLater { dashboard.setPlanMode(enabled) }
         }
 
         // Wire background worker completion notification
         agentSvc?.onBackgroundWorkerCompleted = { agentId, resultMessage, isError ->
-            SwingUtilities.invokeLater {
+            invokeLater {
                 if (isError) {
                     dashboard.appendError("Background agent $agentId: $resultMessage")
                 } else {
@@ -1173,22 +1173,22 @@ class AgentController(
         // Wire sub-agent boundary card callbacks → JCEF bridge
         agentSvc?.subAgentCallbacks = AgentService.SubAgentCallbacks(
             onSpawn = { agentId, label ->
-                SwingUtilities.invokeLater { dashboard.spawnSubAgent(agentId, label) }
+                invokeLater { dashboard.spawnSubAgent(agentId, label) }
             },
             onIteration = { agentId, iteration ->
-                SwingUtilities.invokeLater { dashboard.updateSubAgentIteration(agentId, iteration) }
+                invokeLater { dashboard.updateSubAgentIteration(agentId, iteration) }
             },
             onToolCall = { agentId, toolName, toolArgs ->
-                SwingUtilities.invokeLater { dashboard.addSubAgentToolCall(agentId, toolName, toolArgs) }
+                invokeLater { dashboard.addSubAgentToolCall(agentId, toolName, toolArgs) }
             },
             onToolResult = { agentId, toolName, result, durationMs, isError ->
-                SwingUtilities.invokeLater { dashboard.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
+                invokeLater { dashboard.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
             },
             onMessage = { agentId, textContent ->
-                SwingUtilities.invokeLater { dashboard.updateSubAgentMessage(agentId, textContent) }
+                invokeLater { dashboard.updateSubAgentMessage(agentId, textContent) }
             },
             onComplete = { agentId, textContent, tokensUsed, isError ->
-                SwingUtilities.invokeLater { dashboard.completeSubAgent(agentId, textContent, tokensUsed, isError) }
+                invokeLater { dashboard.completeSubAgent(agentId, textContent, tokensUsed, isError) }
             }
         )
 
@@ -1204,7 +1204,7 @@ class AgentController(
                 dashboard.appendStatus("No rollback manager available.", RichStreamingPanel.StatusType.WARNING)
                 return@setCefRevertCheckpointCallback
             }
-            SwingUtilities.invokeLater {
+            invokeLater {
                 val error = manager.rollbackToCheckpoint(checkpointId)
                 if (error == null) {
                     // Refresh VFS after revert
@@ -1233,7 +1233,7 @@ class AgentController(
             dashboard.appendStatus("No changes to undo.", RichStreamingPanel.StatusType.WARNING)
             return
         }
-        SwingUtilities.invokeLater {
+        invokeLater {
             val answer = Messages.showYesNoDialog(
                 project,
                 "Undo all file changes made by the agent?",
@@ -1299,7 +1299,7 @@ class AgentController(
 
     private fun handleProgress(progress: AgentProgress) {
         val maxTokens = try { AgentSettings.getInstance(project).state.maxInputTokens } catch (_: Exception) { AgentSettings.DEFAULTS.maxInputTokens }
-        SwingUtilities.invokeLater { dashboard.updateProgress(progress.step, progress.tokensUsed, maxTokens) }
+        invokeLater { dashboard.updateProgress(progress.step, progress.tokensUsed, maxTokens) }
 
         val toolInfo = progress.toolCallInfo
         when {
@@ -1388,7 +1388,7 @@ class AgentController(
         if (pending != null) {
             LOG.info("AgentController: processing queued user intervention: ${pending.take(100)}")
             // Schedule follow-up execution after current result is handled
-            SwingUtilities.invokeLater { executeTask(pending) }
+            invokeLater { executeTask(pending) }
         }
 
         when (result) {
@@ -1692,7 +1692,7 @@ class AgentController(
         if (latest != null) {
             val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(latest)
             if (vf != null) {
-                SwingUtilities.invokeLater {
+                invokeLater {
                     FileEditorManager.getInstance(project).openFile(vf, true)
                 }
             }
@@ -1749,7 +1749,7 @@ class AgentController(
                         ),
                         models.map { ModelListEntry(id = it.id, name = it.displayName, description = it.displayProvider) }
                     )
-                    SwingUtilities.invokeLater {
+                    invokeLater {
                         dashboard.updateModelList(json)
                         // Also set the display name for the current model
                         val currentId = settings.state.sourcegraphChatModel ?: ""

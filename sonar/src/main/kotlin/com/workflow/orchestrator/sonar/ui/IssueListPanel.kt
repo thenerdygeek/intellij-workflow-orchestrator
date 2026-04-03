@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -237,7 +238,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
             }
 
             // Restore scroll position
-            SwingUtilities.invokeLater {
+            invokeLater {
                 scrollPane.verticalScrollBar.value = scrollPosition
             }
         }

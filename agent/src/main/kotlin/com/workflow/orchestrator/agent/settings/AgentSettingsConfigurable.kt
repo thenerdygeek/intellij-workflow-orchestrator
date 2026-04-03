@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.settings
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
@@ -253,7 +254,7 @@ class AgentSettingsConfigurable(
 
                 val result = client.listModels()
 
-                SwingUtilities.invokeLater {
+                invokeLater {
                     when (result) {
                         is ApiResult.Success -> {
                             cachedModels = result.data.data
@@ -274,7 +275,7 @@ class AgentSettingsConfigurable(
                     loadModelsButton?.isEnabled = true
                 }
             } catch (e: Exception) {
-                SwingUtilities.invokeLater {
+                invokeLater {
                     modelStatusLabel?.icon = AllIcons.General.Error
                     modelStatusLabel?.text = "Error: ${e.message}"
                     modelStatusLabel?.foreground = JBColor.RED

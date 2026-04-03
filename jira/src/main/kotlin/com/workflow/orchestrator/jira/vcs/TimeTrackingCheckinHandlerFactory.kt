@@ -14,7 +14,10 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -106,8 +109,6 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)
 
         // Fire-and-forget: post-commit time logging must not block the commit flow.
-        // Guard against project disposal to prevent accessing disposed services.
-        @Suppress("RAW_SCOPE")
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             if (project.isDisposed) return@launch
             try {

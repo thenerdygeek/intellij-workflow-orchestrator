@@ -7,6 +7,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import javax.swing.JEditorPane
 import javax.swing.JPanel
+import com.intellij.openapi.application.invokeLater
 import javax.swing.SwingUtilities
 import javax.swing.text.html.HTMLDocument
 import javax.swing.text.html.HTMLEditorKit
@@ -351,7 +352,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
     }
 
     private fun scrollToBottom() {
-        SwingUtilities.invokeLater {
+        invokeLater {
             editorPane.caretPosition = editorPane.document.length
         }
     }
@@ -367,7 +368,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
 
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
-        else SwingUtilities.invokeLater(action)
+        else invokeLater { action() }
     }
 
     // ═══════════════════════════════════════════════════
