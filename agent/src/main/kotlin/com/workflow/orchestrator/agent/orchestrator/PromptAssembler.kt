@@ -60,6 +60,11 @@ class PromptAssembler(
         sections.add(PERSISTENCE_AND_COMPLETION)
         sections.add(TOOL_POLICY)
 
+        // Skill rules — primacy zone so LLM sees them before any context data
+        if (!skillDescriptions.isNullOrBlank()) {
+            sections.add("<skill_rules>\nYou have access to skills — structured workflows that produce better results than ad-hoc approaches.\n\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n\nRULE: When a skill matches the task, load it BEFORE starting work.\nDo NOT attempt planning, debugging, brainstorming, or TDD workflows without the corresponding skill.\nThe skill contains the detailed workflow — the system prompt only tells you WHEN to use it, not HOW.\n</skill_rules>")
+        }
+
         // === CONTEXT ZONE (reference data) ===
         if (projectName != null || frameworkInfo != null) {
             val ctx = buildProjectContext(projectName, projectPath, frameworkInfo, project)
@@ -87,10 +92,6 @@ class PromptAssembler(
             builtInDescs
         }
         sections.add("<available_agents>\n$allAgentDescs\n\nTo delegate, call agent(subagent_type=\"name\", prompt=\"...\").\n</available_agents>")
-
-        if (!skillDescriptions.isNullOrBlank()) {
-            sections.add("<available_skills>\n$skillDescriptions\n\nTo use a skill, call Skill(skill=\"name\"). Users can also type /skill-name in chat.\n\nIMPORTANT: Before starting work, check if an available skill matches the task. Skills contain battle-tested workflows — always prefer them over ad-hoc approaches. In particular:\n- For planning multi-step tasks → Skill(skill=\"writing-plans\")\n- For brainstorming new features/architecture → Skill(skill=\"brainstorm\")\n- For executing an approved plan → Skill(skill=\"subagent-driven\")\n- For TDD workflow → Skill(skill=\"tdd\")\n- For debugging → Skill(skill=\"systematic-debugging\")\n</available_skills>")
-        }
 
         if (!previousStepResults.isNullOrEmpty()) {
             val prev = previousStepResults.joinToString("\n\n") { "- $it" }
@@ -272,7 +273,7 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             DECISION PROCESS — run this before every task:
 
             1. If the user explicitly asks to "create a plan", "write a plan", or "plan this":
-               → ALWAYS enable_plan_mode + Skill(skill="writing-plans"). No exceptions.
+               → enable_plan_mode, then Skill(skill="writing-plans"). No exceptions.
 
             2. Otherwise, INVESTIGATE SCOPE first — use agent(subagent_type="explorer") to research
                the codebase areas involved, or read key files/structure directly for smaller scopes.
@@ -291,37 +292,17 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
                - You're confident about the exact change needed after reading the file
                - No cross-file dependencies are affected
 
-            3. To create a plan:
-               a. Call enable_plan_mode (blocks write tools until plan is approved)
-               b. Call Skill(skill="writing-plans") and follow its workflow
-               c. The skill will guide you to use create_plan with title + markdown
-                  (## Goal, ## Steps with ### per step, ## Testing — steps auto-extracted from ### headings)
-
-            4. After the user approves a plan:
-               - For multi-task plans: use Skill(skill="subagent-driven") — dispatches a fresh
-                 subagent per task with two-stage review (spec compliance + code quality)
-               - For simple 1-2 task plans: execute directly with update_plan_step to track progress
-               - Mark steps 'running' when started, 'done' when complete, 'failed' if they fail
-
-            5. If the user requests revision, incorporate their feedback and call create_plan again.
+            3. After the user approves a plan:
+               - For multi-task plans: Skill(skill="subagent-driven")
+               - For simple 1-2 task plans: execute directly with update_plan_step
             </planning>
         """.trimIndent()
 
         val FORCED_PLANNING_RULES = """
             <planning mode="required">
-            - Plan mode is ACTIVE. Source code mutation tools (edit_file, create_file, format_code,
-              optimize_imports, refactor_rename) are NOT available until you create a plan and the user approves it.
-            - Call Skill(skill="writing-plans") to activate the planning workflow, then follow its instructions.
-            - Analyze the task by reading relevant files using read_file, search_code, file_structure,
-              diagnostics, run_command (for tests/builds), runtime, and debug tools.
-            - Then produce a comprehensive implementation plan using create_plan with:
-              1. `title` — short display title
-              2. `markdown` — full plan as markdown (## Goal, ## Steps with ### per step, ## Testing)
-              Steps are auto-extracted from ### headings — no separate JSON needed.
-            - Once the user approves the plan, plan mode will automatically deactivate and all tools
-              will become available. Execute using Skill(skill="subagent-driven") for multi-task plans,
-              or directly with update_plan_step for simple 1-2 task plans.
-            - If the user requests revision, incorporate their feedback and call create_plan again.
+            Plan mode is ACTIVE. Write tools are NOT available until you create a plan and the user approves it.
+            Call Skill(skill="writing-plans") to activate the planning workflow, then follow its instructions.
+            Once the user approves, plan mode deactivates and all tools become available.
             </planning>
         """.trimIndent()
 
@@ -340,9 +321,6 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             Specialist agents: Use bundled specialists (code-reviewer, architect-reviewer, test-automator,
             spring-boot-engineer, refactoring-specialist, security-auditor, performance-engineer, devops-engineer)
             via agent(subagent_type="name") for domain-specific tasks. See <available_agents> for full list.
-
-            Plan execution: After a plan is approved, use Skill(skill="subagent-driven") to execute it.
-            This dispatches a fresh subagent per task with two-stage review (spec compliance + code quality).
             </delegation>
         """.trimIndent()
 
@@ -467,20 +445,18 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             Do NOT retry the same failing command without fixing the underlying issue first.
             </example>
 
-            <example name="when-to-plan">
-            User: "Refactor the notification system to use events instead of direct calls"
-            This is a multi-file architectural change → call enable_plan_mode, then Skill(skill="writing-plans") to create a structured plan.
-            Wait for plan approval, then execute with Skill(skill="subagent-driven").
+            <example name="skill-matching">
+            User: "The UserService tests are failing with NPE"
+            → Skill(skill="systematic-debugging"). Always load this for bugs, test failures, or unexpected behavior.
+
+            User: "I want to add a caching layer to the API"
+            → Skill(skill="brainstorm"). Always load this for new features, architecture, or design discussions.
+
+            User: "Refactor the notification system to use events"
+            → enable_plan_mode + Skill(skill="writing-plans"). Multi-file changes need a plan.
 
             User: "Add a null check in processOrder()"
-            This is a single-file targeted fix → act directly without a plan.
-            </example>
-
-            <example name="multi-file-implementation">
-            User: "Add logging to all service classes"
-            Good approach: After plan is approved, use Skill(skill="subagent-driven") to execute it.
-            This dispatches a fresh subagent per task with two-stage review (spec compliance + code quality).
-            Bad approach: Editing 10 files yourself, filling your context with verbose file contents.
+            → Act directly. Single-file, single-line fix — no skill needed.
             </example>
 
             <example name="parallel-research">
@@ -496,16 +472,6 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             After implementing all changes, before calling attempt_completion:
               agent(subagent_type="reviewer", prompt="Review changes in src/main/kotlin/auth/. Verify: JWT dependency added, token generation correct, existing tests updated, no security issues.")
             Bad approach: Declaring "Done!" without verifying multi-file changes.
-            </example>
-
-            <example name="skill-activation">
-            User: "The UserService tests are failing with NPE"
-            Good approach: Skill(skill="systematic-debugging") — this activates a structured debugging workflow that ensures root cause investigation before proposing fixes.
-            Bad approach: Jumping straight to guessing the fix without investigating the root cause.
-
-            User: "I want to add a caching layer to the API"
-            Good approach: Skill(skill="brainstorm") first to explore requirements and design, then Skill(skill="writing-plans") to create the implementation plan.
-            Bad approach: Immediately editing files without understanding requirements or planning.
             </example>
             </examples>
         """.trimIndent()
