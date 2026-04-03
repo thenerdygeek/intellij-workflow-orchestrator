@@ -582,8 +582,22 @@ class SourcegraphChatClient(
                     }
                     appendLine()
                 }
+
+                if (tools != null && tools.isNotEmpty()) {
+                    appendLine("=== Tool Schemas (${tools.size}) ===")
+                    tools.forEach { tool ->
+                        val fn = tool.function
+                        val params = fn.parameters.properties.entries.joinToString(", ") { (k, v) ->
+                            "$k: ${v.type}${if (v.enumValues != null) " [${v.enumValues.joinToString("|")}]" else ""}"
+                        }
+                        val req = fn.parameters.required.joinToString(", ")
+                        appendLine("  ${fn.name}($params) required=[$req]")
+                        appendLine("    ${fn.description.take(120)}")
+                    }
+                    appendLine()
+                }
             })
-            log.info("[Agent:API] Request dumped to ${file.name} (${messages.size} messages, $bodyLength chars)")
+            log.info("[Agent:API] Request dumped to ${file.name} (${messages.size} messages, ${tools?.size ?: 0} tools, $bodyLength chars)")
         } catch (e: Exception) {
             log.debug("[Agent:API] Failed to dump request: ${e.message}")
         }
