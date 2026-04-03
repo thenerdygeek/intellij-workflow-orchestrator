@@ -1,11 +1,6 @@
 ---
 name: brainstorm
-description: >
-  Turn ideas into fully formed designs through collaborative dialogue. Use when the user wants
-  to build something new, add a feature, design architecture, or plan a significant change.
-  Triggers on: "brainstorm", "design", "how should I", "let's plan", "I want to add", "I want to build",
-  "new feature", "architecture for", "approach for". Also use proactively before any non-trivial
-  implementation — understanding what to build prevents wasted work.
+description: Turn ideas into fully formed designs through collaborative dialogue. Use when the user wants to build something new, add a feature, design architecture, or plan a significant change. Triggers on — "brainstorm", "design", "how should I", "let's plan", "I want to add", "I want to build", "new feature", "architecture for", "approach for". Also use proactively before any non-trivial implementation — understanding what to build prevents wasted work.
 user-invocable: true
 preferred-tools: [think, ask_questions, create_plan, core_memory_append, archival_memory_insert, read_file, search_code, find_definition, find_references, file_structure, agent]
 ---

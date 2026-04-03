@@ -231,8 +231,7 @@ class PromptAssemblerTest {
         assertTrue(prompt.contains("targeted-lookup"), "Should contain targeted lookup example")
         assertTrue(prompt.contains("edit-with-verification"), "Should contain edit verification example")
         assertTrue(prompt.contains("error-recovery"), "Should contain error recovery example")
-        assertTrue(prompt.contains("when-to-plan"), "Should contain planning example")
-        assertTrue(prompt.contains("multi-file-implementation"), "Should contain multi-file implementation example")
+        assertTrue(prompt.contains("skill-matching"), "Should contain skill-matching example")
         assertTrue(prompt.contains("parallel-research"), "Should contain parallel research example")
         assertTrue(prompt.contains("review-before-complete"), "Should contain review before complete example")
     }

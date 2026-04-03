@@ -1,9 +1,6 @@
 ---
 name: writing-plans
-description: >
-  Create structured implementation plans with bite-sized tasks, TDD steps, and file-level guidance.
-  Triggers on: "plan this", "create a plan", "write a plan", multi-file tasks, new features, refactoring,
-  cross-module changes. Always load after enable_plan_mode.
+description: Create structured implementation plans with bite-sized tasks, TDD steps, and file-level guidance. Triggers on — "plan this", "create a plan", "write a plan", multi-file tasks, new features, refactoring, cross-module changes. Always load after enable_plan_mode.
 preferred-tools: [read_file, search_code, file_structure, find_definition, find_references, type_hierarchy, diagnostics, run_command, think, create_plan, update_plan_step, agent]
 ---
 
