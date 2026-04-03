@@ -37,7 +37,7 @@ class PromptAssemblerTest {
         // Identity + core directives
         assertTrue(prompt.contains("AI coding assistant"), "Should contain core identity")
         assertTrue(prompt.contains("<core_directives>"), "Should contain core directives block")
-        assertTrue(prompt.contains("Persistence"), "Should contain persistence directive")
+        assertTrue(prompt.contains("Verify before done"), "Should contain verify-before-done directive")
 
         // Mandatory sections
         assertTrue(prompt.contains("<tool_policy>"), "Should contain tool policy section")

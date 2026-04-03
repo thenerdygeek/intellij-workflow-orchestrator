@@ -85,7 +85,8 @@ No description means this should be skipped.
         registry.scan()
 
         assertNull(registry.getAgent("invalid"))
-        assertTrue(registry.getAllAgents().isEmpty())
+        // Only builtins should be loaded — the invalid file is skipped
+        assertTrue(registry.getAllAgents().all { it.scope == AgentDefinitionRegistry.AgentScope.BUILTIN })
     }
 
     @Test
@@ -95,7 +96,8 @@ No description means this should be skipped.
 
         registry.scan()
 
-        assertTrue(registry.getAllAgents().isEmpty())
+        // Only builtins should be loaded
+        assertTrue(registry.getAllAgents().all { it.scope == AgentDefinitionRegistry.AgentScope.BUILTIN })
     }
 
     @Test
@@ -164,13 +166,16 @@ Beta body.
     }
 
     @Test
-    fun `buildDescriptionIndex returns empty string when no agents`() {
+    fun `buildDescriptionIndex includes builtin agents`() {
         registry.scan()
-        assertEquals("", registry.buildDescriptionIndex())
+        val index = registry.buildDescriptionIndex()
+        // Builtins are always loaded, so index is never empty after scan
+        assertTrue(index.contains("code-reviewer"))
+        assertTrue(index.contains("architect-reviewer"))
     }
 
     @Test
-    fun `getAllAgents returns sorted list`() {
+    fun `getAllAgents returns sorted list including builtins`() {
         val agentDir = File(tempDir, ".workflow/agents").also { it.mkdirs() }
         File(agentDir, "zebra.md").writeText("""
 ---
@@ -190,23 +195,29 @@ Aardvark.
         registry.scan()
 
         val agents = registry.getAllAgents()
-        assertEquals(2, agents.size)
-        assertEquals("aardvark", agents[0].name)
-        assertEquals("zebra", agents[1].name)
+        // 8 builtins + 2 project agents = 10 total
+        assertTrue(agents.size >= 10)
+        // Verify sorted by name
+        assertEquals(agents.sortedBy { it.name }, agents)
+        // Verify our project agents are present
+        assertNotNull(agents.find { it.name == "aardvark" })
+        assertNotNull(agents.find { it.name == "zebra" })
     }
 
     @Test
-    fun `handles empty agents directory`() {
+    fun `handles empty agents directory with only builtins`() {
         File(tempDir, ".workflow/agents").mkdirs()
         registry.scan()
-        assertTrue(registry.getAllAgents().isEmpty())
+        // Only builtins should be loaded
+        assertTrue(registry.getAllAgents().all { it.scope == AgentDefinitionRegistry.AgentScope.BUILTIN })
     }
 
     @Test
-    fun `handles missing agents directory`() {
+    fun `handles missing agents directory with only builtins`() {
         // No .workflow/agents directory at all
         registry.scan()
-        assertTrue(registry.getAllAgents().isEmpty())
+        // Only builtins should be loaded
+        assertTrue(registry.getAllAgents().all { it.scope == AgentDefinitionRegistry.AgentScope.BUILTIN })
     }
 
     @Test
@@ -344,7 +355,8 @@ First.
         """.trimIndent())
 
         registry.scan()
-        assertEquals(1, registry.getAllAgents().size)
+        val countAfterFirst = registry.getAllAgents().size
+        assertNotNull(registry.getAgent("first"))
 
         // Delete the file and add a different one
         File(agentDir, "first.md").delete()
@@ -357,7 +369,8 @@ Second.
         """.trimIndent())
 
         registry.scan()
-        assertEquals(1, registry.getAllAgents().size)
+        // Same total count (builtins + 1 project agent)
+        assertEquals(countAfterFirst, registry.getAllAgents().size)
         assertNull(registry.getAgent("first"))
         assertNotNull(registry.getAgent("second"))
     }

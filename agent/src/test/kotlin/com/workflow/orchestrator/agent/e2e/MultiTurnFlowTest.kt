@@ -111,7 +111,7 @@ class MultiTurnFlowTest {
                 PlanStep(id = "step-3", title = "Add controller endpoint", description = "Wire the endpoint", dependsOn = listOf("step-2"))
             )
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
 
         assertTrue(planManager.hasPlan(), "Plan should be submitted")
         assertFalse(planManager.isPlanApproved(), "Plan should not be approved yet")
@@ -541,7 +541,7 @@ class MultiTurnFlowTest {
                 )
             )
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
 
         // Editing a file in the current step should not trigger deviation
         val onPlan = planManager.checkDeviation("edit_file", "src/main/kotlin/UserService.kt")

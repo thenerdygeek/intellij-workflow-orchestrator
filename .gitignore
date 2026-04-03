@@ -48,3 +48,4 @@ agent/webview/tsconfig.tsbuildinfo
 .superpowers/
 .worktrees/
 hs_err_pid*.log
+*.hprof

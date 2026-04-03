@@ -63,11 +63,11 @@ class ConversationWindowCondenserTest {
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — essential event preservation
+    // condense — essential event preservation
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation keeps SystemMessageAction and first user MessageAction`() {
+    fun `condense keeps SystemMessageAction and first user MessageAction`() {
         val sysMsg = SystemMessageAction(content = "system prompt", id = 1)
         val userMsg = MessageAction(content = "user task", id = 2, source = EventSource.USER)
         val agentMsg = MessageAction(content = "response 1", id = 3, source = EventSource.AGENT)
@@ -88,8 +88,9 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
-        val action = result.action
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val action = (result as Condensation).action
 
         // Essential events (ids 1,2) must NOT be in the forgotten set
         val forgotten = action.forgotten.toSet()
@@ -98,11 +99,11 @@ class ConversationWindowCondenserTest {
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — keeps roughly half from tail
+    // condense — keeps roughly half from tail
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation keeps roughly half of non-essential events from the tail`() {
+    fun `condense keeps roughly half of non-essential events from the tail`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         // 8 non-essential events (ids 3-10)
@@ -115,8 +116,9 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
-        val forgotten = result.action.forgotten.toSet()
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val forgotten = (result as Condensation).action.forgotten.toSet()
 
         // 2 essential + 8 non-essential = 10 total
         // numNonEssential = 8, numRecentToKeep = max(1, 8/2) = 4
@@ -126,11 +128,11 @@ class ConversationWindowCondenserTest {
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — dangling observations
+    // condense — dangling observations
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation skips dangling observations at slice boundary`() {
+    fun `condense skips dangling observations at slice boundary`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         // Non-essential events: mix of actions and observations
@@ -149,8 +151,9 @@ class ConversationWindowCondenserTest {
         )
 
         val view = View(events = events, unhandledCondensationRequest = true)
-        val result = condenser.getCondensation(contextOf(view))
-        val forgotten = result.action.forgotten.toSet()
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val forgotten = (result as Condensation).action.forgotten.toSet()
         val kept = events.map { it.id }.toSet() - forgotten
 
         // 2 essential + 8 non-essential = 10 total
@@ -169,11 +172,11 @@ class ConversationWindowCondenserTest {
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — range mode for contiguous IDs
+    // condense — range mode for contiguous IDs
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation uses range mode when forgotten IDs are contiguous`() {
+    fun `condense uses range mode when forgotten IDs are contiguous`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         // 6 non-essential with contiguous IDs
@@ -186,8 +189,9 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
-        val action = result.action
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val action = (result as Condensation).action
 
         // 2 essential + 6 non-essential = 8 total
         // numRecentToKeep = max(1, 6/2) = 3
@@ -201,11 +205,11 @@ class ConversationWindowCondenserTest {
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — explicit list mode for non-contiguous IDs
+    // condense — explicit list mode for non-contiguous IDs
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation uses explicit list when forgotten IDs are non-contiguous`() {
+    fun `condense uses explicit list when forgotten IDs are non-contiguous`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         // Non-contiguous IDs: put a NEVER_FORGET event in the middle of what would be forgotten
@@ -221,8 +225,9 @@ class ConversationWindowCondenserTest {
         )
 
         val view = View(events = events, unhandledCondensationRequest = true)
-        val result = condenser.getCondensation(contextOf(view))
-        val action = result.action
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val action = (result as Condensation).action
 
         // 2 essential + 6 non-essential = 8
         // numRecentToKeep = max(1, 6/2) = 3
@@ -234,11 +239,11 @@ class ConversationWindowCondenserTest {
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — only essential events (nothing to forget)
+    // condense — only essential events (nothing to forget)
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation handles view with only essential events`() {
+    fun `condense passes through view with only essential events`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
 
@@ -247,19 +252,17 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
-        val action = result.action
-
-        // Nothing to forget — no-op condensation
-        assertTrue(action.forgotten.isEmpty())
+        val result = condenser.condense(contextOf(view))
+        // Nothing to forget — returns CondenserView (pass-through)
+        assertTrue(result is CondenserView)
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — no first user message
+    // condense — no first user message
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation returns no-op when no user message exists`() {
+    fun `condense passes through when no user message exists`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val agentMsg = MessageAction(content = "agent msg", id = 2, source = EventSource.AGENT)
 
@@ -268,16 +271,17 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
-        assertTrue(result.action.forgotten.isEmpty())
+        val result = condenser.condense(contextOf(view))
+        // No user message → pass-through
+        assertTrue(result is CondenserView)
     }
 
     // -----------------------------------------------------------------------
-    // getCondensation — NEVER_FORGET_TYPES protection
+    // condense — NEVER_FORGET_TYPES protection
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation does NOT include NEVER_FORGET_TYPES events in forgotten set`() {
+    fun `condense does NOT include NEVER_FORGET_TYPES events in forgotten set`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         val events = listOf(
@@ -296,8 +300,9 @@ class ConversationWindowCondenserTest {
         )
 
         val view = View(events = events, unhandledCondensationRequest = true)
-        val result = condenser.getCondensation(contextOf(view))
-        val forgotten = result.action.forgotten.toSet()
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val forgotten = (result as Condensation).action.forgotten.toSet()
 
         // NEVER_FORGET_TYPES must never appear in forgotten
         assertFalse(4 in forgotten, "FactRecordedAction must not be forgotten")
@@ -306,7 +311,7 @@ class ConversationWindowCondenserTest {
     }
 
     @Test
-    fun `getCondensation protects SkillActivatedAction and MentionAction`() {
+    fun `condense protects SkillActivatedAction and MentionAction`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         val events = listOf(
@@ -323,8 +328,9 @@ class ConversationWindowCondenserTest {
         )
 
         val view = View(events = events, unhandledCondensationRequest = true)
-        val result = condenser.getCondensation(contextOf(view))
-        val forgotten = result.action.forgotten.toSet()
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val forgotten = (result as Condensation).action.forgotten.toSet()
 
         assertFalse(3 in forgotten, "SkillActivatedAction must not be forgotten")
         assertFalse(4 in forgotten, "MentionAction must not be forgotten")
@@ -379,7 +385,7 @@ class ConversationWindowCondenserTest {
     // -----------------------------------------------------------------------
 
     @Test
-    fun `getCondensation with single non-essential event keeps it`() {
+    fun `condense with single non-essential event passes through`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         val agentMsg = MessageAction(content = "response", id = 3, source = EventSource.AGENT)
@@ -389,15 +395,15 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
+        val result = condenser.condense(contextOf(view))
 
         // numNonEssential = 1, numRecentToKeep = max(1, 1/2) = max(1, 0) = 1
-        // All kept, nothing to forget
-        assertTrue(result.action.forgotten.isEmpty())
+        // All kept, nothing to forget → pass-through
+        assertTrue(result is CondenserView)
     }
 
     @Test
-    fun `getCondensation with all observations in slice falls back to sliceStartIndex`() {
+    fun `condense with all observations in slice falls back to sliceStartIndex`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         // First two are non-essential actions, last two are observations
@@ -411,8 +417,9 @@ class ConversationWindowCondenserTest {
         )
 
         val view = View(events = events, unhandledCondensationRequest = true)
-        val result = condenser.getCondensation(contextOf(view))
-        val forgotten = result.action.forgotten.toSet()
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
+        val forgotten = (result as Condensation).action.forgotten.toSet()
 
         // 2 essential + 4 non-essential = 6
         // numRecentToKeep = max(1, 4/2) = 2
@@ -424,7 +431,7 @@ class ConversationWindowCondenserTest {
     }
 
     @Test
-    fun `getCondensation produces valid CondensationAction`() {
+    fun `condense produces valid CondensationAction`() {
         val sysMsg = SystemMessageAction(content = "system", id = 1)
         val userMsg = MessageAction(content = "task", id = 2, source = EventSource.USER)
         val nonEssential = (3..8).map {
@@ -436,8 +443,9 @@ class ConversationWindowCondenserTest {
             unhandledCondensationRequest = true
         )
 
-        val result = condenser.getCondensation(contextOf(view))
+        val result = condenser.condense(contextOf(view))
+        assertTrue(result is Condensation)
         // CondensationAction.validate() should not throw
-        assertDoesNotThrow { result.action.validate() }
+        assertDoesNotThrow { (result as Condensation).action.validate() }
     }
 }

@@ -17,7 +17,7 @@ class PlanModeTransitionTest {
         AgentService.planModeActive.set(true)
         val pm = PlanManager()
         val plan = AgentPlan(goal = "test", steps = listOf(PlanStep(id = "1", title = "step 1")))
-        pm.submitPlan(plan)
+        pm.restorePlan(plan)
         pm.approvePlan()
         assertFalse(AgentService.planModeActive.get(), "planModeActive should be false after approval")
     }

@@ -31,6 +31,7 @@ import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -131,6 +132,16 @@ description optional: for approval dialog on run_tests, compile_module.
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+
+    /** C7: Resolve stream callback from project-scoped UiCallbacks, falling back to static field. */
+    private fun resolveStreamCallback(project: Project): ((String, String) -> Unit)? {
+        val projectCallbacks = try { AgentService.getInstance(project).uiCallbacks } catch (_: Exception) { null }
+        return if (projectCallbacks != null) {
+            { tid, chunk -> projectCallbacks.streamCommandOutput(tid, chunk) }
+        } else {
+            RunCommandTool.streamCallback
+        }
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
@@ -432,7 +443,7 @@ description optional: for approval dialog on run_tests, compile_module.
 
             val handler = descriptor.processHandler
             if (handler != null && !handler.isProcessTerminated) {
-                val processTerminated = awaitProcessTermination(handler, MAX_PROCESS_WAIT_SECONDS * 1000L)
+                val processTerminated = awaitProcessTermination(handler, MAX_PROCESS_WAIT_SECONDS * 1000L, project)
                 if (!processTerminated) {
                     return ToolResult(
                         "Process for '${descriptor.displayName}' is still running after ${MAX_PROCESS_WAIT_SECONDS}s " +
@@ -537,11 +548,11 @@ description optional: for approval dialog on run_tests, compile_module.
         }
     }
 
-    private suspend fun awaitProcessTermination(handler: ProcessHandler, timeoutMs: Long): Boolean {
+    private suspend fun awaitProcessTermination(handler: ProcessHandler, timeoutMs: Long, project: Project? = null): Boolean {
         if (handler.isProcessTerminated) return true
 
         val toolCallId = RunCommandTool.currentToolCallId.get()
-        val streamCallback = RunCommandTool.streamCallback
+        val streamCallback = if (project != null) resolveStreamCallback(project) else RunCommandTool.streamCallback
 
         val terminated = withTimeoutOrNull(timeoutMs) {
             coroutineScope {
@@ -660,7 +671,7 @@ description optional: for approval dialog on run_tests, compile_module.
                                     if (continuation.isActive) continuation.resume(null)
                                     return
                                 }
-                                handleDescriptorReady(descriptor, continuation, testTarget, descriptorRef, processHandlerRef)
+                                handleDescriptorReady(descriptor, continuation, testTarget, descriptorRef, processHandlerRef, project)
                             }
                         }
 
@@ -747,14 +758,15 @@ description optional: for approval dialog on run_tests, compile_module.
         continuation: kotlinx.coroutines.CancellableContinuation<ToolResult?>,
         testTarget: String,
         descriptorRef: AtomicReference<RunContentDescriptor?>,
-        processHandlerRef: AtomicReference<ProcessHandler?>
+        processHandlerRef: AtomicReference<ProcessHandler?>,
+        project: Project? = null
     ) {
         descriptorRef.set(descriptor)
         val handler = descriptor.processHandler
         processHandlerRef.set(handler)
 
         val toolCallId = RunCommandTool.currentToolCallId.get()
-        val activeStreamCallback = RunCommandTool.streamCallback
+        val activeStreamCallback = if (project != null) resolveStreamCallback(project) else RunCommandTool.streamCallback
 
         if (handler != null && toolCallId != null) {
             handler.addProcessListener(object : ProcessAdapter() {
@@ -968,7 +980,7 @@ description optional: for approval dialog on run_tests, compile_module.
 
             val process = processBuilder.start()
             val toolCallId = RunCommandTool.currentToolCallId.get()
-            val activeStreamCallback = RunCommandTool.streamCallback
+            val activeStreamCallback = resolveStreamCallback(project)
 
             val outputBuilder = StringBuilder()
             val readerThread = Thread {

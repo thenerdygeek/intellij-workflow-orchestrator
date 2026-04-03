@@ -187,7 +187,7 @@ class SingleAgentSessionTest {
     }
 
     @Test
-    fun `max iterations respected`() = runTest {
+    fun `budget exhaustion terminates runaway loop`() = runTest {
         // Brain always returns tool calls, never a final response
         val infiniteToolCall = ChatCompletionResponse(
             id = "resp",
@@ -212,6 +212,18 @@ class SingleAgentSessionTest {
 
         coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(infiniteToolCall)
 
+        // Simulate budget exhaustion after a few iterations — context fills up
+        // Initially under budget, then jumps to TERMINATE level
+        var callCount = 0
+        every { bridge.currentTokens } answers {
+            callCount++
+            if (callCount > 3) 146_000 else 1_000 // exceeds 97% threshold after 3 calls
+        }
+        every { bridge.effectiveMaxInputTokens } returns 150_000
+        every { bridge.remainingBudget() } answers {
+            if (callCount > 3) 4_000 else 149_000
+        }
+
         val result = session.execute(
             task = "Infinite task",
             tools = emptyMap(),
@@ -223,7 +235,7 @@ class SingleAgentSessionTest {
 
         assertTrue(result is SingleAgentResult.Failed, "Expected Failed, got $result")
         val failed = result as SingleAgentResult.Failed
-        assertTrue(failed.error.contains("maximum iterations"))
+        assertTrue(failed.error.contains("budget", ignoreCase = true), "Expected budget exhaustion error, got: ${failed.error}")
     }
 
     @Test

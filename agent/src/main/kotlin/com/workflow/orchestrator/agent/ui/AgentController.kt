@@ -161,11 +161,29 @@ class AgentController(
             }
         )
 
-        // Wire ask_user_input callbacks
-        com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.showInputCallback = { processId, description, prompt, command ->
-            com.intellij.openapi.application.invokeLater {
-                dashboard.showProcessInput(processId, description, prompt, command)
+        // Wire project-scoped UI callbacks (C7: replaces static companion fields)
+        try {
+            AgentService.getInstance(project).uiCallbacks = object : com.workflow.orchestrator.agent.runtime.UiCallbacks {
+                override fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
+                    com.intellij.openapi.application.invokeLater {
+                        dashboard.showProcessInput(processId, description, prompt, command)
+                    }
+                }
+                override fun streamCommandOutput(toolCallId: String, chunk: String) {
+                    com.intellij.openapi.application.invokeLater {
+                        dashboard.appendToolOutput(toolCallId, chunk)
+                    }
+                }
+                override fun notifyToolProgress(toolName: String, message: String) {
+                    LOG.debug("Tool progress [$toolName]: $message")
+                }
             }
+        } catch (_: Exception) {
+            // AgentService not yet registered — callbacks will be set when executeTask runs
+        }
+        // Legacy static callbacks — delegate to project-scoped UiCallbacks
+        com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.showInputCallback = { processId, description, prompt, command ->
+            try { AgentService.getInstance(project).uiCallbacks?.showProcessInput(processId, description, prompt, command) } catch (_: Exception) {}
         }
         dashboard.setCefProcessInputCallbacks(
             onInput = { input -> com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input) }
@@ -891,11 +909,9 @@ class AgentController(
                 )
                 currentApprovalGate = approvalGate
 
-                // Wire streaming output from RunCommandTool → JCEF
+                // Wire streaming output — legacy static callback delegates to project-scoped UiCallbacks
                 com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback = { toolCallId, chunk ->
-                    com.intellij.openapi.application.invokeLater {
-                        dashboard.appendToolOutput(toolCallId, chunk)
-                    }
+                    try { AgentService.getInstance(project).uiCallbacks?.streamCommandOutput(toolCallId, chunk) } catch (_: Exception) {}
                 }
 
                 // Create orchestrator (lightweight — just brain + registry + project)

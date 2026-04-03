@@ -41,7 +41,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "First step"))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertTrue(planManager.areDependenciesMet("s1"))
     }
 
@@ -54,7 +54,7 @@ class PlanManagerTest {
                 PlanStep(id = "s2", title = "Second", dependsOn = listOf("s1"))
             )
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertFalse(planManager.areDependenciesMet("s2"))
     }
 
@@ -67,7 +67,7 @@ class PlanManagerTest {
                 PlanStep(id = "s2", title = "Second", dependsOn = listOf("s1"))
             )
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertTrue(planManager.areDependenciesMet("s2"))
     }
 
@@ -80,7 +80,7 @@ class PlanManagerTest {
                 PlanStep(id = "s2", title = "Second", dependsOn = listOf("s1"))
             )
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertTrue(planManager.areDependenciesMet("s2"))
     }
 
@@ -94,7 +94,7 @@ class PlanManagerTest {
                 PlanStep(id = "s3", title = "Third", dependsOn = listOf("s1", "s2"))
             )
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertFalse(planManager.areDependenciesMet("s3"))
     }
 
@@ -116,7 +116,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1", status = "pending", files = listOf("Main.kt")))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertNull(planManager.checkDeviation("edit_file", "/src/Main.kt"))
     }
 
@@ -126,7 +126,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1", status = "running", files = listOf("Main.kt")))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertNull(planManager.checkDeviation("edit_file", "/src/Main.kt"))
     }
 
@@ -136,7 +136,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1", status = "running", files = listOf("Main.kt")))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         val warning = planManager.checkDeviation("edit_file", "/src/Other.kt")
         assertNotNull(warning)
         assertTrue(warning!!.contains("Other.kt"))
@@ -149,7 +149,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1", status = "running", files = emptyList()))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertNull(planManager.checkDeviation("edit_file", "/src/Any.kt"))
     }
 
@@ -159,7 +159,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1", status = "running", files = listOf("Main.kt")))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertNull(planManager.checkDeviation("run_command", null))
     }
 
@@ -169,7 +169,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1", status = "in_progress", files = listOf("Main.kt")))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         val warning = planManager.checkDeviation("edit_file", "/src/Other.kt")
         assertNotNull(warning)
     }
@@ -224,7 +224,7 @@ class PlanManagerTest {
             goal = "Test",
             steps = listOf(PlanStep(id = "s1", title = "Step 1"))
         )
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         planManager.revisePlan(mapOf("s1" to "Please use a different approach"))
 
         // Verify plan was saved to disk
@@ -256,7 +256,7 @@ class PlanManagerTest {
     @Test
     fun `submitPlan stores plan`() {
         val plan = AgentPlan(goal = "Test", steps = listOf(PlanStep(id = "s1", title = "Step 1")))
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         assertTrue(planManager.hasPlan())
         assertFalse(planManager.isPlanApproved())
     }
@@ -264,7 +264,7 @@ class PlanManagerTest {
     @Test
     fun `approvePlan marks plan as approved`() {
         val plan = AgentPlan(goal = "Test", steps = listOf(PlanStep(id = "s1", title = "Step 1")))
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         planManager.approvePlan()
         assertTrue(planManager.isPlanApproved())
     }
@@ -272,7 +272,7 @@ class PlanManagerTest {
     @Test
     fun `updateStepStatus changes step status`() {
         val plan = AgentPlan(goal = "Test", steps = listOf(PlanStep(id = "s1", title = "Step 1")))
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         planManager.updateStepStatus("s1", "done")
         assertEquals("done", planManager.currentPlan!!.steps.first().status)
     }
@@ -280,7 +280,7 @@ class PlanManagerTest {
     @Test
     fun `clear resets state`() {
         val plan = AgentPlan(goal = "Test", steps = listOf(PlanStep(id = "s1", title = "Step 1")))
-        planManager.submitPlan(plan)
+        planManager.restorePlan(plan)
         planManager.clear()
         assertFalse(planManager.hasPlan())
     }

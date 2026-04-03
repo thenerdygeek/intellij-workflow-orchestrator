@@ -446,7 +446,13 @@ class RunCommandTool : AgentTool {
                 ?: if (isLikelyBuildCommand(command)) BUILD_IDLE_THRESHOLD_MS else DEFAULT_IDLE_THRESHOLD_MS
 
             // Buffer-based reader thread (handles binary output)
-            val activeStreamCallback = streamCallback
+            // C7: prefer project-scoped UiCallbacks over static companion field
+            val projectCallbacks = try { com.workflow.orchestrator.agent.AgentService.getInstance(project).uiCallbacks } catch (_: Exception) { null }
+            val activeStreamCallback: ((String, String) -> Unit)? = if (projectCallbacks != null) {
+                { tid, chunk -> projectCallbacks.streamCommandOutput(tid, chunk) }
+            } else {
+                streamCallback
+            }
             val readerThread = Thread {
                 try {
                     process.inputStream.bufferedReader().use { reader ->

@@ -65,6 +65,13 @@ class AgentService(
      */
     @Volatile var activeScope: com.workflow.orchestrator.agent.runtime.SessionScope? = null
 
+    /**
+     * Project-scoped UI callbacks. Set by [AgentController] on init, cleared on dispose.
+     * Tools use this instead of static companion fields to route UI interactions
+     * to the correct project window (C7 fix for multi-project bug).
+     */
+    @Volatile var uiCallbacks: com.workflow.orchestrator.agent.runtime.UiCallbacks? = null
+
     /** Plan manager for the current agent session, set by SingleAgentSession. */
     @Volatile var currentPlanManager: PlanManager? = null
 

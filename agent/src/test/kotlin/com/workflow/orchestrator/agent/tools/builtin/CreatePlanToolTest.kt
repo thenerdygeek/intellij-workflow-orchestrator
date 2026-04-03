@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.workflow.orchestrator.agent.runtime.*
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -34,35 +36,35 @@ class CreatePlanToolTest {
     }
 
     @Test
-    fun `PlanManager approve completes future`() {
+    fun `PlanManager approve resolves submitPlanAndWait`() = runTest {
         val manager = PlanManager()
         val plan = AgentPlan("test", steps = listOf(PlanStep("step-1", "step")))
-        val future = manager.submitPlan(plan)
 
-        assertFalse(future.isDone)
-        manager.approvePlan()
-        assertTrue(future.isDone)
-        assertTrue(future.get() is PlanApprovalResult.Approved)
+        // Approve in a concurrent coroutine
+        launch { manager.approvePlan() }
+        val result = manager.submitPlanAndWait(plan, timeoutMs = 5000)
+
+        assertTrue(result is PlanApprovalResult.Approved)
         assertTrue(manager.isPlanApproved())
     }
 
     @Test
-    fun `PlanManager revise completes future with comments`() {
+    fun `PlanManager revise resolves submitPlanAndWait with comments`() = runTest {
         val manager = PlanManager()
         val plan = AgentPlan("test", steps = listOf(PlanStep("step-1", "step")))
-        val future = manager.submitPlan(plan)
 
-        manager.revisePlan(mapOf("step-1" to "use different approach"))
-        assertTrue(future.isDone)
-        val result = future.get() as PlanApprovalResult.Revised
-        assertEquals("use different approach", result.comments["step-1"])
+        launch { manager.revisePlan(mapOf("step-1" to "use different approach")) }
+        val result = manager.submitPlanAndWait(plan, timeoutMs = 5000)
+
+        assertTrue(result is PlanApprovalResult.Revised)
+        assertEquals("use different approach", (result as PlanApprovalResult.Revised).comments["step-1"])
     }
 
     @Test
     fun `PlanManager updateStepStatus changes step`() {
         val manager = PlanManager()
         val plan = AgentPlan("test", steps = listOf(PlanStep("step-1", "step"), PlanStep("step-2", "step2")))
-        manager.submitPlan(plan)
+        manager.restorePlan(plan)
 
         manager.updateStepStatus("step-1", "running")
         assertEquals("running", manager.currentPlan?.steps?.find { it.id == "step-1" }?.status)

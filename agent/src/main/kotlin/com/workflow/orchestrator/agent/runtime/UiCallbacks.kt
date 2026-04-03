@@ -1,18 +1,16 @@
 package com.workflow.orchestrator.agent.runtime
 
 /**
- * Abstraction for UI interactions that the session layer needs.
+ * Abstraction for UI interactions that tools and the session layer need.
  *
- * Decouples the runtime from JCEF/Swing specifics so that
- * [SessionScope] (and anything it feeds) can be unit-tested
- * without a real IDE window.
+ * Registered on [com.workflow.orchestrator.agent.AgentService.uiCallbacks]
+ * (project-scoped) so each project window gets its own callback instance.
+ * Tools look up callbacks via `AgentService.getInstance(project).uiCallbacks`
+ * instead of static companion fields — this prevents multi-project routing bugs (C7).
  */
-// TODO(C7): Migrate AskUserInputTool.showInputCallback and RunCommandTool.streamCallback
-// to use UiCallbacks via AgentService.activeScope instead of static companion fields.
-// Blocked until pre-existing AgentController.kt changes are committed.
 interface UiCallbacks {
-    /** Show a modal input dialog and return the user's answer, or null if cancelled. */
-    suspend fun showInputDialog(prompt: String, placeholder: String?): String?
+    /** Show a process input prompt in the chat panel (for ask_user_input tool). */
+    fun showProcessInput(processId: String, description: String, prompt: String, command: String)
 
     /** Stream incremental output from a running command to the chat panel. */
     fun streamCommandOutput(toolCallId: String, chunk: String)

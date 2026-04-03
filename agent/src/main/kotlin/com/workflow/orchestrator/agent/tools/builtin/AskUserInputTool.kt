@@ -90,8 +90,13 @@ class AskUserInputTool : AgentTool {
         val deferred = CompletableDeferred<String>()
         pendingInput = deferred
 
-        // Show input UI in chat
-        showInputCallback?.invoke(processId, description, prompt, managed.command)
+        // Show input UI in chat — C7: prefer project-scoped UiCallbacks over static field
+        val projectCallbacks = try { com.workflow.orchestrator.agent.AgentService.getInstance(project).uiCallbacks } catch (_: Exception) { null }
+        if (projectCallbacks != null) {
+            projectCallbacks.showProcessInput(processId, description, prompt, managed.command)
+        } else {
+            showInputCallback?.invoke(processId, description, prompt, managed.command)
+        }
 
         // Wait for user input with timeout
         val userInput = withTimeoutOrNull(USER_INPUT_TIMEOUT_MS) { deferred.await() }
