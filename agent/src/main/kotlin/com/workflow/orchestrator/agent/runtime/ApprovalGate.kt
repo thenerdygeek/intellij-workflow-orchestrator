@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 
 /**
@@ -115,11 +116,19 @@ class ApprovalGate(
         // Notify UI via callback
         approvalCallback?.invoke(toolName, risk, params)
 
-        // Wait indefinitely until user responds
+        // Wait with timeout — if UI dies or user is unresponsive, don't block forever
         return try {
-            val result = deferred.await()
-            auditEntry.result = result
-            result
+            val result = withTimeoutOrNull(300_000L) { deferred.await() }
+            if (result != null) {
+                auditEntry.result = result
+                result
+            } else {
+                log.warn("[ApprovalGate] Approval timed out after 5 minutes for tool: $toolName")
+                val timeout = ApprovalResult.Rejected("Approval timed out after 5 minutes")
+                auditEntry.result = timeout
+                pendingApproval = null
+                timeout
+            }
         } finally {
             pendingApproval = null
         }
