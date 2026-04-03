@@ -169,7 +169,7 @@ class ApprovalGate(
          */
         private val NONE_RISK_TOOLS = setOf(
             // Meta-tools (no side effects at all)
-            "request_tools", "think", "Skill",
+            "request_tools", "think", "skill",
 
             // Planning (creates plan context, doesn't modify files)
             "create_plan", "update_plan_step", "ask_questions",

@@ -113,7 +113,7 @@ class CreatePlanTool : AgentTool {
             is PlanApprovalResult.Approved -> {
                 val executionGuidance = if (steps.size > 2) {
                     "Plan approved by user (${steps.size} steps). " +
-                        "Call Skill(skill=\"subagent-driven\") NOW to execute — it dispatches a fresh " +
+                        "Call skill(skill=\"subagent-driven\") NOW to execute — it dispatches a fresh " +
                         "subagent per task with two-stage review (spec compliance + code quality)."
                 } else {
                     "Plan approved by user (${steps.size} steps). " +

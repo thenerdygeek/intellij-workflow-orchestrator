@@ -37,6 +37,8 @@ object DynamicToolSelector {
         "send_stdin", "kill_process", "ask_user_input",
         "agent",
         "think",
+        // Skills — always available since system prompt advertises skills in primacy zone
+        "skill",
         // Planning & interaction — always available so the agent can clarify, plan, and guide users
         "ask_questions", "create_plan", "update_plan_step", "enable_plan_mode",
         // Memory tools — always available so the agent can store/retrieve knowledge at any time
@@ -84,7 +86,7 @@ object DynamicToolSelector {
         "archival_memory_insert", "archival_memory_search", "conversation_search"
     )
 
-    private val SKILL_TOOL_NAMES = setOf("Skill")
+    private val SKILL_TOOL_NAMES = setOf("skill")
 
     private val JPA_TOOL_NAMES = setOf("spring")
 

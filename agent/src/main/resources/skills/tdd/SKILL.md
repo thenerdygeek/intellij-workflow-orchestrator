@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Red-green-refactor TDD workflow. Write the test first, watch it fail, write minimal code to pass. Triggers on — "TDD", "test first", "test-driven", "write tests for", or when the user explicitly requests test-first development.
+description: Disciplined red-green-refactor TDD workflow that writes the test first from requirements, watches it fail to confirm it tests the right thing, writes minimal production code to make it pass, then refactors with confidence. Use this when the user asks for test-driven development or test-first approaches — trigger phrases include "TDD", "test first", "test-driven", "write tests for", "add tests", "test this", and "cover this with tests". Also use this when adding new functionality that needs test coverage or when fixing bugs that should have regression tests to prevent recurrence. Do not use this for exploratory changes where the requirements are still unclear, or when the user explicitly says they will write tests later. For example, if the user says "Write tests for the new service method", "Add test coverage for the parser", or "Fix this bug with a regression test", load this skill first. It enforces a disciplined cycle where tests are written from requirements and specifications rather than from the implementation, ensuring they actually validate intended behavior and catch real regressions instead of just mirroring what the code already does.
 preferred-tools: [read_file, edit_file, search_code, run_command, diagnostics, think, find_definition, find_references]
 ---
 

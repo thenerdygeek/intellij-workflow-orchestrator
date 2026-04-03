@@ -21,7 +21,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class SkillTool : AgentTool {
-    override val name = "Skill"
+    override val name = "skill"
     override val description = "Load a skill definition and its instructions. Returns the full skill content for you to follow. Skills provide structured workflows for specific tasks — check the available skills listed in your context."
     override val parameters = FunctionParameters(
         properties = mapOf(

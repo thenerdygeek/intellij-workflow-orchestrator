@@ -16,10 +16,10 @@ class EnablePlanModeTool : AgentTool {
     override val name = "enable_plan_mode"
     override val description = """
         Switch to plan mode when you determine a task requires thorough planning.
-        Call this BEFORE Skill(skill="writing-plans") when the task involves 2+ files,
+        Call this BEFORE skill(skill="writing-plans") when the task involves 2+ files,
         architectural decisions, cross-module changes, or complex multi-step work.
         This blocks write tools until a plan is approved and highlights the plan
-        button in the UI. After calling this, use Skill(skill="writing-plans") to
+        button in the UI. After calling this, use skill(skill="writing-plans") to
         create a structured implementation plan.
         Do NOT call this for simple questions, single-file fixes, or status checks.
     """.trimIndent()
@@ -67,7 +67,7 @@ class EnablePlanModeTool : AgentTool {
         // Notify the controller → sets planModeEnabled = true + highlights the UI button.
         agentService.onPlanModeEnabled?.invoke(true)
 
-        val result = "Plan mode enabled. Write tools are blocked until a plan is approved. Next step: call Skill(skill=\"writing-plans\") to create a structured implementation plan. Reason: $reason"
+        val result = "Plan mode enabled. Write tools are blocked until a plan is approved. Next step: call skill(skill=\"writing-plans\") to create a structured implementation plan. Reason: $reason"
         return ToolResult(
             content = result,
             summary = result,

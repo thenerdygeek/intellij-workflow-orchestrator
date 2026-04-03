@@ -272,13 +272,11 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
 <skill_rules>
 You have access to skills — structured workflows that produce better results than ad-hoc approaches.
 
+CRITICAL RULE: If you think there is even a 1%% chance that a skill below applies to the current task, you MUST invoke it immediately using skill(skill="name") BEFORE doing any other work — including before exploring code, before asking clarifying questions, and before proposing solutions. This is not optional. Do not rationalize skipping a skill. If a skill exists for the kind of work you are about to do, load it first. The skill contains the full workflow — the descriptions below only tell you WHEN to use each skill, not HOW to execute the workflow.
+
 %s
 
-To use a skill, call Skill(skill="name"). Users can also type /skill-name in chat.
-
-RULE: When a skill matches the task, load it BEFORE starting work.
-Do NOT attempt planning, debugging, brainstorming, or TDD workflows without the corresponding skill.
-The skill contains the detailed workflow — the system prompt only tells you WHEN to use it, not HOW.
+To invoke: call skill(skill="name"). Users can also type /skill-name in chat.
 </skill_rules>
 """
 
@@ -287,13 +285,13 @@ The skill contains the detailed workflow — the system prompt only tells you WH
             DECISION PROCESS — run this before every task:
 
             1. If the user explicitly asks to "create a plan", "write a plan", or "plan this":
-               → enable_plan_mode, then Skill(skill="writing-plans"). No exceptions.
+               → enable_plan_mode, then skill(skill="writing-plans"). No exceptions.
 
             2. Otherwise, INVESTIGATE SCOPE first — use agent(subagent_type="explorer") to research
                the codebase areas involved, or read key files/structure directly for smaller scopes.
                Then decide based on what you find:
 
-               PLAN (enable_plan_mode + Skill(skill="writing-plans")) when ANY of these are true:
+               PLAN (enable_plan_mode + skill(skill="writing-plans")) when ANY of these are true:
                - Task touches 2+ files or crosses module boundaries
                - Task adds a new feature, API endpoint, service method, or UI component
                - Task involves refactoring, renaming, or moving code
@@ -307,7 +305,7 @@ The skill contains the detailed workflow — the system prompt only tells you WH
                - No cross-file dependencies are affected
 
             3. After the user approves a plan:
-               - For multi-task plans: Skill(skill="subagent-driven")
+               - For multi-task plans: skill(skill="subagent-driven")
                - For simple 1-2 task plans: execute directly with update_plan_step
             </planning>
         """.trimIndent()
@@ -315,7 +313,7 @@ The skill contains the detailed workflow — the system prompt only tells you WH
         val FORCED_PLANNING_RULES = """
             <planning mode="required">
             Plan mode is ACTIVE. Write tools are NOT available until you create a plan and the user approves it.
-            Call Skill(skill="writing-plans") to activate the planning workflow, then follow its instructions.
+            Call skill(skill="writing-plans") to activate the planning workflow, then follow its instructions.
             Once the user approves, plan mode deactivates and all tools become available.
             </planning>
         """.trimIndent()
@@ -461,13 +459,13 @@ The skill contains the detailed workflow — the system prompt only tells you WH
 
             <example name="skill-matching">
             User: "The UserService tests are failing with NPE"
-            → Skill(skill="systematic-debugging"). Always load this for bugs, test failures, or unexpected behavior.
+            → skill(skill="systematic-debugging"). Always load this for bugs, test failures, or unexpected behavior.
 
             User: "I want to add a caching layer to the API"
-            → Skill(skill="brainstorm"). Always load this for new features, architecture, or design discussions.
+            → skill(skill="brainstorm"). Always load this for new features, architecture, or design discussions.
 
             User: "Refactor the notification system to use events"
-            → enable_plan_mode + Skill(skill="writing-plans"). Multi-file changes need a plan.
+            → enable_plan_mode + skill(skill="writing-plans"). Multi-file changes need a plan.
 
             User: "Add a null check in processOrder()"
             → Act directly. Single-file, single-line fix — no skill needed.
