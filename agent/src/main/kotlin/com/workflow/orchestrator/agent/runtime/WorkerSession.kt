@@ -143,6 +143,7 @@ class WorkerSession(
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
         var consecutiveNoToolResponses = 0
+        val loopGuard = LoopGuard()
 
         for (iteration in 1..maxIterations) {
             if (parentJob?.isActive == false) {
@@ -239,8 +240,20 @@ class WorkerSession(
 
                     consecutiveNoToolResponses = 0
 
+                    // Doom loop detection: check each tool call before execution, skip if detected
+                    val doomSkipped = mutableSetOf<String>()
+                    for (tc in toolCalls) {
+                        val doomMessage = loopGuard.checkDoomLoop(tc.function.name, tc.function.arguments)
+                        if (doomMessage != null) {
+                            bridge.addToolError(tc.id, doomMessage, "Doom loop detected — execution skipped", tc.function.name)
+                            doomSkipped.add(tc.id)
+                        }
+                    }
+
                     // Execute tool calls and add results
                     for (toolCall in toolCalls) {
+                        if (toolCall.id in doomSkipped) continue
+
                         val toolName = toolCall.function.name
 
                         if (parentJob?.isActive == false) {
@@ -261,6 +274,20 @@ class WorkerSession(
                             )
                             recordMessage("tool", errorContent, toolCallId = toolCall.id)
                             continue
+                        }
+
+                        // Pre-edit read enforcement: block edit_file if file not read in this session
+                        if (toolName == "edit_file") {
+                            val editPathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolCall.function.arguments)
+                            val editPath = editPathMatch?.groupValues?.get(1)
+                            if (editPath != null) {
+                                val preEditWarning = loopGuard.checkPreEditRead(editPath)
+                                if (preEditWarning != null) {
+                                    bridge.addToolError(toolCall.id, preEditWarning, "Edit blocked: file not read", toolCall.function.name)
+                                    recordMessage("tool", preEditWarning, toolCallId = toolCall.id)
+                                    continue
+                                }
+                            }
                         }
 
                         uiCallbacks?.onToolCall?.invoke(agentId, toolName, toolCall.function.arguments)
@@ -291,6 +318,12 @@ class WorkerSession(
                             recordMessage("tool", toolResult.content, toolCallId = toolCall.id)
 
                             allArtifacts.addAll(toolResult.artifacts)
+
+                            // Clear file read tracking after successful edit so agent can re-read after edit
+                            if (toolName == "edit_file" && !toolResult.isError) {
+                                val editPathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolCall.function.arguments)
+                                editPathMatch?.groupValues?.get(1)?.let { loopGuard.clearFileRead(it) }
+                            }
 
                             // Exit early when worker signals completion via worker_complete
                             if (toolResult.isCompletion) {
