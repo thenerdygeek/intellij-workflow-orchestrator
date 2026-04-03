@@ -51,7 +51,8 @@ class LoopGuard(
 
         /**
          * Normalize JSON arguments for consistent hashing.
-         * Parses and re-serializes to eliminate whitespace/ordering differences.
+         * Parses and re-serializes to eliminate whitespace differences.
+         * Note: key ordering is preserved from input (not sorted).
          */
         internal fun normalizeArgs(args: String): String = try {
             jsonParser.encodeToString(JsonObject.serializer(), jsonParser.decodeFromString(JsonObject.serializer(), args))
@@ -143,24 +144,31 @@ class LoopGuard(
             recentDoomCalls.removeAt(0)
         }
 
-        // Track file reads with re-read detection
+        // Track file reads with re-read detection.
+        // Only count FULL-file reads (no offset/limit) toward the re-read limit.
+        // Sectional reads with offset/limit are the recommended alternative and must not be blocked.
         if (toolName == "read_file") {
             val pathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(args)
             val filePath = pathMatch?.groupValues?.get(1)
             if (filePath != null) {
-                val count = readFileCounts.getOrDefault(filePath, 0) + 1
-                readFileCounts[filePath] = count
+                val hasOffset = args.contains("\"offset\"")
+                val hasLimit = args.contains("\"limit\"")
+                val isFullRead = !hasOffset && !hasLimit
 
-                if (count >= MAX_REREAD_COUNT) {
-                    // Hard block — file read too many times without edit/condensation clearing it
-                    guardrailStore?.record(
-                        "File '$filePath' was read $count times without using the content. Use search_code or read_file with offset+limit instead of re-reading entire files."
-                    )
-                    return "You have read '$filePath' $count times. The content keeps getting compressed out of context. " +
-                        "Use search_code to find specific content, or use read_file with offset and limit parameters to read only the lines you need."
-                } else if (count == 2) {
-                    // Soft warning on first re-read — allow execution but inject guidance
-                    // Return null to allow execution; caller can inject a system warning separately
+                // Always track that this file was read (for checkPreEditRead)
+                readFileCounts.putIfAbsent(filePath, 0)
+
+                if (isFullRead) {
+                    val count = readFileCounts.getOrDefault(filePath, 0) + 1
+                    readFileCounts[filePath] = count
+
+                    if (count >= MAX_REREAD_COUNT) {
+                        guardrailStore?.record(
+                            "File '$filePath' was read $count times without using the content. Use search_code or read_file with offset+limit instead of re-reading entire files."
+                        )
+                        return "You have read '$filePath' $count times. The content keeps getting compressed out of context. " +
+                            "Use search_code to find specific content, or use read_file with offset and limit parameters to read only the lines you need."
+                    }
                 }
             }
         }

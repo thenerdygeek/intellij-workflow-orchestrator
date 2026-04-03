@@ -524,6 +524,34 @@ class LoopGuardTest {
         assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/B.kt"}"""))
     }
 
+    @Test
+    fun `sectional reads with offset and limit do not count toward re-read limit`() {
+        val guard = LoopGuard()
+        // Full-file read counts toward limit
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "x"}"""))
+        // Sectional reads do NOT count — they are the recommended alternative
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt", "offset": 1, "limit": 50}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "x"}"""))
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt", "offset": 51, "limit": 50}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "x"}"""))
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt", "offset": 101, "limit": 50}"""))
+        assertNull(guard.checkDoomLoop("think", """{"thought": "x"}"""))
+        // Even more sectional reads — still allowed (only 1 full-file read happened)
+        assertNull(guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt", "offset": 151, "limit": 50}"""))
+    }
+
+    @Test
+    fun `checkPreEditRead passes for file at re-read limit`() {
+        val guard = LoopGuard()
+        // Read file 3 times (hitting the re-read block limit)
+        guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        guard.checkDoomLoop("read_file", """{"path": "/src/Main.kt"}""")
+        // File should still be editable even though further reads are blocked
+        assertNull(guard.checkPreEditRead("/src/Main.kt"))
+    }
+
     // --- Helper ---
 
     private var toolCallCounter = 0

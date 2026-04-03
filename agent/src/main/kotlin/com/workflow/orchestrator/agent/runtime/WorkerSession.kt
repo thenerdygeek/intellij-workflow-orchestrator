@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.context.EventSourcedContextBridge
 import com.workflow.orchestrator.agent.security.OutputValidator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.util.AgentStringUtils
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -143,6 +144,8 @@ class WorkerSession(
         var totalTokensUsed = 0
         val allArtifacts = mutableListOf<String>()
         var consecutiveNoToolResponses = 0
+        // Doom loop + re-read protection only. afterIteration() not called —
+        // workers are short-lived (max 32 iter), reminders/nudges are overkill.
         val loopGuard = LoopGuard()
 
         for (iteration in 1..maxIterations) {
@@ -278,7 +281,7 @@ class WorkerSession(
 
                         // Pre-edit read enforcement: block edit_file if file not read in this session
                         if (toolName == "edit_file") {
-                            val editPathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolCall.function.arguments)
+                            val editPathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(toolCall.function.arguments)
                             val editPath = editPathMatch?.groupValues?.get(1)
                             if (editPath != null) {
                                 val preEditWarning = loopGuard.checkPreEditRead(editPath)
@@ -321,7 +324,7 @@ class WorkerSession(
 
                             // Clear file read tracking after successful edit so agent can re-read after edit
                             if (toolName == "edit_file" && !toolResult.isError) {
-                                val editPathMatch = Regex(""""path"\s*:\s*"([^"]+)"""").find(toolCall.function.arguments)
+                                val editPathMatch = AgentStringUtils.JSON_FILE_PATH_REGEX.find(toolCall.function.arguments)
                                 editPathMatch?.groupValues?.get(1)?.let { loopGuard.clearFileRead(it) }
                             }
 
