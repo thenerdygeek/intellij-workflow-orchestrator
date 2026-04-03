@@ -4,6 +4,12 @@ import com.intellij.openapi.diagnostic.Logger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -43,6 +49,7 @@ class ChangeLedger(private val sessionDir: File? = null) {
     }
 
     private val entries = CopyOnWriteArrayList<ChangeEntry>()
+    private val rollbacks = CopyOnWriteArrayList<RollbackEntry>()
     private val checkpoints = mutableMapOf<String, CheckpointMeta>()
     private var changesFile: File? = null
 
@@ -79,17 +86,25 @@ class ChangeLedger(private val sessionDir: File? = null) {
     fun changesForIteration(iteration: Int): List<ChangeEntry> =
         entries.filter { it.iteration == iteration }
 
-    /** Get cumulative stats. */
+    /** Collect all entry IDs that have been rolled back. */
+    private fun rolledBackIds(): Set<String> =
+        rollbacks.flatMap { it.rolledBackEntryIds }.toSet()
+
+    /** Get cumulative stats (excludes rolled-back entries). */
     fun totalStats(): EditStats {
-        val added = entries.sumOf { it.linesAdded }
-        val removed = entries.sumOf { it.linesRemoved }
-        val files = entries.map { it.filePath }.distinct().size
+        val excluded = rolledBackIds()
+        val effective = entries.filter { it.id !in excluded }
+        val added = effective.sumOf { it.linesAdded }
+        val removed = effective.sumOf { it.linesRemoved }
+        val files = effective.map { it.filePath }.distinct().size
         return EditStats(added, removed, files)
     }
 
-    /** Get per-file stats. */
+    /** Get per-file stats (excludes rolled-back entries). */
     fun fileStats(): Map<String, FileEditSummary> {
-        return entries.groupBy { it.relativePath }.mapValues { (path, edits) ->
+        val excluded = rolledBackIds()
+        val effective = entries.filter { it.id !in excluded }
+        return effective.groupBy { it.relativePath }.mapValues { (path, edits) ->
             FileEditSummary(
                 path = path,
                 editCount = edits.size,
@@ -115,6 +130,29 @@ class ChangeLedger(private val sessionDir: File? = null) {
     fun listCheckpoints(): List<CheckpointMeta> =
         checkpoints.values.sortedBy { it.iteration }
 
+    /** Get all rollback events. */
+    fun allRollbacks(): List<RollbackEntry> = rollbacks.toList()
+
+    /** Record a rollback event. Persists as {"type":"rollback","data":{...}} to changes.jsonl. */
+    fun recordRollback(entry: RollbackEntry) {
+        rollbacks.add(entry)
+        try {
+            val wrapper = buildJsonObject {
+                put("type", "rollback")
+                put("data", json.encodeToJsonElement(entry))
+            }
+            changesFile?.appendText(json.encodeToString(wrapper) + "\n")
+        } catch (e: Exception) {
+            LOG.warn("ChangeLedger: failed to persist rollback entry", e)
+        }
+    }
+
+    /** Return entries with iteration greater than the checkpoint's iteration. */
+    fun entriesAfterCheckpoint(checkpointId: String): List<ChangeEntry> {
+        val checkpoint = checkpoints[checkpointId] ?: return emptyList()
+        return entries.filter { it.iteration > checkpoint.iteration }
+    }
+
     /** Get all entries (for UI). */
     fun allEntries(): List<ChangeEntry> = entries.toList()
 
@@ -136,6 +174,9 @@ class ChangeLedger(private val sessionDir: File? = null) {
         val stats = fileStats()
         val totalStats = totalStats()
         val recentCheckpoint = checkpoints.values.maxByOrNull { it.iteration }
+
+        // Collect files affected by rollbacks for the reverted section
+        val revertedFiles = rollbacks.flatMap { it.affectedFiles }.toSet()
 
         return buildString {
             appendLine("Changes made in this session:")
@@ -161,6 +202,15 @@ class ChangeLedger(private val sessionDir: File? = null) {
                 appendLine("  [$action] $path +${summary.totalLinesAdded}/-${summary.totalLinesRemoved}$edits$verified")
             }
 
+            // Reverted files section
+            if (revertedFiles.isNotEmpty()) {
+                appendLine()
+                appendLine("Reverted:")
+                revertedFiles.sorted().forEach { file ->
+                    appendLine("  [REVERTED] $file")
+                }
+            }
+
             appendLine()
             appendLine("Totals: ${totalStats.filesModified} files, +${totalStats.totalLinesAdded}/-${totalStats.totalLinesRemoved} lines")
 
@@ -178,6 +228,8 @@ class ChangeLedger(private val sessionDir: File? = null) {
 
     /**
      * Load ledger from disk (for session resume).
+     * Handles both plain ChangeEntry lines (backward compatible) and
+     * typed wrapper lines: {"type":"rollback","data":{...}}
      */
     fun loadFromDisk() {
         val file = changesFile ?: return
@@ -186,11 +238,18 @@ class ChangeLedger(private val sessionDir: File? = null) {
             file.readLines().forEach { line ->
                 if (line.isNotBlank()) {
                     try {
-                        entries.add(json.decodeFromString<ChangeEntry>(line))
+                        val parsed = json.parseToJsonElement(line).jsonObject
+                        val type = parsed["type"]?.jsonPrimitive?.content
+                        if (type == "rollback" && parsed.containsKey("data")) {
+                            val rollback = json.decodeFromJsonElement<RollbackEntry>(parsed["data"]!!)
+                            rollbacks.add(rollback)
+                        } else {
+                            entries.add(json.decodeFromJsonElement<ChangeEntry>(parsed))
+                        }
                     } catch (_: Exception) { /* skip malformed lines */ }
                 }
             }
-            LOG.info("ChangeLedger: loaded ${entries.size} entries from disk")
+            LOG.info("ChangeLedger: loaded ${entries.size} entries and ${rollbacks.size} rollbacks from disk")
         } catch (e: Exception) {
             LOG.warn("ChangeLedger: failed to load from disk", e)
         }
@@ -223,6 +282,28 @@ data class ChangeEntry(
 
 @Serializable
 enum class ChangeAction { CREATED, MODIFIED, DELETED }
+
+@Serializable
+enum class RollbackSource { LLM_TOOL, USER_BUTTON, USER_UNDO }
+
+@Serializable
+enum class RollbackMechanism { LOCAL_HISTORY, GIT_FALLBACK }
+
+@Serializable
+enum class RollbackScope { FULL_CHECKPOINT, SINGLE_FILE }
+
+@Serializable
+data class RollbackEntry(
+    val id: String,
+    val timestamp: Long,
+    val checkpointId: String,
+    val description: String,
+    val source: RollbackSource,
+    val mechanism: RollbackMechanism,
+    val affectedFiles: List<String>,
+    val rolledBackEntryIds: List<String>,
+    val scope: RollbackScope
+)
 
 @Serializable
 data class CheckpointMeta(

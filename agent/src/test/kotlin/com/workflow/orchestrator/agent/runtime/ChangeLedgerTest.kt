@@ -8,7 +8,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 // Comprehensive tests for ChangeLedger — the core of the change tracking system.
-// Tests cover: recording, querying, persistence, context string, checkpoints.
+// Tests cover: recording, querying, persistence, context string, checkpoints, rollback.
 class ChangeLedgerTest {
 
     private lateinit var ledger: ChangeLedger
@@ -301,5 +301,141 @@ class ChangeLedgerTest {
 
         val ctx = ledger.toContextString()
         assertTrue(ctx.contains("most recent"))
+    }
+
+    // ── Rollback ──
+
+    private fun makeRollback(
+        id: String = "rb-${System.nanoTime()}",
+        checkpointId: String = "cp-123",
+        rolledBackEntryIds: List<String> = emptyList(),
+        affectedFiles: List<String> = listOf("src/Test.kt"),
+        source: RollbackSource = RollbackSource.LLM_TOOL,
+        mechanism: RollbackMechanism = RollbackMechanism.LOCAL_HISTORY,
+        scope: RollbackScope = RollbackScope.FULL_CHECKPOINT
+    ) = RollbackEntry(
+        id = id,
+        timestamp = System.currentTimeMillis(),
+        checkpointId = checkpointId,
+        description = "Rollback to $checkpointId",
+        source = source,
+        mechanism = mechanism,
+        affectedFiles = affectedFiles,
+        rolledBackEntryIds = rolledBackEntryIds,
+        scope = scope
+    )
+
+    @Test
+    fun `recordRollback adds rollback entry`() {
+        val rb = makeRollback()
+        ledger.recordRollback(rb)
+
+        val rollbacks = ledger.allRollbacks()
+        assertEquals(1, rollbacks.size)
+        assertEquals(rb.id, rollbacks[0].id)
+    }
+
+    @Test
+    fun `totalStats excludes rolled-back entries`() {
+        val entry1 = makeEntry(id = "e1", linesAdded = 10, linesRemoved = 2, filePath = "/a")
+        val entry2 = makeEntry(id = "e2", linesAdded = 5, linesRemoved = 1, filePath = "/b")
+        val entry3 = makeEntry(id = "e3", linesAdded = 20, linesRemoved = 0, filePath = "/c")
+        ledger.recordChange(entry1)
+        ledger.recordChange(entry2)
+        ledger.recordChange(entry3)
+
+        // Roll back entry1 and entry2
+        ledger.recordRollback(makeRollback(rolledBackEntryIds = listOf("e1", "e2")))
+
+        val stats = ledger.totalStats()
+        // Only entry3 should count
+        assertEquals(20, stats.totalLinesAdded)
+        assertEquals(0, stats.totalLinesRemoved)
+        assertEquals(1, stats.filesModified)
+    }
+
+    @Test
+    fun `fileStats excludes rolled-back entries`() {
+        val entry1 = makeEntry(id = "e1", relativePath = "src/A.kt", linesAdded = 10, linesRemoved = 2)
+        val entry2 = makeEntry(id = "e2", relativePath = "src/A.kt", linesAdded = 5, linesRemoved = 1)
+        val entry3 = makeEntry(id = "e3", relativePath = "src/B.kt", linesAdded = 20, linesRemoved = 0)
+        ledger.recordChange(entry1)
+        ledger.recordChange(entry2)
+        ledger.recordChange(entry3)
+
+        // Roll back entry1
+        ledger.recordRollback(makeRollback(rolledBackEntryIds = listOf("e1")))
+
+        val stats = ledger.fileStats()
+        val aStats = stats["src/A.kt"]!!
+        assertEquals(1, aStats.editCount) // Only entry2
+        assertEquals(5, aStats.totalLinesAdded)
+        assertEquals(1, aStats.totalLinesRemoved)
+
+        val bStats = stats["src/B.kt"]!!
+        assertEquals(1, bStats.editCount)
+        assertEquals(20, bStats.totalLinesAdded)
+    }
+
+    @Test
+    fun `toContextString marks rolled-back entries`() {
+        val entry1 = makeEntry(
+            id = "e1", relativePath = "src/Reverted.kt", filePath = "/src/Reverted.kt",
+            linesAdded = 10, linesRemoved = 2
+        )
+        val entry2 = makeEntry(
+            id = "e2", relativePath = "src/Kept.kt", filePath = "/src/Kept.kt",
+            linesAdded = 5, linesRemoved = 1
+        )
+        ledger.recordChange(entry1)
+        ledger.recordChange(entry2)
+
+        ledger.recordRollback(
+            makeRollback(
+                rolledBackEntryIds = listOf("e1"),
+                affectedFiles = listOf("src/Reverted.kt")
+            )
+        )
+
+        val ctx = ledger.toContextString()
+        assertTrue(ctx.contains("[REVERTED]"), "Expected [REVERTED] in:\n$ctx")
+        assertTrue(ctx.contains("src/Reverted.kt"), "Expected reverted file in:\n$ctx")
+        assertTrue(ctx.contains("src/Kept.kt"), "Expected kept file in:\n$ctx")
+    }
+
+    @Test
+    fun `rollback entries persist and reload`() {
+        val entry1 = makeEntry(id = "e1", linesAdded = 10, linesRemoved = 0, filePath = "/a")
+        ledger.recordChange(entry1)
+        ledger.recordRollback(makeRollback(id = "rb-1", rolledBackEntryIds = listOf("e1")))
+
+        // Create a new ledger and load from same directory
+        val ledger2 = ChangeLedger()
+        ledger2.initialize(tempDir)
+        ledger2.loadFromDisk()
+
+        assertEquals(1, ledger2.allRollbacks().size)
+        assertEquals("rb-1", ledger2.allRollbacks()[0].id)
+        // totalStats should exclude rolled-back entry
+        assertEquals(0, ledger2.totalStats().totalLinesAdded)
+    }
+
+    @Test
+    fun `entriesAfterCheckpoint returns correct entries`() {
+        ledger.recordCheckpoint(CheckpointMeta("cp-1", "Iter 2", 2, 0, emptyList(), 0, 0))
+
+        val entry1 = makeEntry(id = "e1", iteration = 1, checkpointId = "cp-1")
+        val entry2 = makeEntry(id = "e2", iteration = 2, checkpointId = "cp-1")
+        val entry3 = makeEntry(id = "e3", iteration = 3, checkpointId = "cp-2")
+        val entry4 = makeEntry(id = "e4", iteration = 4, checkpointId = "cp-2")
+        ledger.recordChange(entry1)
+        ledger.recordChange(entry2)
+        ledger.recordChange(entry3)
+        ledger.recordChange(entry4)
+
+        val after = ledger.entriesAfterCheckpoint("cp-1")
+        assertEquals(2, after.size)
+        assertEquals("e3", after[0].id)
+        assertEquals("e4", after[1].id)
     }
 }
