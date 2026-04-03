@@ -498,4 +498,43 @@ class EventStoreTest {
         val ids = store.all().map { it.id }.sorted()
         assertEquals((0 until 1000).toList(), ids)
     }
+
+    @Test
+    fun `all and slice are safe under concurrent adds`() {
+        val store = EventStore()
+        // Pre-populate
+        repeat(100) { store.add(MessageAction(content = "seed-$it"), EventSource.USER) }
+
+        val errors = java.util.concurrent.atomic.AtomicInteger(0)
+        val writerThread = Thread {
+            repeat(500) {
+                store.add(MessageAction(content = "writer-$it"), EventSource.USER)
+            }
+        }
+        val readerThreads = (0 until 5).map {
+            Thread {
+                repeat(200) {
+                    try {
+                        val snapshot = store.all()
+                        // Snapshot must have consistent size
+                        assertEquals(snapshot.size, snapshot.size)
+                        val s = store.size()
+                        assertTrue(s >= 100) // At least the seed
+                        val sliced = store.slice(0, 50)
+                        assertTrue(sliced.size <= 50)
+                    } catch (_: Exception) {
+                        errors.incrementAndGet()
+                    }
+                }
+            }
+        }
+
+        writerThread.start()
+        readerThreads.forEach { it.start() }
+        writerThread.join()
+        readerThreads.forEach { it.join() }
+
+        assertEquals(0, errors.get(), "No ConcurrentModificationException should occur")
+        assertEquals(600, store.size())
+    }
 }

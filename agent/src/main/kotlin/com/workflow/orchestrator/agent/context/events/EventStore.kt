@@ -56,9 +56,9 @@ class EventStore(private val sessionDir: File? = null) {
      *
      * @return the event, or null if [id] is out of range
      */
-    fun get(id: Int): Event? {
-        if (id < 0 || id >= events.size) return null
-        return events[id]
+    fun get(id: Int): Event? = lock.withLock {
+        if (id < 0 || id >= events.size) return@withLock null
+        events[id]
     }
 
     /**
@@ -66,23 +66,22 @@ class EventStore(private val sessionDir: File? = null) {
      *
      * @return list of events, empty if the range is invalid or empty
      */
-    fun slice(startId: Int, endId: Int): List<Event> {
-        val safeStart = startId.coerceAtLeast(0)
-        val safeEnd = endId.coerceAtMost(events.size)
-        if (safeStart >= safeEnd) return emptyList()
-        return events.subList(safeStart, safeEnd).toList()
+    fun slice(startId: Int, endId: Int): List<Event> = lock.withLock {
+        val start = startId.coerceIn(0, events.size)
+        val end = endId.coerceIn(start, events.size)
+        events.subList(start, end).toList()
     }
 
     /**
      * Current number of events in the store.
      */
-    fun size(): Int = events.size
+    fun size(): Int = lock.withLock { events.size }
 
     /**
      * Snapshot copy of all events. The returned list is a new ArrayList
      * and can be safely iterated while new events are being added.
      */
-    fun all(): List<Event> = ArrayList(events)
+    fun all(): List<Event> = lock.withLock { ArrayList(events) }
 
     /**
      * Incrementally append new events (since last persist) to the JSONL file.
