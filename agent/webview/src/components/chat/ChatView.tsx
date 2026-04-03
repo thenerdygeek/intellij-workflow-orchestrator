@@ -223,7 +223,7 @@ const WORKING_PHRASES = [
  * When `targetText` changes, the displayed text deletes character-by-character,
  * then types out the new text. A blinking cursor appears during animation.
  */
-function useTypewriter(targetText: string, backspaceMs = 20, typeMs = 30) {
+function useTypewriter(targetText: string, backspaceMs = 15, typeMs = 22) {
   const [display, setDisplay] = useState(targetText);
   const [isAnimating, setIsAnimating] = useState(false);
   const prevTarget = useRef(targetText);
