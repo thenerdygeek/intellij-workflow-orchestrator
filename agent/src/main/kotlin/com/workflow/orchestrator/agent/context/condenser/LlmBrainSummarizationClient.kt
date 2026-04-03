@@ -14,7 +14,7 @@ class LlmBrainSummarizationClient(private val brain: LlmBrain) : SummarizationCl
 
     override suspend fun summarize(messages: List<ChatMessage>): String? {
         return try {
-            when (val result = brain.chat(messages, null, 500, null)) {
+            when (val result = brain.chat(messages, null, 1500, null)) {
                 is ApiResult.Success -> {
                     result.data.choices.firstOrNull()?.message?.content
                 }
