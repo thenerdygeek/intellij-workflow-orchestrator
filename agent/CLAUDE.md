@@ -34,7 +34,7 @@ AgentController (UI entry point)
 - **EventStore** — Append-only log of typed agent events (MessageAction, ToolAction, ToolResultObservation, SystemMessageAction, FactRecordedAction, PlanUpdatedAction, etc.). Persisted as JSONL under `{sessionDir}/events.jsonl`. Loaded and replayed on session resume. Single source of truth.
 - **View** — Immutable projection of all EventStore events at a point in time. Produced by `View.fromEvents(eventStore.all())`. Carries `events` (ordered list), `forgottenEventIds` (from condensation actions), and token estimates. Passed to the CondenserPipeline as the input for each condensation decision.
 - **CondenserPipeline** — Ordered chain of condensers applied to a View. Returns either `CondenserView` (view is ready for LLM call) or `Condensation` (condensation action needed before proceeding). Created by `CondenserFactory` using `ContextManagementConfig`. Default pipeline: SmartPrunerCondenser → ObservationMaskingCondenser → ConversationWindowCondenser → LLMSummarizingCondenser.
-- **ContextManagementConfig** — Single config object for the entire condenser pipeline. Fields: `smartPrunerEnabled`, `observationMaskingThreshold`, `conversationWindowThreshold`, `llmSummarizationThreshold`, `condensationLoopThreshold`. Defaults in `ContextManagementConfig.DEFAULT`. Passed through `EventSourcedContextBridge.create()`.
+- **ContextManagementConfig** — Single config object for the entire condenser pipeline. Fields: `observationMaskingThreshold` (0.60), `observationMaskingInnerWindowTokens` (40K), `observationMaskingOuterWindowTokens` (60K), `smartPrunerEnabled`, `conversationWindowThreshold` (0.75), `llmSummarizingTokenThreshold` (0.85), `llmSummarizingMaxSize` (150), `llmSummarizingKeepFirst` (4), `condensationLoopThreshold` (10). Defaults in `ContextManagementConfig.DEFAULT`. Worker config has stricter thresholds (0.50/0.65/0.75). Passed through `EventSourcedContextBridge.create()`.
 - **ConversationMemory** — Converts a filtered View (post-condensation) into `List<ChatMessage>` ready for an LLM call. Handles role assignment, forgotten-event suppression, and proper message ordering. Invoked by `EventSourcedContextBridge.getMessagesViaCondenser()` after the pipeline returns a `CondenserView`.
 - **BudgetEnforcer** — Three-status budget monitoring (Cline-inspired single compression threshold): OK (<80%), COMPRESS (80-97%), TERMINATE (>97%). COMPRESS fires once per crossing (re-arms when utilization drops back below 80%). Reads token counts from `EventSourcedContextBridge`.
 - **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
@@ -86,7 +86,7 @@ Assembled dynamically per turn. Section order follows primacy/recency attention 
 | Category | Tools |
 |----------|-------|
 | Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, think, request_tools, project_context |
-| Change Tracking | list_changes (always active, read-only), rollback_changes (reverts to LocalHistory checkpoint) |
+| Change Tracking | list_changes (always active, read-only), rollback_changes (reverts to LocalHistory checkpoint, git fallback), revert_file (single-file revert) |
 | Process Interaction | send_stdin, kill_process, ask_user_input, send_message_to_parent |
 | PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
 | IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |
@@ -127,7 +127,7 @@ The pipeline is: **EventStore → View → CondenserPipeline → ConversationMem
 3. The `CondenserPipeline` (created by `CondenserFactory` from `ContextManagementConfig`) runs the view through condensers in order:
    - **SmartPrunerCondenser** (Stage 1, zero-loss): Deduplication (keep latest file read, respects edit boundaries), error purging (truncate failed tool args after 4 turns), write superseding (compact writes confirmed by subsequent reads). Runs if `smartPrunerEnabled = true` (default).
    - **ObservationMaskingCondenser** (Stage 2, cheap): Replaces large tool result bodies with rich placeholders (tool name, args, content preview, disk path, recovery hint). Three tiers: FULL (within 40K window), COMPRESSED (within 60K window, first 20 + last 5 lines), METADATA (beyond both). Activates above `observationMaskingThreshold` (default: 0.60 utilization).
-   - **ConversationWindowCondenser** (Stage 3, reactive): Sliding window — removes oldest 50% of eligible messages (after protecting system prompt and first user-assistant exchange). Returns `Condensation` action to be stored in EventStore. Activates above `conversationWindowThreshold` (default: 0.75 utilization).
+   - **ConversationWindowCondenser** (Stage 3, proactive): Sliding window — removes oldest 50% of eligible messages (after protecting system prompt and first user-assistant exchange). Returns `Condensation` action to be stored in EventStore. Activates above `conversationWindowThreshold` (default: 0.75 utilization) OR on context window overflow error.
    - **LLMSummarizingCondenser** (Stage 4, expensive): LLM-powered structured summary (Goal/Instructions/Discoveries/Accomplished/Files template) with [APPROX] markers. Falls back to truncation summarizer on LLM error. Activates above `llmSummarizationThreshold` (default: 0.85 utilization).
 4. If the pipeline returns `CondenserView`, `ConversationMemory.processEvents()` converts filtered events → `List<ChatMessage>` for the LLM call.
 5. If the pipeline returns `Condensation`, the condensation action is added to the EventStore and the condenser runs again (guarded against infinite loops by `condensationLoopCount > condensationLoopThreshold`).
@@ -223,6 +223,26 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 1. **Disk** — `plan.json` in session directory (`PlanPersistence`)
 2. **Context** — `<active_plan>` system message with structured summary, updated in-place via `bridge.planAnchor`; also recorded as `PlanUpdatedAction` in EventStore
 3. **UI** — Editor tab + chat card, real-time step updates
+
+## Checkpoint/Revert Architecture
+
+Three revert paths, one notification flow:
+
+1. **LLM tool** — `rollback_changes` (full checkpoint) or `revert_file` (single file)
+2. **User revert button** — Checkpoint timeline revert in EditStatsBar
+3. **User undo button** — Footer undo button in chat UI
+
+All paths:
+- Use `AgentRollbackManager` (LocalHistory primary, git checkout per-file fallback)
+- Record `RollbackEntry` in `ChangeLedger` (append-only, persisted to changes.jsonl)
+- Update context anchor (LLM sees effective stats excluding rolled-back entries)
+- Push to UI via `notifyRollback()` bridge (greyed-out tool calls + RollbackCard)
+
+**Stats computation:** `totalStats()` and `fileStats()` exclude entries whose IDs appear in any `RollbackEntry.rolledBackEntryIds`.
+
+**Git command blocking:** `RunCommandTool` blocks `git checkout`, `git reset`, `git restore`, `git clean` via `SAFE_GIT_SUBCOMMANDS` allowlist, and guides the LLM toward `rollback_changes` / `revert_file`.
+
+**Created files:** `AgentRollbackManager.trackFileCreation()` ensures new files are deleted (not git-checkout'd) on rollback.
 
 ## Conversation Persistence & Durable Execution
 
