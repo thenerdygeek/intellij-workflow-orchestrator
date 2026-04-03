@@ -581,9 +581,8 @@ class SpawnAgentTool : AgentTool {
         // Notify UI that the background sub-agent has been spawned
         uiCallbacks?.onSpawn?.invoke(agentId, "$description ($subagentType)")
 
-        // Launch in detached coroutine
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val job = scope.launch {
+        // Launch in AgentService's shared scope so it is cancelled on dispose
+        val job = agentService.backgroundWorkerScope.launch {
             agentService.activeWorkerCount.incrementAndGet()
             try {
                 val contextManager = EventSourcedContextBridge.create(

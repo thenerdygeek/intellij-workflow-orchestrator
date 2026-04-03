@@ -42,6 +42,8 @@ class AgentService(
 ) : Disposable {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    /** Shared scope for background workers — cancelled in [dispose] so detached coroutines don't leak. */
+    val backgroundWorkerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val credentialStore = CredentialStore()
 
     /** Reference to the active AgentController, used for session resume from History tab. */
@@ -334,6 +336,7 @@ class AgentService(
 
     override fun dispose() {
         scope.cancel()
+        backgroundWorkerScope.cancel()
     }
 
     companion object {
