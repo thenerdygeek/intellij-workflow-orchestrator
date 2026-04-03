@@ -41,7 +41,9 @@ class AgentDefinitionRegistry(private val project: Project) {
         val skills: List<String> = emptyList(),     // skills to preload
         val memory: MemoryScope? = null,
         val filePath: String,
-        val scope: AgentScope
+        val scope: AgentScope,
+        /** Raw YAML frontmatter key-value pairs for extension fields like can-delegate. */
+        val frontmatter: Map<String, String> = emptyMap()
     )
 
     enum class AgentScope { BUILTIN, USER, PROJECT }
@@ -109,7 +111,8 @@ class AgentDefinitionRegistry(private val project: Project) {
                         try { MemoryScope.valueOf(it) } catch (_: Exception) { null }
                     },
                     filePath = "builtin:$resourcePath",
-                    scope = AgentScope.BUILTIN
+                    scope = AgentScope.BUILTIN,
+                    frontmatter = frontmatter
                 )
             } catch (e: Exception) {
                 LOG.warn("AgentDefinitionRegistry: failed to load built-in agent '$agentName'", e)
@@ -140,7 +143,8 @@ class AgentDefinitionRegistry(private val project: Project) {
                         try { MemoryScope.valueOf(it) } catch (_: Exception) { null }
                     },
                     filePath = file.absolutePath,
-                    scope = scope
+                    scope = scope,
+                    frontmatter = frontmatter
                 )
             } catch (e: Exception) {
                 LOG.warn("AgentDefinitionRegistry: failed to parse ${file.name}: ${e.message}")

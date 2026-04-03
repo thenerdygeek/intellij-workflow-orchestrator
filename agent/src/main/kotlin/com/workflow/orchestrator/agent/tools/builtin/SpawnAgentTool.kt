@@ -258,7 +258,10 @@ class SpawnAgentTool : AgentTool {
 
         if (customAgent != null) {
             agentDef = customAgent
-            workerType = WorkerType.ORCHESTRATOR
+            workerType = if (customAgent.frontmatter["can-delegate"] == "true")
+                WorkerType.ORCHESTRATOR
+            else
+                WorkerType.CODER
             maxIter = customAgent.maxTurns
         } else if (resolvedType in BUILT_IN_AGENTS) {
             agentDef = null

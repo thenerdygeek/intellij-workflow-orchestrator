@@ -26,6 +26,17 @@ class ConversationWindowCondenser(
     }
 
     override fun getCondensation(context: CondenserContext): Condensation {
+        // Delegate to getCondensationOrPassthrough which handles the no-op case
+        // by returning CondenserView. This override is kept for the abstract contract
+        // but should not be called directly — use condense() instead.
+        throw UnsupportedOperationException("Use condense() instead")
+    }
+
+    override fun condense(context: CondenserContext): CondenserResult {
+        if (!shouldCondense(context)) {
+            return CondenserView(context.view)
+        }
+
         val view = context.view
         val events = view.events
 
@@ -35,9 +46,9 @@ class ConversationWindowCondenser(
             (it is MessageAction || it is UserSteeringAction) && it.source == EventSource.USER
         }
 
-        // If no first user message, return no-op condensation (nothing to forget)
+        // If no first user message, nothing to forget — pass through
         if (firstUserMsg == null) {
-            return noOpCondensation()
+            return CondenserView(context.view)
         }
 
         val essentialEvents = buildSet {
@@ -49,7 +60,7 @@ class ConversationWindowCondenser(
         // Step 2: Calculate keep count
         val numNonEssentialEvents = view.size - numEssentialEvents
         if (numNonEssentialEvents <= 0) {
-            return noOpCondensation()
+            return CondenserView(context.view)
         }
         val numRecentToKeep = maxOf(1, numNonEssentialEvents / 2)
         val sliceStartIndex = view.size - numRecentToKeep
@@ -83,7 +94,7 @@ class ConversationWindowCondenser(
         val forgottenEventIds = (allEventIds - eventsToKeep).sorted()
 
         if (forgottenEventIds.isEmpty()) {
-            return noOpCondensation()
+            return CondenserView(context.view)
         }
 
         // Step 5: Optimize — use range mode if IDs are contiguous
@@ -108,18 +119,6 @@ class ConversationWindowCondenser(
                 )
             )
         }
-    }
-
-    private fun noOpCondensation(): Condensation {
-        return Condensation(
-            CondensationAction(
-                forgottenEventIds = emptyList(),
-                forgottenEventsStartId = null,
-                forgottenEventsEndId = null,
-                summary = null,
-                summaryOffset = null
-            )
-        )
     }
 
     private fun isContiguous(sortedIds: List<Int>): Boolean {

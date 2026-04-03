@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.listeners
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.workflow.orchestrator.agent.runtime.ConversationStore
@@ -21,6 +22,10 @@ import java.io.File
  * Also loads checkpoint data to show the user what the agent was doing when interrupted.
  */
 class AgentStartupActivity : ProjectActivity {
+
+    companion object {
+        private val LOG = Logger.getInstance(AgentStartupActivity::class.java)
+    }
 
     override suspend fun execute(project: Project) {
         // Only check if agent is enabled
@@ -74,14 +79,14 @@ class AgentStartupActivity : ProjectActivity {
                         try {
                             val agentService = com.workflow.orchestrator.agent.AgentService.getInstance(project)
                             agentService.resumeSession(latest.sessionId)
-                        } catch (_: Exception) { /* controller not available */ }
+                        } catch (e: Exception) { LOG.debug("Failed to resume session", e) }
                     })
                     .notify(project)
             }
 
             // Also run periodic cleanup of stale sessions
             index.cleanup()
-        } catch (_: Exception) { /* service not available */ }
+        } catch (e: Exception) { LOG.debug("Failed to check interrupted sessions", e) }
 
         // Check for interrupted Ralph loops
         try {
@@ -116,7 +121,7 @@ class AgentStartupActivity : ProjectActivity {
                                 agentService.ralphOrchestrator?.resumeInterrupted(loop)
                                 // Trigger actual execution via the agent tab
                                 agentService.resumeRalphLoop(loop.originalPrompt)
-                            } catch (_: Exception) {}
+                            } catch (e: Exception) { LOG.debug("Failed to resume Ralph loop", e) }
                         })
                         .addAction(NotificationAction.createSimple("Cancel") {
                             val dir = File(ralphDir, loop.loopId)
@@ -125,6 +130,6 @@ class AgentStartupActivity : ProjectActivity {
                         .notify(project)
                 }
             }
-        } catch (_: Exception) { /* ralph not available */ }
+        } catch (e: Exception) { LOG.debug("Failed to check interrupted Ralph loops", e) }
     }
 }
