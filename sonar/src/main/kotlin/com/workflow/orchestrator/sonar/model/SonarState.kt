@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.sonar.model
 
+import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import java.time.Instant
 
 data class SonarState(
@@ -27,7 +28,8 @@ data class SonarState(
     val totalIssueCount: Int? = null,
     val totalNewCodeIssueCount: Int? = null,
     val totalCoverageFileCount: Int? = null,
-    val projectHealth: ProjectHealthMetrics = ProjectHealthMetrics()
+    val projectHealth: ProjectHealthMetrics = ProjectHealthMetrics(),
+    val securityHotspots: List<SecurityHotspotData> = emptyList()
 ) {
     /** Returns the active issues based on the current mode. */
     val activeIssues: List<MappedIssue>

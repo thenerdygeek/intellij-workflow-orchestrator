@@ -15,6 +15,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.sonar.api.SonarApiClient
+import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.sonar.model.*
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
@@ -229,6 +230,14 @@ class SonarDataService(private val project: Project) : Disposable {
         }
         val projectHealthDeferred = scope.async { client.getProjectMeasures(projectKey, branch) }
         val gateDeferred = scope.async { client.getQualityGateStatus(projectKey, branch) }
+        val hotspotsDeferred = scope.async {
+            try { client.getSecurityHotspots(projectKey, branch) }
+            catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                log.info("[Sonar:Hotspots] Security hotspots not available (may require Developer Edition)")
+                null
+            }
+        }
         val metricKeys = settings.state.sonarMetricKeys.orEmpty()
         val measuresDeferred = scope.async { client.getMeasures(projectKey, branch, metricKeys) }
 
@@ -239,6 +248,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val newCodePeriodResult = newCodePeriodDeferred.await()
         val projectHealthResult = projectHealthDeferred.await()
         val gateResult = gateDeferred.await()
+        val hotspotsResult = hotspotsDeferred.await()
         val measuresResult = measuresDeferred.await()
 
         val qualityGate = when (gateResult) {
@@ -373,6 +383,27 @@ class SonarDataService(private val project: Project) : Disposable {
             null -> null
         }
 
+        // Map security hotspots (optional — requires Developer Edition+)
+        val securityHotspots = when (hotspotsResult) {
+            is ApiResult.Success -> hotspotsResult.data.hotspots.map { dto ->
+                SecurityHotspotData(
+                    key = dto.key,
+                    message = dto.message,
+                    component = dto.component,
+                    line = dto.line,
+                    securityCategory = dto.securityCategory,
+                    probability = dto.vulnerabilityProbability,
+                    status = dto.status,
+                    resolution = dto.resolution
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[Sonar:Hotspots] Failed to fetch security hotspots: ${hotspotsResult.message}")
+                emptyList()
+            }
+            null -> emptyList()
+        }
+
         val newState = SonarState(
             projectKey = projectKey,
             branch = branch,
@@ -396,7 +427,8 @@ class SonarDataService(private val project: Project) : Disposable {
             totalIssueCount = totalIssueCount,
             totalNewCodeIssueCount = totalNewCodeIssueCount,
             totalCoverageFileCount = fileCoverage.size,
-            projectHealth = projectHealth
+            projectHealth = projectHealth,
+            securityHotspots = securityHotspots
         )
 
         _stateFlow.value = newState
