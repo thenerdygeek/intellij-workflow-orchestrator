@@ -68,18 +68,17 @@ class CompletionGatekeeper(
 
         if (planGateBlockCount >= MAX_PLAN_BLOCKS_WITHOUT_PROGRESS) {
             return "COMPLETION BLOCKED (${planGateBlockCount}x): ${incomplete.size} plan steps " +
-                "still incomplete with no progress. To proceed, call update_plan_step for each:\n" +
-                incomplete.joinToString("\n") {
-                    "- update_plan_step(step=\"${it.title}\", status=\"skipped\", comment=\"Not needed\")"
-                } + "\n\nOr continue working on them."
+                "still incomplete with no progress. Continue working on them:\n" +
+                incomplete.mapIndexed { i, step ->
+                    "${i + 1}. [${step.status}] ${step.title}"
+                }.joinToString("\n")
         }
 
         return "COMPLETION BLOCKED: Your plan has ${incomplete.size} incomplete steps:\n" +
             incomplete.mapIndexed { i, step ->
                 "${i + 1}. [${step.status}] ${step.title}"
             }.joinToString("\n") +
-            "\n\nContinue working on the next incomplete step. " +
-            "If a step is no longer needed, call update_plan_step to mark it as skipped."
+            "\n\nContinue working on the next incomplete step."
     }
 
     private fun checkSelfCorrection(): String? {

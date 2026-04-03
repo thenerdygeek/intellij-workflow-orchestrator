@@ -315,7 +315,7 @@ class SingleAgentSession(
         val allArtifacts = mutableListOf<String>()
         val editedFiles = mutableListOf<String>()
         var compressionDone = false  // Re-arms if utilization drops below 80% and rises again
-        var lastWarningPercent = 0
+
 
         var verificationPending = false
         forceTextOnly = false
@@ -519,22 +519,6 @@ class SingleAgentSession(
                 }
             }
 
-            // 5a: Inject context budget warning at 10% thresholds past 50% (50%, 60%, 70%, 80%, 90%)
-            val maxInputTokens = bridge.effectiveMaxInputTokens
-            val usedPercent = if (maxInputTokens > 0) ((bridge.currentTokens.toDouble() / maxInputTokens) * 100).toInt() else 0
-            if (usedPercent > 50 && usedPercent / 10 > lastWarningPercent / 10) {
-                lastWarningPercent = usedPercent
-                // Cap system warnings at 2 — remove oldest before adding new one
-                var warningRemovalAttempts = 0
-                while (bridge.countSystemWarnings() >= 2 && warningRemovalAttempts < 10) {
-                    if (!bridge.removeOldestSystemWarning()) break
-                    warningRemovalAttempts++
-                }
-                val remaining = maxInputTokens - bridge.currentTokens
-                val budgetWarningContent = "<system_warning>Context usage: ${bridge.currentTokens}/$maxInputTokens tokens ($usedPercent%). $remaining tokens remaining. Be efficient with remaining context.</system_warning>"
-                bridge.addSystemMessage(budgetWarningContent)
-            }
-
             // Use the condenser pipeline + ConversationMemory path for LLM calls.
             val messages: List<ChatMessage>
             when (val outcome = bridge.getMessagesViaCondenser()) {
@@ -605,7 +589,7 @@ class SingleAgentSession(
                     retryResult as LlmCallResult.Success, iteration, totalTokensUsed, allArtifacts,
                     editedFiles, activeTools, bridge, project, approvalGate, loopGuard,
                     backpressureGate, selfCorrectionGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
-                    onStreamChunk, eventLog, sessionTrace, maxIterations,
+                    onStreamChunk, eventLog, sessionTrace,
                     sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint
                 ) ?: continue
             }
@@ -616,7 +600,7 @@ class SingleAgentSession(
                         result, iteration, totalTokensUsed, allArtifacts,
                         editedFiles, activeTools, bridge, project, approvalGate, loopGuard,
                         backpressureGate, selfCorrectionGate, budgetEnforcer, brain, activeToolDefs, maxOutputTokens, onProgress,
-                        onStreamChunk, eventLog, sessionTrace, maxIterations,
+                        onStreamChunk, eventLog, sessionTrace,
                         sessionId, sessionStartMs, iterationStartMs, onDebugLog, onCheckpoint
                     )
                     if (sessionResult != null) return sessionResult
@@ -651,18 +635,6 @@ class SingleAgentSession(
                 }
             }
         }
-
-        LOG.warn("SingleAgentSession: reached max iterations ($maxIterations)")
-        eventLog?.log(AgentEventType.SESSION_FAILED, "Max iterations ($maxIterations) reached")
-        sessionTrace?.dumpConversationState(bridge.getMessages(), "max_iterations_reached")
-        sessionTrace?.sessionFailed("Max iterations ($maxIterations) reached", totalTokensUsed, maxIterations)
-        val maxIterError = "Reached maximum iterations ($maxIterations) without completing"
-        agentFileLogger?.logSessionEnd(sessionId, maxIterations, totalTokensUsed, System.currentTimeMillis() - sessionStartMs, error = maxIterError)
-        return SingleAgentResult.Failed(
-            error = maxIterError,
-            tokensUsed = totalTokensUsed,
-            scorecard = buildScorecard(sessionId, "failed", selfCorrectionGate, System.currentTimeMillis() - sessionStartMs, project)
-        )
     }
 
     /**
@@ -690,7 +662,6 @@ class SingleAgentSession(
         onStreamChunk: (String) -> Unit,
         eventLog: AgentEventLog?,
         sessionTrace: SessionTrace?,
-        maxIterations: Int,
         sessionId: String = "",
         sessionStartMs: Long = 0L,
         iterationStartMs: Long = 0L,
@@ -866,10 +837,10 @@ class SingleAgentSession(
                 }
             }
 
-            // forceTextOnly mode: tools are disabled (malformed retries exhausted, iteration 95%+,
+            // forceTextOnly mode: tools are disabled (malformed retries exhausted
             // or MAX_NO_TOOL_NUDGES exceeded). Allow implicit completion via gatekeeper.
             val gateBlock = completionGatekeeper?.checkCompletion()
-            if (gateBlock != null && iteration < maxIterations - 1) {
+            if (gateBlock != null) {
                 val blockedGate = completionGatekeeper?.lastBlockedGate ?: "unknown"
                 metrics.completionGateBlocks[blockedGate] = (metrics.completionGateBlocks[blockedGate] ?: 0) + 1
                 bridge.addUserMessage(gateBlock)
