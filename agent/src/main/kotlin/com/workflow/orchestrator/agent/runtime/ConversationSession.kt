@@ -357,30 +357,20 @@ class ConversationSession private constructor(
             // Calculate reserved tokens
             val reservedTokens = toolDefTokens + systemPromptTokens + 200
 
-            // Create the session first to get sessionDirectory
-            val session = ConversationSession(
-                sessionId = UUID.randomUUID().toString().take(12),
-                bridge = EventSourcedContextBridge.create(
-                    sessionDir = null, // will be set after store is created
-                    config = ContextManagementConfig.DEFAULT,
-                    maxInputTokens = maxInputTokens,
-                    reservedTokens = reservedTokens
-                ),
-                brain = agentService.brain,
-                toolDefinitions = allToolDefs,
-                tools = allTools,
-                systemPrompt = systemPrompt,
-                reservedTokens = reservedTokens,
-                createdAt = System.currentTimeMillis(),
-                skillManager = skillManager,
-                projectTools = projectTools,
-                projectBasePath = project.basePath
-            )
+            // M9: Create session directory upfront so the bridge is built correctly the first time.
+            // Previously, a placeholder bridge (sessionDir=null) was created, then discarded and
+            // replaced — wasting an allocation and risking subtle bugs if the placeholder leaks.
+            val sessionId = UUID.randomUUID().toString().take(12)
+            val createdAt = System.currentTimeMillis()
 
-            // Now recreate the bridge with the correct sessionDir
+            // Compute sessionDir by creating a lightweight store reference
+            val sessionStore = ConversationStore(sessionId, projectBasePath = project.basePath)
+            val sessionDir = sessionStore.sessionDirectory
+
+            // Create the real bridge directly with the correct sessionDir
             val summarizationClient = LlmBrainSummarizationClient(agentService.brain)
             val bridge = EventSourcedContextBridge.create(
-                sessionDir = session.store.sessionDirectory,
+                sessionDir = sessionDir,
                 config = ContextManagementConfig.DEFAULT,
                 summarizationClient = summarizationClient,
                 maxInputTokens = maxInputTokens,
@@ -388,18 +378,17 @@ class ConversationSession private constructor(
             )
 
             // Wire disk spillover for full tool outputs (OpenCode pattern)
-            bridge.toolOutputStore = ToolOutputStore(session.store.sessionDirectory)
+            bridge.toolOutputStore = ToolOutputStore(sessionDir)
 
-            // Replace the placeholder bridge with the properly-configured one
-            val properSession = ConversationSession(
-                sessionId = session.sessionId,
+            val session = ConversationSession(
+                sessionId = sessionId,
                 bridge = bridge,
                 brain = agentService.brain,
                 toolDefinitions = allToolDefs,
                 tools = allTools,
                 systemPrompt = systemPrompt,
                 reservedTokens = reservedTokens,
-                createdAt = session.createdAt,
+                createdAt = createdAt,
                 skillManager = skillManager,
                 projectTools = projectTools,
                 projectBasePath = project.basePath
@@ -408,12 +397,12 @@ class ConversationSession private constructor(
             // Register in the global session index for cross-project history
             try {
                 GlobalSessionIndex.getInstance().addSession(GlobalSessionIndex.SessionEntry(
-                    sessionId = properSession.sessionId,
+                    sessionId = session.sessionId,
                     projectName = project.name,
                     projectPath = project.basePath ?: "",
                     title = "",
-                    createdAt = properSession.createdAt,
-                    lastMessageAt = properSession.createdAt,
+                    createdAt = session.createdAt,
+                    lastMessageAt = session.createdAt,
                     messageCount = 0,
                     status = SessionStatus.ACTIVE.value
                 ))
@@ -425,11 +414,11 @@ class ConversationSession private constructor(
             }
 
             // Initialize change ledger for edit tracking (persists to changes.jsonl)
-            properSession.changeLedger.initialize(properSession.store.sessionDirectory)
+            session.changeLedger.initialize(session.store.sessionDirectory)
 
             // Set session directory on AgentService for subagent transcript storage
             try {
-                agentService.currentSessionDir = properSession.store.sessionDirectory
+                agentService.currentSessionDir = session.store.sessionDirectory
                 agentService.currentContextBridge = bridge
             } catch (_: Exception) {}
 
@@ -441,7 +430,7 @@ class ConversationSession private constructor(
                 }
             } catch (_: Exception) {}
 
-            return properSession
+            return session
         }
 
         /**

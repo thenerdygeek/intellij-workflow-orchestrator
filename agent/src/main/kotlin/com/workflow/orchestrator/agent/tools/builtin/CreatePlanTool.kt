@@ -11,11 +11,7 @@ import com.workflow.orchestrator.agent.runtime.PlanStep
 import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -85,23 +81,9 @@ class CreatePlanTool : AgentTool {
         )
 
         // Submit plan and suspend until user approves or revises.
+        // PlanManager.submitPlanAndWait is coroutine-native — no CompletableFuture bridging needed.
         val result = try {
-            withTimeoutOrNull(600_000L) { // 10 minute timeout
-                suspendCancellableCoroutine<PlanApprovalResult> { cont ->
-                    val future = planManager.submitPlan(plan)
-                    cont.invokeOnCancellation { future.cancel(true) }
-                    future.whenComplete { value, error ->
-                        if (error != null) {
-                            if (!cont.isCompleted) cont.resumeWithException(error)
-                        } else {
-                            if (!cont.isCompleted) cont.resume(value)
-                        }
-                    }
-                }
-            } ?: return ToolResult(
-                "Plan approval timed out after 10 minutes. Please try again.",
-                "Plan timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
+            planManager.submitPlanAndWait(plan, timeoutMs = 600_000L)
         } catch (e: CancellationException) {
             return ToolResult(
                 "Plan approval was cancelled.",

@@ -167,7 +167,6 @@ class PlanManager {
         val result = PlanApprovalResult.Revised(comments)
         approvalDeferred?.complete(result)
         approvalDeferred = null
-        approvalFuture?.complete(result)
     }
 
     /** New revision method: carries the actual line content + full markdown for LLM context. */
@@ -178,7 +177,6 @@ class PlanManager {
         val result = PlanApprovalResult.RevisedWithContext(revisions, fullMarkdown)
         approvalDeferred?.complete(result)
         approvalDeferred = null
-        approvalFuture?.complete(result)
     }
 
     /** Resolve pending plan approval with a free-form chat message.
@@ -189,7 +187,6 @@ class PlanManager {
         val result = PlanApprovalResult.ChatMessage(message)
         approvalDeferred?.complete(result)
         approvalDeferred = null
-        approvalFuture?.complete(result)
     }
 
     fun updateStepStatus(stepId: String, status: String) {
@@ -252,7 +249,6 @@ class PlanManager {
 
     fun clear() {
         currentPlan = null
-        approvalFuture = null
         approvalDeferred = null
         isRevisionInProgress = false
     }
