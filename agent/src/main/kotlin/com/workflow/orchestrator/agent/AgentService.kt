@@ -271,6 +271,7 @@ class AgentService(
             // Change tracking tools
             register(ListChangesTool())
             register(RollbackChangesTool())
+            register(RevertFileTool())
 
             // IDE tools (diagnostics is the primary — combines syntax + semantic checks)
             register(SemanticDiagnosticsTool()) // name = "diagnostics"
