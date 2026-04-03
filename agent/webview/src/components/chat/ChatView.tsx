@@ -9,6 +9,7 @@ import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
 import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
+import { RollbackCard } from '@/components/agent/RollbackCard';
 import {
   ChatContainerRoot,
   ChatContainerContent,
@@ -132,6 +133,7 @@ export const ChatView = memo(function ChatView() {
   const pendingProcessInput = useChatStore(s => s.pendingProcessInput);
   const resolveProcessInput = useChatStore(s => s.resolveProcessInput);
   const retryMessage = useChatStore(s => s.retryMessage);
+  const rollbackEvents = useChatStore(s => s.rollbackEvents);
 
   const approvalRef = useRef<HTMLDivElement>(null);
 
@@ -210,6 +212,13 @@ export const ChatView = memo(function ChatView() {
         {toolCallsArray.length > 0 && (
           <ToolCallChain toolCalls={toolCallsArray} />
         )}
+
+        {/* Rollback events */}
+        {rollbackEvents.map(rb => (
+          <ErrorBoundary key={rb.id}>
+            <RollbackCard rollback={rb} />
+          </ErrorBoundary>
+        ))}
 
         {/* Plan */}
         {plan && !plan.approved && <PlanSummaryCard plan={plan} />}

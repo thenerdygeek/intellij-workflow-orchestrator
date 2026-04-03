@@ -82,9 +82,11 @@ Parameters:
                 isError = true
             )
 
-        // Resolve to absolute path
-        val resolvedPath = if (filePath.startsWith("/")) filePath
-        else "${project.basePath}/$filePath"
+        // Resolve to absolute path and canonicalize
+        val resolvedPath = java.io.File(
+            if (filePath.startsWith("/")) filePath
+            else "${project.basePath}/$filePath"
+        ).canonicalPath
 
         val result = rollbackManager.rollbackFile(resolvedPath)
         val ledger = agentService.currentChangeLedger

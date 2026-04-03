@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Manages rollback of agent-made file changes using IntelliJ's LocalHistory API,
@@ -32,9 +33,12 @@ class AgentRollbackManager(private val project: Project) {
         private val LOG = Logger.getInstance(AgentRollbackManager::class.java)
     }
 
-    private val checkpoints = mutableMapOf<String, Label>()
-    private val touchedFiles = mutableSetOf<String>()
-    private val createdFiles = mutableSetOf<String>()
+    private val checkpoints = ConcurrentHashMap<String, Label>()
+    private val touchedFiles: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val createdFiles: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile
+    var latestCheckpointIdField: String? = null
+        private set
 
     /**
      * Create a LocalHistory checkpoint before the agent starts modifying files.
@@ -47,6 +51,7 @@ class AgentRollbackManager(private val project: Project) {
                 project, "Agent: $description"
             )
             checkpoints[id] = label
+            latestCheckpointIdField = id
             LOG.info("AgentRollbackManager: created checkpoint $id: $description")
         } catch (e: Exception) {
             LOG.warn("AgentRollbackManager: failed to create checkpoint", e)
@@ -139,28 +144,31 @@ class AgentRollbackManager(private val project: Project) {
             )
         }
 
+        // Canonicalize path to prevent traversal and aliasing issues
+        val canonicalPath = File(filePath).canonicalPath
+
         // If the file was created by the agent, just delete it
-        if (filePath in createdFiles) {
+        if (canonicalPath in createdFiles) {
             return try {
-                val file = File(filePath)
+                val file = File(canonicalPath)
                 if (file.exists()) {
                     file.delete()
                 }
-                createdFiles.remove(filePath)
-                touchedFiles.remove(filePath)
+                createdFiles.remove(canonicalPath)
+                touchedFiles.remove(canonicalPath)
                 refreshVfs()
                 RollbackResult(
                     success = true,
                     mechanism = RollbackMechanism.GIT_FALLBACK,
-                    affectedFiles = listOf(filePath)
+                    affectedFiles = listOf(canonicalPath)
                 )
             } catch (e: Exception) {
-                LOG.warn("AgentRollbackManager: failed to delete created file $filePath", e)
+                LOG.warn("AgentRollbackManager: failed to delete created file $canonicalPath", e)
                 RollbackResult(
                     success = false,
                     mechanism = RollbackMechanism.GIT_FALLBACK,
                     affectedFiles = emptyList(),
-                    failedFiles = listOf(filePath),
+                    failedFiles = listOf(canonicalPath),
                     error = "Failed to delete created file: ${e.message ?: e.javaClass.simpleName}"
                 )
             }
@@ -169,7 +177,7 @@ class AgentRollbackManager(private val project: Project) {
         // For modified files, use git checkout
         return try {
             val ref = if (checkpointId != null) checkpointId else "HEAD"
-            val process = ProcessBuilder("git", "checkout", ref, "--", filePath)
+            val process = ProcessBuilder("git", "checkout", ref, "--", canonicalPath)
                 .directory(File(basePath))
                 .redirectErrorStream(true)
                 .start()
@@ -177,30 +185,30 @@ class AgentRollbackManager(private val project: Project) {
             val exitCode = process.waitFor()
 
             if (exitCode == 0) {
-                touchedFiles.remove(filePath)
+                touchedFiles.remove(canonicalPath)
                 refreshVfs()
                 RollbackResult(
                     success = true,
                     mechanism = RollbackMechanism.GIT_FALLBACK,
-                    affectedFiles = listOf(filePath)
+                    affectedFiles = listOf(canonicalPath)
                 )
             } else {
-                LOG.warn("AgentRollbackManager: git checkout failed for $filePath: $output")
+                LOG.warn("AgentRollbackManager: git checkout failed for $canonicalPath: $output")
                 RollbackResult(
                     success = false,
                     mechanism = RollbackMechanism.GIT_FALLBACK,
                     affectedFiles = emptyList(),
-                    failedFiles = listOf(filePath),
+                    failedFiles = listOf(canonicalPath),
                     error = "git checkout failed (exit $exitCode): ${output.take(200)}"
                 )
             }
         } catch (e: Exception) {
-            LOG.warn("AgentRollbackManager: git checkout failed for $filePath", e)
+            LOG.warn("AgentRollbackManager: git checkout failed for $canonicalPath", e)
             RollbackResult(
                 success = false,
                 mechanism = RollbackMechanism.GIT_FALLBACK,
                 affectedFiles = emptyList(),
-                failedFiles = listOf(filePath),
+                failedFiles = listOf(canonicalPath),
                 error = "git checkout failed: ${e.message ?: e.javaClass.simpleName}"
             )
         }
@@ -297,11 +305,25 @@ class AgentRollbackManager(private val project: Project) {
         checkpoints.clear()
         touchedFiles.clear()
         createdFiles.clear()
+        latestCheckpointIdField = null
     }
 
     /** Check if we have any checkpoints available for rollback. */
     fun hasCheckpoints(): Boolean = checkpoints.isNotEmpty()
 
     /** Get the most recent checkpoint ID. */
-    fun latestCheckpointId(): String? = checkpoints.keys.lastOrNull()
+    fun latestCheckpointId(): String? = latestCheckpointIdField
 }
+
+/**
+ * Structured result from a rollback operation.
+ * Replaces the old String? (null=success, string=error) convention
+ * with a rich result that tells callers exactly what happened.
+ */
+data class RollbackResult(
+    val success: Boolean,
+    val mechanism: RollbackMechanism,
+    val affectedFiles: List<String>,
+    val failedFiles: List<String> = emptyList(),
+    val error: String? = null
+)

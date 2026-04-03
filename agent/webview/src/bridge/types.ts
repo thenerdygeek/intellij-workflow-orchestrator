@@ -11,6 +11,10 @@ export interface Message {
   toolChain?: ToolCall[];
   /** Sub-agent state — present on 'system' messages with type 'subagent' */
   subAgent?: SubAgentState;
+  /** File path associated with this message (e.g., from edit_file tool calls) */
+  filePath?: string;
+  /** True if this message's changes have been rolled back */
+  rolledBack?: boolean;
 }
 
 // ── Sub-Agent types ──
@@ -39,6 +43,8 @@ export interface ToolCall {
   result?: string;
   output?: string;
   durationMs?: number;
+  /** True if this tool call's changes have been rolled back */
+  rolledBack?: boolean;
 }
 
 // ── Plan types ──

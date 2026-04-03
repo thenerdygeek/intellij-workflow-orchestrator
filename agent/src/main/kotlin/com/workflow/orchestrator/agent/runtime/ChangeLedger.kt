@@ -331,16 +331,3 @@ data class FileEditSummary(
     val verified: Boolean,
     val action: ChangeAction
 )
-
-/**
- * Structured result from a rollback operation.
- * Replaces the old String? (null=success, string=error) convention
- * with a rich result that tells callers exactly what happened.
- */
-data class RollbackResult(
-    val success: Boolean,
-    val mechanism: RollbackMechanism,
-    val affectedFiles: List<String>,
-    val failedFiles: List<String> = emptyList(),
-    val error: String? = null
-)

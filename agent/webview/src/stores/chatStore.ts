@@ -755,9 +755,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   applyRollback(rollback: RollbackInfo) {
-    set((state) => ({
-      rollbackEvents: [...state.rollbackEvents, rollback],
-    }));
+    set((state) => {
+      const rolledBackFiles = new Set(rollback.affectedFiles);
+
+      const messages = state.messages.map((msg) => {
+        // Mark messages that have a filePath matching a rolled-back file
+        let msgRolledBack = msg.rolledBack;
+        if ('filePath' in msg && msg.filePath && rolledBackFiles.has(msg.filePath)) {
+          msgRolledBack = true;
+        }
+
+        // Mark tool calls within tool chains that reference rolled-back files
+        let toolChain = msg.toolChain;
+        if (toolChain && toolChain.length > 0) {
+          toolChain = toolChain.map((tc) => {
+            try {
+              const parsed = JSON.parse(tc.args) as Record<string, unknown>;
+              const filePath = parsed.file_path || parsed.path;
+              if (typeof filePath === 'string' && rolledBackFiles.has(filePath)) {
+                return { ...tc, rolledBack: true };
+              }
+            } catch { /* not JSON, skip */ }
+            return tc;
+          });
+        }
+
+        if (msgRolledBack !== msg.rolledBack || toolChain !== msg.toolChain) {
+          return { ...msg, rolledBack: msgRolledBack, toolChain };
+        }
+        return msg;
+      });
+
+      return {
+        messages,
+        rollbackEvents: [...state.rollbackEvents, rollback],
+      };
+    });
   },
 
   // ── Sub-Agent Actions ──

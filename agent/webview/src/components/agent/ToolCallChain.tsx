@@ -176,60 +176,74 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
   const target = extractTarget(tc.args);
   const isRunning = tc.status === 'RUNNING';
   const isCmdTool = category === 'CMD';
+  const isRolledBack = tc.rolledBack === true;
 
   return (
-    <ChainOfThoughtStep
-      defaultOpen={false}
-      forceOpen={isRunning && isCmdTool}
-    >
-      <ChainOfThoughtTrigger
-        isActive={isRunning}
-        icon={<StatusIcon status={tc.status} />}
-      >
-        <span className="flex items-center gap-1.5 w-full min-w-0">
-          <Badge
-            variant="secondary"
-            className={cn(
-              'rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-wider border-0 shrink-0',
-              catStyle.className,
-            )}
-          >
-            {catStyle.label}
-          </Badge>
-          <span className="font-mono font-medium text-[var(--fg)] shrink-0">{tc.name}</span>
-          {target && (
-            <span className="truncate font-mono text-[var(--fg-muted)]" style={{ maxWidth: '150px' }}>
-              {target}
-            </span>
-          )}
-          <span className="flex-1" />
-          {isRunning && (
-            <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">running</span>
-          )}
-          {tc.durationMs != null && !isRunning && (
-            <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
-              {formatDuration(tc.durationMs)}
-            </span>
-          )}
-        </span>
-      </ChainOfThoughtTrigger>
-      <ChainOfThoughtContent>
-        {isCmdTool ? (
-          <TerminalContent toolCall={tc} />
-        ) : (
-          <ToolCallDetails toolCall={tc} />
-        )}
-      </ChainOfThoughtContent>
-      {tc.status === 'ERROR' && tc.result && (
-        <div className="mt-1 text-[11px] px-2 py-1 rounded"
+    <div className={cn('relative', isRolledBack && 'opacity-40')}>
+      {isRolledBack && (
+        <span
+          className="absolute -top-1 -right-1 z-10 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider"
           style={{
-            color: 'var(--error, #ef4444)',
-            background: 'var(--diff-rem-bg, rgba(239,68,68,0.1))',
-          }}>
-          {tc.result}
-        </div>
+            background: 'var(--warning, #e5a100)',
+            color: 'var(--bg, #1e1e1e)',
+          }}
+        >
+          reverted
+        </span>
       )}
-    </ChainOfThoughtStep>
+      <ChainOfThoughtStep
+        defaultOpen={false}
+        forceOpen={isRunning && isCmdTool}
+      >
+        <ChainOfThoughtTrigger
+          isActive={isRunning}
+          icon={<StatusIcon status={tc.status} />}
+        >
+          <span className="flex items-center gap-1.5 w-full min-w-0">
+            <Badge
+              variant="secondary"
+              className={cn(
+                'rounded px-1 py-0 text-[9px] font-semibold uppercase tracking-wider border-0 shrink-0',
+                catStyle.className,
+              )}
+            >
+              {catStyle.label}
+            </Badge>
+            <span className={cn('font-mono font-medium text-[var(--fg)] shrink-0', isRolledBack && 'line-through')}>{tc.name}</span>
+            {target && (
+              <span className={cn('truncate font-mono text-[var(--fg-muted)]', isRolledBack && 'line-through')} style={{ maxWidth: '150px' }}>
+                {target}
+              </span>
+            )}
+            <span className="flex-1" />
+            {isRunning && (
+              <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">running</span>
+            )}
+            {tc.durationMs != null && !isRunning && (
+              <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
+                {formatDuration(tc.durationMs)}
+              </span>
+            )}
+          </span>
+        </ChainOfThoughtTrigger>
+        <ChainOfThoughtContent>
+          {isCmdTool ? (
+            <TerminalContent toolCall={tc} />
+          ) : (
+            <ToolCallDetails toolCall={tc} />
+          )}
+        </ChainOfThoughtContent>
+        {tc.status === 'ERROR' && tc.result && (
+          <div className="mt-1 text-[11px] px-2 py-1 rounded"
+            style={{
+              color: 'var(--error, #ef4444)',
+              background: 'var(--diff-rem-bg, rgba(239,68,68,0.1))',
+            }}>
+            {tc.result}
+          </div>
+        )}
+      </ChainOfThoughtStep>
+    </div>
   );
 });
 
