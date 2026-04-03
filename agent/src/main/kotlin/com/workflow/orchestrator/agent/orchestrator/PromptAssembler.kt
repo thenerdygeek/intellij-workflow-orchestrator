@@ -111,6 +111,7 @@ class PromptAssembler(
         }
         sections.add(FEW_SHOT_EXAMPLES)
         sections.add(RULES)
+        sections.add(STEERING_RULES)
 
         val activeToolNames = if (activeTools.isNotEmpty()) activeTools.map { it.name }.toSet() else null
         val integrationRules = buildIntegrationRules(activeToolNames)
@@ -507,6 +508,21 @@ Do NOT call attempt_completion when completing individual plan steps — use upd
             Bad approach: Immediately editing files without understanding requirements or planning.
             </example>
             </examples>
+        """.trimIndent()
+
+        val STEERING_RULES = """
+            <user_steering_protocol>
+            ## User Steering
+
+            Messages wrapped in <user_steering> tags are real-time redirections from the user sent while you were working. When you see a steering message:
+
+            1. **Acknowledge briefly** — confirm you received the redirection (one sentence)
+            2. **Adjust immediately** — change your approach to match the user's new direction
+            3. **Don't restart from scratch** — build on work already done unless the user explicitly asks to discard it
+            4. **Don't apologize** — the user is steering, not correcting a mistake
+
+            Example: if you were fixing a database migration and receive `<user_steering>Skip the migration, focus on the API endpoints</user_steering>`, stop the migration work and pivot to API endpoints, keeping any useful context you've already gathered.
+            </user_steering_protocol>
         """.trimIndent()
 
         val RULES = """
