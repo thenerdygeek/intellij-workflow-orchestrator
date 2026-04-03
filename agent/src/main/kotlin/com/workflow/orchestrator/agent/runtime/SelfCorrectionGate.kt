@@ -241,4 +241,28 @@ class SelfCorrectionGate(
      * Check if a file is tracked (was edited in this session).
      */
     fun isTracked(filePath: String): Boolean = normalizePath(filePath) in fileStates
+
+    /**
+     * Restore verification state from a [ChangeLedger] on session resume.
+     *
+     * Walks all ledger entries and reconstructs [FileState] so that the gate
+     * knows which files were edited, which were verified, and which had errors.
+     * Called once during session resume before the ReAct loop restarts.
+     */
+    fun restoreFromLedger(ledger: ChangeLedger) {
+        for (entry in ledger.allEntries()) {
+            val path = normalizePath(entry.filePath)
+            if (!isVerifiableExtension(path)) continue
+            val state = fileStates.getOrPut(path) { FileState() }
+            state.editCount++
+            if (entry.verified) {
+                state.verified = true
+                state.verificationRequested = true
+            } else if (entry.verificationError != null) {
+                state.lastError = entry.verificationError
+                state.retryCount++
+                state.verificationRequested = true
+            }
+        }
+    }
 }
