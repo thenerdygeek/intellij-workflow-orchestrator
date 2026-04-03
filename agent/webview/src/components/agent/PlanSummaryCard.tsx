@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, Check, RotateCcw, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
@@ -9,6 +9,43 @@ import { useChatStore } from '@/stores/chatStore';
 
 interface PlanSummaryCardProps {
   plan: Plan;
+}
+
+/** Typewriter effect — reveals text character by character. */
+function TypewriterText({ text, speed = 12 }: { text: string; speed?: number }) {
+  const [displayed, setDisplayed] = useState('');
+  const indexRef = useRef(0);
+  const prevTextRef = useRef('');
+
+  useEffect(() => {
+    // Reset when summary text changes (new plan)
+    if (text !== prevTextRef.current) {
+      prevTextRef.current = text;
+      indexRef.current = 0;
+      setDisplayed('');
+    }
+
+    const timer = setInterval(() => {
+      if (indexRef.current < text.length) {
+        indexRef.current++;
+        setDisplayed(text.slice(0, indexRef.current));
+      } else {
+        clearInterval(timer);
+      }
+    }, speed);
+
+    return () => clearInterval(timer);
+  }, [text, speed]);
+
+  return (
+    <>
+      {displayed}
+      {displayed.length < text.length && (
+        <span className="inline-block w-[2px] h-[13px] align-middle ml-[1px] animate-pulse"
+          style={{ backgroundColor: 'var(--accent)' }} />
+      )}
+    </>
+  );
 }
 
 export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
@@ -100,7 +137,7 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
             className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
             style={{ color: 'var(--fg-secondary)' }}
           >
-            {plan.summary}
+            <TypewriterText text={plan.summary} />
           </div>
         ) : plan.markdown ? (
           <div
