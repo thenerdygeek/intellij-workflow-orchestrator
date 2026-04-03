@@ -72,7 +72,7 @@ object DynamicToolSelector {
 
     private val GRADLE_TOOL_NAMES = setOf("build")
 
-    private val RUNTIME_TOOL_NAMES = setOf("runtime_config", "runtime_exec")
+    private val RUNTIME_TOOL_NAMES = setOf("runtime_config", "runtime_exec", "coverage")
 
     private val IDE_TOOL_NAMES = setOf(
         "run_inspections", "refactor_rename", "list_quickfixes",
@@ -162,6 +162,12 @@ object DynamicToolSelector {
             "runtime",
             setOf("run", "execute", "process", "launch", "test result", "test output",
                 "test fail", "run config", "run configuration", "test", "tests", "run test"),
+            RUNTIME_TOOL_NAMES
+        ),
+        ToolGroup(
+            "coverage",
+            setOf("coverage", "covered", "uncovered", "test coverage", "line coverage",
+                "code coverage", "coverage report", "run with coverage"),
             RUNTIME_TOOL_NAMES
         ),
         ToolGroup(

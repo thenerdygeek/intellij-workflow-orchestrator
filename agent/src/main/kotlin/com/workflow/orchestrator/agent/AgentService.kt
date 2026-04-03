@@ -284,6 +284,7 @@ class AgentService(
             // Runtime integration — split into config (run configurations) and exec (processes/tests/compile)
             register(RuntimeConfigTool())
             register(RuntimeExecTool())
+            register(CoverageTool())
             // Debug integration — split into breakpoints, stepping, and inspection
             register(DebugBreakpointsTool(debugController))
             register(DebugStepTool(debugController))
