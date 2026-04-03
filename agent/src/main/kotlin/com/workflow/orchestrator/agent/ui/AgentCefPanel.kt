@@ -995,6 +995,10 @@ class AgentCefPanel(
         callJs("updateCheckpoints(${jsonStr(checkpointsJson)})")
     }
 
+    fun notifyRollback(rollbackJson: String) {
+        callJs("notifyRollback(${jsonStr(rollbackJson)})")
+    }
+
     // ═══════════════════════════════════════════════════
     //  Theme
     // ═══════════════════════════════════════════════════

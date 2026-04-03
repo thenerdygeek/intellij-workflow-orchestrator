@@ -230,7 +230,7 @@ class RunCommandTool : AgentTool {
             }
 
             if (!isSafe) {
-                return "Error: 'git $subCommand' is blocked for safety. Allowed read-only git commands: ${SAFE_GIT_SUBCOMMANDS.joinToString(", ")}. For write operations, use the appropriate IDE tools."
+                return "Error: 'git $subCommand' is blocked for safety. To revert file changes, use the rollback_changes or revert_file tools instead. Allowed read-only git commands: ${SAFE_GIT_SUBCOMMANDS.joinToString(", ")}."
             }
 
             // Block remote refs only in write git commands; allow in read-only commands
@@ -247,7 +247,7 @@ class RunCommandTool : AgentTool {
             // Check for dangerous flags even in safe sub-commands
             for (flag in DANGEROUS_GIT_FLAGS) {
                 if (trimmed.contains(" $flag") || trimmed.contains("=$flag")) {
-                    return "Error: Flag '$flag' is blocked for safety in git commands."
+                    return "Error: Flag '$flag' is blocked for safety in git commands. To revert changes, use rollback_changes or revert_file tools instead."
                 }
             }
 

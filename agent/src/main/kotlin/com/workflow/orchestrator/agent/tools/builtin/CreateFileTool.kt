@@ -131,6 +131,7 @@ class CreateFileTool : AgentTool {
             val iteration = agentService.currentIteration ?: 0
 
             val checkpointId = rollback?.createCheckpoint("Create $rawPath") ?: ""
+            rollback?.trackFileCreation(resolvedPath)
 
             val lineCount = content.lines().size
             ledger?.recordChange(ChangeEntry(

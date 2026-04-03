@@ -544,6 +544,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.updateCheckpoints(checkpointsJson) }
     }
 
+    fun notifyRollback(rollbackJson: String) {
+        runOnEdt { cefPanel?.notifyRollback(rollbackJson) }
+        mirrors.forEach { it.notifyRollback(rollbackJson) }
+    }
+
     fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
         cefPanel?.onRevertCheckpoint = onRevert
     }

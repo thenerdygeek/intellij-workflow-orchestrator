@@ -170,6 +170,7 @@ class EditFileTool : AgentTool {
             val iteration = agentService.currentIteration ?: 0
 
             val checkpointId = rollback?.createCheckpoint("Edit $rawPath") ?: ""
+            rollback?.trackFileChange(resolvedPath)
 
             val oldLineCount = content.lines().size
             val newLineCount = newContent.lines().size
