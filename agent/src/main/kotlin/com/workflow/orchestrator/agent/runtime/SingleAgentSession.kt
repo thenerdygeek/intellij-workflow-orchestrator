@@ -358,6 +358,7 @@ class SingleAgentSession(
                 if (steeringMessages.isNotEmpty()) {
                     for (msg in steeringMessages) {
                         bridge.addSteeringMessage(msg.content)
+                        eventLog?.log(AgentEventType.STEERING_RECEIVED, "User steering: ${msg.content.take(200)}")
                     }
                     LOG.info("SingleAgentSession: injected ${steeringMessages.size} steering message(s) at iteration $iteration")
                     onProgress(AgentProgress(
