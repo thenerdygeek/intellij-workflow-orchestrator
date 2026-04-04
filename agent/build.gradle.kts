@@ -39,6 +39,7 @@ dependencies {
     testRuntimeOnly(libs.junit5.platform.launcher)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.kotlinx.serialization.json)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.turbine)
 }
