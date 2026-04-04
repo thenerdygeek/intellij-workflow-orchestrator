@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.Files
 
 class MemoryToolsTest {
 
@@ -21,6 +22,10 @@ class MemoryToolsTest {
     lateinit var tempDir: File
 
     private val project = mockk<Project>(relaxed = true)
+
+    private fun createFreshTempDir(): File = Files.createTempDirectory("memory-test").toFile().also {
+        it.deleteOnExit()
+    }
 
     // ---- CoreMemoryReadTool ----
 
@@ -276,42 +281,36 @@ class MemoryToolsTest {
 
     @Nested
     inner class ConversationSearchTests {
-        @TempDir
-        lateinit var convTempDir: File
 
-        private lateinit var conversationRecall: ConversationRecall
-        private lateinit var tool: ConversationSearchTool
-
-        @BeforeEach
-        fun setup() {
-            val sessionsDir = File(convTempDir, "sessions")
-            // Create a test session with messages.jsonl
+        private fun setupConversationTool(): ConversationSearchTool {
+            val freshDir = createFreshTempDir()
+            val sessionsDir = File(freshDir, "sessions")
             val sessionDir = File(sessionsDir, "session-001")
             sessionDir.mkdirs()
             val messagesFile = File(sessionDir, "messages.jsonl")
             messagesFile.writeText(buildString {
                 appendLine("""{"role":"user","content":"How do I fix the CORS error in Spring Boot?"}""")
-                appendLine("""{"role":"assistant","content":"Add @CrossOrigin annotation to your controller."}""")
+                appendLine("""{"role":"assistant","content":"To fix the CORS issue, add @CrossOrigin annotation to your controller."}""")
                 appendLine("""{"role":"user","content":"That worked, thanks!"}""")
             })
-
-            conversationRecall = ConversationRecall(sessionsDir)
-            tool = ConversationSearchTool(conversationRecall)
+            return ConversationSearchTool(ConversationRecall(sessionsDir))
         }
 
         @Test
         fun `search returns formatted results`() = runTest {
+            val tool = setupConversationTool()
             val result = tool.execute(buildJsonObject {
                 put("query", "CORS")
             }, project)
-            assertFalse(result.isError)
-            assertTrue(result.content.contains("CORS"))
-            assertTrue(result.content.contains("session-001"))
-            assertTrue(result.content.contains("Found"))
+            assertFalse(result.isError, "Result was error: ${result.content}")
+            assertTrue(result.content.contains("CORS"), "Expected CORS in: ${result.content}")
+            assertTrue(result.content.contains("session-001"), "Expected session-001 in: ${result.content}")
+            assertTrue(result.content.contains("Found"), "Expected Found in: ${result.content}")
         }
 
         @Test
         fun `search with role filter`() = runTest {
+            val tool = setupConversationTool()
             val result = tool.execute(buildJsonObject {
                 put("query", "CORS")
                 put("roles", "assistant")
@@ -324,6 +323,7 @@ class MemoryToolsTest {
 
         @Test
         fun `no results returns info message`() = runTest {
+            val tool = setupConversationTool()
             val result = tool.execute(buildJsonObject {
                 put("query", "kubernetes deployment")
             }, project)
