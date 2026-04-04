@@ -1,5 +1,11 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+/*
+ * TODO: Re-enable after lean agent rewrite restores RequestToolsTool.
+ * The class and AgentService.pendingToolActivations were removed during the agent gut.
+ */
+
+/*
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.settings.ToolPreferences
@@ -13,7 +19,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.util.concurrent.ConcurrentLinkedQueue
 
-class RequestToolsToolTest {
+class RequestToolsToolTest_DISABLED {
 
     private val project = mockk<Project>(relaxed = true)
     private val tool = RequestToolsTool()
@@ -151,3 +157,4 @@ class RequestToolsToolTest {
         assertFalse(desc.contains("'core':"))
     }
 }
+*/
