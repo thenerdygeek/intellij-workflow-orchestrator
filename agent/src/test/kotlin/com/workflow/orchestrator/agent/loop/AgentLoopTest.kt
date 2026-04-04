@@ -31,7 +31,6 @@ class AgentLoopTest {
 
     // ---- Helpers ----
 
-    /** Creates a ChatCompletionResponse with text content and no tool calls. */
     private fun textResponse(content: String): ChatCompletionResponse =
         ChatCompletionResponse(
             id = "resp-${System.nanoTime()}",
@@ -45,7 +44,6 @@ class AgentLoopTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 20, totalTokens = 120)
         )
 
-    /** Creates a ChatCompletionResponse with tool calls. */
     private fun toolCallResponse(vararg calls: Pair<String, String>): ChatCompletionResponse =
         ChatCompletionResponse(
             id = "resp-${System.nanoTime()}",
@@ -69,7 +67,6 @@ class AgentLoopTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 30, totalTokens = 130)
         )
 
-    /** Creates a ChatCompletionResponse with no content and no tool calls (empty). */
     private fun emptyResponse(): ChatCompletionResponse =
         ChatCompletionResponse(
             id = "resp-${System.nanoTime()}",
@@ -83,7 +80,6 @@ class AgentLoopTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
         )
 
-    /** Creates a response with finish_reason "length" (truncated output). */
     private fun lengthResponse(partialContent: String? = "I was about to call"): ChatCompletionResponse =
         ChatCompletionResponse(
             id = "resp-${System.nanoTime()}",
@@ -107,10 +103,6 @@ class AgentLoopTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 4096, totalTokens = 4196)
         )
 
-    /**
-     * A fake LlmBrain that returns pre-configured responses in sequence via chatStream.
-     * Each call to chatStream returns the next response in the list.
-     */
     private class SequenceBrain(private val responses: List<ApiResult<ChatCompletionResponse>>) : LlmBrain {
         override val modelId: String = "test-model"
         private var callIndex = 0
@@ -142,11 +134,9 @@ class AgentLoopTest {
         override fun cancelActiveRequest() { cancelCalled = true }
     }
 
-    /** Convenience: build a SequenceBrain from successful responses. */
     private fun sequenceBrain(vararg responses: ChatCompletionResponse): SequenceBrain =
         SequenceBrain(responses.map { ApiResult.Success(it) })
 
-    /** A simple AgentTool that returns a fixed result. */
     private fun fakeTool(
         toolName: String,
         result: ToolResult = ToolResult(content = "ok", summary = "ok", tokenEstimate = 5)
@@ -158,7 +148,6 @@ class AgentLoopTest {
         override suspend fun execute(params: JsonObject, project: Project) = result
     }
 
-    /** The "attempt_completion" tool that marks the loop as done. */
     private fun completionTool(summary: String = "Done.") = fakeTool(
         "attempt_completion",
         ToolResult(
@@ -169,7 +158,6 @@ class AgentLoopTest {
         )
     )
 
-    /** Build an AgentLoop with the given brain and tools. */
     private fun buildLoop(
         brain: LlmBrain,
         tools: List<AgentTool>,
@@ -201,9 +189,7 @@ class AgentLoopTest {
         @Test
         fun `completes when attempt_completion tool returns isCompletion=true`() = runTest {
             val brain = sequenceBrain(
-                // First call: model calls read_file
                 toolCallResponse("read_file" to """{"path":"src/main.kt"}"""),
-                // Second call: model calls attempt_completion
                 toolCallResponse("attempt_completion" to """{"result":"All done."}""")
             )
 
@@ -227,9 +213,7 @@ class AgentLoopTest {
         @Test
         fun `injects continuation prompt on empty response`() = runTest {
             val brain = sequenceBrain(
-                // First call: empty response
                 emptyResponse(),
-                // Second call: model recovers and calls attempt_completion
                 toolCallResponse("attempt_completion" to """{"result":"Recovered."}""")
             )
 
@@ -264,9 +248,7 @@ class AgentLoopTest {
         @Test
         fun `nudges to use tools on text-only response`() = runTest {
             val brain = sequenceBrain(
-                // First call: text-only (thinking aloud)
                 textResponse("I think the problem might be in the main function."),
-                // Second call: model uses a tool after the nudge
                 toolCallResponse("attempt_completion" to """{"result":"Fixed."}""")
             )
 
@@ -284,9 +266,7 @@ class AgentLoopTest {
         @Test
         fun `handles unknown tool name gracefully`() = runTest {
             val brain = sequenceBrain(
-                // First call: model calls a tool that doesn't exist
                 toolCallResponse("nonexistent_tool" to """{}"""),
-                // Second call: model recovers
                 toolCallResponse("attempt_completion" to """{"result":"Done anyway."}""")
             )
 
@@ -300,9 +280,7 @@ class AgentLoopTest {
         @Test
         fun `handles invalid JSON arguments gracefully`() = runTest {
             val brain = sequenceBrain(
-                // First call: model sends malformed JSON
                 toolCallResponse("read_file" to """not valid json{{{"""),
-                // Second call: model recovers
                 toolCallResponse("attempt_completion" to """{"result":"Done."}""")
             )
 
@@ -337,34 +315,12 @@ class AgentLoopTest {
 
         @Test
         fun `cancel stops the loop immediately`() = runTest {
-            // Brain returns a tool call, but we cancel before the second iteration
-            val brain = sequenceBrain(
-                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
-                toolCallResponse("read_file" to """{"path":"b.kt"}"""),
-                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            val brain2 = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}""")
             )
-
             val tools = listOf(
                 fakeTool("read_file"),
                 completionTool("Done.")
-            )
-
-            val loop = buildLoop(brain, tools)
-
-            // Cancel after seeing the first tool call
-            var firstToolSeen = false
-            val loopWithCallback = buildLoop(brain, tools, onToolCall = { progress ->
-                if (!firstToolSeen) {
-                    firstToolSeen = true
-                    loop.cancel()
-                }
-            })
-
-            // Use the loop with callback (but same brain)
-            // Actually, we need a fresh brain and loop pair. Let me rethink.
-            // Simpler: cancel immediately before running.
-            val brain2 = sequenceBrain(
-                toolCallResponse("read_file" to """{"path":"a.kt"}""")
             )
             val loop2 = buildLoop(brain2, tools)
             loop2.cancel()
@@ -392,12 +348,11 @@ class AgentLoopTest {
             val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
             loop.run("Fix it")
 
-            // I8: Each tool fires start (before) + complete (after) = 4 callbacks total
             assertEquals(4, progressList.size)
-            assertEquals("read_file", progressList[0].toolName)    // start
-            assertEquals("read_file", progressList[1].toolName)    // complete
-            assertEquals("attempt_completion", progressList[2].toolName)  // start
-            assertEquals("attempt_completion", progressList[3].toolName)  // complete
+            assertEquals("read_file", progressList[0].toolName)
+            assertEquals("read_file", progressList[1].toolName)
+            assertEquals("attempt_completion", progressList[2].toolName)
+            assertEquals("attempt_completion", progressList[3].toolName)
         }
     }
 
@@ -406,7 +361,6 @@ class AgentLoopTest {
 
         @Test
         fun `fails when max iterations exceeded`() = runTest {
-            // Brain always returns a tool call that isn't completion
             val responses = (1..5).map {
                 toolCallResponse("read_file" to """{"path":"file$it.kt"}""")
             }
@@ -425,7 +379,7 @@ class AgentLoopTest {
         }
     }
 
-    // ---- C1: Plan mode execution guard ----
+    // ---- Plan mode guard ----
 
     @Nested
     inner class PlanModeGuardTests {
@@ -433,9 +387,7 @@ class AgentLoopTest {
         @Test
         fun `plan mode blocks write tools with error message`() = runTest {
             val brain = sequenceBrain(
-                // Model hallucinates edit_file in plan mode
                 toolCallResponse("edit_file" to """{"path":"a.kt","content":"bad"}"""),
-                // Model recovers and calls attempt_completion
                 toolCallResponse("attempt_completion" to """{"result":"Planned."}""")
             )
 
@@ -449,7 +401,6 @@ class AgentLoopTest {
 
             assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
 
-            // The edit_file call should have been blocked
             val editProgress = progressList.find { it.toolName == "edit_file" }
             assertNotNull(editProgress, "edit_file progress should be reported")
             assertTrue(editProgress!!.isError, "edit_file should be an error")
@@ -459,7 +410,6 @@ class AgentLoopTest {
         @Test
         fun `plan mode allows read tools`() = runTest {
             val brain = sequenceBrain(
-                // Model calls read_file (allowed in plan mode)
                 toolCallResponse("read_file" to """{"path":"a.kt"}"""),
                 toolCallResponse("attempt_completion" to """{"result":"Done reading."}""")
             )
@@ -474,7 +424,6 @@ class AgentLoopTest {
 
             assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
 
-            // read_file should NOT be blocked
             val readProgress = progressList.find { it.toolName == "read_file" }
             assertNotNull(readProgress, "read_file progress should be reported")
             assertFalse(readProgress!!.isError, "read_file should not be an error in plan mode")
@@ -482,7 +431,6 @@ class AgentLoopTest {
 
         @Test
         fun `all write tool names are blocked in plan mode`() = runTest {
-            // Verify each write tool name is in the WRITE_TOOLS set
             val expectedWriteTools = setOf(
                 "edit_file", "create_file", "run_command", "revert_file",
                 "kill_process", "send_stdin", "format_code", "optimize_imports",
@@ -492,7 +440,7 @@ class AgentLoopTest {
         }
     }
 
-    // ---- C3: API retry for transient failures ----
+    // ---- API retry ----
 
     @Nested
     inner class ApiRetryTests {
@@ -500,11 +448,8 @@ class AgentLoopTest {
         @Test
         fun `retries on rate limit error and recovers`() = runTest {
             val brain = SequenceBrain(listOf(
-                // First call: 429 rate limit
                 ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
-                // Second call: 429 again
                 ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
-                // Third call: success with completion
                 ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
             ))
 
@@ -518,9 +463,7 @@ class AgentLoopTest {
         @Test
         fun `retries on server error and recovers`() = runTest {
             val brain = SequenceBrain(listOf(
-                // First call: 500 server error
                 ApiResult.Error(ErrorType.SERVER_ERROR, "Internal server error"),
-                // Second call: success
                 ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Recovered."}"""))
             ))
 
@@ -533,7 +476,6 @@ class AgentLoopTest {
 
         @Test
         fun `fails after max retries exceeded`() = runTest {
-            // 6 rate limit errors — exceeds MAX_API_RETRIES (5)
             val errors = (1..6).map {
                 ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded") as ApiResult<ChatCompletionResponse>
             }
@@ -566,13 +508,9 @@ class AgentLoopTest {
         @Test
         fun `resets retry count after successful API call`() = runTest {
             val brain = SequenceBrain(listOf(
-                // First: rate limit error
                 ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
-                // Second: success (read_file)
                 ApiResult.Success(toolCallResponse("read_file" to """{"path":"a.kt"}""")),
-                // Third: another rate limit error (retry count should be reset)
                 ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
-                // Fourth: success (completion)
                 ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
             ))
 
@@ -602,7 +540,7 @@ class AgentLoopTest {
         }
     }
 
-    // ---- I1: finish_reason length handling ----
+    // ---- finish_reason: length ----
 
     @Nested
     inner class FinishReasonLengthTests {
@@ -610,9 +548,7 @@ class AgentLoopTest {
         @Test
         fun `finish_reason length injects continuation instead of processing tool calls`() = runTest {
             val brain = sequenceBrain(
-                // First call: truncated response (finish_reason: length) with partial tool call JSON
                 lengthResponse("I was about to call"),
-                // Second call: model recovers after continuation prompt
                 toolCallResponse("attempt_completion" to """{"result":"Done after retry."}""")
             )
 
@@ -625,7 +561,6 @@ class AgentLoopTest {
             val result = loop.run("Fix the bug")
 
             assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
-            // The truncated tool call should NOT have been executed
             val readFileCalls = progressList.filter { it.toolName == "read_file" }
             assertTrue(readFileCalls.isEmpty(), "read_file should not have been called from truncated response")
         }
@@ -641,7 +576,6 @@ class AgentLoopTest {
             val loop = buildLoop(brain, tools)
             loop.run("Do something")
 
-            // Check that the continuation message was added to context
             val messages = contextManager.getMessages()
             val continuationMsg = messages.find {
                 it.role == "user" && it.content?.contains("cut short") == true
@@ -650,7 +584,7 @@ class AgentLoopTest {
         }
     }
 
-    // ---- I8: Tool progress fires before AND after execution ----
+    // ---- Tool progress callbacks ----
 
     @Nested
     inner class ToolProgressCallbackTests {
@@ -670,17 +604,13 @@ class AgentLoopTest {
             val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
             loop.run("Fix it")
 
-            // Each tool should fire twice: once before (start) and once after (complete)
-            // read_file: start + complete, attempt_completion: start + complete = 4
             assertEquals(4, progressList.size, "Expected 4 progress events (2 tools x 2 callbacks each)")
 
-            // read_file start callback: empty result, zero duration
             val readStart = progressList[0]
             assertEquals("read_file", readStart.toolName)
             assertEquals("", readStart.result)
             assertEquals(0L, readStart.durationMs)
 
-            // read_file complete callback: has result and duration
             val readComplete = progressList[1]
             assertEquals("read_file", readComplete.toolName)
             assertTrue(readComplete.result.isNotEmpty(), "Completed callback should have result")
@@ -690,7 +620,6 @@ class AgentLoopTest {
         @Test
         fun `start callback fires even when tool execution fails`() = runTest {
             val brain = sequenceBrain(
-                // Call a tool with bad JSON — should still get start callback
                 toolCallResponse("read_file" to """not valid json{{{"""),
                 toolCallResponse("attempt_completion" to """{"result":"Done."}""")
             )
@@ -703,12 +632,178 @@ class AgentLoopTest {
             val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
             loop.run("Do something")
 
-            // read_file: just error callback (no start since JSON parse fails before execute)
-            // attempt_completion: start + complete
-            // Actually, invalid JSON fires error callback only (before start is not fired for JSON parse failure)
-            // Let's verify we get at least the attempt_completion start+complete
             val completionCallbacks = progressList.filter { it.toolName == "attempt_completion" }
             assertEquals(2, completionCallbacks.size, "attempt_completion should have start + complete callbacks")
+        }
+    }
+
+    // ---- Loop detection (from Cline) ----
+
+    @Nested
+    inner class LoopDetectionTests {
+
+        @Test
+        fun `fails after 5 consecutive identical tool calls`() = runTest {
+            // 5 identical read_file calls with same args
+            val responses = (1..5).map {
+                toolCallResponse("read_file" to """{"path":"a.kt"}""")
+            }
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool()
+            )
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Read the file")
+
+            assertTrue(result is LoopResult.Failed, "Expected Failed after loop detection but got $result")
+            val failed = result as LoopResult.Failed
+            assertTrue(
+                failed.error.contains("Loop detected", ignoreCase = true),
+                "Error should mention loop detection, got: ${failed.error}"
+            )
+        }
+
+        @Test
+        fun `injects warning at 3 consecutive identical calls`() = runTest {
+            // 3 identical calls, then a different call, then completion
+            val responses = listOf(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                // Model self-corrects after warning
+                toolCallResponse("read_file" to """{"path":"b.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Read files")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after self-correction but got $result")
+
+            // Verify the warning was injected into context
+            val messages = contextManager.getMessages()
+            val warningMsg = messages.find {
+                it.role == "user" && it.content?.contains("same tool with identical arguments") == true
+            }
+            assertNotNull(warningMsg, "Soft warning should be injected at 3 consecutive identical calls")
+        }
+
+        @Test
+        fun `different tool calls do not trigger loop detection`() = runTest {
+            // All different files
+            val responses = listOf(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"b.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"c.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"d.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"e.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Read all files")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed with different args, but got $result")
+        }
+    }
+
+    // ---- Context overflow detection (from Cline) ----
+
+    @Nested
+    inner class ContextOverflowTests {
+
+        @Test
+        fun `detects explicit CONTEXT_LENGTH_EXCEEDED error`() {
+            val loop = buildLoop(sequenceBrain(), listOf(completionTool()))
+            val error = ApiResult.Error(ErrorType.CONTEXT_LENGTH_EXCEEDED, "Context too long")
+            assertTrue(loop.isContextOverflowError(error), "Should detect CONTEXT_LENGTH_EXCEEDED")
+        }
+
+        @Test
+        fun `detects context overflow from error message patterns`() {
+            val loop = buildLoop(sequenceBrain(), listOf(completionTool()))
+
+            val patterns = listOf(
+                "maximum context length exceeded",
+                "token limit exceeded for this model",
+                "context window limit reached",
+                "input too long for this model",
+                "prompt too large",
+                "Maximum token limit exceeded"
+            )
+
+            for (msg in patterns) {
+                val error = ApiResult.Error(ErrorType.VALIDATION_ERROR, msg)
+                assertTrue(
+                    loop.isContextOverflowError(error),
+                    "Should detect overflow from message: '$msg'"
+                )
+            }
+        }
+
+        @Test
+        fun `does not false-positive on unrelated errors`() {
+            val loop = buildLoop(sequenceBrain(), listOf(completionTool()))
+
+            val unrelatedErrors = listOf(
+                ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid token"),
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
+                ApiResult.Error(ErrorType.VALIDATION_ERROR, "Invalid model parameter"),
+                ApiResult.Error(ErrorType.SERVER_ERROR, "Internal server error")
+            )
+
+            for (error in unrelatedErrors) {
+                assertFalse(
+                    loop.isContextOverflowError(error),
+                    "Should not detect overflow from: ${error.message}"
+                )
+            }
+        }
+
+        @Test
+        fun `context overflow triggers compaction and retries`() = runTest {
+            val brain = SequenceBrain(listOf(
+                // First call: context overflow
+                ApiResult.Error(ErrorType.CONTEXT_LENGTH_EXCEEDED, "Context too long"),
+                // After compaction, retry succeeds
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+            ))
+
+            val tools = listOf(completionTool("Done."))
+            // Use a context manager with very low threshold so compact() actually triggers
+            contextManager = ContextManager(maxInputTokens = 100, compactionThreshold = 0.01)
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after overflow recovery but got $result")
+        }
+
+        @Test
+        fun `fails after max context overflow retries`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Error(ErrorType.CONTEXT_LENGTH_EXCEEDED, "Context too long"),
+                ApiResult.Error(ErrorType.CONTEXT_LENGTH_EXCEEDED, "Context too long"),
+                ApiResult.Error(ErrorType.CONTEXT_LENGTH_EXCEEDED, "Still too long")
+            ))
+
+            val tools = listOf(completionTool())
+            contextManager = ContextManager(maxInputTokens = 100, compactionThreshold = 0.01)
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Failed, "Expected Failed after max overflow retries but got $result")
         }
     }
 }

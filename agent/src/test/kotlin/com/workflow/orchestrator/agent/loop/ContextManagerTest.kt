@@ -67,7 +67,6 @@ class ContextManagerTest {
             cm.addToolResult(toolCallId = "call_abc", content = "result text", isError = false)
 
             val messages = cm.getMessages()
-            // No system prompt set, so first message is the tool result
             assertEquals(1, messages.size)
             val msg = messages[0]
             assertEquals("tool", msg.role)
@@ -121,10 +120,9 @@ class ContextManagerTest {
         @Test
         fun `utilization uses local estimate when no API data`() {
             cm = ContextManager(maxInputTokens = 1000)
-            cm.setSystemPrompt("sys") // 3 bytes -> ~0.75 tokens
-            cm.addUserMessage("hello world") // 11 bytes -> ~2.75 tokens
+            cm.setSystemPrompt("sys")
+            cm.addUserMessage("hello world")
 
-            // Should use bytes/4 estimate, result should be > 0 and < 100
             val util = cm.utilizationPercent()
             assertTrue(util > 0.0, "utilization should be positive")
             assertTrue(util < 100.0, "utilization should be under 100%")
@@ -146,11 +144,270 @@ class ContextManagerTest {
 
         @Test
         fun `tokenEstimate returns bytes div 4 estimate`() {
-            cm.setSystemPrompt("abcd") // 4 bytes (system prompt, not in messages list)
-            cm.addUserMessage("abcdefgh") // 8 bytes content + 4 bytes per-message overhead
+            cm.setSystemPrompt("abcd")
+            cm.addUserMessage("abcdefgh")
 
-            // estimate: "abcd" (4 bytes) + "abcdefgh" (8 bytes) + overhead (4 bytes) = 16 / 4 = 4
             assertEquals(4, cm.tokenEstimate())
+        }
+    }
+
+    // ---- Stage 1: Duplicate file read detection (from Cline) ----
+
+    @Nested
+    inner class DuplicateFileReadDetection {
+
+        @Test
+        fun `replaces older file reads with dedup notice keeping latest`() {
+            cm.setSystemPrompt("sys")
+
+            // First read of file a.kt
+            cm.addUserMessage("Read this file")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c1", type = "function", function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                    )
+                )
+            )
+            cm.addToolResult(
+                toolCallId = "c1",
+                content = "[read_file for 'a.kt'] Result:\nfun main() { println(\"hello\") }",
+                isError = false,
+                toolName = "read_file"
+            )
+
+            // Second read of the same file
+            cm.addUserMessage("Read it again")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c2", type = "function", function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                    )
+                )
+            )
+            cm.addToolResult(
+                toolCallId = "c2",
+                content = "[read_file for 'a.kt'] Result:\nfun main() { println(\"hello world\") }",
+                isError = false,
+                toolName = "read_file"
+            )
+
+            val percentSaved = cm.deduplicateFileReads()
+
+            assertTrue(percentSaved > 0.0, "Should save space by deduplicating")
+
+            // First read should be replaced with a notice
+            val messages = cm.getMessages()
+            val firstToolResult = messages.find { it.role == "tool" && it.toolCallId == "call_abc" }
+                ?: messages.filter { it.role == "tool" }[0]
+            assertTrue(
+                firstToolResult.content!!.contains("previously read"),
+                "First read should be replaced with dedup notice, got: ${firstToolResult.content}"
+            )
+
+            // Second read should be intact
+            val toolResults = messages.filter { it.role == "tool" }
+            val lastToolResult = toolResults.last()
+            assertTrue(
+                lastToolResult.content!!.contains("hello world"),
+                "Latest read should be preserved intact"
+            )
+        }
+
+        @Test
+        fun `no dedup when each file read is unique`() {
+            cm.setSystemPrompt("sys")
+
+            // Read a.kt
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c1", type = "function", function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                    )
+                )
+            )
+            cm.addToolResult(
+                toolCallId = "c1",
+                content = "[read_file for 'a.kt'] Result:\ncode a",
+                isError = false,
+                toolName = "read_file"
+            )
+
+            // Read b.kt (different file)
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c2", type = "function", function = FunctionCall("read_file", """{"path":"b.kt"}"""))
+                    )
+                )
+            )
+            cm.addToolResult(
+                toolCallId = "c2",
+                content = "[read_file for 'b.kt'] Result:\ncode b",
+                isError = false,
+                toolName = "read_file"
+            )
+
+            val percentSaved = cm.deduplicateFileReads()
+            assertEquals(0.0, percentSaved, 0.01, "No savings when all reads are unique files")
+        }
+
+        @Test
+        fun `dedup handles three reads of same file - only latest survives`() {
+            cm.setSystemPrompt("sys")
+
+            for (i in 1..3) {
+                cm.addAssistantMessage(
+                    ChatMessage(
+                        role = "assistant", content = null,
+                        toolCalls = listOf(
+                            ToolCall(id = "c$i", type = "function", function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                        )
+                    )
+                )
+                cm.addToolResult(
+                    toolCallId = "c$i",
+                    content = "[read_file for 'a.kt'] Result:\nversion $i of the code",
+                    isError = false,
+                    toolName = "read_file"
+                )
+            }
+
+            cm.deduplicateFileReads()
+
+            val toolResults = cm.getMessages().filter { it.role == "tool" }
+            // First two should be deduped
+            assertTrue(toolResults[0].content!!.contains("previously read"))
+            assertTrue(toolResults[1].content!!.contains("previously read"))
+            // Last one should be intact
+            assertTrue(toolResults[2].content!!.contains("version 3"))
+        }
+    }
+
+    // ---- Stage 2: Conversation truncation (from Cline) ----
+
+    @Nested
+    inner class ConversationTruncation {
+
+        @Test
+        fun `truncation preserves first user-assistant exchange`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            // First exchange (the task description)
+            cm.addUserMessage("Fix the bug in main.kt")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "I'll look at the code."))
+            // Many more exchanges
+            for (i in 1..10) {
+                cm.addUserMessage("question $i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i"))
+            }
+
+            cm.truncateConversation(TruncationStrategy.HALF)
+
+            val messages = cm.getMessages()
+            // First message should still be the original task
+            assertEquals("Fix the bug in main.kt", messages[0].content)
+        }
+
+        @Test
+        fun `truncation preserves last N messages`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            cm.addUserMessage("task")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "starting"))
+            for (i in 1..10) {
+                cm.addUserMessage("q$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+
+            val countBefore = cm.messageCount()
+            cm.truncateConversation(TruncationStrategy.HALF)
+
+            val messages = cm.getMessages()
+            val countAfter = messages.size
+            assertTrue(countAfter < countBefore, "Some messages should be removed")
+            // Last message should still be present
+            assertEquals("a10", messages.last().content)
+        }
+
+        @Test
+        fun `truncation maintains role alternation`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            for (i in 1..10) {
+                cm.addUserMessage("q$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+
+            cm.truncateConversation(TruncationStrategy.HALF)
+
+            val messages = cm.getMessages()
+            // Check alternation: no two consecutive messages should have the same role
+            // (except system which is prepended)
+            for (i in 1 until messages.size) {
+                val prev = messages[i - 1]
+                val curr = messages[i]
+                // System prompt can precede user
+                if (prev.role == "system") continue
+                // After truncation notice (assistant), next should be user
+                if (prev.role == "assistant" && curr.role == "user") continue
+                if (prev.role == "user" && curr.role == "assistant") continue
+                // Tool results follow assistant tool_calls
+                if (prev.role == "assistant" && curr.role == "tool") continue
+                if (prev.role == "tool" && curr.role == "user") continue
+                if (prev.role == "tool" && curr.role == "tool") continue // multiple tool results
+                // Allow tool -> assistant for adjacent tool groups
+                if (prev.role == "tool" && curr.role == "assistant") continue
+                fail<String>("Unexpected role sequence at index $i: ${prev.role} -> ${curr.role}")
+            }
+        }
+
+        @Test
+        fun `LAST_TWO keeps only first and last pair`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            for (i in 1..10) {
+                cm.addUserMessage("q$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+
+            cm.truncateConversation(TruncationStrategy.LAST_TWO)
+
+            val messages = cm.getMessages()
+            // Should have first pair + truncation notice + last pair = roughly 4 messages
+            assertTrue(messages.size <= 6, "LAST_TWO should keep very few messages, got ${messages.size}")
+            assertEquals("q1", messages[0].content)
+        }
+
+        @Test
+        fun `no-op when too few messages to truncate`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            cm.addUserMessage("task")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "ok"))
+
+            val countBefore = cm.messageCount()
+            cm.truncateConversation(TruncationStrategy.HALF)
+            assertEquals(countBefore, cm.messageCount(), "Should not truncate when < 4 messages")
+        }
+
+        @Test
+        fun `truncation inserts notice in first assistant message`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            for (i in 1..10) {
+                cm.addUserMessage("q$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+
+            cm.truncateConversation(TruncationStrategy.HALF)
+
+            val messages = cm.getMessages()
+            // Second message (first assistant) should contain truncation notice
+            val firstAssistant = messages[1]
+            assertEquals("assistant", firstAssistant.role)
+            assertTrue(
+                firstAssistant.content!!.contains("truncated", ignoreCase = true),
+                "First assistant message should contain truncation notice"
+            )
         }
     }
 
@@ -162,7 +419,6 @@ class ContextManagerTest {
         @Test
         fun `replaces old tool results with placeholder but keeps recent ones`() {
             cm.setSystemPrompt("sys")
-            // Add 8 tool results
             for (i in 1..8) {
                 cm.addAssistantMessage(
                     ChatMessage(
@@ -173,7 +429,7 @@ class ContextManagerTest {
                         )
                     )
                 )
-                cm.addToolResult(toolCallId = "call_$i", content = "x".repeat(100), isError = false)
+                cm.addToolResult(toolCallId = "call_$i", content = "x".repeat(100), isError = false, toolName = "tool_$i")
             }
 
             cm.trimOldToolResults(keepRecent = 5)
@@ -191,6 +447,33 @@ class ContextManagerTest {
             // Last 5 should be intact
             for (i in 3..7) {
                 assertEquals("x".repeat(100), toolMessages[i].content)
+            }
+        }
+
+        @Test
+        fun `trimmed placeholder includes tool name`() {
+            cm.setSystemPrompt("sys")
+            for (i in 1..4) {
+                cm.addAssistantMessage(
+                    ChatMessage(
+                        role = "assistant", content = null,
+                        toolCalls = listOf(
+                            ToolCall(id = "call_$i", type = "function", function = FunctionCall(name = "read_file", arguments = "{}"))
+                        )
+                    )
+                )
+                cm.addToolResult(toolCallId = "call_$i", content = "x".repeat(50), isError = false, toolName = "read_file")
+            }
+
+            cm.trimOldToolResults(keepRecent = 2)
+
+            val trimmedMessages = cm.getMessages().filter { it.role == "tool" && it.content!!.contains("[Result trimmed") }
+            assertTrue(trimmedMessages.isNotEmpty(), "Should have trimmed messages")
+            for (msg in trimmedMessages) {
+                assertTrue(
+                    msg.content!!.contains("read_file"),
+                    "Trimmed placeholder should include tool name, got: ${msg.content}"
+                )
             }
         }
 
@@ -219,22 +502,23 @@ class ContextManagerTest {
         @Test
         fun `replaces old messages with summary from LLM`() = runTest {
             val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: Testing\nFILES: none\nDONE: nothing\nERRORS: none\nPENDING: test")
-            cm = ContextManager(maxInputTokens = 1000)
+            // Use a small maxInputTokens so that the byte-estimate of large messages stays above 95%
+            cm = ContextManager(maxInputTokens = 200)
             cm.setSystemPrompt("sys")
-            // Add 10 user/assistant exchanges
+            // Use large messages so byte/4 estimate stays high even after truncation
+            val padding = "x".repeat(100)
             for (i in 1..10) {
-                cm.addUserMessage("question $i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i"))
+                cm.addUserMessage("question $i $padding")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i $padding"))
             }
             val countBefore = cm.messageCount()
 
-            // Simulate API reporting 900/1000 tokens used (90%) to trigger stage 2 compaction
-            cm.updateTokens(promptTokens = 900)
+            // Force high utilization: updateTokens is stale after compact() invalidates it,
+            // but the large messages ensure tokenEstimate() stays above 95% of 200
+            cm.updateTokens(promptTokens = 195)
             cm.compact(fakeBrain)
 
-            // After summarization: message count should be smaller
             assertTrue(cm.messageCount() < countBefore, "message count should decrease after compaction")
-            // The summary should be present as a user message
             val messages = cm.getMessages()
             val summaryMsg = messages.find { it.content?.contains("TASK:") == true }
             assertNotNull(summaryMsg, "summary message should exist")
@@ -243,19 +527,40 @@ class ContextManagerTest {
         @Test
         fun `compact preserves system prompt`() = runTest {
             val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: test\nFILES: a.kt")
+            cm = ContextManager(maxInputTokens = 200)
             cm.setSystemPrompt("important system prompt")
+            val padding = "x".repeat(100)
             for (i in 1..10) {
-                cm.addUserMessage("q$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+                cm.addUserMessage("q$i $padding")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i $padding"))
             }
 
-            // Simulate high utilization to trigger compaction
-            cm.updateTokens(promptTokens = 900)
+            cm.updateTokens(promptTokens = 195)
             cm.compact(fakeBrain)
 
             val messages = cm.getMessages()
             assertEquals("system", messages[0].role)
             assertEquals("important system prompt", messages[0].content)
+        }
+
+        @Test
+        fun `summary is inserted as assistant message to avoid consecutive user messages`() = runTest {
+            val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: test\nFILES: a.kt\nDONE: stuff")
+            cm = ContextManager(maxInputTokens = 200)
+            cm.setSystemPrompt("sys")
+            val padding = "x".repeat(100)
+            for (i in 1..10) {
+                cm.addUserMessage("q$i $padding")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i $padding"))
+            }
+
+            cm.updateTokens(promptTokens = 195)
+            cm.compact(fakeBrain)
+
+            val messages = cm.getMessages()
+            val summaryMsg = messages.find { it.content?.contains("[Context Summary]") == true }
+            assertNotNull(summaryMsg, "summary message should exist")
+            assertEquals("assistant", summaryMsg!!.role, "Summary should be an assistant message, not user")
         }
     }
 
@@ -274,7 +579,6 @@ class ContextManagerTest {
             cm.slidingWindow(keepFraction = 0.3)
 
             val messages = cm.getMessages()
-            // system + last 3 out of 10 messages
             assertEquals(4, messages.size)
             assertEquals("system", messages[0].role)
             assertEquals("msg 8", messages[1].content)
@@ -296,14 +600,13 @@ class ContextManagerTest {
         }
     }
 
-    // ---- Pair-aware compaction (C2) ----
+    // ---- Pair-aware compaction ----
 
     @Nested
     inner class PairAwareCompaction {
 
         @Test
         fun `findSafeSplitPoint lands on user message boundary`() {
-            // Build: user -> assistant(toolCalls) -> tool -> user -> assistant -> tool
             cm.addUserMessage("first question")
             cm.addAssistantMessage(
                 ChatMessage(
@@ -325,15 +628,12 @@ class ContextManagerTest {
             )
             cm.addToolResult(toolCallId = "c2", content = "result2", isError = false)
 
-            // Target index 2 falls on a "tool" message (between assistant+toolCalls and user).
-            // findSafeSplitPoint should move forward to index 3 (the "user" message).
             val safePoint = cm.findSafeSplitPoint(2)
             assertEquals(3, safePoint, "Should find next user message at index 3")
         }
 
         @Test
         fun `findSafeSplitPoint searches backward when no user message after target`() {
-            // Build: user -> assistant(toolCalls) -> tool -> tool
             cm.addUserMessage("question")
             cm.addAssistantMessage(
                 ChatMessage(
@@ -347,59 +647,31 @@ class ContextManagerTest {
             cm.addToolResult(toolCallId = "c1", content = "r1", isError = false)
             cm.addToolResult(toolCallId = "c2", content = "r2", isError = false)
 
-            // Target index 2 = tool result. No user message after it. Should search backward to index 0.
             val safePoint = cm.findSafeSplitPoint(2)
             assertEquals(0, safePoint, "Should find user message at index 0 (backward search)")
         }
 
         @Test
         fun `sliding window preserves tool call and result pairing`() {
-            // Build conversation with interleaved tool call groups
-            // Group 1: user -> assistant(toolCalls) -> tool
-            cm.addUserMessage("q1")
-            cm.addAssistantMessage(
-                ChatMessage(
-                    role = "assistant", content = null,
-                    toolCalls = listOf(
-                        ToolCall(id = "c1", type = "function", function = FunctionCall("tool_a", "{}"))
+            for (i in 1..3) {
+                cm.addUserMessage("q$i")
+                cm.addAssistantMessage(
+                    ChatMessage(
+                        role = "assistant", content = null,
+                        toolCalls = listOf(
+                            ToolCall(id = "c$i", type = "function", function = FunctionCall("tool_$i", "{}"))
+                        )
                     )
                 )
-            )
-            cm.addToolResult(toolCallId = "c1", content = "r1", isError = false)
-            // Group 2: user -> assistant(toolCalls) -> tool
-            cm.addUserMessage("q2")
-            cm.addAssistantMessage(
-                ChatMessage(
-                    role = "assistant", content = null,
-                    toolCalls = listOf(
-                        ToolCall(id = "c2", type = "function", function = FunctionCall("tool_b", "{}"))
-                    )
-                )
-            )
-            cm.addToolResult(toolCallId = "c2", content = "r2", isError = false)
-            // Group 3: user -> assistant(toolCalls) -> tool
-            cm.addUserMessage("q3")
-            cm.addAssistantMessage(
-                ChatMessage(
-                    role = "assistant", content = null,
-                    toolCalls = listOf(
-                        ToolCall(id = "c3", type = "function", function = FunctionCall("tool_c", "{}"))
-                    )
-                )
-            )
-            cm.addToolResult(toolCallId = "c3", content = "r3", isError = false)
+                cm.addToolResult(toolCallId = "c$i", content = "r$i", isError = false)
+            }
 
-            // 9 messages total. keepFraction=0.5 => keepCount=4, rawSplitPoint=5
-            // Index 5 is an assistant message with toolCalls — unsafe!
-            // findSafeSplitPoint(5) should find index 6 (user "q3") or 3 (user "q2")
             cm.slidingWindow(keepFraction = 0.5)
 
             val messages = cm.getMessages()
-            // Verify no assistant message with toolCalls exists without its matching tool result
             for (i in messages.indices) {
                 val msg = messages[i]
                 if (msg.role == "assistant" && !msg.toolCalls.isNullOrEmpty()) {
-                    // Each tool call should have a matching tool result after it
                     for (tc in msg.toolCalls!!) {
                         val hasResult = messages.drop(i + 1).any { it.role == "tool" && it.toolCallId == tc.id }
                         assertTrue(hasResult, "Tool call ${tc.id} should have a matching tool result after it")
@@ -411,12 +683,12 @@ class ContextManagerTest {
         @Test
         fun `llm summarization preserves tool call pairing`() = runTest {
             val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: test\nFILES: a.kt\nDONE: something\nERRORS: none\nPENDING: nothing")
-            cm = ContextManager(maxInputTokens = 1000)
+            cm = ContextManager(maxInputTokens = 200)
             cm.setSystemPrompt("sys")
 
-            // Build: user -> assistant(toolCalls) -> tool -> user -> assistant(toolCalls) -> tool -> user -> assistant -> ...
+            val padding = "x".repeat(80)
             for (i in 1..5) {
-                cm.addUserMessage("question $i")
+                cm.addUserMessage("question $i $padding")
                 cm.addAssistantMessage(
                     ChatMessage(
                         role = "assistant", content = null,
@@ -425,14 +697,12 @@ class ContextManagerTest {
                         )
                     )
                 )
-                cm.addToolResult(toolCallId = "call_$i", content = "result $i", isError = false)
+                cm.addToolResult(toolCallId = "call_$i", content = "result $i $padding", isError = false)
             }
 
-            // Force compaction by reporting high utilization
-            cm.updateTokens(promptTokens = 900)
+            cm.updateTokens(promptTokens = 195)
             cm.compact(fakeBrain)
 
-            // After compaction, verify pairing integrity
             val messages = cm.getMessages()
             for (i in messages.indices) {
                 val msg = messages[i]
@@ -446,7 +716,41 @@ class ContextManagerTest {
         }
     }
 
-    // ---- I2: LLM summarization failure leaves messages unchanged ----
+    // ---- Stale token invalidation (bug fix) ----
+
+    @Nested
+    inner class StaleTokenInvalidation {
+
+        @Test
+        fun `compact invalidates stale prompt tokens`() = runTest {
+            val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: test")
+            // Use large maxInputTokens so that after compaction, the byte estimate is much lower
+            cm = ContextManager(maxInputTokens = 10_000, compactionThreshold = 0.70)
+            cm.setSystemPrompt("sys")
+
+            for (i in 1..20) {
+                cm.addUserMessage("q$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+
+            // Set high token count to trigger compaction (96%)
+            cm.updateTokens(promptTokens = 9600)
+            assertTrue(cm.shouldCompact(), "Should trigger compaction")
+
+            cm.compact(fakeBrain)
+
+            // After compaction, utilization should be recalculated from estimate,
+            // not from the stale 9600 value. The byte estimate of 20 short messages
+            // is much less than 9600 tokens.
+            val utilAfter = cm.utilizationPercent()
+            assertTrue(
+                utilAfter < 96.0,
+                "After compaction, utilization should be lower than before (got $utilAfter)"
+            )
+        }
+    }
+
+    // ---- LLM summarization failure ----
 
     @Nested
     inner class LlmSummarizationFailure {
@@ -454,27 +758,19 @@ class ContextManagerTest {
         @Test
         fun `LLM failure during summarization leaves messages unchanged`() = runTest {
             val errorBrain = ErrorLlmBrain()
-            cm = ContextManager(maxInputTokens = 1000)
+            cm = ContextManager(maxInputTokens = 200)
             cm.setSystemPrompt("sys")
 
-            // Add enough messages to trigger summarization
+            val padding = "x".repeat(100)
             for (i in 1..10) {
-                cm.addUserMessage("question $i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i"))
+                cm.addUserMessage("question $i $padding")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i $padding"))
             }
 
-            val countBefore = cm.messageCount()
-            val messagesBefore = cm.getMessages().map { it.content }
-
-            // Force high utilization to trigger stage 2 (LLM summarization)
-            cm.updateTokens(promptTokens = 900)
+            cm.updateTokens(promptTokens = 195)
             cm.compact(errorBrain)
 
-            // Messages should be unchanged after failed summarization
-            // (sliding window at stage 3 may still run, but stage 2 should not lose context)
-            // At minimum, we should not have fewer messages than what sliding window alone would produce
             val messagesAfter = cm.getMessages()
-            // The key assertion: no message was replaced with an error placeholder
             val hasErrorPlaceholder = messagesAfter.any {
                 it.content?.contains("Compaction failed") == true
             }
@@ -482,7 +778,7 @@ class ContextManagerTest {
         }
     }
 
-    // ---- I6: Token estimate counts tool_calls content ----
+    // ---- Token estimate counts tool_calls ----
 
     @Nested
     inner class TokenEstimateToolCalls {
@@ -490,7 +786,6 @@ class ContextManagerTest {
         @Test
         fun `tokenEstimate counts tool call names and arguments`() {
             cm = ContextManager(maxInputTokens = 100_000)
-            // Add an assistant message with tool calls but no text content
             cm.addAssistantMessage(
                 ChatMessage(
                     role = "assistant",
@@ -509,16 +804,13 @@ class ContextManagerTest {
             )
 
             val estimate = cm.tokenEstimate()
-            // "read_file" = 9 bytes, arguments = 38 bytes, overhead = 4 bytes => (9+38+4)/4 = 12
             assertTrue(estimate > 0, "Token estimate should be > 0 for tool call messages (got $estimate)")
-            // Without the fix, this would be 1 (just the 4-byte overhead / 4)
             assertTrue(estimate > 1, "Token estimate should count tool call content, not just overhead")
         }
 
         @Test
         fun `tokenEstimate counts both content and tool calls`() {
             cm = ContextManager(maxInputTokens = 100_000)
-            // Message with both content and tool calls
             cm.addAssistantMessage(
                 ChatMessage(
                     role = "assistant",
@@ -537,7 +829,6 @@ class ContextManagerTest {
             )
 
             val estimate = cm.tokenEstimate()
-            // "Let me read that file." = 22 bytes + "read_file" = 9 + args = 15 + overhead = 4 = 50 bytes / 4 = 12
             val contentOnlyEstimate = ("Let me read that file.".toByteArray().size + 4) / 4
             assertTrue(estimate > contentOnlyEstimate, "Estimate should be higher when tool calls are included")
         }
@@ -581,7 +872,6 @@ class ContextManagerTest {
         override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
     }
 
-    /** LlmBrain that always returns an error — for testing I2 (summarization failure). */
     private class ErrorLlmBrain : LlmBrain {
         override val modelId: String = "error-model"
 
