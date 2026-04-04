@@ -41,7 +41,9 @@ import com.workflow.orchestrator.agent.tools.runtime.*
 import com.workflow.orchestrator.agent.tools.vcs.*
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
+import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
+import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
@@ -117,23 +119,40 @@ class AgentService(private val project: Project) : Disposable {
      * Never cached — always picks up the latest settings (model, URL, token).
      */
     private suspend fun createBrain(): LlmBrain {
-        val agentSettings = AgentSettings.getInstance(project)
         val connections = ConnectionSettings.getInstance()
         val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
         val credentialStore = CredentialStore()
         val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
 
-        val model = agentSettings.state.sourcegraphChatModel
-        if (!model.isNullOrBlank() && sgUrl.isNotBlank()) {
-            return OpenAiCompatBrain(
-                sourcegraphUrl = sgUrl,
-                tokenProvider = tokenProvider,
-                model = model
-            )
+        if (sgUrl.isBlank()) {
+            throw IllegalStateException("No Sourcegraph URL configured. Set one in Settings > AI & Advanced.")
         }
 
-        // Fall back to factory auto-resolution
-        return LlmBrainFactory.create(project)
+        // Always fetch models and pick the best (latest Opus).
+        // If fetch fails, fall back to settings or factory auto-resolution.
+        val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
+        val models = ModelCache.getModels(client)
+        val best = ModelCache.pickBest(models)
+
+        val modelId = if (best != null) {
+            log.info("[Agent] Auto-selected model: ${best.modelName} (${best.id})")
+            best.id
+        } else {
+            val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
+            if (!settingsModel.isNullOrBlank()) {
+                log.info("[Agent] Models unavailable, using settings: $settingsModel")
+                settingsModel
+            } else {
+                log.info("[Agent] Falling back to LlmBrainFactory")
+                return LlmBrainFactory.create(project)
+            }
+        }
+
+        return OpenAiCompatBrain(
+            sourcegraphUrl = sgUrl,
+            tokenProvider = tokenProvider,
+            model = modelId
+        )
     }
 
     // ── Tool Registration ──────────────────────────────────────────────────

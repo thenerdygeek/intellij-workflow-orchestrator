@@ -184,6 +184,67 @@ class AgentController(
         if (!model.isNullOrBlank()) {
             dashboard.setModelName(model)
         }
+
+        // Fetch available models from Sourcegraph and populate the dropdown
+        loadModelList()
+    }
+
+    /**
+     * Fetch the model list from Sourcegraph and send to the dashboard dropdown.
+     * Uses ModelCache (24h TTL) to avoid redundant API calls.
+     * Runs in background — failure is non-fatal (dropdown shows current model only).
+     */
+    /**
+     * Fetch models from Sourcegraph, populate the dropdown, and auto-select the best
+     * (latest Opus) model. Uses ModelCache (24h TTL) to avoid redundant API calls.
+     * Runs in background — failure is non-fatal.
+     */
+    private fun loadModelList() {
+        val connections = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+        if (connections.state.sourcegraphUrl.isBlank()) return
+
+        val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+        scope.launch {
+            try {
+                val client = com.workflow.orchestrator.core.ai.SourcegraphChatClient(
+                    baseUrl = connections.state.sourcegraphUrl.trimEnd('/'),
+                    tokenProvider = { credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.SOURCEGRAPH) },
+                    model = ""
+                )
+                val models = com.workflow.orchestrator.core.ai.ModelCache.getModels(client)
+                if (models.isNotEmpty()) {
+                    // Build JSON for the dropdown
+                    val modelsJson = models.joinToString(",", "[", "]") { m ->
+                        val id = m.id.replace("\"", "\\\"")
+                        val name = m.modelName.replace("\"", "\\\"")
+                        val provider = m.provider.replace("\"", "\\\"")
+                        """{"id":"$id","name":"$name","provider":"$provider"}"""
+                    }
+
+                    // Auto-select the best model (latest Opus) if no model is configured
+                    val settings = AgentSettings.getInstance(project)
+                    val best = com.workflow.orchestrator.core.ai.ModelCache.pickBest(models)
+                    if (best != null && settings.state.sourcegraphChatModel.isNullOrBlank()) {
+                        settings.state.sourcegraphChatModel = best.id
+                        LOG.info("AgentController: auto-selected model: ${best.modelName} (${best.id})")
+                    }
+
+                    com.intellij.openapi.application.invokeLater {
+                        dashboard.updateModelList(modelsJson)
+                        // Show the active model name (auto-selected or configured)
+                        val activeModel = settings.state.sourcegraphChatModel ?: best?.id ?: ""
+                        val displayName = models.find { it.id == activeModel }?.modelName ?: activeModel
+                        if (displayName.isNotBlank()) {
+                            dashboard.setModelName(displayName)
+                        }
+                    }
+                    LOG.info("AgentController: loaded ${models.size} models for dropdown")
+                }
+            } catch (e: Exception) {
+                LOG.debug("AgentController: failed to load model list: ${e.message}")
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════
