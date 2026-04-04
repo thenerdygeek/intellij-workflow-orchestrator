@@ -23,6 +23,9 @@ import com.workflow.orchestrator.agent.session.SessionStore
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
+import com.workflow.orchestrator.agent.memory.ArchivalMemory
+import com.workflow.orchestrator.agent.memory.ConversationRecall
+import com.workflow.orchestrator.agent.memory.CoreMemory
 import com.workflow.orchestrator.agent.tools.builtin.*
 import com.workflow.orchestrator.agent.tools.config.*
 import com.workflow.orchestrator.agent.tools.database.*
@@ -33,6 +36,7 @@ import com.workflow.orchestrator.agent.tools.debug.DebugStepTool
 import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
+import com.workflow.orchestrator.agent.tools.memory.*
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
@@ -74,6 +78,10 @@ class AgentService(private val project: Project) : Disposable {
     private val activeTask = AtomicReference<ActiveTask?>(null)
 
     private var debugController: AgentDebugController? = null
+    private var coreMemory: CoreMemory? = null
+    private var archivalMemory: ArchivalMemory? = null
+    private var conversationRecall: ConversationRecall? = null
+    private lateinit var agentDir: java.io.File
 
     /**
      * Hook manager — loaded from .agent-hooks.json in project root.
@@ -94,7 +102,20 @@ class AgentService(private val project: Project) : Disposable {
     init {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val agentDir = ProjectIdentifier.agentDir(basePath)
+        this.agentDir = agentDir
         sessionStore = SessionStore(agentDir)
+
+        // Initialize 3-tier memory system (Letta pattern)
+        val coreMem = CoreMemory.forProject(agentDir)
+        val archivalMemory = ArchivalMemory.forProject(agentDir)
+        val conversationRecall = ConversationRecall.forProject(agentDir)
+        this.coreMemory = coreMem
+        this.archivalMemory = archivalMemory
+        this.conversationRecall = conversationRecall
+
+        // Prune stale archival entries on startup (Codex decay pattern)
+        val pruned = archivalMemory.prune()
+        if (pruned > 0) log.info("[AgentService] Pruned $pruned stale archival memories")
 
         // Initialize hook system (ported from Cline's HookFactory + getAllHooksDirs)
         val hookRunner = HookRunner(workingDir = basePath)
@@ -286,6 +307,23 @@ class AgentService(private val project: Project) : Disposable {
 
         // Debug tools (require AgentDebugController)
         registerDebugTools()
+
+        // ── Memory tools (always available — 3-tier Letta pattern) ───────
+        coreMemory?.let { cm ->
+            safeRegisterCore { CoreMemoryReadTool(cm) }
+            safeRegisterCore { CoreMemoryAppendTool(cm) }
+            safeRegisterCore { CoreMemoryReplaceTool(cm) }
+        }
+        archivalMemory?.let { am ->
+            safeRegisterCore { ArchivalMemoryInsertTool(am) }
+            safeRegisterCore { ArchivalMemorySearchTool(am) }
+        }
+        conversationRecall?.let { cr ->
+            safeRegisterCore { ConversationSearchTool(cr) }
+        }
+        if (::agentDir.isInitialized) {
+            safeRegisterCore { SaveMemoryTool(agentDir) }
+        }
 
         // ── Conditional integration tools ────────────────────────────────
         // Only registered when the service URL is configured in ConnectionSettings
@@ -499,7 +537,8 @@ class AgentService(private val project: Project) : Disposable {
                     availableSkills = availableSkills,
                     activeSkillContent = ctx.getActiveSkill(),
                     taskProgress = ctx.getTaskProgress(),
-                    deferredToolCatalog = deferredCatalog
+                    deferredToolCatalog = deferredCatalog,
+                    coreMemoryXml = coreMemory?.compile()
                 )
                 ctx.setSystemPrompt(systemPrompt)
 

@@ -36,7 +36,9 @@ object SystemPrompt {
         activeSkillContent: String? = null,
         taskProgress: String? = null,
         /** Deferred tools available via tool_search (name, one-line description). */
-        deferredToolCatalog: List<Pair<String, String>>? = null
+        deferredToolCatalog: List<Pair<String, String>>? = null,
+        /** Compiled core memory XML (Letta pattern: always in prompt if non-empty). */
+        coreMemoryXml: String? = null
     ): String = buildString {
 
         // 1. AGENT ROLE
@@ -83,6 +85,12 @@ object SystemPrompt {
         // 9. OBJECTIVE
         append(SECTION_SEP)
         append(objective())
+
+        // 9b. CORE MEMORY (Letta pattern: always in prompt if non-empty)
+        coreMemoryXml?.let {
+            append(SECTION_SEP)
+            append(it)
+        }
 
         // 10. USER INSTRUCTIONS (optional)
         userInstructions(projectName, additionalContext, repoMap)?.let {
