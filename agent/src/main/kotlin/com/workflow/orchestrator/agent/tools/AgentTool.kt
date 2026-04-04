@@ -61,7 +61,24 @@ data class ToolResult(
     /** The skill name that was activated (set by UseSkillTool). */
     val activatedSkillName: String? = null,
     /** The full skill content that was loaded (set by UseSkillTool). */
-    val activatedSkillContent: String? = null
+    val activatedSkillContent: String? = null,
+    /**
+     * True when this result signals a session handoff via new_task tool.
+     * Ported from Cline: the LLM creates a structured context summary and
+     * hands off to a fresh session to escape context exhaustion.
+     */
+    val isSessionHandoff: Boolean = false,
+    /**
+     * The structured handoff context for the new session.
+     * Contains: Current Work, Key Technical Concepts, Relevant Files and Code,
+     * Problem Solving, Pending Tasks and Next Steps.
+     */
+    val handoffContext: String? = null,
+    /**
+     * Unified diff for file changes (edit_file, create_file).
+     * Sent to the UI for before/after diff display.
+     */
+    val diff: String? = null
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5

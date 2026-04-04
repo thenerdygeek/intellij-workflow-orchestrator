@@ -71,7 +71,16 @@ class AgentLoop(
      * and updates the webview after each API response. We fire this callback so the UI
      * can show running totals.
      */
-    private val onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null
+    private val onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
+    /**
+     * Optional callback fired after write operations (edit_file, create_file, etc.)
+     * to create a named checkpoint. Ported from Cline's checkpoint reversion pattern:
+     * checkpoints are created at meaningful mutation points so the user can revert.
+     *
+     * @param toolName the tool that triggered the checkpoint
+     * @param args the tool arguments (used for description)
+     */
+    private val onWriteCheckpoint: (suspend (toolName: String, args: String) -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -518,7 +527,13 @@ class AgentLoop(
             // We fire the callback here so AgentService can persist asynchronously.
             onCheckpoint?.invoke()
 
-            // Notify callback
+            // Write checkpoint: after write operations, create a named checkpoint
+            // for reversion support (ported from Cline's checkpoint reversion)
+            if (!toolResult.isError && toolName in WRITE_TOOLS) {
+                onWriteCheckpoint?.invoke(toolName, call.function.arguments)
+            }
+
+            // Notify callback (includes editDiff for file change tools — ported from Cline)
             onToolCall(
                 ToolCallProgress(
                     toolName = toolName,
@@ -526,7 +541,8 @@ class AgentLoop(
                     result = toolResult.summary,
                     durationMs = durationMs,
                     isError = toolResult.isError,
-                    toolCallId = toolCallId
+                    toolCallId = toolCallId,
+                    editDiff = toolResult.diff
                 )
             )
 
@@ -540,6 +556,17 @@ class AgentLoop(
                     iterations = iteration,
                     tokensUsed = totalTokensUsed,
                     verifyCommand = toolResult.verifyCommand,
+                    inputTokens = totalInputTokens,
+                    outputTokens = totalOutputTokens
+                )
+            }
+
+            // Check for session handoff (new_task tool — ported from Cline)
+            if (toolResult.isSessionHandoff) {
+                return LoopResult.SessionHandoff(
+                    context = toolResult.handoffContext ?: toolResult.content,
+                    iterations = iteration,
+                    tokensUsed = totalTokensUsed,
                     inputTokens = totalInputTokens,
                     outputTokens = totalOutputTokens
                 )

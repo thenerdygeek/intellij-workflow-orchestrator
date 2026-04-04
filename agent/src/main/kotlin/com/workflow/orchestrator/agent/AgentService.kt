@@ -133,6 +133,7 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { PlanModeRespondTool() }
         safeRegisterCore { ActModeRespondTool() }
         safeRegisterCore { UseSkillTool() }
+        safeRegisterCore { NewTaskTool() }
 
         // Core VCS — the three most commonly needed git tools
         safeRegisterCore { GitStatusTool() }
@@ -394,6 +395,9 @@ class AgentService(private val project: Project) : Disposable {
                 // checkpoint only newly-added messages (JSONL append).
                 var lastCheckpointedCount = ctx.messageCount()
 
+                // Write checkpoint counter — create checkpoint after write operations
+                var writeCheckpointCounter = 0
+
                 val loop = AgentLoop(
                     brain = brain,
                     tools = tools,
@@ -406,6 +410,22 @@ class AgentService(private val project: Project) : Disposable {
                     planMode = planModeActive.get(),
                     toolDefinitionProvider = toolDefinitionProvider,
                     toolResolver = { name -> registry.get(name) },
+                    onWriteCheckpoint = { toolName, args ->
+                        // Create named checkpoint after write operations (ported from Cline)
+                        writeCheckpointCounter++
+                        try {
+                            val checkpointId = "cp-${writeCheckpointCounter}-${System.currentTimeMillis()}"
+                            val description = "After $toolName: ${args.take(100)}"
+                            sessionStore.saveCheckpoint(
+                                sessionId = sid,
+                                checkpointId = checkpointId,
+                                messages = ctx.exportMessages(),
+                                description = description
+                            )
+                        } catch (e: Exception) {
+                            log.warn("AgentService: write checkpoint save failed (non-fatal)", e)
+                        }
+                    },
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where
@@ -464,18 +484,21 @@ class AgentService(private val project: Project) : Disposable {
                     is LoopResult.Failed -> result.tokensUsed
                     is LoopResult.Cancelled -> result.tokensUsed
                     is LoopResult.PlanPresented -> result.tokensUsed
+                    is LoopResult.SessionHandoff -> result.tokensUsed
                 }
                 val inputTokens = when (result) {
                     is LoopResult.Completed -> result.inputTokens
                     is LoopResult.Failed -> result.inputTokens
                     is LoopResult.Cancelled -> result.inputTokens
                     is LoopResult.PlanPresented -> result.inputTokens
+                    is LoopResult.SessionHandoff -> result.inputTokens
                 }
                 val outputTokens = when (result) {
                     is LoopResult.Completed -> result.outputTokens
                     is LoopResult.Failed -> result.outputTokens
                     is LoopResult.Cancelled -> result.outputTokens
                     is LoopResult.PlanPresented -> result.outputTokens
+                    is LoopResult.SessionHandoff -> result.outputTokens
                 }
                 session = session.copy(
                     status = when (result) {
@@ -483,6 +506,7 @@ class AgentService(private val project: Project) : Disposable {
                         is LoopResult.Failed -> SessionStatus.FAILED
                         is LoopResult.Cancelled -> SessionStatus.CANCELLED
                         is LoopResult.PlanPresented -> SessionStatus.ACTIVE
+                        is LoopResult.SessionHandoff -> SessionStatus.COMPLETED
                     },
                     lastMessageAt = System.currentTimeMillis(),
                     totalTokens = tokensUsed,
@@ -601,6 +625,137 @@ class AgentService(private val project: Project) : Disposable {
             task = continuationMessage,
             sessionId = sessionId,
             contextManager = ctx,
+            onStreamChunk = onStreamChunk,
+            onToolCall = onToolCall,
+            onTaskProgress = onTaskProgress,
+            onComplete = onComplete
+        )
+    }
+
+    // ── Checkpoint Reversion (ported from Cline's checkpoint reversion) ─────
+
+    /**
+     * Revert a session to a specific checkpoint.
+     *
+     * Ported from Cline's checkpoint reversion pattern:
+     * 1. Load the checkpoint messages
+     * 2. Restore ContextManager state to that point
+     * 3. Delete later checkpoints (they're invalidated)
+     * 4. Overwrite the session's messages with the checkpoint
+     * 5. Continue from that point
+     *
+     * @param sessionId the session to revert
+     * @param checkpointId the checkpoint to revert to
+     * @param onStreamChunk streaming callback
+     * @param onToolCall tool progress callback
+     * @param onTaskProgress progress callback
+     * @param onComplete completion callback
+     * @return the Job for the continued session, or null if checkpoint not found
+     */
+    fun revertToCheckpoint(
+        sessionId: String,
+        checkpointId: String,
+        onStreamChunk: (String) -> Unit = {},
+        onToolCall: (ToolCallProgress) -> Unit = {},
+        onTaskProgress: (TaskProgress) -> Unit = {},
+        onComplete: (LoopResult) -> Unit = {}
+    ): Job? {
+        // Load checkpoint
+        val checkpointMessages = sessionStore.loadCheckpoint(sessionId, checkpointId)
+        if (checkpointMessages == null) {
+            log.warn("AgentService.revertToCheckpoint: checkpoint $checkpointId not found for session $sessionId")
+            return null
+        }
+
+        // Load session metadata
+        val session = sessionStore.load(sessionId)
+        if (session == null) {
+            log.warn("AgentService.revertToCheckpoint: session $sessionId not found")
+            return null
+        }
+
+        // Rebuild ContextManager from checkpoint
+        val agentSettings = AgentSettings.getInstance(project)
+        val ctx = ContextManager(maxInputTokens = agentSettings.state.maxInputTokens)
+
+        if (session.systemPrompt.isNotBlank()) {
+            ctx.setSystemPrompt(session.systemPrompt)
+        }
+
+        ctx.restoreMessages(checkpointMessages)
+
+        // Overwrite session's messages with checkpoint state
+        sessionStore.saveMessages(sessionId, checkpointMessages)
+
+        // Delete checkpoints after this one (they're invalidated by reversion)
+        sessionStore.deleteCheckpointsAfter(sessionId, checkpointId)
+
+        // Update session metadata
+        val updatedSession = session.copy(
+            status = SessionStatus.ACTIVE,
+            messageCount = checkpointMessages.size,
+            lastMessageAt = System.currentTimeMillis()
+        )
+        sessionStore.save(updatedSession)
+
+        log.info("AgentService.revertToCheckpoint: reverted session $sessionId to checkpoint $checkpointId " +
+            "(${checkpointMessages.size} messages)")
+
+        // Continue execution from the checkpoint
+        return executeTask(
+            task = "Continue from where you left off. The conversation has been reverted to an earlier checkpoint.",
+            sessionId = sessionId,
+            contextManager = ctx,
+            onStreamChunk = onStreamChunk,
+            onToolCall = onToolCall,
+            onTaskProgress = onTaskProgress,
+            onComplete = onComplete
+        )
+    }
+
+    /**
+     * List checkpoints for a session.
+     *
+     * @param sessionId the session to list checkpoints for
+     * @return list of checkpoint metadata, newest first
+     */
+    fun listCheckpoints(sessionId: String): List<com.workflow.orchestrator.agent.session.CheckpointInfo> {
+        return sessionStore.listCheckpoints(sessionId)
+    }
+
+    // ── Session Handoff (ported from Cline's new_task) ──────────────────────
+
+    /**
+     * Start a new session with handoff context from a completed session.
+     *
+     * Ported from Cline's new_task flow:
+     * 1. Save the current session as COMPLETED
+     * 2. Create a new session
+     * 3. Create a fresh ContextManager
+     * 4. Inject the handoff context as the first user message
+     * 5. Start a new AgentLoop with the fresh context
+     *
+     * @param handoffContext the structured context summary from the LLM
+     * @param onStreamChunk streaming callback
+     * @param onToolCall tool progress callback
+     * @param onTaskProgress task progress callback
+     * @param onComplete completion callback
+     * @return the Job for the new session
+     */
+    fun startHandoffSession(
+        handoffContext: String,
+        onStreamChunk: (String) -> Unit = {},
+        onToolCall: (ToolCallProgress) -> Unit = {},
+        onTaskProgress: (TaskProgress) -> Unit = {},
+        onComplete: (LoopResult) -> Unit = {}
+    ): Job {
+        // The handoff context becomes the task for the new session
+        val preamble = "Continue from the previous session. Here is the preserved context:\n\n$handoffContext"
+
+        return executeTask(
+            task = preamble,
+            sessionId = null, // new session ID
+            contextManager = null, // fresh context
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
             onTaskProgress = onTaskProgress,

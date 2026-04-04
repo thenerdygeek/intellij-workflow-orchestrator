@@ -253,6 +253,37 @@ class AgentController(
                         status = RichStreamingPanel.SessionStatus.SUCCESS
                     )
                 }
+
+                is LoopResult.SessionHandoff -> {
+                    // Session handoff (ported from Cline's new_task):
+                    // Notify user, then automatically start a new session with preserved context
+                    dashboard.appendStatus(
+                        "Context limit reached. Starting fresh session with preserved context.",
+                        RichStreamingPanel.StatusType.INFO
+                    )
+                    if (result.inputTokens > 0 || result.outputTokens > 0) {
+                        val inputK = formatTokenCount(result.inputTokens)
+                        val outputK = formatTokenCount(result.outputTokens)
+                        dashboard.appendStatus(
+                            "Previous session used ${inputK} input + ${outputK} output tokens",
+                            RichStreamingPanel.StatusType.INFO
+                        )
+                    }
+
+                    // Reset context for the new session
+                    contextManager = null
+
+                    // Auto-start fresh session with handoff context
+                    currentJob = service.startHandoffSession(
+                        handoffContext = result.context,
+                        onStreamChunk = ::onStreamChunk,
+                        onToolCall = ::onToolCall,
+                        onTaskProgress = ::onTaskProgress,
+                        onComplete = ::onComplete
+                    )
+                    // Don't unlock input — the new session is running
+                    return@invokeLater
+                }
             }
 
             dashboard.setBusy(false)
@@ -351,6 +382,62 @@ class AgentController(
         return service.sessionStore.list().filter {
             it.status != com.workflow.orchestrator.agent.session.SessionStatus.COMPLETED &&
             it.messageCount > 0
+        }
+    }
+
+    /**
+     * List checkpoints for the current session.
+     *
+     * Ported from Cline's checkpoint reversion UI:
+     * returns the list of checkpoints so the UI can display them
+     * and allow the user to revert.
+     */
+    fun listCheckpoints(sessionId: String): List<com.workflow.orchestrator.agent.session.CheckpointInfo> {
+        return service.listCheckpoints(sessionId)
+    }
+
+    /**
+     * Revert to a specific checkpoint in a session.
+     *
+     * Ported from Cline's checkpoint reversion:
+     * restores the conversation to the checkpoint state and continues.
+     */
+    fun revertToCheckpoint(sessionId: String, checkpointId: String) {
+        LOG.info("AgentController.revertToCheckpoint: session=$sessionId, checkpoint=$checkpointId")
+
+        // Cancel any running task first
+        if (currentJob?.isActive == true) {
+            service.cancelCurrentTask()
+        }
+        currentJob = null
+
+        // Reset UI
+        dashboard.reset()
+        dashboard.setBusy(true)
+        dashboard.setInputLocked(true)
+        taskStartTime = System.currentTimeMillis()
+
+        dashboard.appendStatus("Reverting to checkpoint...", RichStreamingPanel.StatusType.INFO)
+
+        // Reset context manager — the reverted session creates its own
+        contextManager = null
+
+        val job = service.revertToCheckpoint(
+            sessionId = sessionId,
+            checkpointId = checkpointId,
+            onStreamChunk = ::onStreamChunk,
+            onToolCall = ::onToolCall,
+            onTaskProgress = ::onTaskProgress,
+            onComplete = ::onComplete
+        )
+
+        if (job != null) {
+            currentJob = job
+        } else {
+            dashboard.appendError("Could not revert to checkpoint. The checkpoint may have been deleted.")
+            dashboard.setBusy(false)
+            dashboard.setInputLocked(false)
+            dashboard.focusInput()
         }
     }
 

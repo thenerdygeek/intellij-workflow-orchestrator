@@ -45,6 +45,24 @@ sealed class LoopResult {
         val inputTokens: Int = 0,
         val outputTokens: Int = 0
     ) : LoopResult()
+
+    /**
+     * Session handoff — the LLM called `new_task` to escape context exhaustion.
+     *
+     * Ported from Cline's new_task tool: when context is too full for compaction
+     * to save enough, the LLM creates a structured summary and hands off to a
+     * fresh session. The caller (AgentService) saves the current session, creates
+     * a new one, and injects the handoff context as the first user message.
+     *
+     * @param context structured summary (Current Work, Key Concepts, Files, Problems, Pending)
+     */
+    data class SessionHandoff(
+        val context: String,
+        val iterations: Int,
+        val tokensUsed: Int = 0,
+        val inputTokens: Int = 0,
+        val outputTokens: Int = 0
+    ) : LoopResult()
 }
 
 data class ToolCallProgress(
@@ -53,5 +71,7 @@ data class ToolCallProgress(
     val result: String = "",
     val durationMs: Long = 0,
     val isError: Boolean = false,
-    val toolCallId: String = ""
+    val toolCallId: String = "",
+    /** Unified diff for file edits (edit_file, create_file). Sent to UI for diff display. */
+    val editDiff: String? = null
 )
