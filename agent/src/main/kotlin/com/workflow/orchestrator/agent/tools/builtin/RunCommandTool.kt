@@ -528,11 +528,14 @@ class RunCommandTool : AgentTool {
 
     private fun buildExitResult(managed: ManagedProcess, command: String, params: JsonObject): ToolResult {
         val rawOutput = collectOutput(managed)
-        val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-            truncateOutput(rawOutput, MAX_OUTPUT_CHARS) +
-                "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
+        // Strip ANSI for LLM context (saves tokens, LLM doesn't need color codes).
+        // The UI already received raw output with ANSI via streamCallback.
+        val cleanOutput = stripAnsi(rawOutput)
+        val truncatedOutput = if (cleanOutput.length > MAX_OUTPUT_CHARS) {
+            truncateOutput(cleanOutput, MAX_OUTPUT_CHARS) +
+                "\n\n[Total output: ${cleanOutput.length} chars. Use a more targeted command to see specific sections.]"
         } else {
-            rawOutput
+            cleanOutput
         }
 
         val exitCode = managed.process.exitValue()
@@ -552,11 +555,12 @@ class RunCommandTool : AgentTool {
 
     private fun buildTimeoutResult(managed: ManagedProcess, timeoutSeconds: Long): ToolResult {
         val rawOutput = collectOutput(managed)
-        val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-            truncateOutput(rawOutput, MAX_OUTPUT_CHARS) +
-                "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
+        val cleanOutput = stripAnsi(rawOutput)
+        val truncatedOutput = if (cleanOutput.length > MAX_OUTPUT_CHARS) {
+            truncateOutput(cleanOutput, MAX_OUTPUT_CHARS) +
+                "\n\n[Total output: ${cleanOutput.length} chars. Use a more targeted command to see specific sections.]"
         } else {
-            rawOutput
+            cleanOutput
         }
         return ToolResult(
             content = "[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n$truncatedOutput",
