@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), ~70 registered tools in 3-tier ToolRegistry (core/deferred/active via tool_search), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 7 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond`/`act_mode_respond`, skill system (`use_skill`), session handoff (`new_task`), JSONL session persistence with checkpoint reversion (SessionStore), task progress (FocusChain), cost tracking, diff view, sub-agent delegation (`spawn_agent`) with parallel research subagents (up to 5 concurrent), dynamic agent configs via YAML (`AgentConfigLoader`), configurable context budget, JCEF chat UI |
+| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), 3-tier ToolRegistry (~22 core + ~48 deferred via `tool_search`, conditional integration loading), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 8 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond`/`act_mode_respond` (user-controlled act switch), skill system (`use_skill` + InstructionLoader), session handoff (`new_task`), JSONL session persistence with checkpoint reversion (SessionStore), task progress (markdown checklist), cost tracking, diff view, sub-agent delegation (`agent` tool, 3 scopes: research/implement/review), tool approval gate with diff preview, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -129,9 +129,11 @@ Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
 - **Deactivation:** User approves plan (switches to act), user unclicks Plan button, new chat, or cancel
 - **State:** `AgentService.planModeActive` (AtomicBoolean) — single source of truth
 - **Plan flow:** LLM uses read/search tools to explore, calls `plan_mode_respond` with plan.
-  If `needsMoreExploration=true`, loop continues. If `false`, returns `LoopResult.PlanPresented` for user review.
-- **Act flow:** After plan approval, loop switches to act mode. LLM uses `act_mode_respond` for progress
-  updates (cannot be called consecutively — ported from Cline)
+  If `needsMoreExploration=true`, loop continues immediately. If `false`, loop suspends via `userInputChannel`
+  waiting for user input (chat message, plan comments, or approve). User types freely to discuss/refine.
+- **Act switch:** Only the user can switch to act mode (click Approve). LLM CANNOT switch to act mode.
+- **Act flow:** After approval, `planModeActive` set to false, write tools re-enabled. LLM uses
+  `act_mode_respond` for progress updates (cannot be called consecutively — ported from Cline)
 
 ## Threading
 
@@ -140,7 +142,7 @@ Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
 - File writes: `WriteCommandAction.runWriteCommandAction()`
 - User operations: `runBackgroundableTask`
 - Background polling: `CoroutineScope` + `SupervisorJob` tied to `Disposable`
-- Parallel subagents: `supervisorScope` + `async` for research scope (up to 5 concurrent)
+- Sub-agents: sequential execution via `agent` tool (child AgentLoop in parent's coroutine)
 - Use coroutine scope, not `runBlocking`, in Swing callbacks
 
 ## Authentication
@@ -168,31 +170,21 @@ All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (compu
 
 Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`.
 
-## Dynamic Agent Configs
+## Agent Personas
 
-YAML config files in `~/.workflow-orchestrator/agents/` define custom subagent personas with hot-reload.
-Each `.yaml` file has YAML frontmatter (name, description, tools, skills, modelId) and a markdown body
-that becomes the system prompt. Loaded by `AgentConfigLoader` on startup, file-watched for changes.
-
-Example:
-```yaml
----
-name: "Code Reviewer"
-description: "Reviews code for bugs and quality"
-tools: "read_file, search_code, find_references"
-modelId: "optional/model-override"
----
-You are a code review specialist. Analyze code for...
-```
-
-Registered as dynamic tools (`use_subagent_code_reviewer`) callable by the LLM.
+Bundled agent personas in `agent/src/main/resources/agents/` (8 files: architect-reviewer, code-reviewer,
+devops-engineer, performance-engineer, refactoring-specialist, security-auditor, spring-boot-engineer,
+test-automator). These are markdown files with YAML frontmatter (name, description, tools, max-turns)
+used by the `agent` sub-agent tool to specialize sub-agent behavior.
 
 **Persistence pattern** (ported from Cline's `message-state.ts`): JSONL append after every tool execution
 for conversation history. Session metadata updated atomically after each checkpoint. Named checkpoints
 created after write operations (`edit_file`, `create_file`, etc.) for checkpoint reversion support.
+Atomic writes (write to .tmp then rename) for crash safety.
 
-**Hook config:** `.agent-hooks.json` in project root (7 hook types: TaskStart, UserPromptSubmit,
-TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse). See `docs/architecture/agent-architecture.md` Section 11.
+**Hook config:** `.agent-hooks.json` in project root (8 hook types: TaskStart, UserPromptSubmit,
+TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse, TaskComplete).
+See `docs/architecture/agent-architecture.md` Section 11.
 
 **Skills:** Bundled from classpath `/skills/`, project-local from `{projectPath}/.agent-skills/`,
 global from `~/.workflow-orchestrator/skills/`. Each skill is a directory with `SKILL.md` (YAML frontmatter).
