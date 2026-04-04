@@ -10,7 +10,7 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 - Constraints: 190K input tokens (configurable), no `system` role (converted to user with `<system_instructions>` tags), no `tool_choice`, strict user/assistant alternation
 - Output limit varies per model — no hardcoded clamp. User configures maxOutputTokens in settings.
 - Model: Auto-resolved from `GET /.api/llm/models` on first use via `ModelCache`. Priority: Anthropic Opus thinking > Opus > Sonnet. No hardcoded defaults.
-- Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with `<tool_result>` tags, consecutive same-role merging
+- Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with plain text prefix "RESULT of {toolName}:" (not XML — prevents LLM echo hallucination), consecutive same-role merging, zero-width space for empty assistant tool-call messages
 
 ## Architecture
 

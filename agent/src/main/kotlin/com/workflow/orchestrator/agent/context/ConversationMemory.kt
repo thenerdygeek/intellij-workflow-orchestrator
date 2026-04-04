@@ -112,9 +112,13 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
         var expectedToolCallIds: MutableSet<String> = mutableSetOf()
     )
 
+    /** Transient map populated during event conversion, consumed by sanitization. */
+    private val toolCallIdToName = mutableMapOf<String, String>()
+
     private fun convertEventsToMessages(events: List<Event>): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
         var pendingAssistant: PendingAssistant? = null
+        toolCallIdToName.clear()
 
         for (event in events) {
             when (event) {
@@ -164,6 +168,10 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
                     // Flush pending assistant before adding tool result
                     flushPending(pendingAssistant, messages)
                     pendingAssistant = null
+
+                    // Store tool name in a transient map for the sanitization step.
+                    // ChatMessage DTO can't carry it (serialized to API JSON).
+                    toolCallIdToName[event.toolCallId] = event.toolName
 
                     messages.add(ChatMessage(
                         role = "tool",
@@ -356,10 +364,10 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
     /**
      * Mirrors [com.workflow.orchestrator.core.ai.SourcegraphChatClient.sanitizeMessages]:
      * - system -> user with `<system_instructions>` wrapping, buffered and merged into next user
-     * - tool -> user with `<tool_result>` wrapping
+     * - tool -> user with plain text "RESULT of {toolName}:" prefix (not XML — prevents LLM echo)
      * - Merge consecutive same-role messages
      * - Ensure starts with user
-     * - Empty assistant content -> `<tool_calls/>` placeholder
+     * - Empty assistant content -> zero-width space placeholder (avoids LLM echoing XML)
      */
     private fun sanitizeForSourcegraph(messages: List<ChatMessage>): List<ChatMessage> {
         // Phase 1: Convert system and tool roles to user content
@@ -380,7 +388,11 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
                         converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
                         pendingSystemContent = null
                     }
-                    val toolContent = "<tool_result${msg.toolCallId?.let { " tool_use_id=\"$it\"" } ?: ""}>\n${msg.content ?: ""}\n</tool_result>"
+                    // Plain text prefix (OpenHands/SWE-agent pattern) instead of XML tags.
+                    // XML like <tool_result> primes the LLM to generate <tool_calls> as text
+                    // instead of using the structured API. Plain text labels avoid this.
+                    val toolName = msg.toolCallId?.let { toolCallIdToName[it] } ?: "unknown"
+                    val toolContent = "RESULT of $toolName:\n${msg.content ?: ""}"
                     converted.add(ChatMessage(role = "user", content = toolContent))
                 }
                 "user" -> {
@@ -428,13 +440,19 @@ class ConversationMemory(private val maxMessageChars: Int = 30_000) {
             msg.content.isNullOrBlank() && msg.toolCalls.isNullOrEmpty()
         }
 
-        // Assistant messages with tool calls but null/empty content -> placeholder
+        // Assistant messages with tool calls but null/empty content -> zero-width space
+        // IMPORTANT: Do NOT use XML-like placeholders here (e.g., <tool_calls/>).
+        // The LLM sees its own past assistant messages in the conversation history.
+        // If those messages contain XML tool syntax, the model learns to produce
+        // <tool_calls>...</tool_calls> as text output instead of using the structured
+        // API tool_calls field. A zero-width space is invisible, satisfies the
+        // non-empty content requirement, and cannot be echoed as meaningful text.
         for (i in merged.indices) {
             val msg = merged[i]
             if (msg.role == "assistant" && msg.content.isNullOrBlank() && !msg.toolCalls.isNullOrEmpty()) {
                 merged[i] = ChatMessage(
                     role = "assistant",
-                    content = "<tool_calls/>",
+                    content = "\u200B", // zero-width space — invisible, non-empty, impossible to echo
                     toolCalls = msg.toolCalls
                 )
             }

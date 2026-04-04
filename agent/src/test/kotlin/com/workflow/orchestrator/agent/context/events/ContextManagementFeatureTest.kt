@@ -733,9 +733,9 @@ class ContextManagementFeatureTest {
         assertTrue("tc-p2" in toolCallIds, "tc-p2 should be in tool_calls")
 
         // Assert: there are tool result messages for each call (after Sourcegraph sanitization, they become user messages)
-        // Sourcegraph sanitizes "tool" → "user" with <tool_result> wrapping
+        // Sourcegraph sanitizes "tool" → "user" with plain text prefix
         val toolResultMessages = messages.filter { msg ->
-            msg.role == "user" && msg.content?.contains("<tool_result") == true
+            msg.role == "user" && msg.content?.contains("RESULT of") == true
         }
         // Both tool results should be present (may be merged into one user message by sanitization)
         val allContent = messages.joinToString("\n") { it.content ?: "" }

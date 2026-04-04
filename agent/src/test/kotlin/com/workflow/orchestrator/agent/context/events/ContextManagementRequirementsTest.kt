@@ -408,18 +408,18 @@ class ContextManagementRequirementsTest {
             )
         }
 
-        // Tool results must be wrapped in <tool_result> tags
+        // Tool results must use plain text prefix (not XML tags)
         val toolResultMessages = messages.filter { msg ->
-            msg.content?.contains("<tool_result") == true
+            msg.content?.contains("RESULT of") == true
         }
         assertTrue(toolResultMessages.isNotEmpty(),
-            "At least one message should contain <tool_result> tags for tool results")
+            "At least one message should contain 'RESULT of' prefix for tool results")
 
-        // Assistant messages with only tool calls should have <tool_calls/> placeholder if content is null/blank
+        // Assistant messages with only tool calls should have zero-width space placeholder if content is null/blank
         val toolCallMessages = messages.filter { it.role == "assistant" && !it.toolCalls.isNullOrEmpty() }
         for (msg in toolCallMessages) {
             assertFalse(msg.content.isNullOrBlank(),
-                "Assistant message with tool calls should have <tool_calls/> placeholder, not blank content")
+                "Assistant message with tool calls should have zero-width space placeholder, not blank content")
         }
     }
 

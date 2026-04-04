@@ -330,7 +330,7 @@ class ConversationMemoryTest {
             )
             val result = memory.processEvents(events, userMsg(0, "Hi"))
 
-            // After sanitization, tool msgs become user msgs with <tool_result> tags
+            // After sanitization, tool msgs become user msgs with [tool_result] brackets
             // But orphan filtering happens before sanitization, so it should be gone
             assertFalse(result.any { it.content?.contains("orphan result") == true })
         }
@@ -370,7 +370,7 @@ class ConversationMemoryTest {
         }
 
         @Test
-        fun `tool results are wrapped in tool_result tags with tool_use_id`() {
+        fun `tool results use plain text prefix with tool name`() {
             val events = listOf(
                 userMsg(0, "Read file"),
                 fileRead(1, toolCallId = "tc-1", responseGroupId = "rg-1"),
@@ -379,7 +379,7 @@ class ConversationMemoryTest {
             val result = memory.processEvents(events, userMsg(0, "Read file"))
 
             assertTrue(result.any {
-                it.content?.contains("<tool_result tool_use_id=\"tc-1\">") == true &&
+                it.content?.contains("RESULT of") == true &&
                     it.content?.contains("file content") == true
             })
         }
@@ -428,7 +428,7 @@ class ConversationMemoryTest {
 
             val assistantWithTools = result.find { it.toolCalls != null }
             assertNotNull(assistantWithTools)
-            assertEquals("<tool_calls/>", assistantWithTools!!.content)
+            assertEquals("\u200B", assistantWithTools!!.content)
         }
 
         @Test

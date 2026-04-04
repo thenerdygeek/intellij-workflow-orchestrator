@@ -167,8 +167,11 @@ class SourcegraphChatClient(
                     } else content
                 }
                 "tool" -> {
-                    // Convert tool result to user message
-                    val toolContent = "<tool_result${msg.toolCallId?.let { " tool_use_id=\"$it\"" } ?: ""}>\n${msg.content ?: ""}\n</tool_result>"
+                    // Convert tool result to user message with plain text prefix.
+                    // Do NOT use XML tags like <tool_result> — they prime the LLM to
+                    // generate <tool_calls> as text instead of using the structured API.
+                    // Plain text labels (matching OpenHands/SWE-agent pattern) avoid this.
+                    val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
                     converted.add(ChatMessage(role = "user", content = toolContent))
                 }
                 "user" -> {
