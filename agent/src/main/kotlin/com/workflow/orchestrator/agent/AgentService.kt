@@ -108,124 +108,177 @@ class AgentService(private val project: Project) : Disposable {
 
     // ── Tool Registration ──────────────────────────────────────────────────
 
+    /**
+     * Three-tier tool registration:
+     * - Core tools (~21): always sent to LLM on every API call
+     * - Deferred tools (~45): available via tool_search, loaded on demand
+     * - Conditional: integration tools only registered when their service URL is configured
+     *
+     * This reduces per-call schema tokens from ~10K to ~4K.
+     * The GitTool meta-tool is removed — individual git_status/git_diff/git_log
+     * are core, and remaining git tools are deferred.
+     */
     private fun registerAllTools() {
-        // Builtin tools
-        safeRegister { ReadFileTool() }
-        safeRegister { EditFileTool() }
-        safeRegister { CreateFileTool() }
-        safeRegister { SearchCodeTool() }
-        safeRegister { GlobFilesTool() }
-        safeRegister { RunCommandTool() }
-        safeRegister { KillProcessTool() }
-        safeRegister { SendStdinTool() }
-        safeRegister { RevertFileTool() }
-        safeRegister { AttemptCompletionTool() }
-        safeRegister { ThinkTool() }
-        safeRegister { AskQuestionsTool() }
-        safeRegister { AskUserInputTool() }
-        safeRegister { ProjectContextTool() }
-        safeRegister { CurrentTimeTool() }
-        safeRegister { PlanModeRespondTool() }
-        safeRegister { ActModeRespondTool() }
-        safeRegister { UseSkillTool() }
+        // ── Core tools (always sent to LLM) ──────────────────────────────
+        safeRegisterCore { ReadFileTool() }
+        safeRegisterCore { EditFileTool() }
+        safeRegisterCore { CreateFileTool() }
+        safeRegisterCore { SearchCodeTool() }
+        safeRegisterCore { GlobFilesTool() }
+        safeRegisterCore { RunCommandTool() }
+        safeRegisterCore { RevertFileTool() }
+        safeRegisterCore { AttemptCompletionTool() }
+        safeRegisterCore { ThinkTool() }
+        safeRegisterCore { AskQuestionsTool() }
+        safeRegisterCore { PlanModeRespondTool() }
+        safeRegisterCore { ActModeRespondTool() }
+        safeRegisterCore { UseSkillTool() }
 
-        // VCS tools
-        safeRegister { GitTool() }
-        safeRegister { GitStatusTool() }
-        safeRegister { GitDiffTool() }
-        safeRegister { GitLogTool() }
-        safeRegister { GitBranchesTool() }
-        safeRegister { GitBlameTool() }
-        safeRegister { GitShowCommitTool() }
-        safeRegister { GitShowFileTool() }
-        safeRegister { GitStashListTool() }
-        safeRegister { GitFileHistoryTool() }
-        safeRegister { GitMergeBaseTool() }
-        safeRegister { ChangelistShelveTool() }
+        // Core VCS — the three most commonly needed git tools
+        safeRegisterCore { GitStatusTool() }
+        safeRegisterCore { GitDiffTool() }
+        safeRegisterCore { GitLogTool() }
 
-        // PSI / code intelligence tools
-        safeRegister { FindDefinitionTool() }
-        safeRegister { FindReferencesTool() }
-        safeRegister { FindImplementationsTool() }
-        safeRegister { FileStructureTool() }
-        safeRegister { TypeHierarchyTool() }
-        safeRegister { CallHierarchyTool() }
-        safeRegister { TypeInferenceTool() }
-        safeRegister { DataFlowAnalysisTool() }
-        safeRegister { GetMethodBodyTool() }
-        safeRegister { GetAnnotationsTool() }
-        safeRegister { TestFinderTool() }
-        safeRegister { StructuralSearchTool() }
-        safeRegister { ReadWriteAccessTool() }
+        // Core PSI — essential navigation tools
+        safeRegisterCore { FindDefinitionTool() }
+        safeRegisterCore { FindReferencesTool() }
+        safeRegisterCore { SemanticDiagnosticsTool() }
 
-        // IDE tools
-        safeRegister { FormatCodeTool() }
-        safeRegister { OptimizeImportsTool() }
-        safeRegister { RefactorRenameTool() }
-        safeRegister { SemanticDiagnosticsTool() }
-        safeRegister { RunInspectionsTool() }
-        safeRegister { ProblemViewTool() }
-        safeRegister { ListQuickFixesTool() }
+        // tool_search itself is core (the LLM needs it to discover deferred tools)
+        safeRegisterCore { ToolSearchTool(registry) }
 
-        // Database tools
-        safeRegister { DbListProfilesTool() }
-        safeRegister { DbQueryTool() }
-        safeRegister { DbSchemaTool() }
-
-        // Framework tools
-        safeRegister { BuildTool() }
-        safeRegister { SpringTool() }
-
-        // Run config tools
-        safeRegister { CreateRunConfigTool() }
-        safeRegister { ModifyRunConfigTool() }
-        safeRegister { DeleteRunConfigTool() }
-
-        // Integration tools (Jira, Bamboo, Bitbucket, Sonar)
-        safeRegister { JiraTool() }
-        safeRegister { BambooBuildsTool() }
-        safeRegister { BambooPlansTool() }
-        safeRegister { BitbucketPrTool() }
-        safeRegister { BitbucketRepoTool() }
-        safeRegister { BitbucketReviewTool() }
-        safeRegister { SonarTool() }
-
-        // Runtime tools
-        safeRegister { RuntimeExecTool() }
-        safeRegister { RuntimeConfigTool() }
-        safeRegister { CoverageTool() }
-
-        // Debug tools (require AgentDebugController)
-        registerDebugTools()
-
-        // Sub-agent delegation tool (depth-1: sub-agents cannot spawn further sub-agents)
-        safeRegister { SpawnAgentTool(
+        // Sub-agent delegation tool
+        safeRegisterCore { SpawnAgentTool(
             brainProvider = { createBrain() },
             toolRegistry = registry,
             project = project
         ) }
 
-        log.info("AgentService: registered ${registry.allTools().size} tools")
+        // ── Deferred tools (loaded via tool_search) ──────────────────────
+
+        // PSI tools beyond the core 3
+        safeRegisterDeferred { FindImplementationsTool() }
+        safeRegisterDeferred { FileStructureTool() }
+        safeRegisterDeferred { TypeHierarchyTool() }
+        safeRegisterDeferred { CallHierarchyTool() }
+        safeRegisterDeferred { TypeInferenceTool() }
+        safeRegisterDeferred { DataFlowAnalysisTool() }
+        safeRegisterDeferred { GetMethodBodyTool() }
+        safeRegisterDeferred { GetAnnotationsTool() }
+        safeRegisterDeferred { TestFinderTool() }
+        safeRegisterDeferred { StructuralSearchTool() }
+        safeRegisterDeferred { ReadWriteAccessTool() }
+
+        // IDE tools beyond core
+        safeRegisterDeferred { FormatCodeTool() }
+        safeRegisterDeferred { OptimizeImportsTool() }
+        safeRegisterDeferred { RefactorRenameTool() }
+        safeRegisterDeferred { RunInspectionsTool() }
+        safeRegisterDeferred { ProblemViewTool() }
+        safeRegisterDeferred { ListQuickFixesTool() }
+
+        // VCS tools beyond core 3 (individual tools — GitTool meta-tool removed)
+        safeRegisterDeferred { GitBlameTool() }
+        safeRegisterDeferred { GitBranchesTool() }
+        safeRegisterDeferred { GitShowCommitTool() }
+        safeRegisterDeferred { GitShowFileTool() }
+        safeRegisterDeferred { GitStashListTool() }
+        safeRegisterDeferred { GitFileHistoryTool() }
+        safeRegisterDeferred { GitMergeBaseTool() }
+        safeRegisterDeferred { ChangelistShelveTool() }
+
+        // Framework tools
+        safeRegisterDeferred { BuildTool() }
+        safeRegisterDeferred { SpringTool() }
+
+        // Runtime tools
+        safeRegisterDeferred { RuntimeExecTool() }
+        safeRegisterDeferred { RuntimeConfigTool() }
+        safeRegisterDeferred { CoverageTool() }
+
+        // Run config tools
+        safeRegisterDeferred { CreateRunConfigTool() }
+        safeRegisterDeferred { ModifyRunConfigTool() }
+        safeRegisterDeferred { DeleteRunConfigTool() }
+
+        // Database tools
+        safeRegisterDeferred { DbListProfilesTool() }
+        safeRegisterDeferred { DbQueryTool() }
+        safeRegisterDeferred { DbSchemaTool() }
+
+        // Other deferred tools
+        safeRegisterDeferred { ProjectContextTool() }
+        safeRegisterDeferred { CurrentTimeTool() }
+        safeRegisterDeferred { KillProcessTool() }
+        safeRegisterDeferred { SendStdinTool() }
+        safeRegisterDeferred { AskUserInputTool() }
+
+        // Debug tools (require AgentDebugController)
+        registerDebugTools()
+
+        // ── Conditional integration tools ────────────────────────────────
+        // Only registered when the service URL is configured in ConnectionSettings
+        registerConditionalIntegrationTools()
+
+        log.info("AgentService: registered ${registry.count()} tools " +
+            "(${registry.coreCount()} core, ${registry.deferredCount()} deferred)")
+    }
+
+    /**
+     * Register integration tools conditionally — only when their service URL
+     * is configured. Prevents the LLM from seeing tools it can never use.
+     */
+    private fun registerConditionalIntegrationTools() {
+        val connections = ConnectionSettings.getInstance()
+
+        if (connections.state.jiraUrl.isNotBlank()) {
+            safeRegisterDeferred { JiraTool() }
+        }
+        if (connections.state.bambooUrl.isNotBlank()) {
+            safeRegisterDeferred { BambooBuildsTool() }
+            safeRegisterDeferred { BambooPlansTool() }
+        }
+        if (connections.state.sonarUrl.isNotBlank()) {
+            safeRegisterDeferred { SonarTool() }
+        }
+        if (connections.state.bitbucketUrl.isNotBlank()) {
+            safeRegisterDeferred { BitbucketPrTool() }
+            safeRegisterDeferred { BitbucketRepoTool() }
+            safeRegisterDeferred { BitbucketReviewTool() }
+        }
     }
 
     private fun registerDebugTools() {
         try {
             val controller = AgentDebugController(project)
             debugController = controller
-            registry.register(DebugStepTool(controller))
-            registry.register(DebugInspectTool(controller))
-            registry.register(DebugBreakpointsTool(controller))
+            registry.registerDeferred(DebugStepTool(controller))
+            registry.registerDeferred(DebugInspectTool(controller))
+            registry.registerDeferred(DebugBreakpointsTool(controller))
         } catch (e: Exception) {
             log.warn("AgentService: failed to register debug tools: ${e.message}")
         }
     }
 
-    private inline fun safeRegister(factory: () -> AgentTool) {
+    private inline fun safeRegisterCore(factory: () -> AgentTool) {
         try {
-            registry.register(factory())
+            registry.registerCore(factory())
         } catch (e: Exception) {
-            log.warn("AgentService: failed to register tool: ${e.message}")
+            log.warn("AgentService: failed to register core tool: ${e.message}")
         }
+    }
+
+    private inline fun safeRegisterDeferred(factory: () -> AgentTool) {
+        try {
+            registry.registerDeferred(factory())
+        } catch (e: Exception) {
+            log.warn("AgentService: failed to register deferred tool: ${e.message}")
+        }
+    }
+
+    /** Backward-compatible register — delegates to core. */
+    private inline fun safeRegister(factory: () -> AgentTool) {
+        safeRegisterCore(factory)
     }
 
     // ── Task Execution ─────────────────────────────────────────────────────
@@ -285,6 +338,14 @@ class AgentService(private val project: Project) : Disposable {
                 val availableSkills = bundledSkills.map { it.name to it.description }
                     .ifEmpty { null }
 
+                // Reset active deferred tools for new sessions (not resumed ones)
+                if (contextManager == null) {
+                    registry.resetActiveDeferred()
+                }
+
+                // Build deferred catalog for system prompt injection
+                val deferredCatalog = registry.getDeferredCatalog()
+
                 val systemPrompt = SystemPrompt.build(
                     projectName = projectName,
                     projectPath = projectPath,
@@ -297,25 +358,34 @@ class AgentService(private val project: Project) : Disposable {
                     additionalContext = projectInstructions,
                     availableSkills = availableSkills,
                     activeSkillContent = ctx.getActiveSkill(),
-                    taskProgress = ctx.getTaskProgress()
+                    taskProgress = ctx.getTaskProgress(),
+                    deferredToolCatalog = deferredCatalog
                 )
                 ctx.setSystemPrompt(systemPrompt)
 
-                // Build tool definitions, filtering by mode.
+                // Build tool definitions dynamically — uses getActiveTools() which grows
+                // as tool_search activates deferred tools during the session.
                 // Plan mode: remove write tools + act_mode_respond, keep plan_mode_respond.
                 // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools.
-                // Ported from Cline's mode-specific tool schema filtering.
-                val tools = registry.allTools().associateBy { it.name }
                 val isPlanMode = planModeActive.get()
-                val toolDefs = tools.values
-                    .filter { tool ->
-                        if (isPlanMode) {
-                            tool.name !in writeToolNames && tool.name != "act_mode_respond"
-                        } else {
-                            tool.name != "plan_mode_respond"
+
+                // Dynamic tool definition provider — called on each loop iteration
+                val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
+                    registry.getActiveTools().values
+                        .filter { tool ->
+                            if (isPlanMode) {
+                                tool.name !in writeToolNames && tool.name != "act_mode_respond"
+                            } else {
+                                tool.name != "plan_mode_respond"
+                            }
                         }
-                    }
-                    .map { it.toToolDefinition() }
+                        .map { it.toToolDefinition() }
+                }
+
+                // Initial tool definitions (also used as fallback in AgentLoop)
+                val toolDefs = toolDefinitionProvider()
+                // Tool map for execution — use registry.get() to resolve any tool including deferred
+                val tools = registry.getActiveTools()
 
                 // Track the message count before this turn, so we can
                 // checkpoint only newly-added messages (JSONL append).
@@ -331,6 +401,8 @@ class AgentService(private val project: Project) : Disposable {
                     onToolCall = onToolCall,
                     onTaskProgress = onTaskProgress,
                     planMode = planModeActive.get(),
+                    toolDefinitionProvider = toolDefinitionProvider,
+                    toolResolver = { name -> registry.get(name) },
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where

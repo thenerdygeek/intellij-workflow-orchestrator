@@ -52,7 +52,19 @@ class AgentLoop(
     private val onTaskProgress: (TaskProgress) -> Unit = {},
     private val maxIterations: Int = 200,
     private val planMode: Boolean = false,
-    private val onCheckpoint: (suspend () -> Unit)? = null
+    private val onCheckpoint: (suspend () -> Unit)? = null,
+    /**
+     * Optional provider for dynamic tool definitions. When set, this is called on each
+     * iteration to get the current tool definitions (supporting tool_search activation).
+     * Falls back to the static [toolDefinitions] list when null.
+     */
+    private val toolDefinitionProvider: (() -> List<ToolDefinition>)? = null,
+    /**
+     * Optional provider for resolving tools by name dynamically.
+     * Supports deferred tools that aren't in the initial [tools] map.
+     * Falls back to the static [tools] map when null.
+     */
+    private val toolResolver: ((String) -> AgentTool?)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -148,10 +160,11 @@ class AgentLoop(
                 contextManager.compact(brain)
             }
 
-            // Stage 1: Call LLM
+            // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)
+            val currentToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
-                tools = toolDefinitions,
+                tools = currentToolDefs,
                 onChunk = { chunk ->
                     chunk.choices.firstOrNull()?.delta?.content?.let { onStreamChunk(it) }
                 }
@@ -340,10 +353,11 @@ class AgentLoop(
                 LoopStatus.OK -> { /* no action */ }
             }
 
-            val tool = tools[toolName]
+            val tool = toolResolver?.invoke(toolName) ?: tools[toolName]
             if (tool == null) {
                 // Unknown tool
-                val errorMsg = "Unknown tool: '$toolName'. Available tools: ${tools.keys.joinToString(", ")}"
+                val allToolNames = if (toolResolver != null) "use tool_search to find tools" else tools.keys.joinToString(", ")
+                val errorMsg = "Unknown tool: '$toolName'. Available tools: $allToolNames"
                 contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
                 onToolCall(
                     ToolCallProgress(

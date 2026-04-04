@@ -891,4 +891,134 @@ class AgentLoopTest {
             assertTrue(result is LoopResult.Completed, "Expected Completed — checkpoint should not block loop")
         }
     }
+
+    // ---- Dynamic tool definitions (tool_search support) ----
+
+    @Nested
+    inner class DynamicToolDefinitionTests {
+
+        @Test
+        fun `toolDefinitionProvider is called on each iteration`() = runTest {
+            var providerCallCount = 0
+            val allTools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val toolMap = allTools.associateBy { it.name }
+            val toolDefs = allTools.map { it.toToolDefinition() }
+
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val loop = AgentLoop(
+                brain = brain,
+                tools = toolMap,
+                toolDefinitions = toolDefs,
+                contextManager = contextManager,
+                project = project,
+                toolDefinitionProvider = {
+                    providerCallCount++
+                    toolDefs
+                }
+            )
+
+            val result = loop.run("Do something")
+            assertTrue(result is LoopResult.Completed)
+            // Provider should be called on each iteration (2 iterations in this case)
+            assertEquals(2, providerCallCount, "toolDefinitionProvider should be called on each loop iteration")
+        }
+
+        @Test
+        fun `toolResolver resolves tools not in initial map`() = runTest {
+            // Start with only attempt_completion in the tools map
+            val completionT = completionTool("Done.")
+            val initialTools = mapOf("attempt_completion" to completionT)
+            val defs = listOf(completionT.toToolDefinition())
+
+            // But create a "hidden" tool that toolResolver can find
+            val hiddenTool = fakeTool("jira")
+
+            val brain = sequenceBrain(
+                toolCallResponse("jira" to """{"action":"list"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val loop = AgentLoop(
+                brain = brain,
+                tools = initialTools,
+                toolDefinitions = defs,
+                contextManager = contextManager,
+                project = project,
+                toolResolver = { name ->
+                    if (name == "jira") hiddenTool else initialTools[name]
+                }
+            )
+
+            val progressList = mutableListOf<ToolCallProgress>()
+            val loopWithCallback = AgentLoop(
+                brain = brain,
+                tools = initialTools,
+                toolDefinitions = defs,
+                contextManager = contextManager,
+                project = project,
+                toolResolver = { name ->
+                    if (name == "jira") hiddenTool else initialTools[name]
+                },
+                onToolCall = { progressList.add(it) }
+            )
+            val result = loopWithCallback.run("Use jira")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+            // Verify jira tool was resolved and called successfully
+            val jiraProgress = progressList.filter { it.toolName == "jira" }
+            assertTrue(jiraProgress.any { !it.isError }, "jira should execute without error via toolResolver")
+        }
+
+        @Test
+        fun `newly loaded tools included in next API call definitions`() = runTest {
+            // Simulate tool_search activation: the provider returns growing definitions
+            val baseTool = fakeTool("read_file")
+            val extraTool = fakeTool("jira")
+            val completionT = completionTool("Done.")
+
+            val allTools = listOf(baseTool, extraTool, completionT).associateBy { it.name }
+            var includeJira = false
+
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                // After first iteration, jira gets activated
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val capturedToolCounts = mutableListOf<Int>()
+
+            val loop = AgentLoop(
+                brain = brain,
+                tools = allTools,
+                toolDefinitions = listOf(baseTool.toToolDefinition(), completionT.toToolDefinition()),
+                contextManager = contextManager,
+                project = project,
+                toolDefinitionProvider = {
+                    val defs = mutableListOf(baseTool.toToolDefinition(), completionT.toToolDefinition())
+                    if (includeJira) {
+                        defs.add(extraTool.toToolDefinition())
+                    }
+                    // After first call, simulate tool_search activation
+                    includeJira = true
+                    capturedToolCounts.add(defs.size)
+                    defs
+                }
+            )
+
+            val result = loop.run("Do something")
+            assertTrue(result is LoopResult.Completed)
+
+            // First iteration: 2 defs, second iteration: 3 defs (jira added)
+            assertEquals(2, capturedToolCounts.size)
+            assertEquals(2, capturedToolCounts[0], "First call should have 2 tool defs")
+            assertEquals(3, capturedToolCounts[1], "Second call should have 3 tool defs (jira added)")
+        }
+    }
 }

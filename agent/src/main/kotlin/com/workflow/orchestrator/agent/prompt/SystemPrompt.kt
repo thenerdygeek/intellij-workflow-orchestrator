@@ -34,7 +34,9 @@ object SystemPrompt {
         additionalContext: String? = null,
         availableSkills: List<Pair<String, String>>? = null,
         activeSkillContent: String? = null,
-        taskProgress: String? = null
+        taskProgress: String? = null,
+        /** Deferred tools available via tool_search (name, one-line description). */
+        deferredToolCatalog: List<Pair<String, String>>? = null
     ): String = buildString {
 
         // 1. AGENT ROLE
@@ -60,6 +62,12 @@ object SystemPrompt {
 
         // 6. SKILLS (optional)
         skills(availableSkills, activeSkillContent)?.let {
+            append(SECTION_SEP)
+            append(it)
+        }
+
+        // 6b. DEFERRED TOOL CATALOG (optional)
+        deferredToolCatalog(deferredToolCatalog)?.let {
             append(SECTION_SEP)
             append(it)
         }
@@ -271,6 +279,22 @@ There are two modes:
                 appendLine("# Active Skill Instructions")
                 appendLine()
                 append(activeSkillContent)
+            }
+        }.trimEnd()
+    }
+
+    /**
+     * Section 6b: Deferred Tool Catalog
+     * Lists tools available via tool_search so the LLM knows what's discoverable.
+     */
+    private fun deferredToolCatalog(catalog: List<Pair<String, String>>?): String? {
+        if (catalog.isNullOrEmpty()) return null
+        return buildString {
+            appendLine("ADDITIONAL TOOLS AVAILABLE VIA tool_search")
+            appendLine()
+            appendLine("Use the tool_search tool to load any of these specialized tools when needed:")
+            for ((name, description) in catalog) {
+                appendLine("- $name: $description")
             }
         }.trimEnd()
     }
