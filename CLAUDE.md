@@ -167,6 +167,9 @@ All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (compu
 | Conversation history | `agent/sessions/{sessionId}/messages.jsonl` | Per-session |
 | Checkpoints | `agent/sessions/{sessionId}/checkpoints/{cpId}.jsonl` | Per-session |
 | Checkpoint metadata | `agent/sessions/{sessionId}/checkpoints/{cpId}.meta.json` | Per-session |
+| Core memory | `agent/core-memory.json` | Persistent |
+| Archival memory | `agent/archival/store.json` | Persistent (5000 cap) |
+| Legacy memory | `agent/memory/` | Persistent |
 | Logs | `logs/agent-YYYY-MM-DD.jsonl` | 7 days |
 
 Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`.
@@ -207,6 +210,33 @@ See `docs/architecture/agent-architecture.md` Section 11.
 
 **Skills:** Bundled from classpath `/skills/`, project-local from `{projectPath}/.agent-skills/`,
 global from `~/.workflow-orchestrator/skills/`. Each skill is a directory with `SKILL.md` (YAML frontmatter).
+
+## Agent Memory System
+
+Three-tier memory ported from Letta/MemGPT pattern with file-based storage (no external dependencies):
+
+**Tier 1 — Core Memory** (`core-memory.json`): Named blocks always injected as `<core_memory>` in system prompt.
+Agent self-edits via `core_memory_read/append/replace` tools. Per-block character limits (5K default).
+Persisted as JSON, loaded at session start.
+
+**Tier 2 — Archival Memory** (`archival/store.json`): JSON store with tag-boosted keyword search (3x tag boost).
+Insert via `archival_memory_insert`, search via `archival_memory_search`. Codex-style usage tracking
+(usage_count, last_usage) with decay-based pruning (30-day window). Cap: 5000 entries.
+
+**Tier 3 — Conversation Recall**: Keyword search across JSONL session transcripts via `conversation_search`.
+Read-only, filters by role, skips tool messages. Backed by existing SessionStore.
+
+**Legacy — save_memory**: Markdown file persistence to `agent/memory/` directory.
+
+| Tool | Tier | Description |
+|------|------|-------------|
+| `core_memory_read` | Core | Read memory blocks (all or by label) |
+| `core_memory_append` | Core | Append to a named block |
+| `core_memory_replace` | Core | Find-and-replace in a block |
+| `archival_memory_insert` | Archival | Store knowledge with tags |
+| `archival_memory_search` | Archival | Keyword search with tag boost |
+| `conversation_search` | Recall | Search past session transcripts |
+| `save_memory` | Legacy | Save markdown memory file |
 
 ## UX Constraints
 
