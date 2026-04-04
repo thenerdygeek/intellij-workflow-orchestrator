@@ -592,6 +592,7 @@ class AgentService(private val project: Project) : Disposable {
                     onToolCall = onToolCall,
                     onTaskProgress = onTaskProgress,
                     planMode = planModeActive.get(),
+                    maxOutputTokens = agentSettings.state.maxOutputTokens,
                     toolDefinitionProvider = toolDefinitionProvider,
                     toolResolver = { name -> registry.get(name) },
                     hookManager = if (hookManager.hasAnyHooks()) hookManager else null,

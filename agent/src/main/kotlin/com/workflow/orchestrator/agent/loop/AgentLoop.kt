@@ -90,6 +90,8 @@ class AgentLoop(
      * can show running totals.
      */
     private val onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
+    /** Max output tokens per LLM call. Default from AgentSettings: 64000. Passed as max_tokens in the API request. */
+    private val maxOutputTokens: Int? = null,
     /**
      * Optional callback fired after write operations (edit_file, create_file, etc.)
      * to create a named checkpoint. Ported from Cline's checkpoint reversion pattern:
@@ -267,6 +269,7 @@ class AgentLoop(
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,
+                maxTokens = maxOutputTokens,
                 onChunk = { chunk ->
                     chunk.choices.firstOrNull()?.delta?.content?.let { onStreamChunk(it) }
                 }
