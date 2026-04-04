@@ -9,7 +9,10 @@ import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.core.ai.LlmBrain
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.coroutineContext
 
 /**
  * Wraps [AgentLoop] with per-subagent stats tracking, progress callbacks, and cancellation.
@@ -79,6 +82,10 @@ class SubagentRunner(
             val toolDefinitions = tools.values.map { it.toToolDefinition() }
 
             // 5. Create AgentLoop with callbacks
+            // Capture coroutine scope to bridge non-suspend AgentLoop callbacks
+            // to suspend onProgress. Port of Cline's per-tool-call progress reporting.
+            val scope = CoroutineScope(coroutineContext)
+
             val loop = AgentLoop(
                 brain = brain,
                 tools = tools,
@@ -90,16 +97,25 @@ class SubagentRunner(
                 onToolCall = { progress ->
                     stats.toolCalls++
                     val preview = formatToolCallPreview(progress.toolName, progress.args)
-                    // Fire-and-forget would need a scope; instead we track for the next onProgress
                     stats.latestToolCall = preview
+                    // Fire progress with latestToolCall (Cline: onProgress({ latestToolCall }))
+                    scope.launch {
+                        onProgress(SubagentProgressUpdate(
+                            latestToolCall = preview,
+                            stats = stats.snapshot()
+                        ))
+                    }
                 },
                 onTokenUpdate = { inputTokens, outputTokens ->
                     stats.inputTokens = inputTokens
                     stats.outputTokens = outputTokens
-                    // Compute context usage from the context manager
                     stats.contextUsagePercentage = contextManager.utilizationPercent()
                     stats.contextTokens = contextManager.tokenEstimate()
                     stats.contextWindow = contextBudget
+                    // Fire progress with updated stats (Cline: onProgress({ stats: { ...stats } }))
+                    scope.launch {
+                        onProgress(SubagentProgressUpdate(stats = stats.snapshot()))
+                    }
                 }
             )
 
