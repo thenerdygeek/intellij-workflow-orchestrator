@@ -29,6 +29,18 @@ data class Session(
     val messageCount: Int = 0,
     val status: SessionStatus = SessionStatus.ACTIVE,
     val totalTokens: Int = 0,
+    /**
+     * Cumulative input (prompt) tokens for this session.
+     * Ported from Cline's HistoryItem.tokensIn — tracks total prompt tokens
+     * across all API calls in the task.
+     */
+    val inputTokens: Int = 0,
+    /**
+     * Cumulative output (completion) tokens for this session.
+     * Ported from Cline's HistoryItem.tokensOut — tracks total completion tokens
+     * across all API calls in the task.
+     */
+    val outputTokens: Int = 0,
     // Checkpoint/resume fields (ported from Cline's TaskState + task settings persistence)
     val systemPrompt: String = "",
     val planModeEnabled: Boolean = false,

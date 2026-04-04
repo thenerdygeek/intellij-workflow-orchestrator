@@ -194,6 +194,15 @@ class AgentController(
             when (result) {
                 is LoopResult.Completed -> {
                     dashboard.appendCompletionSummary(result.summary, result.verifyCommand)
+                    // Display token usage summary (ported from Cline's cost tracking)
+                    if (result.inputTokens > 0 || result.outputTokens > 0) {
+                        val inputK = formatTokenCount(result.inputTokens)
+                        val outputK = formatTokenCount(result.outputTokens)
+                        dashboard.appendStatus(
+                            "Used ${inputK} input + ${outputK} output tokens",
+                            RichStreamingPanel.StatusType.INFO
+                        )
+                    }
                     dashboard.completeSession(
                         tokensUsed = result.tokensUsed,
                         iterations = result.iterations,
@@ -205,6 +214,14 @@ class AgentController(
 
                 is LoopResult.Failed -> {
                     dashboard.appendError(result.error)
+                    if (result.inputTokens > 0 || result.outputTokens > 0) {
+                        val inputK = formatTokenCount(result.inputTokens)
+                        val outputK = formatTokenCount(result.outputTokens)
+                        dashboard.appendStatus(
+                            "Used ${inputK} input + ${outputK} output tokens",
+                            RichStreamingPanel.StatusType.INFO
+                        )
+                    }
                     dashboard.completeSession(
                         tokensUsed = result.tokensUsed,
                         iterations = result.iterations,
@@ -437,6 +454,18 @@ class AgentController(
         }
         sb.append("]")
         return sb.toString()
+    }
+
+    /**
+     * Format token count for display: "45K" for large counts, exact for small.
+     * Ported from Cline's webview token display pattern.
+     */
+    private fun formatTokenCount(tokens: Int): String {
+        return if (tokens >= 1000) {
+            "${tokens / 1000}K"
+        } else {
+            tokens.toString()
+        }
     }
 
     fun dispose() {

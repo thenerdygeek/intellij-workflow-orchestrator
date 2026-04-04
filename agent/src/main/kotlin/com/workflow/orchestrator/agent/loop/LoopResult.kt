@@ -5,18 +5,26 @@ sealed class LoopResult {
         val summary: String,
         val iterations: Int,
         val tokensUsed: Int = 0,
-        val verifyCommand: String? = null
+        val verifyCommand: String? = null,
+        /** Cumulative input (prompt) tokens across all API calls. Ported from Cline's tokensIn. */
+        val inputTokens: Int = 0,
+        /** Cumulative output (completion) tokens across all API calls. Ported from Cline's tokensOut. */
+        val outputTokens: Int = 0
     ) : LoopResult()
 
     data class Failed(
         val error: String,
         val iterations: Int = 0,
-        val tokensUsed: Int = 0
+        val tokensUsed: Int = 0,
+        val inputTokens: Int = 0,
+        val outputTokens: Int = 0
     ) : LoopResult()
 
     data class Cancelled(
         val iterations: Int,
-        val tokensUsed: Int = 0
+        val tokensUsed: Int = 0,
+        val inputTokens: Int = 0,
+        val outputTokens: Int = 0
     ) : LoopResult()
 
     /**
@@ -33,7 +41,9 @@ sealed class LoopResult {
         val plan: String,
         val needsMoreExploration: Boolean = false,
         val iterations: Int,
-        val tokensUsed: Int = 0
+        val tokensUsed: Int = 0,
+        val inputTokens: Int = 0,
+        val outputTokens: Int = 0
     ) : LoopResult()
 }
 

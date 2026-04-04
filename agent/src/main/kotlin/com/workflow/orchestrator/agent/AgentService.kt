@@ -458,11 +458,24 @@ class AgentService(private val project: Project) : Disposable {
                 }
 
                 // I5: Update session via .copy() (Session is now fully immutable)
+                // Extract token counts from result (ported from Cline's tokensIn/tokensOut)
                 val tokensUsed = when (result) {
                     is LoopResult.Completed -> result.tokensUsed
                     is LoopResult.Failed -> result.tokensUsed
                     is LoopResult.Cancelled -> result.tokensUsed
                     is LoopResult.PlanPresented -> result.tokensUsed
+                }
+                val inputTokens = when (result) {
+                    is LoopResult.Completed -> result.inputTokens
+                    is LoopResult.Failed -> result.inputTokens
+                    is LoopResult.Cancelled -> result.inputTokens
+                    is LoopResult.PlanPresented -> result.inputTokens
+                }
+                val outputTokens = when (result) {
+                    is LoopResult.Completed -> result.outputTokens
+                    is LoopResult.Failed -> result.outputTokens
+                    is LoopResult.Cancelled -> result.outputTokens
+                    is LoopResult.PlanPresented -> result.outputTokens
                 }
                 session = session.copy(
                     status = when (result) {
@@ -473,6 +486,8 @@ class AgentService(private val project: Project) : Disposable {
                     },
                     lastMessageAt = System.currentTimeMillis(),
                     totalTokens = tokensUsed,
+                    inputTokens = inputTokens,
+                    outputTokens = outputTokens,
                     messageCount = ctx.messageCount()
                 )
                 sessionStore.save(session)

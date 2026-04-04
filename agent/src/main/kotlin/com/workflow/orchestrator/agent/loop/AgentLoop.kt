@@ -64,10 +64,21 @@ class AgentLoop(
      * Supports deferred tools that aren't in the initial [tools] map.
      * Falls back to the static [tools] map when null.
      */
-    private val toolResolver: ((String) -> AgentTool?)? = null
+    private val toolResolver: ((String) -> AgentTool?)? = null,
+    /**
+     * Optional callback fired after each API call with cumulative token counts.
+     * Ported from Cline's cost tracking: Cline tracks tokensIn/tokensOut in HistoryItem
+     * and updates the webview after each API response. We fire this callback so the UI
+     * can show running totals.
+     */
+    private val onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
+    /** Cumulative input (prompt) tokens across all API calls in this loop. */
+    private var totalInputTokens = 0
+    /** Cumulative output (completion) tokens across all API calls in this loop. */
+    private var totalOutputTokens = 0
 
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
@@ -87,6 +98,8 @@ class AgentLoop(
         private const val MAX_API_RETRIES = 5
         private const val MAX_CONTEXT_OVERFLOW_RETRIES = 2
         private const val INITIAL_RETRY_DELAY_MS = 1000L
+        /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
+        private const val MAX_RETRY_DELAY_MS = 30_000L
         private const val CONTINUATION_PROMPT =
             "Your previous response was empty. Please use the available tools to take action on the task, or call attempt_completion if you are done."
         private const val TEXT_ONLY_NUDGE =
@@ -142,7 +155,7 @@ class AgentLoop(
      */
     suspend fun run(task: String): LoopResult {
         if (cancelled.get()) {
-            return LoopResult.Cancelled(iterations = 0, tokensUsed = 0)
+            return LoopResult.Cancelled(iterations = 0, tokensUsed = 0, inputTokens = 0, outputTokens = 0)
         }
 
         contextManager.addUserMessage(task)
@@ -185,8 +198,13 @@ class AgentLoop(
 
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < MAX_API_RETRIES) {
                     apiRetryCount++
-                    val delayMs = INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1))
-                    LOG.warn("[AgentLoop] Retryable API error (${apiResult.type}), retry $apiRetryCount/$MAX_API_RETRIES after ${delayMs}ms")
+                    // Use server-provided retry delay if available (ported from Cline's retry.ts),
+                    // otherwise fall back to exponential backoff
+                    val delayMs = apiResult.retryAfterMs
+                        ?.coerceAtMost(MAX_RETRY_DELAY_MS)
+                        ?: (INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1)))
+                    val delaySource = if (apiResult.retryAfterMs != null) "retry-after header" else "exponential backoff"
+                    LOG.warn("[AgentLoop] Retryable API error (${apiResult.type}), retry $apiRetryCount/$MAX_API_RETRIES after ${delayMs}ms ($delaySource)")
                     delay(delayMs)
                     iteration-- // Don't count retries as iterations
                     continue
@@ -194,7 +212,9 @@ class AgentLoop(
                 return LoopResult.Failed(
                     error = apiResult.message,
                     iterations = iteration,
-                    tokensUsed = totalTokensUsed
+                    tokensUsed = totalTokensUsed,
+                    inputTokens = totalInputTokens,
+                    outputTokens = totalOutputTokens
                 )
             }
 
@@ -204,10 +224,14 @@ class AgentLoop(
             apiRetryCount = 0
             contextOverflowRetries = 0
 
-            // Stage 3: Update token tracking
+            // Stage 3: Update token tracking (ported from Cline's cost tracking)
+            // Cline accumulates tokensIn/tokensOut in HistoryItem after each API call.
             response.usage?.let { usage ->
                 totalTokensUsed += usage.totalTokens
+                totalInputTokens += usage.promptTokens
+                totalOutputTokens += usage.completionTokens
                 contextManager.updateTokens(usage.promptTokens)
+                onTokenUpdate?.invoke(totalInputTokens, totalOutputTokens)
             }
 
             val choice = response.choices.firstOrNull() ?: continue
@@ -253,7 +277,9 @@ class AgentLoop(
                         return LoopResult.Failed(
                             error = "Failed after $MAX_CONSECUTIVE_EMPTIES consecutive empty responses from model.",
                             iterations = iteration,
-                            tokensUsed = totalTokensUsed
+                            tokensUsed = totalTokensUsed,
+                            inputTokens = totalInputTokens,
+                            outputTokens = totalOutputTokens
                         )
                     }
                     contextManager.addUserMessage(CONTINUATION_PROMPT)
@@ -262,13 +288,20 @@ class AgentLoop(
         }
 
         if (cancelled.get()) {
-            return LoopResult.Cancelled(iterations = iteration, tokensUsed = totalTokensUsed)
+            return LoopResult.Cancelled(
+                iterations = iteration,
+                tokensUsed = totalTokensUsed,
+                inputTokens = totalInputTokens,
+                outputTokens = totalOutputTokens
+            )
         }
 
         return LoopResult.Failed(
             error = "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
             iterations = iteration,
-            tokensUsed = totalTokensUsed
+            tokensUsed = totalTokensUsed,
+            inputTokens = totalInputTokens,
+            outputTokens = totalOutputTokens
         )
     }
 
@@ -311,7 +344,12 @@ class AgentLoop(
     private suspend fun executeToolCalls(toolCalls: List<ToolCall>, iteration: Int): LoopResult? {
         for (call in toolCalls) {
             if (cancelled.get()) {
-                return LoopResult.Cancelled(iterations = iteration, tokensUsed = totalTokensUsed)
+                return LoopResult.Cancelled(
+                    iterations = iteration,
+                    tokensUsed = totalTokensUsed,
+                    inputTokens = totalInputTokens,
+                    outputTokens = totalOutputTokens
+                )
             }
 
             val toolName = call.function.name
@@ -342,7 +380,9 @@ class AgentLoop(
                     return LoopResult.Failed(
                         error = "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
                         iterations = iteration,
-                        tokensUsed = totalTokensUsed
+                        tokensUsed = totalTokensUsed,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens
                     )
                 }
                 LoopStatus.SOFT_WARNING -> {
@@ -499,7 +539,9 @@ class AgentLoop(
                     summary = toolResult.content,
                     iterations = iteration,
                     tokensUsed = totalTokensUsed,
-                    verifyCommand = toolResult.verifyCommand
+                    verifyCommand = toolResult.verifyCommand,
+                    inputTokens = totalInputTokens,
+                    outputTokens = totalOutputTokens
                 )
             }
 
@@ -513,7 +555,9 @@ class AgentLoop(
                         plan = toolResult.content,
                         needsMoreExploration = false,
                         iterations = iteration,
-                        tokensUsed = totalTokensUsed
+                        tokensUsed = totalTokensUsed,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens
                     )
                 }
                 // needs_more_exploration=true: loop continues, LLM will use more tools
