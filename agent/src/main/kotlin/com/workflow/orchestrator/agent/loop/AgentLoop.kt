@@ -14,6 +14,7 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -96,7 +97,25 @@ class AgentLoop(
     /**
      * Session ID passed to hook events for identification.
      */
-    private val sessionId: String? = null
+    private val sessionId: String? = null,
+    /**
+     * Callback fired when plan_mode_respond produces a plan.
+     * The UI uses this to render the plan card with per-step comment buttons.
+     * The loop does NOT exit — it continues or waits for user input.
+     *
+     * @param planText the plan text from the LLM
+     * @param needsMoreExploration if true, loop continues immediately (LLM explores more)
+     */
+    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+    /**
+     * Channel for receiving user input during the loop.
+     * Used in plan mode: after the LLM presents a plan (needsMoreExploration=false),
+     * the loop suspends here waiting for the user to type a message, add comments,
+     * or click approve. This matches Cline's ask() pattern.
+     *
+     * When null, the loop does not wait for user input (legacy behavior / sub-agent mode).
+     */
+    val userInputChannel: Channel<String>? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -299,10 +318,17 @@ class AgentLoop(
                     if (completionResult != null) return completionResult
                 }
 
-                // Case B: Text only — nudge model to use tools
+                // Case B: Text only — in plan mode, wait for user input; in act mode, nudge to use tools
                 hasContent -> {
                     consecutiveEmpties = 0
-                    contextManager.addUserMessage(TEXT_ONLY_NUDGE)
+                    if (planMode && userInputChannel != null) {
+                        // In plan mode, text-only responses are conversational turns.
+                        // Notify UI so the streamed text is visible, then wait for user input.
+                        val userMessage = userInputChannel.receive()
+                        contextManager.addUserMessage(userMessage)
+                    } else {
+                        contextManager.addUserMessage(TEXT_ONLY_NUDGE)
+                    }
                 }
 
                 // Case C: Empty response — inject continuation, track consecutive count
@@ -687,24 +713,22 @@ class AgentLoop(
             }
 
             // Check for plan response (plan_mode_respond tool)
-            // Ported from Cline's plan mode flow:
-            // - If needs_more_exploration=true, continue the loop (LLM will explore more)
-            // - If needs_more_exploration=false, return PlanPresented so user can review
+            // Matches Cline's plan mode: the loop NEVER exits for plan presentation.
+            // - Notify UI via callback so the plan card can be rendered
+            // - If needs_more_exploration=true, loop continues immediately (LLM explores more)
+            // - If needs_more_exploration=false, wait for user input before next LLM call
             if (toolResult.isPlanResponse) {
-                if (!toolResult.needsMoreExploration) {
-                    return LoopResult.PlanPresented(
-                        plan = toolResult.content,
-                        needsMoreExploration = false,
-                        iterations = iteration,
-                        tokensUsed = totalTokensUsed,
-                        inputTokens = totalInputTokens,
-                        outputTokens = totalOutputTokens,
-                        filesModified = filesModifiedList(),
-                        linesAdded = totalLinesAdded,
-                        linesRemoved = totalLinesRemoved
-                    )
+                onPlanResponse?.invoke(toolResult.content, toolResult.needsMoreExploration)
+
+                if (!toolResult.needsMoreExploration && userInputChannel != null) {
+                    // Wait for user input (matches Cline's ask() pattern).
+                    // The user can: type in chat, add step comments, or click approve.
+                    // Each sends a message into the channel, which resumes the loop.
+                    val userMessage = userInputChannel.receive()
+                    contextManager.addUserMessage(userMessage)
+                    // Continue the loop — LLM will see the user's message and respond
                 }
-                // needs_more_exploration=true: loop continues, LLM will use more tools
+                // needs_more_exploration=true OR no channel: loop continues immediately
             }
 
             // Store active skill in ContextManager for compaction survival

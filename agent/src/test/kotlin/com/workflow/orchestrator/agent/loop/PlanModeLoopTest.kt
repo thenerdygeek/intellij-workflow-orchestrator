@@ -12,6 +12,8 @@ import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import io.mockk.mockk
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -102,7 +104,9 @@ class PlanModeLoopTest {
     private fun buildLoop(
         brain: LlmBrain,
         tools: List<AgentTool>,
-        planMode: Boolean = false
+        planMode: Boolean = false,
+        onPlanResponse: ((String, Boolean) -> Unit)? = null,
+        userInputChannel: Channel<String>? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
         val toolDefs = tools.map { it.toToolDefinition() }
@@ -112,7 +116,9 @@ class PlanModeLoopTest {
             toolDefinitions = toolDefs,
             contextManager = contextManager,
             project = project,
-            planMode = planMode
+            planMode = planMode,
+            onPlanResponse = onPlanResponse,
+            userInputChannel = userInputChannel
         )
     }
 
@@ -122,80 +128,221 @@ class PlanModeLoopTest {
     inner class PlanModeTests {
 
         @Test
-        fun `plan mode exits when plan_mode_respond called without needs_more_exploration`() = runTest {
+        fun `plan_mode_respond does NOT exit the loop — waits for user input then completes`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+            val planCallbackFired = mutableListOf<Pair<String, Boolean>>()
+
             val brain = sequenceBrain(
+                // LLM explores first
                 toolCallResponse("read_file" to """{"path":"src/main.kt"}"""),
-                toolCallResponse("plan_mode_respond" to """{"response":"Here is my plan: 1. Read, 2. Edit, 3. Test"}""")
+                // LLM presents plan — loop will wait for user input
+                toolCallResponse("plan_mode_respond" to """{"response":"Here is my plan: 1. Read, 2. Edit, 3. Test"}"""),
+                // After user approves, LLM completes
+                toolCallResponse("attempt_completion" to """{"result":"Done implementing"}""")
             )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done implementing",
+                summary = "Done implementing",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
 
             val tools = listOf(
                 fakeTool("read_file"),
-                PlanModeRespondTool()
+                PlanModeRespondTool(),
+                completionTool
             )
-            val loop = buildLoop(brain, tools, planMode = true)
-            val result = loop.run("Refactor the service layer")
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
+                userInputChannel = channel
+            )
 
-            assertTrue(result is LoopResult.PlanPresented, "should return PlanPresented, got: $result")
-            val planResult = result as LoopResult.PlanPresented
-            assertEquals("Here is my plan: 1. Read, 2. Edit, 3. Test", planResult.plan)
-            assertFalse(planResult.needsMoreExploration)
+            // Run the loop in a coroutine — it will suspend at channel.receive()
+            val loopJob = launch {
+                val result = loop.run("Refactor the service layer")
+                assertTrue(result is LoopResult.Completed, "should complete after user input, got: $result")
+            }
+
+            // Feed user input (approval) into the channel
+            channel.send("Approved. Implement the plan.")
+
+            // Wait for the loop to finish
+            loopJob.join()
+
+            // Verify the plan callback was fired
+            assertEquals(1, planCallbackFired.size, "plan callback should fire once")
+            assertTrue(planCallbackFired[0].first.contains("Here is my plan"))
+            assertFalse(planCallbackFired[0].second, "needsMoreExploration should be false")
         }
 
         @Test
-        fun `plan mode continues when needs_more_exploration is true`() = runTest {
+        fun `plan mode continues when needs_more_exploration is true — no wait for input`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+            val planCallbackFired = mutableListOf<Pair<String, Boolean>>()
+
             val brain = sequenceBrain(
-                // First: LLM calls plan_mode_respond with needs_more_exploration=true
+                // LLM calls plan_mode_respond with needs_more_exploration=true
                 toolCallResponse("plan_mode_respond" to """{"response":"I need to check more files","needs_more_exploration":true}"""),
-                // Second: LLM explores more
+                // LLM explores more
                 toolCallResponse("read_file" to """{"path":"src/service.kt"}"""),
-                // Third: LLM presents final plan
-                toolCallResponse("plan_mode_respond" to """{"response":"Final plan: 1. Refactor, 2. Test"}""")
+                // LLM presents final plan — waits for input
+                toolCallResponse("plan_mode_respond" to """{"response":"Final plan: 1. Refactor, 2. Test"}"""),
+                // After user input, LLM completes
+                toolCallResponse("attempt_completion" to """{"result":"All done"}""")
             )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "All done",
+                summary = "All done",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
 
             val tools = listOf(
                 fakeTool("read_file"),
-                PlanModeRespondTool()
+                PlanModeRespondTool(),
+                completionTool
             )
-            val loop = buildLoop(brain, tools, planMode = true)
-            val result = loop.run("Refactor everything")
-
-            assertTrue(result is LoopResult.PlanPresented, "should eventually return PlanPresented")
-            val planResult = result as LoopResult.PlanPresented
-            assertTrue(planResult.plan.contains("Final plan"))
-        }
-
-        @Test
-        fun `PlanPresented result contains plan text and iteration count`() = runTest {
-            val brain = sequenceBrain(
-                toolCallResponse("plan_mode_respond" to """{"response":"Step 1: A, Step 2: B"}""")
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
+                userInputChannel = channel
             )
 
-            val tools = listOf(PlanModeRespondTool())
-            val loop = buildLoop(brain, tools, planMode = true)
-            val result = loop.run("Plan the refactoring") as LoopResult.PlanPresented
+            val loopJob = launch {
+                val result = loop.run("Refactor everything")
+                assertTrue(result is LoopResult.Completed)
+            }
 
-            assertEquals("Step 1: A, Step 2: B", result.plan)
-            assertEquals(1, result.iterations)
-            assertTrue(result.tokensUsed > 0)
+            // Only one channel send needed — first plan_mode_respond has needs_more_exploration=true
+            // so no wait. Second has false so it waits.
+            channel.send("Looks good, implement it.")
+
+            loopJob.join()
+
+            // Verify both plan callbacks fired
+            assertEquals(2, planCallbackFired.size, "plan callback should fire twice")
+            assertTrue(planCallbackFired[0].second, "first call should have needsMoreExploration=true")
+            assertFalse(planCallbackFired[1].second, "second call should have needsMoreExploration=false")
+            assertTrue(planCallbackFired[1].first.contains("Final plan"))
         }
 
         @Test
         fun `plan mode blocks write tools`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+
             val brain = sequenceBrain(
                 // LLM hallucinates a write tool in plan mode
                 toolCallResponse("edit_file" to """{"path":"src/main.kt","changes":"..."}"""),
-                // Then uses plan_mode_respond properly
-                toolCallResponse("plan_mode_respond" to """{"response":"My plan after being corrected"}""")
+                // Then uses plan_mode_respond properly — waits for input
+                toolCallResponse("plan_mode_respond" to """{"response":"My plan after being corrected"}"""),
+                // After user input, completes
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
             )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done",
+                summary = "Done",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
 
             val tools = listOf(
                 fakeTool("edit_file"),
-                PlanModeRespondTool()
+                PlanModeRespondTool(),
+                completionTool
             )
-            val loop = buildLoop(brain, tools, planMode = true)
-            val result = loop.run("Plan changes")
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { _, _ -> },
+                userInputChannel = channel
+            )
 
-            assertTrue(result is LoopResult.PlanPresented)
+            val loopJob = launch {
+                val result = loop.run("Plan changes")
+                assertTrue(result is LoopResult.Completed)
+            }
+
+            channel.send("Approved.")
+            loopJob.join()
+        }
+
+        @Test
+        fun `plan mode without channel does not block — loop continues normally`() = runTest {
+            // When no userInputChannel is provided (e.g., sub-agent), plan_mode_respond
+            // fires the callback but the loop just continues without waiting
+            val planCallbackFired = mutableListOf<String>()
+
+            val brain = sequenceBrain(
+                toolCallResponse("plan_mode_respond" to """{"response":"Sub-agent plan"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done",
+                summary = "Done",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
+
+            val tools = listOf(PlanModeRespondTool(), completionTool)
+            // No channel — loop should NOT block
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { text, _ -> planCallbackFired.add(text) },
+                userInputChannel = null
+            )
+
+            val result = loop.run("Plan something")
+            assertTrue(result is LoopResult.Completed, "should complete without blocking, got: $result")
+            assertEquals(1, planCallbackFired.size)
+        }
+
+        @Test
+        fun `user revision comment flows through channel back to LLM`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+
+            val brain = sequenceBrain(
+                // First plan presentation
+                toolCallResponse("plan_mode_respond" to """{"response":"Plan v1: 1. Do A, 2. Do B"}"""),
+                // After user revision, LLM revises
+                toolCallResponse("plan_mode_respond" to """{"response":"Plan v2: 1. Do A (modified), 2. Do B, 3. Do C"}"""),
+                // After user approval, completes
+                toolCallResponse("attempt_completion" to """{"result":"Implemented revised plan"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Implemented revised plan",
+                summary = "Implemented revised plan",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
+
+            val tools = listOf(PlanModeRespondTool(), completionTool)
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { _, _ -> },
+                userInputChannel = channel
+            )
+
+            val loopJob = launch {
+                val result = loop.run("Plan the work")
+                assertTrue(result is LoopResult.Completed)
+            }
+
+            // User sends revision comment (first plan wait)
+            channel.send("Step 1 needs modification. Also add a Step 3 for testing.")
+            // User approves revised plan (second plan wait)
+            channel.send("Approved. Implement it.")
+
+            loopJob.join()
         }
     }
 

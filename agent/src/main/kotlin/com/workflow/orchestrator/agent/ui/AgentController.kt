@@ -17,6 +17,7 @@ import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 
 /**
  * Bridges the JCEF chat dashboard to [AgentService].
@@ -41,8 +42,15 @@ class AgentController(
     private var taskStartTime: Long = 0L
     /** Last task text for retry button. Gap 17. */
     private var lastTaskText: String? = null
-    /** Current plan text, stored for the approve/revise flow. Priority 1. */
-    private var currentPlan: String? = null
+    /**
+     * Channel for feeding user input into a running loop.
+     * Used in plan mode: after the LLM presents a plan, the loop waits on this channel.
+     * User messages, plan comments, and approve actions all send into this channel.
+     * Matches Cline's ask() pattern where the loop suspends until user responds.
+     */
+    private var userInputChannel: Channel<String>? = null
+    /** True when the loop is actively waiting for user input (plan presented, not exploring). */
+    private var loopWaitingForInput = false
 
     init {
         wireCallbacks()
@@ -136,6 +144,10 @@ class AgentController(
     /**
      * Execute a user task. Called from the chat input, redirect, or example prompts.
      * Safe to call multiple times for multi-turn conversation.
+     *
+     * If a loop is currently waiting for user input (plan mode), feeds the message
+     * into the existing loop's channel instead of starting a new one. This matches
+     * Cline's continuous conversation model where plan mode is a dialogue.
      */
     fun executeTask(task: String) {
         if (task.isBlank()) return
@@ -166,6 +178,18 @@ class AgentController(
             }
         }
 
+        // If the loop is waiting for user input (plan mode dialogue), feed into it
+        val channel = userInputChannel
+        if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
+            LOG.info("AgentController: feeding user message into existing loop via channel")
+            dashboard.appendUserMessage(task)
+            dashboard.setBusy(true)
+            // Input is NOT locked — user can always type freely (Cline behavior)
+            loopWaitingForInput = false
+            runBlocking { channel.send(task) }
+            return
+        }
+
         // Cancel any running task before starting a new one
         currentJob?.let { job ->
             if (job.isActive) {
@@ -177,7 +201,7 @@ class AgentController(
         // Show user message in the chat UI
         dashboard.appendUserMessage(task)
         dashboard.setBusy(true)
-        dashboard.setInputLocked(true)
+        // Input is NOT locked — user can always type (Cline behavior)
         taskStartTime = System.currentTimeMillis()
 
         // Create context manager on first message, reuse on subsequent turns
@@ -187,6 +211,9 @@ class AgentController(
             dashboard.startSession(task)
         }
 
+        // Create a fresh input channel for this loop run
+        userInputChannel = Channel(Channel.RENDEZVOUS)
+
         // Launch the agent loop
         currentJob = service.executeTask(
             task = task,
@@ -194,7 +221,9 @@ class AgentController(
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
             onTaskProgress = ::onTaskProgress,
-            onComplete = ::onComplete
+            onComplete = ::onComplete,
+            onPlanResponse = ::onPlanResponse,
+            userInputChannel = userInputChannel
         )
     }
 
@@ -319,33 +348,6 @@ class AgentController(
                     )
                 }
 
-                is LoopResult.PlanPresented -> {
-                    // Priority 1: Plan presented for user review — render plan card, keep session alive.
-                    // Do NOT call completeSession() — the session stays active for approve/revise.
-                    currentPlan = result.plan
-
-                    // Parse the free-text plan into structured JSON for the JCEF plan card
-                    val planJson = PlanParser.parseToJson(result.plan)
-                    dashboard.renderPlan(planJson)
-
-                    // Display token usage so far
-                    if (result.inputTokens > 0 || result.outputTokens > 0) {
-                        val inputK = formatTokenCount(result.inputTokens)
-                        val outputK = formatTokenCount(result.outputTokens)
-                        dashboard.appendStatus(
-                            "Plan exploration used ${inputK} input + ${outputK} output tokens",
-                            RichStreamingPanel.StatusType.INFO
-                        )
-                    }
-
-                    // Unlock input so the user can interact with the plan (approve/comment)
-                    dashboard.setBusy(false)
-                    dashboard.setInputLocked(false)
-                    dashboard.focusInput()
-                    currentJob = null
-                    return@invokeLater // Skip the common unlock at the bottom
-                }
-
                 is LoopResult.SessionHandoff -> {
                     // Session handoff (ported from Cline's new_task):
                     // Notify user, then automatically start a new session with preserved context
@@ -382,6 +384,10 @@ class AgentController(
             dashboard.setInputLocked(false)
             dashboard.focusInput()
             currentJob = null
+            // Reset channel state — the loop has finished
+            userInputChannel?.close()
+            userInputChannel = null
+            loopWaitingForInput = false
         }
     }
 
@@ -406,8 +412,10 @@ class AgentController(
         // Reset conversation state
         contextManager = null
         taskStartTime = 0L
-        currentPlan = null
         lastTaskText = null
+        userInputChannel?.close()
+        userInputChannel = null
+        loopWaitingForInput = false
 
         // Reset dashboard UI
         dashboard.reset()
@@ -536,48 +544,61 @@ class AgentController(
     }
 
     // ═══════════════════════════════════════════════════
-    //  Plan mode lifecycle — Priority 1
+    //  Plan mode lifecycle — continuous conversation (Cline pattern)
     // ═══════════════════════════════════════════════════
 
     /**
-     * User approved the plan — switch to act mode and implement it.
+     * Callback from AgentLoop when plan_mode_respond is called.
+     * Renders the plan card in the UI. The loop does NOT exit.
      *
-     * Flow: plan_mode_respond -> PlanPresented -> user clicks Approve ->
-     * switch to act mode -> send approved plan to LLM -> LLM implements step by step.
+     * If needsMoreExploration=true, the loop continues immediately.
+     * If needsMoreExploration=false, the loop will wait on userInputChannel
+     * for the user to respond (type chat, add comments, or approve).
+     */
+    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean) {
+        invokeLater {
+            // Parse and render the plan card (our custom addition on top of Cline)
+            val planJson = PlanParser.parseToJson(planText)
+            dashboard.renderPlan(planJson)
+
+            if (!needsMoreExploration) {
+                // The loop is now waiting for user input — unlock the UI
+                loopWaitingForInput = true
+                dashboard.setBusy(false)
+                // Input is never locked — user always types freely
+                dashboard.focusInput()
+            }
+        }
+    }
+
+    /**
+     * User approved the plan — switch to act mode and send approval message into the loop.
+     *
+     * The loop is waiting on userInputChannel. We send the approval message which:
+     * 1. Switches planModeActive to false
+     * 2. Feeds the approval instruction into the waiting loop
+     * 3. The LLM continues in act mode and implements the plan
      */
     private fun approvePlan() {
         LOG.info("AgentController.approvePlan")
-        val plan = currentPlan
-        if (plan == null) {
-            LOG.warn("AgentController.approvePlan: no plan to approve")
-            return
-        }
 
-        // Switch to act mode
+        // Switch to act mode — only the USER can do this (Cline behavior)
         AgentService.planModeActive.set(false)
         dashboard.setPlanMode(false)
 
-        // Clear the stored plan
-        currentPlan = null
+        // Feed the approval into the loop's input channel
+        val instruction = "The user has approved the plan. Switch to ACT MODE and implement it step by step. " +
+            "Follow the plan exactly. Call attempt_completion when all steps are done."
 
-        // Send the approved plan as a user message to continue the loop
-        val instruction = buildString {
-            appendLine("The user approved this plan. Now switch to ACT MODE and implement it step by step.")
-            appendLine()
-            appendLine("APPROVED PLAN:")
-            appendLine(plan)
-            appendLine()
-            appendLine("Execute each step in order. Use tools to implement the changes. " +
-                "Call attempt_completion when all steps are done.")
-        }
+        // Use executeTask which handles the channel-feeding logic
         executeTask(instruction)
     }
 
     /**
-     * User submitted per-step comments on the plan — send to LLM for revision.
+     * User submitted per-step comments on the plan — format and send into the loop.
      *
-     * Flow: plan_mode_respond -> PlanPresented -> user adds comments ->
-     * send comments to LLM -> LLM revises plan -> PlanPresented (revised).
+     * The loop stays in plan mode. The comments go through the userInputChannel,
+     * the LLM sees them, revises the plan, and presents again.
      *
      * @param commentsJson JSON array of step comments: [{"stepId":"1","comment":"..."}]
      */
@@ -613,7 +634,7 @@ class AgentController(
             appendLine("Please revise the plan and present the updated version using plan_mode_respond.")
         }
 
-        // Keep plan mode active — the LLM will explore more if needed and present a revised plan
+        // Feed into the loop — stays in plan mode, LLM revises
         executeTask(revisionMessage)
     }
 
@@ -738,5 +759,8 @@ class AgentController(
         }
         currentJob = null
         contextManager = null
+        userInputChannel?.close()
+        userInputChannel = null
+        loopWaitingForInput = false
     }
 }

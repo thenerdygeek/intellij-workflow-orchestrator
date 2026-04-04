@@ -331,7 +331,18 @@ class AgentService(private val project: Project) : Disposable {
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
         onTaskProgress: (TaskProgress) -> Unit = {},
-        onComplete: (LoopResult) -> Unit = {}
+        onComplete: (LoopResult) -> Unit = {},
+        /**
+         * Callback fired when the LLM presents a plan via plan_mode_respond.
+         * Used by the UI to render the plan card. Does NOT exit the loop.
+         */
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+        /**
+         * Channel for feeding user input into a running loop.
+         * Used in plan mode: after plan presentation, the loop waits on this channel
+         * for the user to send a message, add comments, or approve.
+         */
+        userInputChannel: kotlinx.coroutines.channels.Channel<String>? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -457,6 +468,8 @@ class AgentService(private val project: Project) : Disposable {
                     toolResolver = { name -> registry.get(name) },
                     hookManager = if (hookManager.hasAnyHooks()) hookManager else null,
                     sessionId = sid,
+                    onPlanResponse = onPlanResponse,
+                    userInputChannel = userInputChannel,
                     onWriteCheckpoint = { toolName, args ->
                         // Create named checkpoint after write operations (ported from Cline)
                         writeCheckpointCounter++
@@ -530,21 +543,18 @@ class AgentService(private val project: Project) : Disposable {
                     is LoopResult.Completed -> result.tokensUsed
                     is LoopResult.Failed -> result.tokensUsed
                     is LoopResult.Cancelled -> result.tokensUsed
-                    is LoopResult.PlanPresented -> result.tokensUsed
                     is LoopResult.SessionHandoff -> result.tokensUsed
                 }
                 val inputTokens = when (result) {
                     is LoopResult.Completed -> result.inputTokens
                     is LoopResult.Failed -> result.inputTokens
                     is LoopResult.Cancelled -> result.inputTokens
-                    is LoopResult.PlanPresented -> result.inputTokens
                     is LoopResult.SessionHandoff -> result.inputTokens
                 }
                 val outputTokens = when (result) {
                     is LoopResult.Completed -> result.outputTokens
                     is LoopResult.Failed -> result.outputTokens
                     is LoopResult.Cancelled -> result.outputTokens
-                    is LoopResult.PlanPresented -> result.outputTokens
                     is LoopResult.SessionHandoff -> result.outputTokens
                 }
                 session = session.copy(
@@ -552,7 +562,6 @@ class AgentService(private val project: Project) : Disposable {
                         is LoopResult.Completed -> SessionStatus.COMPLETED
                         is LoopResult.Failed -> SessionStatus.FAILED
                         is LoopResult.Cancelled -> SessionStatus.CANCELLED
-                        is LoopResult.PlanPresented -> SessionStatus.ACTIVE
                         is LoopResult.SessionHandoff -> SessionStatus.COMPLETED
                     },
                     lastMessageAt = System.currentTimeMillis(),
