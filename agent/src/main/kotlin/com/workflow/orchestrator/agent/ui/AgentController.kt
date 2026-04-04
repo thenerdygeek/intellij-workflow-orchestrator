@@ -6,12 +6,15 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.hooks.HookEvent
+import com.workflow.orchestrator.agent.hooks.HookResult
+import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.*
 
 /**
  * Bridges the JCEF chat dashboard to [AgentService].
@@ -99,6 +102,27 @@ class AgentController(
         if (task.isBlank()) return
 
         LOG.info("AgentController.executeTask: ${task.take(80)}")
+
+        // USER_PROMPT_SUBMIT hook (ported from Cline's UserPromptSubmit hook)
+        // Fires after user input, before processing. Cancellable: can block the message.
+        // Cline: "Executes when the user submits a prompt to Cline."
+        val hookManager = service.hookManager
+        if (hookManager.hasHooks(HookType.USER_PROMPT_SUBMIT)) {
+            val hookResult = runBlocking {
+                hookManager.dispatch(
+                    HookEvent(
+                        type = HookType.USER_PROMPT_SUBMIT,
+                        data = mapOf(
+                            "message" to task
+                        )
+                    )
+                )
+            }
+            if (hookResult is HookResult.Cancel) {
+                LOG.info("AgentController: USER_PROMPT_SUBMIT hook cancelled: ${hookResult.reason}")
+                return
+            }
+        }
 
         // Cancel any running task before starting a new one
         currentJob?.let { job ->

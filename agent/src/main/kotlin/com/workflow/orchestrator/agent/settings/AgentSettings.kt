@@ -37,6 +37,13 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var ralphMaxIterations by property(10)
         var ralphMaxCostUsd by string("10.0")
         var ralphReviewerEnabled by property(true)
+
+        /**
+         * Whether lifecycle hooks are enabled.
+         * Ported from Cline's hooksEnabled setting.
+         * When false, no hooks are executed regardless of .agent-hooks.json.
+         */
+        var hooksEnabled by property(true)
     }
 
     companion object {

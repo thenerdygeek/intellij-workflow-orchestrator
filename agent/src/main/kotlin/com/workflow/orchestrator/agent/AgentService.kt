@@ -5,6 +5,11 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.hooks.HookEvent
+import com.workflow.orchestrator.agent.hooks.HookManager
+import com.workflow.orchestrator.agent.hooks.HookResult
+import com.workflow.orchestrator.agent.hooks.HookRunner
+import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
@@ -66,6 +71,15 @@ class AgentService(private val project: Project) : Disposable {
 
     private var debugController: AgentDebugController? = null
 
+    /**
+     * Hook manager — loaded from .agent-hooks.json in project root.
+     * Ported from Cline's hook system: provides lifecycle extensibility points
+     * (TaskStart, PreToolUse, PostToolUse, etc.) via shell command hooks.
+     *
+     * @see <a href="https://github.com/cline/cline/blob/main/src/core/hooks/hook-factory.ts">Cline HookFactory</a>
+     */
+    val hookManager: HookManager
+
     /** Tool names that are blocked in plan mode (write/mutate tools). */
     private val writeToolNames = setOf(
         "edit_file", "create_file", "run_command", "revert_file",
@@ -77,6 +91,12 @@ class AgentService(private val project: Project) : Disposable {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val agentDir = ProjectIdentifier.agentDir(basePath)
         sessionStore = SessionStore(agentDir)
+
+        // Initialize hook system (ported from Cline's HookFactory + getAllHooksDirs)
+        val hookRunner = HookRunner(workingDir = basePath)
+        hookManager = HookManager(hookRunner)
+        hookManager.loadFromConfigFile(basePath)
+
         registerAllTools()
     }
 
@@ -323,6 +343,31 @@ class AgentService(private val project: Project) : Disposable {
 
         val job = scope.launch {
             try {
+                // TASK_START hook (ported from Cline's TaskStart hook)
+                // Fires before the agent loop begins. Cancellable: can abort the task.
+                // Cline: executeHook({ hookName: "TaskStart", hookInput: { taskStart: { task } }, ... })
+                if (hookManager.hasHooks(HookType.TASK_START)) {
+                    val hookResult = hookManager.dispatch(
+                        HookEvent(
+                            type = HookType.TASK_START,
+                            data = mapOf(
+                                "task" to task,
+                                "sessionId" to sid
+                            )
+                        )
+                    )
+                    if (hookResult is HookResult.Cancel) {
+                        log.info("AgentService: TASK_START hook cancelled task: ${hookResult.reason}")
+                        session = session.copy(
+                            status = SessionStatus.CANCELLED,
+                            lastMessageAt = System.currentTimeMillis()
+                        )
+                        sessionStore.save(session)
+                        onComplete(LoopResult.Cancelled(iterations = 0))
+                        return@launch
+                    }
+                }
+
                 // I3: Create a fresh brain each time to pick up settings changes
                 val brain = createBrain()
                 val agentSettings = AgentSettings.getInstance(project)
@@ -410,6 +455,8 @@ class AgentService(private val project: Project) : Disposable {
                     planMode = planModeActive.get(),
                     toolDefinitionProvider = toolDefinitionProvider,
                     toolResolver = { name -> registry.get(name) },
+                    hookManager = if (hookManager.hasAnyHooks()) hookManager else null,
+                    sessionId = sid,
                     onWriteCheckpoint = { toolName, args ->
                         // Create named checkpoint after write operations (ported from Cline)
                         writeCheckpointCounter++
@@ -620,6 +667,27 @@ class AgentService(private val project: Project) : Disposable {
 
         log.info("AgentService.resumeSession: restoring session $sessionId with ${savedMessages.size} messages")
 
+        // TASK_RESUME hook (ported from Cline's TaskResume hook)
+        // Cancellable: can prevent session resumption.
+        // Cline: "Executes when a task is resumed after being interrupted."
+        if (hookManager.hasHooks(HookType.TASK_RESUME)) {
+            val hookResult = kotlinx.coroutines.runBlocking {
+                hookManager.dispatch(
+                    HookEvent(
+                        type = HookType.TASK_RESUME,
+                        data = mapOf(
+                            "sessionId" to sessionId,
+                            "messageCount" to savedMessages.size
+                        )
+                    )
+                )
+            }
+            if (hookResult is HookResult.Cancel) {
+                log.info("AgentService: TASK_RESUME hook cancelled resume: ${hookResult.reason}")
+                return null
+            }
+        }
+
         // Step 5: Continue execution with the restored context
         return executeTask(
             task = continuationMessage,
@@ -768,11 +836,33 @@ class AgentService(private val project: Project) : Disposable {
     /**
      * Cancel the currently running task. Safe to call from any thread.
      * Uses atomic ActiveTask reference to avoid race between loop and job.
+     *
+     * Dispatches TASK_CANCEL hook (observation-only, ported from Cline's TaskCancel).
+     * Cline: "Executes when a task is cancelled by the user."
      */
     fun cancelCurrentTask() {
         activeTask.get()?.let { task ->
             task.loop.cancel()
             task.job.cancel()
+
+            // TASK_CANCEL hook — observation only, fire-and-forget
+            // Cline: TaskCancel is non-cancellable (observation only)
+            if (hookManager.hasHooks(HookType.TASK_CANCEL)) {
+                scope.launch {
+                    try {
+                        hookManager.dispatch(
+                            HookEvent(
+                                type = HookType.TASK_CANCEL,
+                                data = mapOf(
+                                    "reason" to "user_cancelled"
+                                )
+                            )
+                        )
+                    } catch (e: Exception) {
+                        log.warn("AgentService: TASK_CANCEL hook failed (non-fatal)", e)
+                    }
+                }
+            }
         }
     }
 

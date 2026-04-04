@@ -4,6 +4,10 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
+import com.workflow.orchestrator.agent.hooks.HookEvent
+import com.workflow.orchestrator.agent.hooks.HookManager
+import com.workflow.orchestrator.agent.hooks.HookResult
+import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -80,7 +84,19 @@ class AgentLoop(
      * @param toolName the tool that triggered the checkpoint
      * @param args the tool arguments (used for description)
      */
-    private val onWriteCheckpoint: (suspend (toolName: String, args: String) -> Unit)? = null
+    private val onWriteCheckpoint: (suspend (toolName: String, args: String) -> Unit)? = null,
+    /**
+     * Optional hook manager for lifecycle extensibility points.
+     * Ported from Cline's hook system: dispatches PRE_TOOL_USE and POST_TOOL_USE
+     * hooks around each tool execution. Null = hooks disabled (zero overhead).
+     *
+     * @see <a href="https://github.com/cline/cline/blob/main/src/core/task/tools/utils/ToolHookUtils.ts">Cline ToolHookUtils</a>
+     */
+    private val hookManager: HookManager? = null,
+    /**
+     * Session ID passed to hook events for identification.
+     */
+    private val sessionId: String? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -483,6 +499,39 @@ class AgentLoop(
             // store it in ContextManager, and notify the UI.
             extractTaskProgress(params)
 
+            // PRE_TOOL_USE hook (ported from Cline's ToolHookUtils.runPreToolUseIfEnabled)
+            // Runs before each tool execution; can cancel (block) the tool.
+            // Cline: "This should be called by tool handlers after approval succeeds
+            //  but before the actual tool execution begins."
+            if (hookManager != null && hookManager.hasHooks(HookType.PRE_TOOL_USE)) {
+                val preHookResult = hookManager.dispatch(
+                    HookEvent(
+                        type = HookType.PRE_TOOL_USE,
+                        data = mapOf(
+                            "toolName" to toolName,
+                            "arguments" to call.function.arguments,
+                            "iteration" to iteration,
+                            "sessionId" to sessionId
+                        )
+                    )
+                )
+                if (preHookResult is HookResult.Cancel) {
+                    val errorMsg = "Tool '$toolName' blocked by PreToolUse hook: ${preHookResult.reason}"
+                    contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
+                    onToolCall(
+                        ToolCallProgress(
+                            toolName = toolName,
+                            args = call.function.arguments,
+                            result = errorMsg,
+                            durationMs = System.currentTimeMillis() - startTime,
+                            isError = true,
+                            toolCallId = toolCallId
+                        )
+                    )
+                    continue
+                }
+            }
+
             // Fire start callback (empty result, zero duration = RUNNING)
             onToolCall(
                 ToolCallProgress(
@@ -521,6 +570,30 @@ class AgentLoop(
                 isError = toolResult.isError,
                 toolName = toolName
             )
+
+            // POST_TOOL_USE hook (ported from Cline's PostToolUse hook)
+            // Observation-only: runs after tool execution, cannot change the result.
+            // Cline: fires PostToolUse with tool name, parameters, result, success, durationMs.
+            if (hookManager != null && hookManager.hasHooks(HookType.POST_TOOL_USE)) {
+                try {
+                    hookManager.dispatch(
+                        HookEvent(
+                            type = HookType.POST_TOOL_USE,
+                            data = mapOf(
+                                "toolName" to toolName,
+                                "arguments" to call.function.arguments,
+                                "result" to toolResult.summary,
+                                "durationMs" to durationMs,
+                                "isError" to toolResult.isError,
+                                "sessionId" to sessionId
+                            )
+                        )
+                    )
+                } catch (e: Exception) {
+                    // POST_TOOL_USE is observation-only; failures are non-fatal
+                    LOG.warn("[AgentLoop] POST_TOOL_USE hook failed (non-fatal): ${e.message}")
+                }
+            }
 
             // Checkpoint: persist state after every tool result (Cline's pattern).
             // Cline calls saveApiConversationHistory inside addToApiConversationHistory.

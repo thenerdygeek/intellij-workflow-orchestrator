@@ -1,5 +1,9 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.workflow.orchestrator.agent.hooks.HookEvent
+import com.workflow.orchestrator.agent.hooks.HookManager
+import com.workflow.orchestrator.agent.hooks.HookResult
+import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
@@ -390,12 +394,36 @@ class ContextManager(
      * 2. If dedup saves < 30% → apply conversation truncation (Cline's primary strategy)
      * 3. If still above 95% → LLM summarization as fallback (our addition)
      *
+     * PRE_COMPACT hook (ported from Cline's PreCompact hook):
+     * Fires before compaction begins. Cancellable: if cancelled, compaction is skipped.
+     * Cline: "Executes before conversation context is compacted."
+     * This is dangerous but user-requested — they may want to archive or inspect context first.
+     *
      * BUG FIX: Invalidates lastPromptTokens after any compaction stage,
      * since the old token count is stale after removing/replacing messages.
+     *
+     * @param brain the LLM brain for Stage 3 summarization
+     * @param hookManager optional hook manager for PRE_COMPACT dispatch
      */
-    suspend fun compact(brain: LlmBrain) {
+    suspend fun compact(brain: LlmBrain, hookManager: HookManager? = null) {
         val util = utilizationPercent()
         if (util <= 70.0) return
+
+        // PRE_COMPACT hook — cancellable (user can skip compaction)
+        if (hookManager != null && hookManager.hasHooks(HookType.PRE_COMPACT)) {
+            val hookResult = hookManager.dispatch(
+                HookEvent(
+                    type = HookType.PRE_COMPACT,
+                    data = mapOf(
+                        "utilizationPercent" to util,
+                        "messageCount" to messages.size
+                    )
+                )
+            )
+            if (hookResult is HookResult.Cancel) {
+                return // User's hook cancelled compaction
+            }
+        }
 
         // Stage 1: Duplicate file read detection (from Cline)
         val percentSaved = deduplicateFileReads()
