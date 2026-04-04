@@ -161,6 +161,130 @@ class SessionStore(private val baseDir: File) {
         }
     }
 
+    // ── Checkpoint reversion (ported from Cline's context-management checkpoint pattern) ──
+
+    private fun checkpointsDir(sessionId: String): File =
+        File(sessionDataDir(sessionId), "checkpoints")
+
+    private fun checkpointFile(sessionId: String, checkpointId: String): File =
+        File(checkpointsDir(sessionId), "$checkpointId.jsonl")
+
+    private fun checkpointMetaFile(sessionId: String, checkpointId: String): File =
+        File(checkpointsDir(sessionId), "$checkpointId.meta.json")
+
+    /**
+     * Save a named checkpoint — a snapshot of messages at a specific point in time.
+     *
+     * Ported from Cline's checkpoint-based conversation reversion pattern:
+     * Cline tracks conversation state snapshots that can be reverted to.
+     * We persist checkpoints as JSONL files in the session's checkpoints/ directory.
+     *
+     * @param sessionId the session this checkpoint belongs to
+     * @param checkpointId unique identifier for this checkpoint
+     * @param messages the conversation messages at this point
+     * @param description human-readable description (e.g., "After editing UserService.kt")
+     */
+    fun saveCheckpoint(
+        sessionId: String,
+        checkpointId: String,
+        messages: List<ChatMessage>,
+        description: String = ""
+    ) {
+        val dir = checkpointsDir(sessionId)
+        dir.mkdirs()
+
+        // Save messages as JSONL
+        val file = checkpointFile(sessionId, checkpointId)
+        file.bufferedWriter().use { writer ->
+            for (msg in messages) {
+                writer.write(compactJson.encodeToString(msg))
+                writer.newLine()
+            }
+        }
+
+        // Save metadata
+        val meta = CheckpointInfo(
+            id = checkpointId,
+            createdAt = System.currentTimeMillis(),
+            messageCount = messages.size,
+            description = description
+        )
+        val metaFile = checkpointMetaFile(sessionId, checkpointId)
+        metaFile.writeText(json.encodeToString(meta))
+    }
+
+    /**
+     * Load a specific checkpoint's messages.
+     *
+     * @param sessionId the session
+     * @param checkpointId the checkpoint to load
+     * @return the messages at that checkpoint, or null if not found
+     */
+    fun loadCheckpoint(sessionId: String, checkpointId: String): List<ChatMessage>? {
+        val file = checkpointFile(sessionId, checkpointId)
+        if (!file.exists()) return null
+        return try {
+            file.readLines()
+                .filter { it.isNotBlank() }
+                .mapNotNull { line ->
+                    try {
+                        compactJson.decodeFromString<ChatMessage>(line)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * List all checkpoints for a session, sorted by creation time (newest first).
+     *
+     * @param sessionId the session
+     * @return list of checkpoint metadata
+     */
+    fun listCheckpoints(sessionId: String): List<CheckpointInfo> {
+        val dir = checkpointsDir(sessionId)
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles { f -> f.name.endsWith(".meta.json") }
+            ?.mapNotNull { file ->
+                try {
+                    json.decodeFromString<CheckpointInfo>(file.readText())
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            ?.sortedByDescending { it.createdAt }
+            ?: emptyList()
+    }
+
+    /**
+     * Delete checkpoints that are newer than a given checkpoint.
+     * Used during reversion: when reverting to checkpoint C, all checkpoints
+     * created after C are invalidated and should be removed.
+     *
+     * @param sessionId the session
+     * @param checkpointId the checkpoint to revert to (this one is kept)
+     */
+    fun deleteCheckpointsAfter(sessionId: String, checkpointId: String) {
+        val targetMeta = checkpointMetaFile(sessionId, checkpointId)
+        if (!targetMeta.exists()) return
+        val targetInfo = try {
+            json.decodeFromString<CheckpointInfo>(targetMeta.readText())
+        } catch (_: Exception) {
+            return
+        }
+
+        val allCheckpoints = listCheckpoints(sessionId)
+        for (cp in allCheckpoints) {
+            if (cp.createdAt > targetInfo.createdAt) {
+                checkpointFile(sessionId, cp.id).delete()
+                checkpointMetaFile(sessionId, cp.id).delete()
+            }
+        }
+    }
+
     companion object {
         /** Cline uses GlobalFileNames.apiConversationHistory = "api_conversation_history.json".
          *  We use JSONL for efficient append. */
