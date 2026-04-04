@@ -131,22 +131,40 @@ class AgentService(private val project: Project) : Disposable {
         // Always fetch models and pick the best (latest Opus).
         // If fetch fails, fall back to settings or factory auto-resolution.
         val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
-        val models = ModelCache.getModels(client)
+        val models = try {
+            ModelCache.getModels(client)
+        } catch (e: Exception) {
+            log.warn("[Agent] Failed to fetch models from Sourcegraph: ${e.message}")
+            emptyList()
+        }
         val best = ModelCache.pickBest(models)
 
         val modelId = if (best != null) {
             log.info("[Agent] Auto-selected model: ${best.modelName} (${best.id})")
             best.id
         } else {
+            // Model fetch failed or returned empty — try settings
             val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
             if (!settingsModel.isNullOrBlank()) {
-                log.info("[Agent] Models unavailable, using settings: $settingsModel")
+                log.info("[Agent] Models unavailable, using settings model: $settingsModel")
                 settingsModel
             } else {
-                log.info("[Agent] Falling back to LlmBrainFactory")
-                return LlmBrainFactory.create(project)
+                // Last resort — try factory which may have cached models
+                log.warn("[Agent] No models available and no model configured. Trying factory auto-resolution.")
+                try {
+                    return LlmBrainFactory.create(project)
+                } catch (e: Exception) {
+                    throw IllegalStateException(
+                        "Cannot start agent: failed to fetch models from Sourcegraph ($sgUrl) " +
+                        "and no model is configured in settings. " +
+                        "Please check your Sourcegraph URL and token in Settings > AI & Advanced. " +
+                        "Error: ${e.message}"
+                    )
+                }
             }
         }
+
+        log.info("[Agent] Creating brain with model: $modelId at $sgUrl")
 
         return OpenAiCompatBrain(
             sourcegraphUrl = sgUrl,
