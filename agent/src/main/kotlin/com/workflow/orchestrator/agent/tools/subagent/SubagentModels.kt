@@ -63,17 +63,19 @@ data class SubagentProgressUpdate(
 data class SubagentStatusItem(
     val index: Int,
     val prompt: String,
-    var status: String = "pending",
-    var toolCalls: Int = 0,
-    var inputTokens: Int = 0,
-    var outputTokens: Int = 0,
-    var totalCost: Double = 0.0,
-    var contextTokens: Int = 0,
-    var contextWindow: Int = 0,
-    var contextUsagePercentage: Double = 0.0,
-    var latestToolCall: String? = null,
-    var result: String? = null,
-    var error: String? = null,
+    // @Volatile for thread safety: fields mutated concurrently from parallel coroutines.
+    // Cline's JS is single-threaded; on JVM we need visibility guarantees.
+    @Volatile var status: String = "pending",
+    @Volatile var toolCalls: Int = 0,
+    @Volatile var inputTokens: Int = 0,
+    @Volatile var outputTokens: Int = 0,
+    @Volatile var totalCost: Double = 0.0,
+    @Volatile var contextTokens: Int = 0,
+    @Volatile var contextWindow: Int = 0,
+    @Volatile var contextUsagePercentage: Double = 0.0,
+    @Volatile var latestToolCall: String? = null,
+    @Volatile var result: String? = null,
+    @Volatile var error: String? = null,
 )
 
 /**
