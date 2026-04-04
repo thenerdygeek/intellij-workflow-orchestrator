@@ -143,7 +143,7 @@ class EditFileTool : AgentTool {
             }
         } catch (_: Exception) { /* tracking is best-effort */ }
 
-        // TODO: Change tracking will be reimplemented in the new AgentLoop
+        // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
 
         // Build diff context (3 lines before/after edit) for LLM verification
         val contextLines = try {
@@ -272,8 +272,7 @@ class EditFileTool : AgentTool {
                 }
             }
             // Force VFS refresh so IDE diagnostics see changes immediately
-            // COMPRESSION: Not compression-related, but ensures SelfCorrectionGate
-            // gets fresh diagnostics without 1-2s VFS watcher delay
+            // (avoids 1-2s VFS watcher delay before diagnostics update)
             try { vFile.refresh(false, false) } catch (_: Exception) { }
             true
         } catch (_: Exception) {

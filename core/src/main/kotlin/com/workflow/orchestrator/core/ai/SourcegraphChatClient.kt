@@ -295,6 +295,9 @@ class SourcegraphChatClient(
             val jsonBody = json.encodeToString(request)
             log.debug("[Agent:API] POST $CHAT_COMPLETIONS_PATH (stream, ${jsonBody.length} chars)")
 
+            // Dump request for streaming calls too
+            dumpApiRequest(sanitized, tools, jsonBody.length)
+
             val httpRequest = Request.Builder()
                 .url(chatCompletionsUrl())
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
@@ -307,6 +310,7 @@ class SourcegraphChatClient(
                 if (!response.isSuccessful) {
                     activeCall.set(null)
                     val body = response.body?.string() ?: ""
+                    dumpApiError(response.code, body)
                     return@withContext mapErrorResponse(response.code, body, response)
                 }
 
@@ -427,11 +431,13 @@ class SourcegraphChatClient(
 
                 activeCall.set(null)
 
-                ApiResult.Success(ChatCompletionResponse(
+                val streamResponse = ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
                     choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReason)),
                     usage = streamUsage
-                ))
+                )
+                dumpApiResponse(streamResponse)
+                ApiResult.Success(streamResponse)
             }
             } finally {
                 activeCall.set(null)

@@ -3,7 +3,7 @@ package com.workflow.orchestrator.agent.ui.plan
 import com.intellij.testFramework.LightVirtualFile
 
 /**
- * Minimal stub — plan mode will be reimplemented.
+ * Virtual file backing the plan editor tab. Holds plan content for display.
  */
 class AgentPlanVirtualFile(
     val planContent: String,

@@ -326,11 +326,11 @@ class RunCommandTool : AgentTool {
             )
         }
 
-        // Non-allowlisted commands still execute (ApprovalGate handles HIGH-risk approval dialog)
-        // but we note it for observability
+        // Non-allowlisted commands still execute — AgentLoop's approvalGate shows a
+        // confirmation dialog for write tools (run_command classified as HIGH risk)
         if (!isAllowed(command)) {
-            // Command will proceed — the existing ApprovalGate in SingleAgentSession
-            // already shows a confirmation dialog for run_command (classified as HIGH risk)
+            // Command will proceed — approval is handled by AgentLoop.approvalGate
+            // before this execute() method is called
         }
 
         val workingDir = params["working_dir"]?.jsonPrimitive?.content?.let { dir ->

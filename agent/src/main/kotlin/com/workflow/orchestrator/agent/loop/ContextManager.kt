@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
@@ -42,6 +43,8 @@ class ContextManager(
     private val maxInputTokens: Int = 150_000,
     private val compactionThreshold: Double = 0.85
 ) {
+    private val LOG = Logger.getInstance(ContextManager::class.java)
+
     private var systemPrompt: ChatMessage? = null
     private val messages: MutableList<ChatMessage> = mutableListOf()
 
@@ -83,6 +86,7 @@ class ContextManager(
 
     fun setSystemPrompt(prompt: String) {
         systemPrompt = ChatMessage(role = "system", content = prompt)
+        LOG.info("[Context] System prompt set (${prompt.length} chars, ~${prompt.length / 4} tokens)")
     }
 
     fun addUserMessage(content: String) {
@@ -104,6 +108,7 @@ class ContextManager(
         val body = if (isError) "[ERROR] $content" else content
         val idx = messages.size
         messages.add(ChatMessage(role = "tool", content = body, toolCallId = toolCallId))
+        LOG.debug("[Context] Tool result added: $toolCallId (${content.length} chars)")
 
         // Track file reads for dedup (Cline pattern)
         if (!isError && toolName != null) {
@@ -131,6 +136,7 @@ class ContextManager(
      */
     fun updateTokens(promptTokens: Int) {
         lastPromptTokens = promptTokens
+        LOG.debug("[Context] Token update: $promptTokens prompt tokens (${"%.1f".format(utilizationPercent())}% of $maxInputTokens)")
     }
 
     /**
@@ -367,7 +373,10 @@ class ContextManager(
         val result = brain.chat(summaryMessages, maxTokens = 1024)
 
         // On LLM failure, skip compaction entirely — leave messages as-is.
-        if (result is ApiResult.Error) return
+        if (result is ApiResult.Error) {
+            LOG.warn("[Context] Summarization failed: ${(result as ApiResult.Error).message}, skipping")
+            return
+        }
 
         val summaryContent = (result as ApiResult.Success).data.choices.firstOrNull()?.message?.content
             ?: return
@@ -375,10 +384,12 @@ class ContextManager(
         // Store for summary chaining
         lastSummary = summaryContent
 
+        val removedCount = splitPoint
         // Remove old messages, insert summary as ASSISTANT message
         // (not user, to avoid consecutive user messages — bug fix from expert review)
         messages.subList(0, splitPoint).clear()
         messages.add(0, ChatMessage(role = "assistant", content = "[Context Summary]\n$summaryContent"))
+        LOG.info("[Context] Summarized: $removedCount messages -> summary (${summaryContent.length} chars)")
 
         // Rebuild file read indices since messages shifted
         rebuildFileReadIndices()
@@ -409,6 +420,8 @@ class ContextManager(
         val util = utilizationPercent()
         if (util <= 70.0) return
 
+        LOG.info("[Context] Compacting at ${"%.1f".format(util)}% utilization (${messageCount()} messages)")
+
         // PRE_COMPACT hook — cancellable (user can skip compaction)
         if (hookManager != null && hookManager.hasHooks(HookType.PRE_COMPACT)) {
             val hookResult = hookManager.dispatch(
@@ -426,8 +439,14 @@ class ContextManager(
         }
 
         // Stage 1: Duplicate file read detection (from Cline)
+        val countBeforeDedup = messageCount()
         val percentSaved = deduplicateFileReads()
         invalidateTokens()
+
+        if (percentSaved > 0.0) {
+            val dedupCount = fileReadIndices.values.count { it.size > 1 }
+            LOG.info("[Context] Dedup: removed $dedupCount duplicate file reads, saved ${"%.1f".format(percentSaved * 100)}%")
+        }
 
         // Cline's logic: if optimization saves >= 30%, skip truncation
         if (percentSaved >= 0.30) return
@@ -442,8 +461,13 @@ class ContextManager(
             } else {
                 TruncationStrategy.HALF
             }
+            val countBeforeTruncation = messageCount()
             truncateConversation(keep)
             invalidateTokens()
+            val removedCount = countBeforeTruncation - messageCount()
+            if (removedCount > 0) {
+                LOG.info("[Context] Truncated: removed $removedCount messages (strategy: $keep)")
+            }
         }
 
         // Stage 3: LLM summarization as optional fallback (our addition)

@@ -305,7 +305,7 @@ class MentionSearchProvider(private val project: Project) {
     }
 
     private fun searchTools(@Suppress("UNUSED_PARAMETER") query: String): String {
-        // TODO: Wire to tool registry when AgentService is reimplemented
+        // Not wired — @tool autocomplete deferred (see project_remaining_wiring_gaps.md)
         return "[]"
     }
 

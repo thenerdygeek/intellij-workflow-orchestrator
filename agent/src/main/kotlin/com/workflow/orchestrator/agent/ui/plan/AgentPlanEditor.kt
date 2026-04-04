@@ -13,7 +13,10 @@ import javax.swing.JPanel
 import java.awt.BorderLayout
 
 /**
- * Minimal stub — plan editor will be reimplemented when plan mode is re-wired.
+ * Plan editor — displays implementation plan in an editor tab.
+ * Plan mode is ported from Cline: continuous conversation, user-controlled act mode.
+ * The plan card with comments is rendered in the JCEF chat panel; this editor tab
+ * provides a full-screen view for reviewing longer plans.
  */
 class AgentPlanEditor(
     private val project: Project,

@@ -8,6 +8,8 @@ import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
+import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
+import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -21,6 +23,17 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Result of the user's decision when asked to approve a tool execution.
+ *
+ * Ported from Cline's approval flow: Cline shows an approval card for write
+ * operations (edit_file, run_command, etc.) and waits for the user to respond.
+ * - APPROVED: proceed with this one execution
+ * - DENIED: skip this tool call, report denial to the LLM
+ * - ALLOWED_FOR_SESSION: approve this tool for the rest of the session
+ */
+enum class ApprovalResult { APPROVED, DENIED, ALLOWED_FOR_SESSION }
 
 /**
  * Core ReAct loop: call LLM -> execute tools -> repeat.
@@ -87,6 +100,22 @@ class AgentLoop(
      */
     private val onWriteCheckpoint: (suspend (toolName: String, args: String) -> Unit)? = null,
     /**
+     * Optional approval gate for write tool executions (ported from Cline's approval flow).
+     *
+     * When set, the loop suspends before executing write tools (edit_file, create_file,
+     * run_command, revert_file) and waits for the user to approve, deny, or allow for
+     * the rest of the session. Uses CompletableDeferred under the hood so the coroutine
+     * suspends without blocking a thread.
+     *
+     * When null (e.g. in sub-agents), write tools execute without approval.
+     *
+     * @param toolName the tool about to execute
+     * @param args the raw JSON arguments string
+     * @param riskLevel "low", "medium", or "high" risk classification
+     * @return the user's decision
+     */
+    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> ApprovalResult)? = null,
+    /**
      * Optional hook manager for lifecycle extensibility points.
      * Ported from Cline's hook system: dispatches PRE_TOOL_USE and POST_TOOL_USE
      * hooks around each tool execution. Null = hooks disabled (zero overhead).
@@ -134,6 +163,9 @@ class AgentLoop(
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
 
+    /** Tools the user has allowed for the rest of this session (via ALLOWED_FOR_SESSION). */
+    private val approvedForSession = mutableSetOf<String>()
+
     /**
      * Tracks the last tool name called — used to enforce act_mode_respond
      * consecutive-call constraint (ported from Cline: act_mode_respond cannot
@@ -169,6 +201,9 @@ class AgentLoop(
             "kill_process", "send_stdin", "format_code", "optimize_imports",
             "refactor_rename"
         )
+
+        /** Subset of write tools that require user approval via the approval gate. */
+        val APPROVAL_TOOLS = setOf("edit_file", "create_file", "run_command", "revert_file")
 
         /** Error types that are transient and safe to retry. */
         private val RETRYABLE_ERRORS = setOf(
@@ -209,6 +244,7 @@ class AgentLoop(
             return LoopResult.Cancelled(iterations = 0, tokensUsed = 0, inputTokens = 0, outputTokens = 0)
         }
 
+        LOG.info("[Loop] Starting task (maxIterations=$maxIterations, planMode=$planMode)")
         contextManager.addUserMessage(task)
 
         var iteration = 0
@@ -218,9 +254,11 @@ class AgentLoop(
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
+            LOG.info("[Loop] Iteration $iteration -- ${contextManager.messageCount()} messages, ${"%.1f".format(contextManager.utilizationPercent())}% context")
 
             // Stage 0: Compact if needed
             if (contextManager.shouldCompact()) {
+                LOG.info("[Loop] Context compaction triggered at ${"%.1f".format(contextManager.utilizationPercent())}%")
                 contextManager.compact(brain)
             }
 
@@ -240,7 +278,7 @@ class AgentLoop(
                 // Cline detects context window exceeded errors and auto-truncates + retries
                 if (isContextOverflowError(apiResult) && contextOverflowRetries < MAX_CONTEXT_OVERFLOW_RETRIES) {
                     contextOverflowRetries++
-                    LOG.warn("[AgentLoop] Context window overflow detected, compacting and retrying ($contextOverflowRetries/$MAX_CONTEXT_OVERFLOW_RETRIES)")
+                    LOG.warn("[Loop] Context overflow detected, compacting and retrying ($contextOverflowRetries/$MAX_CONTEXT_OVERFLOW_RETRIES)")
                     // Force aggressive compaction
                     contextManager.compact(brain)
                     iteration-- // Don't count overflow retries as iterations
@@ -255,11 +293,12 @@ class AgentLoop(
                         ?.coerceAtMost(MAX_RETRY_DELAY_MS)
                         ?: (INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1)))
                     val delaySource = if (apiResult.retryAfterMs != null) "retry-after header" else "exponential backoff"
-                    LOG.warn("[AgentLoop] Retryable API error (${apiResult.type}), retry $apiRetryCount/$MAX_API_RETRIES after ${delayMs}ms ($delaySource)")
+                    LOG.warn("[Loop] API retry $apiRetryCount/$MAX_API_RETRIES (${apiResult.type}, delay=${delayMs}ms, source=$delaySource)")
                     delay(delayMs)
                     iteration-- // Don't count retries as iterations
                     continue
                 }
+                LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
                 return LoopResult.Failed(
                     error = apiResult.message,
                     iterations = iteration,
@@ -321,6 +360,7 @@ class AgentLoop(
                 // Case B: Text only — in plan mode, wait for user input; in act mode, nudge to use tools
                 hasContent -> {
                     consecutiveEmpties = 0
+                    LOG.info("[Loop] Text-only response (no tool calls) -- nudging")
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
                         // Notify UI so the streamed text is visible, then wait for user input.
@@ -334,6 +374,7 @@ class AgentLoop(
                 // Case C: Empty response — inject continuation, track consecutive count
                 else -> {
                     consecutiveEmpties++
+                    LOG.warn("[Loop] Empty response from LLM (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
                         return LoopResult.Failed(
                             error = "Failed after $MAX_CONSECUTIVE_EMPTIES consecutive empty responses from model.",
@@ -352,6 +393,7 @@ class AgentLoop(
         }
 
         if (cancelled.get()) {
+            LOG.info("[Loop] Task cancelled at iteration $iteration")
             return LoopResult.Cancelled(
                 iterations = iteration,
                 tokensUsed = totalTokensUsed,
@@ -363,6 +405,7 @@ class AgentLoop(
             )
         }
 
+        LOG.warn("[Loop] Task failed after $iteration iterations: exceeded maximum iterations ($maxIterations)")
         return LoopResult.Failed(
             error = "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
             iterations = iteration,
@@ -433,7 +476,7 @@ class AgentLoop(
             val loopStatus = loopDetector.recordToolCall(toolName, call.function.arguments)
             when (loopStatus) {
                 LoopStatus.HARD_LIMIT -> {
-                    LOG.warn("[AgentLoop] Hard loop limit reached: '$toolName' called ${loopDetector.currentCount} times consecutively")
+                    LOG.warn("[Loop] Hard loop limit reached: '$toolName' called ${loopDetector.currentCount} times consecutively")
                     contextManager.addToolResult(
                         toolCallId = toolCallId,
                         content = LOOP_HARD_FAILURE,
@@ -462,7 +505,7 @@ class AgentLoop(
                     )
                 }
                 LoopStatus.SOFT_WARNING -> {
-                    LOG.warn("[AgentLoop] Soft loop warning: '$toolName' called ${loopDetector.currentCount} times consecutively")
+                    LOG.warn("[Loop] Soft loop warning: '$toolName' called ${loopDetector.currentCount} times consecutively")
                     // Inject warning but continue execution (give the model a chance to self-correct)
                     contextManager.addUserMessage(LOOP_SOFT_WARNING)
                 }
@@ -525,6 +568,33 @@ class AgentLoop(
                 continue
             }
 
+            // Approval gate (ported from Cline's approval flow).
+            // Write tools require user approval unless already allowed for this session.
+            // The gate suspends the coroutine (not blocking a thread) until the user responds.
+            if (toolName in APPROVAL_TOOLS && approvalGate != null && toolName !in approvedForSession) {
+                val riskLevel = assessRisk(toolName, call.function.arguments)
+                val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel)
+                when (result) {
+                    ApprovalResult.DENIED -> {
+                        val errorMsg = "Tool execution denied by user."
+                        contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
+                        onToolCall(
+                            ToolCallProgress(
+                                toolName = toolName,
+                                args = call.function.arguments,
+                                result = errorMsg,
+                                durationMs = System.currentTimeMillis() - startTime,
+                                isError = true,
+                                toolCallId = toolCallId
+                            )
+                        )
+                        continue
+                    }
+                    ApprovalResult.ALLOWED_FOR_SESSION -> approvedForSession.add(toolName)
+                    ApprovalResult.APPROVED -> { /* proceed with this single execution */ }
+                }
+            }
+
             // Parse arguments
             val params: JsonObject = try {
                 json.decodeFromString<JsonObject>(call.function.arguments)
@@ -584,6 +654,8 @@ class AgentLoop(
             }
 
             // Fire start callback (empty result, zero duration = RUNNING)
+            val argsSummary = call.function.arguments.take(200)
+            LOG.info("[Loop] Executing tool: $toolName ($argsSummary)")
             onToolCall(
                 ToolCallProgress(
                     toolName = toolName,
@@ -597,6 +669,7 @@ class AgentLoop(
                 tool.execute(params, project)
             } catch (e: Exception) {
                 val errorMsg = "Tool '$toolName' threw exception: ${e.message}"
+                LOG.warn("[Loop] Tool $toolName failed: ${errorMsg.take(200)}")
                 contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
                 onToolCall(
                     ToolCallProgress(
@@ -613,6 +686,12 @@ class AgentLoop(
 
             val durationMs = System.currentTimeMillis() - startTime
             val truncatedContent = truncateOutput(toolResult.content)
+
+            if (toolResult.isError) {
+                LOG.warn("[Loop] Tool $toolName failed: ${toolResult.content.take(200)}")
+            } else {
+                LOG.info("[Loop] Tool $toolName completed in ${durationMs}ms (OK)")
+            }
 
             // Add result to context
             contextManager.addToolResult(
@@ -642,7 +721,7 @@ class AgentLoop(
                     )
                 } catch (e: Exception) {
                     // POST_TOOL_USE is observation-only; failures are non-fatal
-                    LOG.warn("[AgentLoop] POST_TOOL_USE hook failed (non-fatal): ${e.message}")
+                    LOG.warn("[Loop] POST_TOOL_USE hook failed (non-fatal): ${e.message}")
                 }
             }
 
@@ -685,6 +764,7 @@ class AgentLoop(
 
             // Check for completion
             if (toolResult.isCompletion) {
+                LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
                 return LoopResult.Completed(
                     summary = toolResult.content,
                     iterations = iteration,
@@ -718,6 +798,7 @@ class AgentLoop(
             // - If needs_more_exploration=true, loop continues immediately (LLM explores more)
             // - If needs_more_exploration=false, wait for user input before next LLM call
             if (toolResult.isPlanResponse) {
+                LOG.info("[Loop] Plan presented (needsMoreExploration=${toolResult.needsMoreExploration})")
                 onPlanResponse?.invoke(toolResult.content, toolResult.needsMoreExploration)
 
                 if (!toolResult.needsMoreExploration && userInputChannel != null) {
@@ -781,4 +862,36 @@ class AgentLoop(
         }
     }
 
+    /**
+     * Classify the risk level of a tool call for the approval gate.
+     *
+     * - run_command: delegates to [CommandSafetyAnalyzer] for pattern-based classification
+     * - edit_file / create_file: "low" (reversible via checkpoints)
+     * - revert_file: "medium" (destructive — discards changes)
+     *
+     * @param toolName the tool about to execute
+     * @param argsJson the raw JSON arguments string
+     * @return "low", "medium", or "high"
+     */
+    internal fun assessRisk(toolName: String, argsJson: String): String {
+        return when (toolName) {
+            "run_command" -> {
+                // Extract command from JSON args and classify with CommandSafetyAnalyzer
+                try {
+                    val args = json.decodeFromString<JsonObject>(argsJson)
+                    val command = (args["command"] as? JsonPrimitive)?.contentOrNull ?: ""
+                    when (CommandSafetyAnalyzer.classify(command)) {
+                        CommandRisk.DANGEROUS -> "high"
+                        CommandRisk.RISKY -> "medium"
+                        CommandRisk.SAFE -> "low"
+                    }
+                } catch (_: Exception) {
+                    "medium" // can't parse args — default to medium
+                }
+            }
+            "revert_file" -> "medium"
+            "edit_file", "create_file" -> "low"
+            else -> "medium"
+        }
+    }
 }
