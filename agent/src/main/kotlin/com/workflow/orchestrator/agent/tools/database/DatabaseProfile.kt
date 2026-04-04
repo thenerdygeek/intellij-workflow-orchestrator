@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.database
+package com.workflow.orchestrator.agent.tools.database
 
 import kotlinx.serialization.Serializable
 

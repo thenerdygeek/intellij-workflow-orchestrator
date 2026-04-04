@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.database
+package com.workflow.orchestrator.agent.tools.database
 
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +49,7 @@ object DatabaseConnectionManager {
     ): Result<T> = withContext(Dispatchers.IO) {
         runCatching {
             val password = DatabaseCredentialHelper.getPassword(profile.id)
-                ?: error("No password stored for profile '${profile.displayName}'. Check Settings → Agent.")
+                ?: error("No password stored for profile '${profile.displayName}'. Check Settings > Agent.")
 
             val conn = openConnection(profile, password)
             try {
@@ -93,7 +93,7 @@ object DatabaseConnectionManager {
         while (rs.next() && rowCount < MAX_ROWS) {
             val row = (1..colCount).map { i ->
                 val v = rs.getString(i) ?: "NULL"
-                if (v.length > MAX_CELL_CHARS) v.take(MAX_CELL_CHARS) + "…" else v
+                if (v.length > MAX_CELL_CHARS) v.take(MAX_CELL_CHARS) + "\u2026" else v
             }
             rows.add(row)
             rowCount++

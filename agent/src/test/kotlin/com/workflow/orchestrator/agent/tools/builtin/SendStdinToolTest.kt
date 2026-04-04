@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.runtime.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest

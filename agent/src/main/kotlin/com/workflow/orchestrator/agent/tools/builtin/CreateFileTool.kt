@@ -6,13 +6,12 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
-import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -51,31 +50,6 @@ class CreateFileTool : AgentTool {
         val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
         if (pathError != null) return pathError
         val resolvedPath = path!!
-
-        // File ownership check — workers cannot create/overwrite files owned by other workers
-        val workerCtx = kotlin.coroutines.coroutineContext[WorkerContext]
-        if (workerCtx != null && !workerCtx.isOrchestrator) {
-            val registry = workerCtx.fileOwnership
-            if (registry != null) {
-                val claim = registry.claim(resolvedPath, workerCtx.agentId!!, workerCtx.workerType)
-                if (claim.result == ClaimResult.DENIED) {
-                    workerCtx.messageBus?.send(WorkerMessage(
-                        from = workerCtx.agentId!!,
-                        to = WorkerMessageBus.ORCHESTRATOR_ID,
-                        type = MessageType.FILE_CONFLICT,
-                        content = "Create denied for '$resolvedPath' — locked by agent '${claim.ownerAgentId}'",
-                        metadata = mapOf("file" to resolvedPath, "owner" to (claim.ownerAgentId ?: ""))
-                    ))
-                    return ToolResult(
-                        "Error: File '$rawPath' is locked by agent '${claim.ownerAgentId}'. " +
-                            "Wait for it to complete or ask the orchestrator to coordinate.",
-                        "File locked by ${claim.ownerAgentId}",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
-                }
-            }
-        }
 
         val file = java.io.File(resolvedPath)
 
@@ -120,43 +94,7 @@ class CreateFileTool : AgentTool {
             EditFileTool.lastEditLineRanges[file.canonicalPath] = 1..lineCount
         } catch (_: Exception) { }
 
-        // Record in ChangeLedger + create LocalHistory checkpoint
-        // COMPRESSION: The ledger entry captures structured change data that
-        // survives in the changeLedgerAnchor even after this tool result
-        // is pruned from context during Phase 1 tiered pruning.
-        try {
-            val agentService = AgentService.getInstance(project)
-            val ledger = agentService.currentChangeLedger
-            val rollback = agentService.currentRollbackManager
-            val iteration = agentService.currentIteration ?: 0
-
-            val checkpointId = rollback?.createCheckpoint("Create $rawPath") ?: ""
-            rollback?.trackFileCreation(resolvedPath)
-
-            val lineCount = content.lines().size
-            ledger?.recordChange(ChangeEntry(
-                id = java.util.UUID.randomUUID().toString().take(12),
-                sessionId = "",
-                iteration = iteration,
-                timestamp = System.currentTimeMillis(),
-                filePath = resolvedPath,
-                relativePath = rawPath,
-                toolName = "create_file",
-                action = ChangeAction.CREATED,
-                linesAdded = lineCount,
-                linesRemoved = 0,
-                linesBefore = 0,
-                linesAfter = lineCount,
-                oldPreview = "",
-                newPreview = content.take(ChangeLedger.MAX_PREVIEW_CHARS),
-                editLineRange = "1-$lineCount",
-                checkpointId = checkpointId
-            ))
-
-            // Update context anchor so LLM sees the change immediately
-            // COMPRESSION: This keeps the changeLedgerAnchor current.
-            agentService.currentContextBridge?.updateChangeLedgerAnchor(ledger!!)
-        } catch (_: Exception) { /* ledger recording is best-effort */ }
+        // TODO: Change tracking will be reimplemented in the new AgentLoop
 
         val lineCount = content.lines().size
         val summary = "Created $rawPath ($lineCount lines, ${content.length} chars)"

@@ -7,9 +7,9 @@ import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
-import com.workflow.orchestrator.agent.database.DatabaseCredentialHelper
-import com.workflow.orchestrator.agent.database.DatabaseProfile
-import com.workflow.orchestrator.agent.database.DbType
+import com.workflow.orchestrator.agent.tools.database.DatabaseCredentialHelper
+import com.workflow.orchestrator.agent.tools.database.DatabaseProfile
+import com.workflow.orchestrator.agent.tools.database.DbType
 import java.awt.Dimension
 import javax.swing.JComboBox
 import javax.swing.JComponent

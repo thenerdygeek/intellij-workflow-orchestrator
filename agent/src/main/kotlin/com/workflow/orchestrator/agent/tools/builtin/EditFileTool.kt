@@ -8,13 +8,12 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
@@ -56,31 +55,6 @@ class EditFileTool : AgentTool {
         val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
         if (pathError != null) return pathError
         val resolvedPath = path!!
-
-        // File ownership check — workers cannot edit files owned by other workers
-        val workerCtx = kotlin.coroutines.coroutineContext[WorkerContext]
-        if (workerCtx != null && !workerCtx.isOrchestrator) {
-            val registry = workerCtx.fileOwnership
-            if (registry != null) {
-                val claim = registry.claim(resolvedPath, workerCtx.agentId!!, workerCtx.workerType)
-                if (claim.result == ClaimResult.DENIED) {
-                    workerCtx.messageBus?.send(WorkerMessage(
-                        from = workerCtx.agentId!!,
-                        to = WorkerMessageBus.ORCHESTRATOR_ID,
-                        type = MessageType.FILE_CONFLICT,
-                        content = "Edit denied for '$resolvedPath' — locked by agent '${claim.ownerAgentId}'",
-                        metadata = mapOf("file" to resolvedPath, "owner" to (claim.ownerAgentId ?: ""))
-                    ))
-                    return ToolResult(
-                        "Error: File '$rawPath' is locked by agent '${claim.ownerAgentId}'. " +
-                            "Wait for it to complete or ask the orchestrator to coordinate.",
-                        "File locked by ${claim.ownerAgentId}",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
-                }
-            }
-        }
 
         // Try VFS-backed path first (undo support, sees unsaved changes), fall back to java.io.File
         val vFile = findVirtualFile(resolvedPath)
@@ -159,47 +133,7 @@ class EditFileTool : AgentTool {
             }
         } catch (_: Exception) { /* tracking is best-effort */ }
 
-        // Record in ChangeLedger + create LocalHistory checkpoint
-        // COMPRESSION: The ledger entry captures structured change data that
-        // survives in the changeLedgerAnchor even after this tool result
-        // is pruned from context during Phase 1 tiered pruning.
-        try {
-            val agentService = AgentService.getInstance(project)
-            val ledger = agentService.currentChangeLedger
-            val rollback = agentService.currentRollbackManager
-            val iteration = agentService.currentIteration ?: 0
-
-            val checkpointId = rollback?.createCheckpoint("Edit $rawPath") ?: ""
-            rollback?.trackFileChange(resolvedPath)
-
-            val oldLineCount = content.lines().size
-            val newLineCount = newContent.lines().size
-            ledger?.recordChange(com.workflow.orchestrator.agent.runtime.ChangeEntry(
-                id = java.util.UUID.randomUUID().toString().take(12),
-                sessionId = "",
-                iteration = iteration,
-                timestamp = System.currentTimeMillis(),
-                filePath = resolvedPath,
-                relativePath = rawPath,
-                toolName = "edit_file",
-                action = com.workflow.orchestrator.agent.runtime.ChangeAction.MODIFIED,
-                linesAdded = (newLineCount - oldLineCount).coerceAtLeast(0),
-                linesRemoved = (oldLineCount - newLineCount).coerceAtLeast(0),
-                linesBefore = oldLineCount,
-                linesAfter = newLineCount,
-                // COMPRESSION: Previews capped to control anchor token budget
-                oldPreview = oldString.take(com.workflow.orchestrator.agent.runtime.ChangeLedger.MAX_PREVIEW_CHARS),
-                newPreview = newString.take(com.workflow.orchestrator.agent.runtime.ChangeLedger.MAX_PREVIEW_CHARS),
-                editLineRange = "$startLine-$endLine",
-                checkpointId = checkpointId
-            ))
-
-            // Update context anchor so LLM sees the change immediately
-            // COMPRESSION: Re-renders changeLedgerAnchor from full ledger
-            if (ledger != null) {
-                agentService.currentContextBridge?.updateChangeLedgerAnchor(ledger)
-            }
-        } catch (_: Exception) { /* ledger recording is best-effort */ }
+        // TODO: Change tracking will be reimplemented in the new AgentLoop
 
         // Build diff context (3 lines before/after edit) for LLM verification
         val contextLines = try {

@@ -43,8 +43,7 @@ class AgentTabProvider : WorkflowTabProvider {
         // Register controller in registry for cross-module access (e.g., AgentChatRedirect)
         AgentControllerRegistry.getInstance(project).controller = controller
 
-        // Register controller on AgentService for session resume from History tab
-        try { com.workflow.orchestrator.agent.AgentService.getInstance(project).activeController = controller } catch (_: Exception) {}
+        // TODO: Wire controller to AgentService when reimplemented
 
         // Register controller for disposal
         (project as? Disposable)?.let {

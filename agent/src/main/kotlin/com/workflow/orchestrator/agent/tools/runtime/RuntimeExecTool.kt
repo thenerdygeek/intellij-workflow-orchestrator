@@ -26,12 +26,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebuggerManager
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
-import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -133,14 +132,9 @@ description optional: for approval dialog on run_tests, compile_module.
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
 
-    /** C7: Resolve stream callback from project-scoped UiCallbacks, falling back to static field. */
-    private fun resolveStreamCallback(project: Project): ((String, String) -> Unit)? {
-        val projectCallbacks = try { AgentService.getInstance(project).uiCallbacks } catch (_: Exception) { null }
-        return if (projectCallbacks != null) {
-            { tid, chunk -> projectCallbacks.streamCommandOutput(tid, chunk) }
-        } else {
-            RunCommandTool.streamCallback
-        }
+    /** Resolve stream callback for live output. */
+    private fun resolveStreamCallback(@Suppress("UNUSED_PARAMETER") project: Project): ((String, String) -> Unit)? {
+        return RunCommandTool.streamCallback
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {

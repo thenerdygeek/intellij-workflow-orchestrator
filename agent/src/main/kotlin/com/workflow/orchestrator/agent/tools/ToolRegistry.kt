@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.tools.WorkerType
 
 class ToolRegistry {
     private val tools = mutableMapOf<String, AgentTool>()

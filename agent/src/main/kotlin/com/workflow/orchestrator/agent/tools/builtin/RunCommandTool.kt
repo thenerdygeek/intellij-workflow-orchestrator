@@ -5,11 +5,11 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.context.ToolOutputStore
-import com.workflow.orchestrator.agent.runtime.ManagedProcess
-import com.workflow.orchestrator.agent.runtime.ProcessRegistry
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.truncateOutput
+import com.workflow.orchestrator.agent.tools.process.ManagedProcess
+import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -446,13 +446,7 @@ class RunCommandTool : AgentTool {
                 ?: if (isLikelyBuildCommand(command)) BUILD_IDLE_THRESHOLD_MS else DEFAULT_IDLE_THRESHOLD_MS
 
             // Buffer-based reader thread (handles binary output)
-            // C7: prefer project-scoped UiCallbacks over static companion field
-            val projectCallbacks = try { com.workflow.orchestrator.agent.AgentService.getInstance(project).uiCallbacks } catch (_: Exception) { null }
-            val activeStreamCallback: ((String, String) -> Unit)? = if (projectCallbacks != null) {
-                { tid, chunk -> projectCallbacks.streamCommandOutput(tid, chunk) }
-            } else {
-                streamCallback
-            }
+            val activeStreamCallback: ((String, String) -> Unit)? = streamCallback
             val readerThread = Thread {
                 try {
                     process.inputStream.bufferedReader().use { reader ->
@@ -535,7 +529,7 @@ class RunCommandTool : AgentTool {
     private fun buildExitResult(managed: ManagedProcess, command: String, params: JsonObject): ToolResult {
         val rawOutput = collectOutput(managed)
         val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-            ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
+            truncateOutput(rawOutput, MAX_OUTPUT_CHARS) +
                 "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
         } else {
             rawOutput
@@ -559,7 +553,7 @@ class RunCommandTool : AgentTool {
     private fun buildTimeoutResult(managed: ManagedProcess, timeoutSeconds: Long): ToolResult {
         val rawOutput = collectOutput(managed)
         val truncatedOutput = if (rawOutput.length > MAX_OUTPUT_CHARS) {
-            ToolOutputStore.middleTruncate(rawOutput, MAX_OUTPUT_CHARS) +
+            truncateOutput(rawOutput, MAX_OUTPUT_CHARS) +
                 "\n\n[Total output: ${rawOutput.length} chars. Use a more targeted command to see specific sections.]"
         } else {
             rawOutput

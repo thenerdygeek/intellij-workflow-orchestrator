@@ -1,12 +1,14 @@
 package com.workflow.orchestrator.agent.ui.plan
 
 import com.intellij.testFramework.LightVirtualFile
-import com.workflow.orchestrator.agent.runtime.AgentPlan
 
+/**
+ * Minimal stub — plan mode will be reimplemented.
+ */
 class AgentPlanVirtualFile(
-    val plan: AgentPlan,
+    val planContent: String,
     val sessionId: String
 ) : LightVirtualFile("Implementation Plan", AgentPlanFileType, "") {
-    var currentPlan: AgentPlan = plan
+    var currentPlanContent: String = planContent
     override fun isWritable() = false
 }

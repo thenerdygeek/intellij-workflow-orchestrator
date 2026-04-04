@@ -4,9 +4,10 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.ProcessRegistry
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.process.ManagedProcess
+import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
@@ -183,7 +184,7 @@ class SendStdinTool : AgentTool {
         ToolResult("Error: unexpected exit from monitor loop", "Error: internal", 5, isError = true)
     }
 
-    private fun collectNewOutput(managed: com.workflow.orchestrator.agent.runtime.ManagedProcess, fromIndex: Int): String {
+    private fun collectNewOutput(managed: ManagedProcess, fromIndex: Int): String {
         val lines = managed.outputLines.toList()
         return if (fromIndex < lines.size) {
             lines.drop(fromIndex).joinToString("")

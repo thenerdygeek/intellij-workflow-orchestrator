@@ -1,21 +1,51 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.*
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
+import com.workflow.orchestrator.agent.tools.WorkerType
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+
+@Serializable
+data class QuestionSet(
+    val title: String? = null,
+    val questions: List<Question>
+)
+
+@Serializable
+data class Question(
+    val id: String,
+    val question: String,
+    val type: String,
+    val options: List<QuestionOption>
+)
+
+@Serializable
+data class QuestionOption(
+    val id: String,
+    val label: String,
+    val description: String = ""
+)
+
+@Serializable
+data class QuestionAnswer(
+    val questionId: String,
+    val selectedOptions: List<String>,
+    val chatMessage: String? = null
+)
+
+@Serializable
+data class QuestionResult(
+    val answers: Map<String, QuestionAnswer> = emptyMap(),
+    val skipped: List<String> = emptyList(),
+    val cancelled: Boolean = false
+)
 
 class AskQuestionsTool : AgentTool {
     override val name = "ask_questions"
@@ -113,98 +143,12 @@ class AskQuestionsTool : AgentTool {
         // Validate parameters
         validateQuestions(params)?.let { return it }
 
-        val title = params["title"]?.jsonPrimitive?.content
-        val questionsJson = params["questions"]!!.jsonPrimitive.content
-        val questions = json.decodeFromString<List<Question>>(questionsJson)
-        val questionSet = QuestionSet(title = title, questions = questions)
-
-        val questionManager = try {
-            AgentService.getInstance(project).currentQuestionManager
-        } catch (_: Exception) { null }
-
-        if (questionManager == null) {
-            return ToolResult(
-                "Error: no active session for question management",
-                "Error: no session", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        }
-
-        if (questionManager.currentQuestions != null) {
-            return ToolResult(
-                "Error: a question wizard is already active. Wait for it to complete before asking new questions.",
-                "Error: questions already active", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        }
-
-        val result = try {
-            withTimeoutOrNull(600_000L) { // 10 minute timeout
-                suspendCancellableCoroutine<QuestionResult> { cont ->
-                    val future = questionManager.submitQuestions(questionSet)
-                    cont.invokeOnCancellation { future.cancel(true) }
-                    future.whenComplete { value, error ->
-                        if (error != null) {
-                            if (!cont.isCompleted) cont.resumeWithException(error)
-                        } else {
-                            if (!cont.isCompleted) cont.resume(value)
-                        }
-                    }
-                }
-            } ?: return ToolResult(
-                "Question wizard timed out after 10 minutes. Please try again.",
-                "Questions timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        } catch (e: CancellationException) {
-            return ToolResult(
-                "Question wizard was cancelled.",
-                "Questions cancelled", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        }
-
-        if (result.cancelled) {
-            return ToolResult(
-                "User cancelled the question wizard",
-                "Questions cancelled by user",
-                ToolResult.ERROR_TOKEN_ESTIMATE
-            )
-        }
-
-        // Format results as structured text
-        val sb = StringBuilder()
-        if (title != null) {
-            sb.appendLine("## $title")
-            sb.appendLine()
-        }
-        sb.appendLine("User responses:")
-        sb.appendLine()
-
-        for (question in questions) {
-            val answer = result.answers[question.id]
-            if (answer != null) {
-                sb.appendLine("### ${question.question}")
-                val selectedLabels = answer.selectedOptions.mapNotNull { optId ->
-                    question.options.find { it.id == optId }?.label
-                }
-                if (selectedLabels.isNotEmpty()) {
-                    for (label in selectedLabels) {
-                        sb.appendLine("  - $label")
-                    }
-                }
-                if (answer.chatMessage != null) {
-                    sb.appendLine("  Note: ${answer.chatMessage}")
-                }
-                sb.appendLine()
-            } else if (question.id in result.skipped) {
-                sb.appendLine("### ${question.question}")
-                sb.appendLine("  (skipped)")
-                sb.appendLine()
-            }
-        }
-
-        val content = sb.toString().trimEnd()
+        // TODO: Wire to new AgentLoop's question manager when reimplemented
         return ToolResult(
-            content = content,
-            summary = "User answered ${result.answers.size}/${questions.size} questions",
-            tokenEstimate = TokenEstimator.estimate(content)
+            content = "Error: Question manager not available. Ask questions as plain text instead.",
+            summary = "ask_questions: not wired yet",
+            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+            isError = true
         )
     }
 }

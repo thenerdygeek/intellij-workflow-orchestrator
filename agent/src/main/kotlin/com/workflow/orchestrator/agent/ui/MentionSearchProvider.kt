@@ -304,49 +304,14 @@ class MentionSearchProvider(private val project: Project) {
         return JsonArray(results).toString()
     }
 
-    private fun searchTools(query: String): String {
-        val agentService = try {
-            com.workflow.orchestrator.agent.AgentService.getInstance(project)
-        } catch (_: Exception) { return "[]" }
-
-        val lowerQuery = query.lowercase()
-        val tools = agentService.toolRegistry.allTools()
-            .filter { lowerQuery.isBlank() || it.name.lowercase().contains(lowerQuery) || it.description.lowercase().contains(lowerQuery) }
-            .take(MAX_RESULTS)
-
-        return buildJsonArray {
-            for (tool in tools) {
-                add(buildJsonObject {
-                    put("type", JsonPrimitive("tool"))
-                    put("label", JsonPrimitive(tool.name))
-                    put("path", JsonPrimitive(tool.name))
-                    put("description", JsonPrimitive(tool.description.take(60)))
-                })
-            }
-        }.toString()
+    private fun searchTools(@Suppress("UNUSED_PARAMETER") query: String): String {
+        // TODO: Wire to tool registry when AgentService is reimplemented
+        return "[]"
     }
 
-    private fun searchSkills(query: String): String {
-        val agentService = try {
-            com.workflow.orchestrator.agent.AgentService.getInstance(project)
-        } catch (_: Exception) { return "[]" }
-
-        val lowerQuery = query.lowercase()
-        val skills = agentService.currentSkillManager?.registry?.getUserInvocableSkills()
-            ?.filter { lowerQuery.isBlank() || it.name.lowercase().contains(lowerQuery) || it.description.lowercase().contains(lowerQuery) }
-            ?.take(MAX_RESULTS)
-            ?: return "[]"
-
-        return buildJsonArray {
-            for (skill in skills) {
-                add(buildJsonObject {
-                    put("type", JsonPrimitive("skill"))
-                    put("label", JsonPrimitive(skill.name))
-                    put("path", JsonPrimitive(skill.name))
-                    put("description", JsonPrimitive(skill.description.take(60)))
-                })
-            }
-        }.toString()
+    private fun searchSkills(@Suppress("UNUSED_PARAMETER") query: String): String {
+        // TODO: Wire to skill manager when AgentService is reimplemented
+        return "[]"
     }
 
     /**

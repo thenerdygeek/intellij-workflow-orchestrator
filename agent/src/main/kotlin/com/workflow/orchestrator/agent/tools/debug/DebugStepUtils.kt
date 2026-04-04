@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.xdebugger.XDebugSession
-import com.workflow.orchestrator.agent.context.TokenEstimator
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.ToolResult
 
 /**

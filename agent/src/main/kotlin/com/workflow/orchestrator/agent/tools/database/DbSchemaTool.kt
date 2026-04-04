@@ -3,10 +3,10 @@ package com.workflow.orchestrator.agent.tools.database
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.database.DatabaseConnectionManager
-import com.workflow.orchestrator.agent.database.DatabaseSettings
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.database.DatabaseConnectionManager
+import com.workflow.orchestrator.agent.tools.database.DatabaseSettings
+import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
@@ -111,10 +111,10 @@ class DbSchemaTool : AgentTool {
 
     // ----- private helpers -----
 
-    private fun defaultSchema(profile: com.workflow.orchestrator.agent.database.DatabaseProfile): String? {
+    private fun defaultSchema(profile: com.workflow.orchestrator.agent.tools.database.DatabaseProfile): String? {
         return when (profile.dbType) {
-            com.workflow.orchestrator.agent.database.DbType.POSTGRESQL -> "public"
-            com.workflow.orchestrator.agent.database.DbType.MYSQL -> null  // use catalog instead
+            com.workflow.orchestrator.agent.tools.database.DbType.POSTGRESQL -> "public"
+            com.workflow.orchestrator.agent.tools.database.DbType.MYSQL -> null  // use catalog instead
             else -> null
         }
     }

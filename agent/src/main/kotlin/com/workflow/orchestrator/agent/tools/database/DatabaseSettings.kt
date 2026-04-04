@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.database
+package com.workflow.orchestrator.agent.tools.database
 
 import com.intellij.openapi.components.*
 import com.intellij.openapi.project.Project

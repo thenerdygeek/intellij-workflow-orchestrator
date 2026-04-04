@@ -4,10 +4,10 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.runtime.ManagedProcess
-import com.workflow.orchestrator.agent.runtime.ProcessRegistry
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.process.ManagedProcess
+import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.coroutines.CompletableDeferred
@@ -90,13 +90,8 @@ class AskUserInputTool : AgentTool {
         val deferred = CompletableDeferred<String>()
         pendingInput = deferred
 
-        // Show input UI in chat — C7: prefer project-scoped UiCallbacks over static field
-        val projectCallbacks = try { com.workflow.orchestrator.agent.AgentService.getInstance(project).uiCallbacks } catch (_: Exception) { null }
-        if (projectCallbacks != null) {
-            projectCallbacks.showProcessInput(processId, description, prompt, managed.command)
-        } else {
-            showInputCallback?.invoke(processId, description, prompt, managed.command)
-        }
+        // Show input UI in chat
+        showInputCallback?.invoke(processId, description, prompt, managed.command)
 
         // Wait for user input with timeout
         val userInput = withTimeoutOrNull(USER_INPUT_TIMEOUT_MS) { deferred.await() }

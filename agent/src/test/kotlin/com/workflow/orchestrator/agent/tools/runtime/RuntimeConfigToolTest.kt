@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject

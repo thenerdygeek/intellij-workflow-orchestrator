@@ -9,9 +9,9 @@ import com.intellij.openapi.vcs.changes.shelf.ShelveChangesManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.context.TokenEstimator
-import com.workflow.orchestrator.agent.context.ToolOutputStore
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.truncateOutput
+import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
@@ -402,7 +402,7 @@ Actions and their parameters:
                 }
 
                 val truncated = if (output.length > DIFF_MAX_OUTPUT_CHARS) {
-                    ToolOutputStore.middleTruncate(output, DIFF_MAX_OUTPUT_CHARS)
+                    truncateOutput(output, DIFF_MAX_OUTPUT_CHARS)
                 } else {
                     output
                 }
@@ -476,7 +476,7 @@ Actions and their parameters:
                 }
 
                 val truncated = if (output.length > LOG_MAX_OUTPUT_CHARS) {
-                    ToolOutputStore.middleTruncate(output, LOG_MAX_OUTPUT_CHARS)
+                    truncateOutput(output, LOG_MAX_OUTPUT_CHARS)
                 } else {
                     output
                 }
@@ -675,7 +675,7 @@ Actions and their parameters:
                 }
 
                 val truncated = if (output.length > SHOW_COMMIT_MAX_OUTPUT_CHARS) {
-                    ToolOutputStore.middleTruncate(output, SHOW_COMMIT_MAX_OUTPUT_CHARS)
+                    truncateOutput(output, SHOW_COMMIT_MAX_OUTPUT_CHARS)
                 } else {
                     output
                 }
@@ -849,7 +849,7 @@ Actions and their parameters:
                 val header = "History for $path ($maxCount max):\n\n"
 
                 val truncated = if (output.length + header.length > FILE_HISTORY_MAX_OUTPUT_CHARS) {
-                    ToolOutputStore.middleTruncate(output, FILE_HISTORY_MAX_OUTPUT_CHARS - header.length)
+                    truncateOutput(output, FILE_HISTORY_MAX_OUTPUT_CHARS - header.length)
                 } else {
                     output
                 }

@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.database
+package com.workflow.orchestrator.agent.tools.database
 
 import com.intellij.credentialStore.CredentialAttributes
 import com.intellij.credentialStore.Credentials

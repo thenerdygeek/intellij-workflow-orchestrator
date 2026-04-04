@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*

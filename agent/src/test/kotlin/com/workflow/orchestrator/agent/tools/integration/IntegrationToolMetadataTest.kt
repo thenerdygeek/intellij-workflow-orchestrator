@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.integration
 
-import com.workflow.orchestrator.agent.runtime.WorkerType
+import com.workflow.orchestrator.agent.tools.WorkerType
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 

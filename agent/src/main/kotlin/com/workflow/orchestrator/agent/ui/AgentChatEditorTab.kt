@@ -63,10 +63,7 @@ class AgentChatEditor(
     private val panel = AgentDashboardPanel(parentDisposable = disposer)
 
     init {
-        try {
-            val controller = AgentService.getInstance(project).activeController
-            controller?.addMirrorPanel(panel)
-        } catch (_: Exception) {}
+        // TODO: Wire to new AgentController when reimplemented
     }
 
     override fun getComponent(): JComponent = panel
@@ -80,10 +77,6 @@ class AgentChatEditor(
     override fun removePropertyChangeListener(listener: PropertyChangeListener) {}
 
     override fun dispose() {
-        try {
-            val controller = AgentService.getInstance(project).activeController
-            controller?.removeMirrorPanel(panel)
-        } catch (_: Exception) {}
         Disposer.dispose(disposer)
     }
 }

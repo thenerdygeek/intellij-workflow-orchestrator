@@ -16,9 +16,9 @@ import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.ModelInfo
-import com.workflow.orchestrator.agent.database.DatabaseCredentialHelper
-import com.workflow.orchestrator.agent.database.DatabaseProfile
-import com.workflow.orchestrator.agent.database.DatabaseSettings
+import com.workflow.orchestrator.agent.tools.database.DatabaseCredentialHelper
+import com.workflow.orchestrator.agent.tools.database.DatabaseProfile
+import com.workflow.orchestrator.agent.tools.database.DatabaseSettings
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.AuthInterceptor

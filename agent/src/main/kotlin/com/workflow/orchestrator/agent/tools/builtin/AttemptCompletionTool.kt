@@ -3,24 +3,19 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.runtime.CompletionGatekeeper
-import com.workflow.orchestrator.agent.runtime.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class AttemptCompletionTool(
-    private val gatekeeper: CompletionGatekeeper
-) : AgentTool {
+class AttemptCompletionTool : AgentTool {
 
     override val name = "attempt_completion"
 
     override val description = "Declare that you have finished the user's request. Call this " +
-        "ONLY when the entire task is fully resolved — not when completing individual plan " +
-        "steps (use update_plan_step for that). Your completion may be blocked if there is " +
-        "unfinished work. The result is displayed prominently to the user as a completion " +
-        "summary — make it informative and well-structured."
+        "ONLY when the entire task is fully resolved. The result is displayed prominently " +
+        "to the user as a completion summary — make it informative and well-structured."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -50,16 +45,6 @@ class AttemptCompletionTool(
                 isError = true
             )
         val command = params["command"]?.jsonPrimitive?.content
-
-        val block = gatekeeper.checkCompletion()
-        if (block != null) {
-            return ToolResult(
-                content = block,
-                summary = "Completion blocked by gate",
-                tokenEstimate = block.length / 4,
-                isError = true
-            )
-        }
 
         return ToolResult(
             content = result,
