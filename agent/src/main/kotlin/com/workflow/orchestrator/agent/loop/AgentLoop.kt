@@ -186,9 +186,14 @@ class AgentLoop(
         /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
         private const val MAX_RETRY_DELAY_MS = 30_000L
         private const val CONTINUATION_PROMPT =
-            "Your previous response was empty. Please use the available tools to take action on the task, or call attempt_completion if you are done."
+            "Your previous response was empty. If the user asked a question or greeted you, " +
+            "use the act_mode_respond tool to reply. If you need to take action, use the appropriate tool. " +
+            "If the task is complete, call attempt_completion."
         private const val TEXT_ONLY_NUDGE =
-            "Please use tools to take action, or call attempt_completion if you're done. Do not just describe what you plan to do — take action with tools."
+            "You responded with text but did not call any tool. " +
+            "If you are answering a question or responding conversationally, use the act_mode_respond tool. " +
+            "If you need to take action on the codebase, use the appropriate tool (read_file, edit_file, etc.). " +
+            "If the task is complete, call attempt_completion."
         private const val LOOP_SOFT_WARNING =
             "WARNING: You have called the same tool with identical arguments multiple times in a row. " +
             "This is not making progress. Please try a different approach, use different parameters, " +
