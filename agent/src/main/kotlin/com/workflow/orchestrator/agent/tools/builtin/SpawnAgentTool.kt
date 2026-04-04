@@ -3,15 +3,20 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.loop.AgentLoop
-import com.workflow.orchestrator.agent.loop.ContextManager
-import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.estimateTokens
+import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
+import com.workflow.orchestrator.agent.tools.subagent.SubagentRunResult
+import com.workflow.orchestrator.agent.tools.subagent.SubagentRunStats
+import com.workflow.orchestrator.agent.tools.subagent.SubagentRunStatus
+import com.workflow.orchestrator.agent.tools.subagent.SubagentRunner
+import com.workflow.orchestrator.agent.tools.subagent.SubagentStatusItem
 import com.workflow.orchestrator.core.ai.LlmBrain
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -24,11 +29,15 @@ import kotlinx.serialization.json.jsonPrimitive
  * The sub-agent's result flows back as a single ToolResult.
  *
  * Depth-1 hard limit: sub-agents CANNOT spawn further sub-agents.
+ *
+ * Supports up to 5 parallel prompts in research scope for fan-out research.
  */
 class SpawnAgentTool(
     private val brainProvider: suspend () -> LlmBrain,
     private val toolRegistry: ToolRegistry,
-    private val project: Project
+    private val project: Project,
+    private val contextBudget: Int = DEFAULT_CONTEXT_BUDGET,
+    private val onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null
 ) : AgentTool {
 
     override val name = "agent"
@@ -53,6 +62,12 @@ Scopes:
 - "implement": Full write access. Use for coding — editing files, creating files, running commands, running tests.
 - "review": Read + diagnostics. Use for code review, finding bugs, checking quality.
 
+Parallel execution (research scope only):
+- In research scope, you can provide up to 5 prompts (prompt, prompt_2, ..., prompt_5).
+- Each prompt runs as a separate parallel subagent with its own context.
+- Use this to fan out multiple research questions simultaneously.
+- For implement/review scopes, only the primary prompt is used (sequential).
+
 Tips:
 - Be specific in the prompt. "Fix the bug in UserService" is bad. "In src/main/kotlin/com/example/UserService.kt, the login() method at line 45 throws NPE when email is null. Add a null check and return an error result." is good.
 - Include file paths. The sub-agent starts with zero context.
@@ -67,6 +82,22 @@ Tips:
             "prompt" to ParameterProperty(
                 type = "string",
                 description = "Complete task description. Include ALL context the agent needs — file paths, class names, what to look for or change, and why. The agent has NO access to your conversation history."
+            ),
+            "prompt_2" to ParameterProperty(
+                type = "string",
+                description = "Optional second research prompt (research scope only, parallel execution)."
+            ),
+            "prompt_3" to ParameterProperty(
+                type = "string",
+                description = "Optional third research prompt (research scope only, parallel execution)."
+            ),
+            "prompt_4" to ParameterProperty(
+                type = "string",
+                description = "Optional fourth research prompt (research scope only, parallel execution)."
+            ),
+            "prompt_5" to ParameterProperty(
+                type = "string",
+                description = "Optional fifth research prompt (research scope only, parallel execution)."
             ),
             "scope" to ParameterProperty(
                 type = "string",
@@ -95,55 +126,220 @@ Tips:
             return errorResult("Invalid scope: '$scope'. Must be one of: research, implement, review")
         }
 
-        // 1. Fresh context (50K budget for sub-agents)
-        val childContext = ContextManager(maxInputTokens = SUB_AGENT_CONTEXT_BUDGET)
-        childContext.setSystemPrompt(buildSubAgentPrompt(scope))
-
-        // 2. Scope-appropriate tools (agent tool NEVER included -- depth-1 enforcement)
-        val scopedTools = resolveScopedTools(scope)
-
-        // 3. Fresh brain
-        val brain = brainProvider()
-
-        // 4. Create and run child loop
         val clampedIterations = maxIter.coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
-        val childLoop = AgentLoop(
+
+        // Collect prompts: for research scope, gather from all PROMPT_KEYS; otherwise just primary
+        val prompts = if (scope == "research") {
+            PROMPT_KEYS.mapNotNull { key -> params[key]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } }
+        } else {
+            listOf(prompt)
+        }
+
+        if (prompts.isEmpty()) {
+            return errorResult("No valid prompts provided")
+        }
+
+        return if (prompts.size == 1) {
+            executeSingle(description, prompts.first(), scope, clampedIterations)
+        } else {
+            executeParallel(description, prompts, scope, clampedIterations)
+        }
+    }
+
+    // ---- Single subagent execution ----
+
+    private suspend fun executeSingle(
+        description: String,
+        prompt: String,
+        scope: String,
+        maxIterations: Int
+    ): ToolResult {
+        val brain = brainProvider()
+        val scopedTools = resolveScopedTools(scope)
+        val systemPrompt = buildSubAgentPrompt(scope)
+
+        val runner = SubagentRunner(
             brain = brain,
             tools = scopedTools,
-            toolDefinitions = scopedTools.values.map { it.toToolDefinition() },
-            contextManager = childContext,
+            systemPrompt = systemPrompt,
             project = project,
-            maxIterations = clampedIterations,
-            planMode = scope != "implement"
+            maxIterations = maxIterations,
+            planMode = scope != "implement",
+            contextBudget = contextBudget
         )
 
-        val result = childLoop.run(prompt)
+        val result = runner.run(prompt) { progress ->
+            onSubagentProgress?.invoke(description, progress)
+        }
 
-        return when (result) {
-            is LoopResult.Completed -> ToolResult(
-                content = "[Agent: $description]\n${result.summary}",
-                summary = "Agent completed ($scope): ${result.summary.take(150)}",
-                tokenEstimate = estimateTokens(result.summary),
-                verifyCommand = result.verifyCommand
+        return mapSingleResult(description, scope, result)
+    }
+
+    private fun mapSingleResult(
+        description: String,
+        scope: String,
+        result: SubagentRunResult
+    ): ToolResult {
+        val statsLine = formatStatsLine(result.stats)
+
+        return when (result.status) {
+            SubagentRunStatus.COMPLETED -> ToolResult(
+                content = "[Agent: $description]\n${result.result ?: "(no output)"}\n\n$statsLine",
+                summary = "Agent completed ($scope): ${(result.result ?: "").take(150)}",
+                tokenEstimate = estimateTokens(result.result ?: ""),
+                verifyCommand = null
             )
-            is LoopResult.Failed -> ToolResult(
-                content = "[Agent: $description] Failed: ${result.error}",
-                summary = "Agent failed after ${result.iterations} iterations: ${result.error.take(100)}",
+            SubagentRunStatus.FAILED -> ToolResult(
+                content = "[Agent: $description] Failed: ${result.error ?: "unknown error"}\n\n$statsLine",
+                summary = "Agent failed: ${(result.error ?: "").take(100)}",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
-            )
-            is LoopResult.Cancelled -> ToolResult(
-                content = "[Agent: $description] Cancelled after ${result.iterations} iterations",
-                summary = "Agent cancelled",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-            is LoopResult.SessionHandoff -> ToolResult(
-                content = "[Agent: $description] Session handoff requested. Context:\n${result.context.take(500)}",
-                summary = "Agent requested session handoff after ${result.iterations} iterations",
-                tokenEstimate = estimateTokens(result.context.take(500))
             )
         }
+    }
+
+    // ---- Parallel subagent execution (research scope only) ----
+
+    private suspend fun executeParallel(
+        description: String,
+        prompts: List<String>,
+        scope: String,
+        maxIterations: Int
+    ): ToolResult {
+        val scopedTools = resolveScopedTools(scope)
+        val systemPrompt = buildSubAgentPrompt(scope)
+
+        // Create status entries for each prompt
+        val entries = prompts.mapIndexed { idx, p ->
+            SubagentStatusItem(
+                index = idx,
+                prompt = excerpt(p),
+                status = "pending"
+            )
+        }
+
+        // Run all prompts in parallel using supervisorScope
+        val results = supervisorScope {
+            prompts.mapIndexed { idx, p ->
+                async {
+                    val brain = brainProvider()
+                    val runner = SubagentRunner(
+                        brain = brain,
+                        tools = scopedTools,
+                        systemPrompt = systemPrompt,
+                        project = project,
+                        maxIterations = maxIterations,
+                        planMode = true, // research scope is always plan mode
+                        contextBudget = contextBudget
+                    )
+
+                    entries[idx].status = "running"
+                    emitGroupProgress(description, entries)
+
+                    try {
+                        val result = runner.run(p) { progress ->
+                            // Update the entry with progress info
+                            progress.stats?.let { stats ->
+                                entries[idx].toolCalls = stats.toolCalls
+                                entries[idx].inputTokens = stats.inputTokens
+                                entries[idx].outputTokens = stats.outputTokens
+                                entries[idx].totalCost = stats.totalCost
+                                entries[idx].contextTokens = stats.contextTokens
+                                entries[idx].contextWindow = stats.contextWindow
+                                entries[idx].contextUsagePercentage = stats.contextUsagePercentage
+                            }
+                            progress.latestToolCall?.let { entries[idx].latestToolCall = it }
+                            emitGroupProgress(description, entries)
+                        }
+
+                        // Update entry with final result
+                        when (result.status) {
+                            SubagentRunStatus.COMPLETED -> {
+                                entries[idx].status = "completed"
+                                entries[idx].result = result.result
+                            }
+                            SubagentRunStatus.FAILED -> {
+                                entries[idx].status = "failed"
+                                entries[idx].error = result.error
+                            }
+                        }
+                        emitGroupProgress(description, entries)
+                        result
+                    } catch (e: Exception) {
+                        entries[idx].status = "failed"
+                        entries[idx].error = e.message ?: "Unknown error"
+                        emitGroupProgress(description, entries)
+                        SubagentRunResult(
+                            status = SubagentRunStatus.FAILED,
+                            error = e.message ?: "Unknown error"
+                        )
+                    }
+                }
+            }.map { it.await() }
+        }
+
+        // Build summary
+        val succeeded = results.count { it.status == SubagentRunStatus.COMPLETED }
+        val failed = results.count { it.status == SubagentRunStatus.FAILED }
+        val total = results.size
+
+        val totalStats = aggregateStats(results)
+        val statsLine = formatStatsLine(totalStats)
+
+        val content = buildString {
+            appendLine("[Parallel agents: $description]")
+            appendLine("Total: $total | Succeeded: $succeeded | Failed: $failed")
+            appendLine()
+
+            results.forEachIndexed { idx, result ->
+                val promptExcerpt = excerpt(prompts[idx], 80)
+                appendLine("--- Agent ${idx + 1}: $promptExcerpt ---")
+                when (result.status) {
+                    SubagentRunStatus.COMPLETED -> {
+                        appendLine(excerpt(result.result ?: "(no output)"))
+                    }
+                    SubagentRunStatus.FAILED -> {
+                        appendLine("FAILED: ${result.error ?: "unknown error"}")
+                    }
+                }
+                appendLine()
+            }
+
+            appendLine(statsLine)
+        }
+
+        val summary = "Parallel agents ($succeeded/$total succeeded): ${description.take(100)}"
+        val hasErrors = failed > 0
+
+        return ToolResult(
+            content = content,
+            summary = summary,
+            tokenEstimate = estimateTokens(content),
+            isError = hasErrors && succeeded == 0 // only error if ALL failed
+        )
+    }
+
+    private suspend fun emitGroupProgress(description: String, entries: List<SubagentStatusItem>) {
+        val completed = entries.count { it.status == "completed" || it.status == "failed" }
+        val status = if (completed == entries.size) "completed" else "running"
+        onSubagentProgress?.invoke(
+            description,
+            SubagentProgressUpdate(status = status)
+        )
+    }
+
+    private fun aggregateStats(results: List<SubagentRunResult>): SubagentRunStats {
+        return SubagentRunStats(
+            toolCalls = results.sumOf { it.stats.toolCalls },
+            inputTokens = results.sumOf { it.stats.inputTokens },
+            outputTokens = results.sumOf { it.stats.outputTokens },
+            cacheWriteTokens = results.sumOf { it.stats.cacheWriteTokens },
+            cacheReadTokens = results.sumOf { it.stats.cacheReadTokens },
+            totalCost = results.sumOf { it.stats.totalCost },
+            contextTokens = results.maxOfOrNull { it.stats.contextTokens } ?: 0,
+            contextWindow = results.maxOfOrNull { it.stats.contextWindow } ?: 0,
+            contextUsagePercentage = results.maxOfOrNull { it.stats.contextUsagePercentage } ?: 0.0
+        )
     }
 
     // ---- Tool scoping ----
@@ -210,7 +406,10 @@ Tips:
     )
 
     companion object {
-        const val SUB_AGENT_CONTEXT_BUDGET = 50_000
+        const val DEFAULT_CONTEXT_BUDGET = 150_000
+        const val MAX_PARALLEL_PROMPTS = 5
+        val PROMPT_KEYS = listOf("prompt", "prompt_2", "prompt_3", "prompt_4", "prompt_5")
+
         const val MIN_ITERATIONS = 5
         const val MAX_ITERATIONS = 100
 
@@ -249,5 +448,29 @@ Tips:
             "db_query", "db_schema", "db_list_profiles",    // Database tools
             "ask_user_input"                                // Sub-agents can't interact with user
         )
+
+        /** Truncate text with ellipsis. */
+        fun excerpt(text: String, maxChars: Int = 1200): String =
+            if (text.length <= maxChars) text
+            else text.take(maxChars) + "..."
+
+        /** Format stats as a human-readable line. */
+        fun formatStatsLine(stats: SubagentRunStats): String = buildString {
+            append("Stats: ")
+            append("${stats.toolCalls} tool calls")
+            append(" | ${formatNumber(stats.inputTokens)} input tokens")
+            append(" | ${formatNumber(stats.outputTokens)} output tokens")
+            if (stats.contextWindow > 0) {
+                append(" | context: ${formatNumber(stats.contextTokens)}/${formatNumber(stats.contextWindow)}")
+                append(" (${String.format("%.0f", stats.contextUsagePercentage)}%)")
+            }
+        }
+
+        /** Format a number with K suffix for readability. */
+        fun formatNumber(n: Int): String = when {
+            n >= 1_000_000 -> "${n / 1_000_000}.${(n % 1_000_000) / 100_000}M"
+            n >= 1_000 -> "${n / 1_000}.${(n % 1_000) / 100}K"
+            else -> n.toString()
+        }
     }
 }

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
@@ -134,6 +135,63 @@ class SpawnAgentToolTest {
             stringPairs.mapValues { (_, v) -> JsonPrimitive(v) as kotlinx.serialization.json.JsonElement } +
             intPairs.mapValues { (_, v) -> JsonPrimitive(v) as kotlinx.serialization.json.JsonElement }
         )
+
+    private fun toolCallResponse(vararg calls: Pair<String, String>): ChatCompletionResponse =
+        ChatCompletionResponse(
+            id = "resp-${System.nanoTime()}",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(
+                        role = "assistant",
+                        content = null,
+                        toolCalls = calls.mapIndexed { idx, (name, args) ->
+                            ToolCall(
+                                id = "call_${idx}_${System.nanoTime()}",
+                                type = "function",
+                                function = FunctionCall(name = name, arguments = args)
+                            )
+                        }
+                    ),
+                    finishReason = "tool_calls"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 100, completionTokens = 30, totalTokens = 130)
+        )
+
+    /**
+     * A fake LlmBrain that returns pre-configured responses in sequence.
+     */
+    private inner class SequenceBrain(
+        private val responses: List<ApiResult<ChatCompletionResponse>>
+    ) : LlmBrain {
+        override val modelId: String = "test-sub-agent-model"
+        private var callIndex = 0
+
+        override suspend fun chat(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            toolChoice: JsonElement?
+        ): ApiResult<ChatCompletionResponse> {
+            throw UnsupportedOperationException("AgentLoop uses chatStream")
+        }
+
+        override suspend fun chatStream(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            onChunk: suspend (StreamChunk) -> Unit
+        ): ApiResult<ChatCompletionResponse> {
+            if (callIndex >= responses.size) {
+                return ApiResult.Error(ErrorType.SERVER_ERROR, "No more scripted responses")
+            }
+            return responses[callIndex++]
+        }
+
+        override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
+        override fun cancelActiveRequest() {}
+    }
 
     // ---- Scope Tests ----
 
@@ -405,64 +463,6 @@ class SpawnAgentToolTest {
     @Nested
     inner class SubAgentLoopTests {
 
-        /**
-         * A fake LlmBrain that returns pre-configured responses in sequence.
-         * Same pattern as AgentLoopTest.SequenceBrain.
-         */
-        private inner class SequenceBrain(
-            private val responses: List<ApiResult<ChatCompletionResponse>>
-        ) : LlmBrain {
-            override val modelId: String = "test-sub-agent-model"
-            private var callIndex = 0
-
-            override suspend fun chat(
-                messages: List<ChatMessage>,
-                tools: List<ToolDefinition>?,
-                maxTokens: Int?,
-                toolChoice: JsonElement?
-            ): ApiResult<ChatCompletionResponse> {
-                throw UnsupportedOperationException("AgentLoop uses chatStream")
-            }
-
-            override suspend fun chatStream(
-                messages: List<ChatMessage>,
-                tools: List<ToolDefinition>?,
-                maxTokens: Int?,
-                onChunk: suspend (StreamChunk) -> Unit
-            ): ApiResult<ChatCompletionResponse> {
-                if (callIndex >= responses.size) {
-                    return ApiResult.Error(ErrorType.SERVER_ERROR, "No more scripted responses")
-                }
-                return responses[callIndex++]
-            }
-
-            override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
-            override fun cancelActiveRequest() {}
-        }
-
-        private fun toolCallResponse(vararg calls: Pair<String, String>): ChatCompletionResponse =
-            ChatCompletionResponse(
-                id = "resp-${System.nanoTime()}",
-                choices = listOf(
-                    Choice(
-                        index = 0,
-                        message = ChatMessage(
-                            role = "assistant",
-                            content = null,
-                            toolCalls = calls.mapIndexed { idx, (name, args) ->
-                                ToolCall(
-                                    id = "call_${idx}_${System.nanoTime()}",
-                                    type = "function",
-                                    function = FunctionCall(name = name, arguments = args)
-                                )
-                            }
-                        ),
-                        finishReason = "tool_calls"
-                    )
-                ),
-                usage = UsageInfo(promptTokens = 100, completionTokens = 30, totalTokens = 130)
-            )
-
         @Test
         fun `sub-agent completion flows back as ToolResult`() = runTest {
             val brain = SequenceBrain(listOf(
@@ -726,6 +726,200 @@ class SpawnAgentToolTest {
             assertTrue(tool.description.contains("Use this when"), "Description should include when to use")
             assertTrue(tool.description.contains("Do NOT use this when"), "Description should include when not to use")
             assertTrue(tool.description.contains("Tips"), "Description should include tips")
+        }
+
+        @Test
+        fun `description includes parallel execution guidance`() {
+            assertTrue(
+                tool.description.contains("Parallel execution"),
+                "Description should include parallel execution section"
+            )
+            assertTrue(
+                tool.description.contains("prompt_2"),
+                "Description should mention prompt_2"
+            )
+        }
+
+        @Test
+        fun `parameters include prompt_2 through prompt_5`() {
+            for (key in listOf("prompt_2", "prompt_3", "prompt_4", "prompt_5")) {
+                assertNotNull(
+                    tool.parameters.properties[key],
+                    "Parameters should include $key"
+                )
+            }
+        }
+    }
+
+    // ---- Parallel Execution Tests ----
+
+    @Nested
+    inner class ParallelExecutionTests {
+
+        @Test
+        fun `research scope with multiple prompts runs all prompts`() = runTest {
+            var brainCallCount = 0
+
+            val spawnTool = SpawnAgentTool(
+                brainProvider = {
+                    brainCallCount++
+                    SequenceBrain(listOf(
+                        ApiResult.Success(toolCallResponse(
+                            "attempt_completion" to """{"result":"Research result ${brainCallCount}."}"""
+                        ))
+                    ))
+                },
+                toolRegistry = registry,
+                project = project
+            )
+
+            val result = spawnTool.execute(
+                params(
+                    "description" to "Multi-research",
+                    "prompt" to "Research question 1",
+                    "prompt_2" to "Research question 2",
+                    "prompt_3" to "Research question 3",
+                    "scope" to "research"
+                ),
+                project
+            )
+
+            assertFalse(result.isError, "Parallel research should succeed: ${result.content}")
+            assertTrue(result.content.contains("Total: 3"), "Should report total of 3 agents")
+            assertTrue(result.content.contains("Succeeded: 3"), "Should report 3 succeeded")
+            assertTrue(result.summary.contains("Parallel agents"), "Summary should mention parallel agents")
+        }
+
+        @Test
+        fun `implement scope ignores extra prompts`() = runTest {
+            val spawnTool = SpawnAgentTool(
+                brainProvider = {
+                    SequenceBrain(listOf(
+                        ApiResult.Success(toolCallResponse(
+                            "attempt_completion" to """{"result":"Done implementing."}"""
+                        ))
+                    ))
+                },
+                toolRegistry = registry,
+                project = project
+            )
+
+            val result = spawnTool.execute(
+                params(
+                    "description" to "Implement feature",
+                    "prompt" to "Implement the feature",
+                    "prompt_2" to "This should be ignored",
+                    "scope" to "implement"
+                ),
+                project
+            )
+
+            assertFalse(result.isError, "Should complete successfully")
+            // Single execution: should NOT contain "Subagent results:" or "Parallel agents"
+            assertFalse(
+                result.content.contains("Parallel agents"),
+                "implement scope should not use parallel execution"
+            )
+            assertTrue(
+                result.content.contains("Agent: Implement feature"),
+                "Should contain single agent description"
+            )
+        }
+
+        @Test
+        fun `parallel research reports stats in summary`() = runTest {
+            var brainCallCount = 0
+
+            val spawnTool = SpawnAgentTool(
+                brainProvider = {
+                    brainCallCount++
+                    SequenceBrain(listOf(
+                        ApiResult.Success(toolCallResponse(
+                            "attempt_completion" to """{"result":"Result $brainCallCount."}"""
+                        ))
+                    ))
+                },
+                toolRegistry = registry,
+                project = project
+            )
+
+            val result = spawnTool.execute(
+                params(
+                    "description" to "Two research tasks",
+                    "prompt" to "First research",
+                    "prompt_2" to "Second research",
+                    "scope" to "research"
+                ),
+                project
+            )
+
+            assertFalse(result.isError, "Should succeed")
+            assertTrue(
+                result.summary.contains("Parallel agents") && result.summary.contains("2/2"),
+                "Summary should contain 'Parallel agents' and '2/2': ${result.summary}"
+            )
+        }
+    }
+
+    // ---- Configurable Context Budget Tests ----
+
+    @Nested
+    inner class ConfigurableContextBudgetTests {
+
+        @Test
+        fun `default context budget is 150K`() {
+            assertEquals(150_000, SpawnAgentTool.DEFAULT_CONTEXT_BUDGET)
+        }
+
+        @Test
+        fun `custom context budget is passed through`() {
+            // Verify construction with custom budget does not throw
+            val customTool = SpawnAgentTool(
+                brainProvider = { throw IllegalStateException("Not used") },
+                toolRegistry = registry,
+                project = project,
+                contextBudget = 80_000
+            )
+            // Tool should be created without error
+            assertEquals("agent", customTool.name)
+        }
+    }
+
+    // ---- Helper Method Tests ----
+
+    @Nested
+    inner class HelperMethodTests {
+
+        @Test
+        fun `excerpt truncates long text`() {
+            val longText = "a".repeat(2000)
+            val result = SpawnAgentTool.excerpt(longText)
+            assertEquals(1203, result.length, "Should be 1200 chars + '...'")
+            assertTrue(result.endsWith("..."), "Should end with ellipsis")
+        }
+
+        @Test
+        fun `excerpt preserves short text`() {
+            val shortText = "Hello world"
+            assertEquals(shortText, SpawnAgentTool.excerpt(shortText))
+        }
+
+        @Test
+        fun `formatNumber formats thousands`() {
+            assertEquals("1.5K", SpawnAgentTool.formatNumber(1_500))
+            assertEquals("10.0K", SpawnAgentTool.formatNumber(10_000))
+            assertEquals("150.0K", SpawnAgentTool.formatNumber(150_000))
+        }
+
+        @Test
+        fun `formatNumber formats small numbers`() {
+            assertEquals("42", SpawnAgentTool.formatNumber(42))
+            assertEquals("999", SpawnAgentTool.formatNumber(999))
+        }
+
+        @Test
+        fun `formatNumber formats millions`() {
+            assertEquals("1.5M", SpawnAgentTool.formatNumber(1_500_000))
         }
     }
 }
