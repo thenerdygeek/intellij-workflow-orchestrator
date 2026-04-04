@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent — ReAct loop, 68 registered tools (15 meta-tools, 144 actions), event-sourced context management (4-stage condenser pipeline), sub-agent orchestration with file ownership, plan lifecycle, JCEF chat UI, real-time steering, Ralph Loop self-improvement, 3-tier memory, compression-proof anchors |
+| `:agent` | AI coding agent — simple ReAct loop (AgentLoop), 68 registered tools (flat ToolRegistry), message-based ContextManager with 3-stage compaction (trim tool results > LLM summarization > sliding window), explicit completion via `attempt_completion` tool, JSON file session persistence (SessionStore), JCEF chat UI, plan mode via schema filtering |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -118,16 +118,14 @@ If any answer is NO, the AI agent cannot use this feature.
 
 ## Plan Mode
 
-Mechanical enforcement (Claude Code style): when plan mode is active, source code mutation tools
-(`edit_file`, `create_file`, `format_code`, `optimize_imports`, `refactor_rename`, `rollback_changes`) are
-removed from the LLM's tool schema. Meta-tool write actions (`jira.transition`, `bamboo_builds.trigger_build`,
-`bitbucket_pr.create_pr`, etc.) are blocked at execution time. Read, run, debug, runtime, analysis, and
-planning tools remain available.
+When plan mode is active, write tools (`edit_file`, `create_file`, `format_code`, `optimize_imports`,
+`refactor_rename`, `rollback_changes`) are removed from the tool schema before each LLM call.
+Read, run, debug, runtime, analysis, and planning tools remain available.
 
-- **Activation:** UI Plan button toggle, or LLM calls `enable_plan_mode` tool
-- **Deactivation:** User approves plan (auto), user unclicks Plan button (manual), new chat, or cancel
+- **Activation:** UI Plan button toggle
+- **Deactivation:** User unclicks Plan button, new chat, or cancel
 - **State:** `AgentService.planModeActive` (AtomicBoolean) — single source of truth
-- **Enforcement:** Two layers — schema filtering (tools removed before LLM call) + execution guard (safety net)
+- **Enforcement:** Schema filtering — write tools excluded from `toolDefinitions` passed to `AgentLoop`
 
 ## Threading
 
@@ -155,15 +153,10 @@ All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (compu
 
 | Data | Path | Retention |
 |---|---|---|
-| Sessions | `agent/sessions/{sessionId}/` | Per-session |
-| API Debug | `agent/sessions/{sessionId}/api-debug/` | Per-session |
-| Traces | `agent/sessions/{sessionId}/traces/` | Per-session |
-| Metrics | `agent/metrics/` | 30 days / 100 max |
-| Memory | `agent/memory/`, `agent/core-memory.json`, `agent/archival/` | Persistent |
-| Guardrails | `agent/guardrails.md` | Persistent |
+| Sessions | `agent/sessions/{sessionId}.json` | Per-session |
 | Logs | `logs/agent-YYYY-MM-DD.jsonl` | 7 days |
 
-Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`. One-time migration from old scattered locations runs on first startup via `StorageMigration`.
+Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`. Sessions are stored as single JSON files via `SessionStore`.
 
 ## UX Constraints
 
