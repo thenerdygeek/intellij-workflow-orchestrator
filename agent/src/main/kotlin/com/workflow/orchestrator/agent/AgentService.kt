@@ -206,6 +206,9 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred { DbQueryTool() }
         safeRegisterDeferred { DbSchemaTool() }
 
+        // VCS explanation tool (ported from Cline's generate_explanation)
+        safeRegisterDeferred { GenerateExplanationTool() }
+
         // Other deferred tools
         safeRegisterDeferred { ProjectContextTool() }
         safeRegisterDeferred { CurrentTimeTool() }
