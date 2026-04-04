@@ -22,6 +22,7 @@ class ConversationRecall(private val sessionsDir: File) {
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
         private const val DEFAULT_LIMIT = 20
+        private const val MAX_CONTENT_LENGTH = 500
 
         fun forProject(agentDir: File): ConversationRecall {
             return ConversationRecall(File(agentDir, "sessions"))
@@ -76,16 +77,19 @@ class ConversationRecall(private val sessionsDir: File) {
                         // Skip tool messages (Letta: removes ALL tool messages to prevent recursion)
                         if (role == "tool") return@forEachLine
 
-                        // Keyword match
+                        // Keyword match — OR logic with frequency-based scoring
+                        // (matches ArchivalMemory pattern, not AND which gives identical scores)
                         val contentLower = content.lowercase()
-                        val matched = keywords.all { kw -> contentLower.contains(kw) }
-                        if (!matched) return@forEachLine
+                        val score = keywords.sumOf { kw ->
+                            contentLower.split(kw).size - 1  // non-overlapping occurrence count
+                        }
+                        if (score == 0) return@forEachLine
 
                         results.add(RecallResult(
                             sessionId = sessionId,
                             role = role,
-                            content = content.take(500),
-                            score = keywords.count { kw -> contentLower.contains(kw) }
+                            content = content.take(MAX_CONTENT_LENGTH),
+                            score = score
                         ))
                     } catch (e: Exception) {
                         // Skip malformed lines

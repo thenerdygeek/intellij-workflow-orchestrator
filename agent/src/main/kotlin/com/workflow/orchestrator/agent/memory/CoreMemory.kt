@@ -98,8 +98,8 @@ class CoreMemory(private val storageFile: File) {
             ?: throw IllegalArgumentException("Block '$label' not found")
         require(!block.readOnly) { "Block '$label' is read-only" }
 
-        val occurrences = block.value.windowed(oldContent.length, 1)
-            .count { it == oldContent }
+        // Non-overlapping count — matches Python's str.count() used by Letta
+        val occurrences = block.value.split(oldContent).size - 1
         require(occurrences == 1) {
             if (occurrences == 0) "No match found for old_content in block '$label'"
             else "Multiple matches ($occurrences) found — replace requires exactly 1 match"
