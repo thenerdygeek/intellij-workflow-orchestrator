@@ -335,10 +335,10 @@ class AgentService(private val project: Project) : Disposable {
                 val projectName = project.name
                 val projectPath = project.basePath ?: ""
 
-                // Load project instructions (CLAUDE.md) and bundled skills
+                // Load project instructions (CLAUDE.md) and all skills (bundled + user)
                 val projectInstructions = InstructionLoader.loadProjectInstructions(projectPath)
-                val bundledSkills = InstructionLoader.loadBundledSkills()
-                val availableSkills = bundledSkills.map { it.name to it.description }
+                val allSkills = InstructionLoader.loadAllSkills(projectPath)
+                val availableSkills = allSkills.map { it.name to it.description }
                     .ifEmpty { null }
 
                 // Reset active deferred tools for new sessions (not resumed ones)

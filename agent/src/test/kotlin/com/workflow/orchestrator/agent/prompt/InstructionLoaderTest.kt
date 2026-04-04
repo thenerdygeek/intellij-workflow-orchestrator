@@ -158,4 +158,179 @@ This has no closing delimiter"""
         assertTrue(frontmatter.isEmpty())
         assertEquals(content, body)
     }
+
+    // ---- Dynamic skill discovery (ported from Cline's skill loading) ----
+
+    @Test
+    fun `discovers skills from project directory`() {
+        // Create a project-local skill directory
+        val skillsDir = File(tempDir, ".agent-skills")
+        val mySkillDir = File(skillsDir, "my-skill")
+        mySkillDir.mkdirs()
+
+        File(mySkillDir, "SKILL.md").writeText("""---
+name: my-skill
+description: A project-specific skill
+---
+
+# My Skill
+
+Do something specific to this project.""")
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+
+        assertEquals(1, skills.size, "should find one skill")
+        assertEquals("my-skill", skills[0].name)
+        assertEquals("A project-specific skill", skills[0].description)
+        assertTrue(skills[0].content.contains("My Skill"))
+    }
+
+    @Test
+    fun `discovers skills from global directory`() {
+        // We can't easily test the real ~/.workflow-orchestrator/skills directory,
+        // but we can verify loadUserSkills doesn't crash when it doesn't exist
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        // Should return empty list (no skills dir exists in tempDir)
+        assertNotNull(skills)
+    }
+
+    @Test
+    fun `ignores skill with missing name`() {
+        val skillsDir = File(tempDir, ".agent-skills")
+        val badSkillDir = File(skillsDir, "bad-skill")
+        badSkillDir.mkdirs()
+
+        File(badSkillDir, "SKILL.md").writeText("""---
+description: No name field
+---
+Content here.""")
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        assertTrue(skills.isEmpty(), "skill without name should be ignored")
+    }
+
+    @Test
+    fun `ignores skill with missing description`() {
+        val skillsDir = File(tempDir, ".agent-skills")
+        val badSkillDir = File(skillsDir, "no-desc")
+        badSkillDir.mkdirs()
+
+        File(badSkillDir, "SKILL.md").writeText("""---
+name: no-desc
+---
+Content without description.""")
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        assertTrue(skills.isEmpty(), "skill without description should be ignored")
+    }
+
+    @Test
+    fun `ignores skill where name does not match directory name`() {
+        val skillsDir = File(tempDir, ".agent-skills")
+        val dirName = File(skillsDir, "dir-name")
+        dirName.mkdirs()
+
+        File(dirName, "SKILL.md").writeText("""---
+name: different-name
+description: Name doesn't match dir
+---
+Content.""")
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        assertTrue(skills.isEmpty(), "skill with mismatched name should be ignored")
+    }
+
+    @Test
+    fun `discovers multiple skills from project directory`() {
+        val skillsDir = File(tempDir, ".agent-skills")
+
+        // Skill 1
+        val skill1Dir = File(skillsDir, "skill-one")
+        skill1Dir.mkdirs()
+        File(skill1Dir, "SKILL.md").writeText("""---
+name: skill-one
+description: First skill
+---
+First skill content.""")
+
+        // Skill 2
+        val skill2Dir = File(skillsDir, "skill-two")
+        skill2Dir.mkdirs()
+        File(skill2Dir, "SKILL.md").writeText("""---
+name: skill-two
+description: Second skill
+---
+Second skill content.""")
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        assertEquals(2, skills.size)
+        val names = skills.map { it.name }.toSet()
+        assertTrue("skill-one" in names)
+        assertTrue("skill-two" in names)
+    }
+
+    @Test
+    fun `ignores non-directory entries in skills folder`() {
+        val skillsDir = File(tempDir, ".agent-skills")
+        skillsDir.mkdirs()
+
+        // Create a regular file (not a directory) — should be ignored
+        File(skillsDir, "not-a-skill.md").writeText("Just a file")
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        assertTrue(skills.isEmpty())
+    }
+
+    @Test
+    fun `ignores skill directory without SKILL_md`() {
+        val skillsDir = File(tempDir, ".agent-skills")
+        val emptySkillDir = File(skillsDir, "empty-skill")
+        emptySkillDir.mkdirs()
+        // No SKILL.md in the directory
+
+        val skills = InstructionLoader.loadUserSkills(tempDir.absolutePath)
+        assertTrue(skills.isEmpty())
+    }
+
+    @Test
+    fun `loadAllSkills merges bundled and user skills`() {
+        // Create a user skill
+        val skillsDir = File(tempDir, ".agent-skills")
+        val userSkillDir = File(skillsDir, "custom-skill")
+        userSkillDir.mkdirs()
+        File(userSkillDir, "SKILL.md").writeText("""---
+name: custom-skill
+description: A custom user skill
+---
+Custom instructions here.""")
+
+        val allSkills = InstructionLoader.loadAllSkills(tempDir.absolutePath)
+
+        // Should include both bundled and user skills
+        val names = allSkills.map { it.name }.toSet()
+        assertTrue("tdd" in names, "should include bundled tdd skill")
+        assertTrue("custom-skill" in names, "should include user custom-skill")
+    }
+
+    @Test
+    fun `user skill overrides bundled skill with same name`() {
+        // Create a user skill that overrides the bundled "tdd" skill
+        val skillsDir = File(tempDir, ".agent-skills")
+        val overrideDir = File(skillsDir, "tdd")
+        overrideDir.mkdirs()
+        File(overrideDir, "SKILL.md").writeText("""---
+name: tdd
+description: My custom TDD approach
+---
+Custom TDD instructions that override the bundled ones.""")
+
+        val allSkills = InstructionLoader.loadAllSkills(tempDir.absolutePath)
+
+        val tddSkill = allSkills.find { it.name == "tdd" }
+        assertNotNull(tddSkill)
+        assertTrue(tddSkill!!.description.contains("My custom TDD approach"),
+            "user skill should override bundled skill")
+        assertTrue(tddSkill.content.contains("Custom TDD instructions"),
+            "user skill content should override bundled content")
+    }
 }

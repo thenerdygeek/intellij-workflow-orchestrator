@@ -105,6 +105,140 @@ object InstructionLoader {
     }
 
     /**
+     * Load user-created skill definitions from project-local and global directories.
+     *
+     * Faithful port of Cline's skill discovery from:
+     * src/core/context/instructions/user-instructions/skills.ts
+     *
+     * Cline scans these directories (via getSkillsDirectoriesForScan):
+     * - {cwd}/.clinerules/skills/  (project, Cline-specific)
+     * - {cwd}/.cline/skills/       (project, Cline-specific)
+     * - {cwd}/.claude/skills/      (project, Claude-specific)
+     * - {cwd}/.agents/skills/      (project, generic)
+     * - ~/.cline/skills/           (global, Cline-specific)
+     * - ~/.agents/skills/          (global, generic)
+     *
+     * Our adaptation scans:
+     * - {projectPath}/.agent-skills/     — project-local skills
+     * - ~/.workflow-orchestrator/skills/  — global user skills
+     *
+     * Each skill directory must contain a SKILL.md file with YAML frontmatter
+     * (name, description). Directory name must match the name field.
+     *
+     * Global skills take precedence over project skills with the same name
+     * (matching Cline's getAvailableSkills resolution order).
+     *
+     * @param projectPath absolute path to the project root
+     * @return list of discovered user skill definitions
+     */
+    fun loadUserSkills(projectPath: String): List<SkillDefinition> {
+        val skills = mutableListOf<SkillDefinition>()
+
+        // Scan project-local skills first (lower precedence)
+        val projectSkillsDir = File(projectPath, ".agent-skills")
+        scanSkillsDirectory(projectSkillsDir, skills)
+
+        // Scan global user skills (higher precedence — overrides project skills)
+        val globalSkillsDir = File(System.getProperty("user.home"), ".workflow-orchestrator/skills")
+        scanSkillsDirectory(globalSkillsDir, skills)
+
+        // Deduplicate: global skills override project skills with the same name
+        // (ported from Cline's getAvailableSkills: iterate backwards, global last = highest precedence)
+        val seen = mutableSetOf<String>()
+        val deduped = mutableListOf<SkillDefinition>()
+        for (skill in skills.reversed()) {
+            if (skill.name !in seen) {
+                seen.add(skill.name)
+                deduped.add(0, skill)
+            }
+        }
+
+        return deduped
+    }
+
+    /**
+     * Load all skills: bundled + user-created (project-local + global).
+     *
+     * Merges bundled skills with user-discovered skills. User skills take
+     * precedence over bundled skills with the same name.
+     *
+     * @param projectPath absolute path to the project root
+     * @return merged list of all available skill definitions
+     */
+    fun loadAllSkills(projectPath: String): List<SkillDefinition> {
+        val bundled = loadBundledSkills()
+        val user = loadUserSkills(projectPath)
+
+        // Merge: user skills override bundled with the same name
+        val byName = LinkedHashMap<String, SkillDefinition>()
+        for (skill in bundled) {
+            byName[skill.name] = skill
+        }
+        for (skill in user) {
+            byName[skill.name] = skill
+        }
+        return byName.values.toList()
+    }
+
+    /**
+     * Scan a directory for skill subdirectories containing SKILL.md files.
+     *
+     * Ported from Cline's scanSkillsDirectory:
+     * - Lists subdirectories in the given directory
+     * - For each subdirectory, looks for SKILL.md
+     * - Parses YAML frontmatter for name and description
+     * - Validates that frontmatter name matches directory name (Cline requirement)
+     *
+     * @param dir the directory to scan
+     * @param skills mutable list to add discovered skills to
+     */
+    private fun scanSkillsDirectory(dir: File, skills: MutableList<SkillDefinition>) {
+        if (!dir.isDirectory) return
+
+        try {
+            val entries = dir.listFiles() ?: return
+            for (entry in entries) {
+                if (!entry.isDirectory) continue
+
+                val skillMd = File(entry, "SKILL.md")
+                if (!skillMd.isFile || !skillMd.canRead()) continue
+
+                try {
+                    val content = skillMd.readText(Charsets.UTF_8)
+                    val (frontmatter, body) = parseYamlFrontmatter(content)
+
+                    val name = frontmatter["name"]
+                    val description = frontmatter["description"]
+
+                    // Cline validates: name must exist and match directory name
+                    if (name.isNullOrBlank()) {
+                        LOG.warn("InstructionLoader: skill at ${entry.path} missing 'name' field")
+                        continue
+                    }
+                    if (description.isNullOrBlank()) {
+                        LOG.warn("InstructionLoader: skill at ${entry.path} missing 'description' field")
+                        continue
+                    }
+                    if (name != entry.name) {
+                        LOG.warn("InstructionLoader: skill name '$name' doesn't match directory '${entry.name}'")
+                        continue
+                    }
+
+                    skills.add(SkillDefinition(
+                        name = name,
+                        description = description,
+                        content = body.ifBlank { content }
+                    ))
+                } catch (e: Exception) {
+                    LOG.warn("InstructionLoader: failed to load skill at ${entry.path}: ${e.message}")
+                }
+            }
+        } catch (e: SecurityException) {
+            LOG.warn("InstructionLoader: permission denied reading skills directory: ${dir.path}")
+        }
+    }
+
+    /**
      * Load the full content of a specific skill by name.
      *
      * Searches bundled skills for a matching name and returns the full
