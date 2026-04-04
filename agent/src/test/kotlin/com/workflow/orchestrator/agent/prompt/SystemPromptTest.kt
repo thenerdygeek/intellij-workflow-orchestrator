@@ -5,18 +5,79 @@ import org.junit.jupiter.api.Test
 
 class SystemPromptTest {
 
-    @Test
-    fun `includes project name and path`() {
-        val prompt = SystemPrompt.build(projectName = "my-app", projectPath = "/home/user/my-app")
+    private fun defaultPrompt() = SystemPrompt.build(
+        projectName = "my-app",
+        projectPath = "/home/user/my-app"
+    )
 
-        assertTrue(prompt.contains("my-app"), "should contain project name")
-        assertTrue(prompt.contains("/home/user/my-app"), "should contain project path")
+    // ---- Section presence tests ----
+
+    @Test
+    fun `includes agent role section`() {
+        val prompt = defaultPrompt()
+
+        assertTrue(
+            prompt.contains("highly skilled software engineer"),
+            "should contain agent role description"
+        )
+        assertTrue(
+            prompt.contains("programming languages, frameworks, design patterns"),
+            "should describe engineering expertise"
+        )
     }
 
     @Test
-    fun `includes attempt_completion instruction`() {
-        val prompt = SystemPrompt.build(projectName = "p", projectPath = "/p")
+    fun `includes editing files section`() {
+        val prompt = defaultPrompt()
 
+        assertTrue(prompt.contains("EDITING FILES"), "should contain EDITING FILES heading")
+        assertTrue(prompt.contains("create_file"), "should reference create_file tool")
+        assertTrue(prompt.contains("edit_file"), "should reference edit_file tool")
+        assertTrue(
+            prompt.contains("Default to edit_file"),
+            "should recommend edit_file as default"
+        )
+        assertTrue(
+            prompt.contains("Auto-formatting Considerations"),
+            "should include auto-formatting section"
+        )
+    }
+
+    @Test
+    fun `includes act vs plan mode section`() {
+        val prompt = defaultPrompt()
+
+        assertTrue(prompt.contains("ACT MODE V.S. PLAN MODE"), "should contain act vs plan heading")
+        assertTrue(prompt.contains("ACT MODE"), "should mention ACT MODE")
+        assertTrue(prompt.contains("PLAN MODE"), "should mention PLAN MODE")
+        assertTrue(prompt.contains("attempt_completion"), "should reference attempt_completion in act mode")
+        assertTrue(prompt.contains("plan_mode_respond"), "should reference plan_mode_respond in plan mode")
+    }
+
+    @Test
+    fun `includes capabilities section`() {
+        val prompt = defaultPrompt()
+
+        assertTrue(prompt.contains("CAPABILITIES"), "should contain CAPABILITIES heading")
+        assertTrue(prompt.contains("run_command"), "should reference run_command tool")
+        assertTrue(prompt.contains("search_files"), "should reference search_files tool")
+        assertTrue(prompt.contains("list_code_definitions"), "should reference list_code_definitions tool")
+        assertTrue(prompt.contains("read_file"), "should reference read_file tool")
+    }
+
+    @Test
+    fun `includes rules section`() {
+        val prompt = defaultPrompt()
+
+        assertTrue(prompt.contains("RULES"), "should contain RULES heading")
+        assertTrue(
+            prompt.contains("current working directory"),
+            "should mention working directory constraint"
+        )
+        assertTrue(
+            prompt.contains("STRICTLY FORBIDDEN"),
+            "should include conversational tone prohibition"
+        )
         assertTrue(
             prompt.contains("attempt_completion"),
             "should instruct agent to call attempt_completion"
@@ -24,52 +85,336 @@ class SystemPromptTest {
     }
 
     @Test
-    fun `plan mode adds read-only constraint`() {
-        val normal = SystemPrompt.build(projectName = "p", projectPath = "/p", planModeEnabled = false)
-        val plan = SystemPrompt.build(projectName = "p", projectPath = "/p", planModeEnabled = true)
+    fun `includes system info section`() {
+        val prompt = defaultPrompt()
 
-        assertFalse(normal.contains("read-only"), "normal mode should not mention read-only")
-        assertTrue(plan.contains("read-only"), "plan mode should mention read-only")
+        assertTrue(prompt.contains("SYSTEM INFORMATION"), "should contain SYSTEM INFORMATION heading")
+        assertTrue(prompt.contains("Operating System:"), "should include OS info")
+        assertTrue(prompt.contains("Default Shell:"), "should include shell info")
+        assertTrue(prompt.contains("IntelliJ IDEA"), "should reference IntelliJ IDEA as IDE")
+        assertTrue(prompt.contains("Home Directory:"), "should include home directory")
+        assertTrue(prompt.contains("Current Working Directory:"), "should include CWD")
     }
 
     @Test
-    fun `includes repo map when provided`() {
-        val repoMap = "src/main.kt\nsrc/utils.kt"
+    fun `includes objective section`() {
+        val prompt = defaultPrompt()
+
+        assertTrue(prompt.contains("OBJECTIVE"), "should contain OBJECTIVE heading")
+        assertTrue(
+            prompt.contains("accomplish a given task iteratively"),
+            "should describe iterative approach"
+        )
+        assertTrue(
+            prompt.contains("<thinking>"),
+            "should instruct use of thinking tags"
+        )
+        assertTrue(
+            prompt.contains("attempt_completion"),
+            "should reference attempt_completion as final step"
+        )
+    }
+
+    @Test
+    fun `sections are separated by section separators`() {
+        val prompt = defaultPrompt()
+        val separatorCount = "====".toRegex().findAll(prompt).count()
+
+        // At minimum: editing files, act vs plan, capabilities, rules, system info, objective
+        // = 6 mandatory sections after agent role = at least 6 separators
+        assertTrue(
+            separatorCount >= 6,
+            "should have at least 6 section separators, found $separatorCount"
+        )
+    }
+
+    // ---- Plan mode tests ----
+
+    @Test
+    fun `act mode shows ACT as current mode`() {
         val prompt = SystemPrompt.build(
-            projectName = "p", projectPath = "/p", repoMap = repoMap
+            projectName = "p", projectPath = "/p", planModeEnabled = false
         )
 
-        assertTrue(prompt.contains("src/main.kt"), "should contain repo map content")
-        assertTrue(prompt.contains("src/utils.kt"), "should contain repo map content")
+        assertTrue(
+            prompt.contains("**ACT MODE**"),
+            "should indicate ACT MODE is current"
+        )
     }
 
     @Test
-    fun `omits repo map section when null`() {
-        val prompt = SystemPrompt.build(projectName = "p", projectPath = "/p", repoMap = null)
+    fun `plan mode shows PLAN as current mode`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", planModeEnabled = true
+        )
+
+        assertTrue(
+            prompt.contains("**PLAN MODE**"),
+            "should indicate PLAN MODE is current"
+        )
+    }
+
+    // ---- System info tests ----
+
+    @Test
+    fun `system info includes custom OS and shell`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p",
+            projectPath = "/p",
+            osName = "macOS 15.2",
+            shell = "/bin/zsh"
+        )
+
+        assertTrue(prompt.contains("macOS 15.2"), "should contain custom OS name")
+        assertTrue(prompt.contains("/bin/zsh"), "should contain custom shell")
+    }
+
+    @Test
+    fun `system info includes project path as CWD`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p",
+            projectPath = "/workspace/my-project"
+        )
+
+        assertTrue(
+            prompt.contains("Current Working Directory: /workspace/my-project"),
+            "should show project path as CWD"
+        )
+    }
+
+    // ---- Skills section tests ----
+
+    @Test
+    fun `includes skills section when skills provided`() {
+        val skills = listOf(
+            "kotlin-expert" to "Expert guidance for Kotlin development",
+            "react-guru" to "React component design and patterns"
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "p",
+            projectPath = "/p",
+            availableSkills = skills
+        )
+
+        assertTrue(prompt.contains("SKILLS"), "should contain SKILLS heading")
+        assertTrue(prompt.contains("kotlin-expert"), "should list kotlin-expert skill")
+        assertTrue(prompt.contains("react-guru"), "should list react-guru skill")
+        assertTrue(prompt.contains("use_skill"), "should reference use_skill tool")
+    }
+
+    @Test
+    fun `omits skills section when no skills provided`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", availableSkills = null
+        )
+
+        assertFalse(prompt.contains("SKILLS"), "should not contain SKILLS heading")
+    }
+
+    @Test
+    fun `omits skills section when empty skills list`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", availableSkills = emptyList()
+        )
+
+        assertFalse(prompt.contains("SKILLS"), "should not contain SKILLS heading")
+    }
+
+    @Test
+    fun `includes active skill content when provided`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p",
+            projectPath = "/p",
+            availableSkills = listOf("test-skill" to "A test skill"),
+            activeSkillContent = "Follow these specific testing guidelines..."
+        )
+
+        assertTrue(
+            prompt.contains("Active Skill Instructions"),
+            "should contain active skill heading"
+        )
+        assertTrue(
+            prompt.contains("Follow these specific testing guidelines"),
+            "should contain active skill content"
+        )
+    }
+
+    // ---- Task progress section tests ----
+
+    @Test
+    fun `includes task progress section when provided`() {
+        val progress = """- [x] Set up project structure
+- [x] Install dependencies
+- [ ] Create components
+- [ ] Test application"""
+
+        val prompt = SystemPrompt.build(
+            projectName = "p",
+            projectPath = "/p",
+            taskProgress = progress
+        )
+
+        assertTrue(
+            prompt.contains("UPDATING TASK PROGRESS"),
+            "should contain task progress heading"
+        )
+        assertTrue(
+            prompt.contains("- [x] Set up project structure"),
+            "should contain completed items"
+        )
+        assertTrue(
+            prompt.contains("- [ ] Create components"),
+            "should contain incomplete items"
+        )
+    }
+
+    @Test
+    fun `omits task progress section when null`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", taskProgress = null
+        )
 
         assertFalse(
-            prompt.contains("Repository structure"),
-            "should not contain repo map heading when null"
+            prompt.contains("UPDATING TASK PROGRESS"),
+            "should not contain task progress heading"
         )
     }
 
     @Test
-    fun `includes additionalContext when provided`() {
+    fun `omits task progress section when blank`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", taskProgress = "  "
+        )
+
+        assertFalse(
+            prompt.contains("UPDATING TASK PROGRESS"),
+            "should not contain task progress heading for blank input"
+        )
+    }
+
+    // ---- User instructions / additional context tests ----
+
+    @Test
+    fun `includes user instructions when additionalContext provided`() {
         val ctx = "Always use Kotlin coroutines for async work."
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", additionalContext = ctx
         )
 
+        assertTrue(
+            prompt.contains("USER'S CUSTOM INSTRUCTIONS"),
+            "should contain custom instructions heading"
+        )
         assertTrue(prompt.contains(ctx), "should contain additional context verbatim")
     }
 
     @Test
-    fun `omits additional context section when null`() {
-        val prompt = SystemPrompt.build(projectName = "p", projectPath = "/p", additionalContext = null)
+    fun `includes repo map in user instructions`() {
+        val repoMap = "src/main.kt\nsrc/utils.kt"
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", repoMap = repoMap
+        )
+
+        assertTrue(
+            prompt.contains("USER'S CUSTOM INSTRUCTIONS"),
+            "should contain custom instructions heading when repoMap provided"
+        )
+        assertTrue(prompt.contains("src/main.kt"), "should contain repo map content")
+        assertTrue(prompt.contains("src/utils.kt"), "should contain repo map content")
+    }
+
+    @Test
+    fun `omits user instructions section when no context or repoMap`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p",
+            additionalContext = null, repoMap = null
+        )
 
         assertFalse(
-            prompt.contains("Additional context"),
-            "should not contain additional context heading when null"
+            prompt.contains("USER'S CUSTOM INSTRUCTIONS"),
+            "should not contain custom instructions heading when nothing provided"
+        )
+    }
+
+    // ---- Project path propagation tests ----
+
+    @Test
+    fun `project path appears in rules section`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/workspace/my-app"
+        )
+
+        // Rules section references CWD multiple times
+        val rulesSection = prompt.substringAfter("RULES").substringBefore("====")
+        assertTrue(
+            rulesSection.contains("/workspace/my-app"),
+            "rules section should contain project path"
+        )
+    }
+
+    @Test
+    fun `project path appears in capabilities section`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/workspace/my-app"
+        )
+
+        val capSection = prompt.substringAfter("CAPABILITIES").substringBefore("====")
+        assertTrue(
+            capSection.contains("/workspace/my-app"),
+            "capabilities section should contain project path"
+        )
+    }
+
+    // ---- Tool name adaptation tests ----
+
+    @Test
+    fun `uses adapted tool names not Cline originals`() {
+        val prompt = defaultPrompt()
+
+        // Our adapted names should be present
+        assertTrue(prompt.contains("create_file"), "should use create_file")
+        assertTrue(prompt.contains("edit_file"), "should use edit_file")
+        assertTrue(prompt.contains("run_command"), "should use run_command")
+
+        // Cline's original XML-format tool names should NOT be present
+        assertFalse(prompt.contains("write_to_file"), "should not use Cline's write_to_file")
+        assertFalse(prompt.contains("replace_in_file"), "should not use Cline's replace_in_file")
+        assertFalse(prompt.contains("execute_command"), "should not use Cline's execute_command")
+    }
+
+    @Test
+    fun `does not reference VS Code`() {
+        val prompt = defaultPrompt()
+
+        assertFalse(
+            prompt.lowercase().contains("vs code"),
+            "should not reference VS Code"
+        )
+        assertFalse(
+            prompt.lowercase().contains("vscode"),
+            "should not reference vscode"
+        )
+    }
+
+    @Test
+    fun `does not reference browser_action`() {
+        val prompt = defaultPrompt()
+
+        assertFalse(
+            prompt.contains("browser_action"),
+            "should not reference browser_action (not applicable in IDE)"
+        )
+    }
+
+    @Test
+    fun `references IntelliJ IDEA as IDE`() {
+        val prompt = defaultPrompt()
+
+        assertTrue(
+            prompt.contains("IntelliJ IDEA"),
+            "should reference IntelliJ IDEA"
         )
     }
 }

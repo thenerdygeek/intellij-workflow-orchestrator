@@ -266,6 +266,11 @@ class AgentService(private val project: Project) : Disposable {
                 val systemPrompt = SystemPrompt.build(
                     projectName = projectName,
                     projectPath = projectPath,
+                    osName = System.getProperty("os.name") ?: "Unknown",
+                    shell = if ((System.getProperty("os.name") ?: "").lowercase().contains("win"))
+                        System.getenv("COMSPEC") ?: "cmd.exe"
+                    else
+                        System.getenv("SHELL") ?: "/bin/bash",
                     planModeEnabled = planModeActive.get()
                 )
                 ctx.setSystemPrompt(systemPrompt)
