@@ -32,6 +32,9 @@ object InstructionLoader {
     /** Well-known instruction file names, checked in priority order. */
     private val INSTRUCTION_FILES = listOf("CLAUDE.md", ".agent-rules", ".claude-rules")
 
+    /** Max description length (Cline enforces 1024 chars). */
+    private const val MAX_DESCRIPTION_LENGTH = 1024
+
     /**
      * Known bundled skill directory names.
      * These correspond to directories under resources/skills/ containing SKILL.md files.
@@ -86,16 +89,30 @@ object InstructionLoader {
                 val content = loadClasspathResource(resourcePath) ?: continue
                 val (frontmatter, body) = parseYamlFrontmatter(content)
 
-                val name = frontmatter["name"] ?: dirName
+                val name = frontmatter["name"]
                 val description = frontmatter["description"] ?: ""
 
-                if (name.isNotBlank()) {
-                    skills.add(SkillDefinition(
-                        name = name,
-                        description = description,
-                        content = body.ifBlank { content }
-                    ))
+                // Validate: name must exist and match directory name (Cline requirement)
+                if (name.isNullOrBlank()) {
+                    LOG.warn("InstructionLoader: bundled skill '$dirName' missing 'name' field")
+                    continue
                 }
+                if (name != dirName) {
+                    LOG.warn("InstructionLoader: bundled skill name '$name' doesn't match directory '$dirName'")
+                    continue
+                }
+
+                // Cline enforces max 1024 char descriptions
+                val trimmedDescription = if (description.length > MAX_DESCRIPTION_LENGTH) {
+                    LOG.warn("InstructionLoader: skill '$name' description truncated to $MAX_DESCRIPTION_LENGTH chars")
+                    description.take(MAX_DESCRIPTION_LENGTH)
+                } else description
+
+                skills.add(SkillDefinition(
+                    name = name,
+                    description = trimmedDescription,
+                    content = body.ifBlank { content }
+                ))
             } catch (e: Exception) {
                 LOG.warn("InstructionLoader: failed to load skill '$dirName': ${e.message}")
             }
@@ -224,9 +241,15 @@ object InstructionLoader {
                         continue
                     }
 
+                    // Cline enforces max 1024 char descriptions
+                    val trimmedDescription = if (description.length > MAX_DESCRIPTION_LENGTH) {
+                        LOG.warn("InstructionLoader: skill '$name' description truncated to $MAX_DESCRIPTION_LENGTH chars")
+                        description.take(MAX_DESCRIPTION_LENGTH)
+                    } else description
+
                     skills.add(SkillDefinition(
                         name = name,
-                        description = description,
+                        description = trimmedDescription,
                         content = body.ifBlank { content }
                     ))
                 } catch (e: Exception) {
