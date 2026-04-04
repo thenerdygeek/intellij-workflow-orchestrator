@@ -890,9 +890,9 @@ Ported from Cline's `FocusChainManager` + `focus-chain-utils.ts`:
 | 6 gate systems (ApprovalGate, SafetyGate, RateLimitGate, etc.) | ~2K | Plan mode schema filtering + hook system |
 | 18-section PromptAssembler (605 LOC) | ~600 | `SystemPrompt.build()` with 11 Cline-ported sections |
 | 5 layers of tool selection (ToolSelector, ToolRanker, ToolFilter, etc.) | ~2K | 3-tier `ToolRegistry` + `tool_search` |
-| Sub-agent orchestration (SubAgentSpawner, WorkerPool, file ownership) | ~5K | `spawn_agent` tool (flat delegation) |
+| Sub-agent orchestration (SubAgentSpawner, WorkerPool, file ownership) | ~5K | `SpawnAgentTool` with `SubagentRunner`, parallel research (up to 5 via supervisorScope), 8 bundled agent personas + user YAML configs via `AgentConfigLoader`, configurable context budget (150K default) |
 | Ralph Loop self-improvement | ~1K | Deferred (not in this rewrite) |
-| 3-tier memory (core memory, archival, working) | ~2K | Session-scoped only + checkpoint persistence |
+| 3-tier memory (core memory, archival, working) | ~2K | Implemented: `CoreMemory` (JSON blocks, always in system prompt), `ArchivalMemory` (JSON store, tag-boosted keyword search, Codex usage decay), `ConversationRecall` (JSONL session search). 7 memory tools registered. Ported from Letta/MemGPT + Codex + Goose. |
 | Compression-proof anchors | ~500 | Task progress + active skill compaction survival |
 | Dynamic instruction injection (dual primacy+recency) | ~500 | Cline-style system prompt sections |
 
