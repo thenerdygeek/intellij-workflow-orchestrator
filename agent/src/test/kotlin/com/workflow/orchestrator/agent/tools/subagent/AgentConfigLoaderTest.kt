@@ -185,7 +185,7 @@ class AgentConfigLoaderTest {
     }
 
     @Test
-    fun `reject config missing tools`() {
+    fun `config with missing tools gets empty list`() {
         val yaml = """
             ---
             name: "Agent"
@@ -193,10 +193,8 @@ class AgentConfigLoaderTest {
             ---
             Prompt.
         """.trimIndent()
-        val ex = assertThrows(IllegalArgumentException::class.java) {
-            loader.parseAgentConfigFromYaml(yaml)
-        }
-        assertTrue(ex.message!!.contains("tools"))
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertTrue(config.tools.isEmpty(), "Missing tools field should result in empty list")
     }
 
     @Test
@@ -218,15 +216,16 @@ class AgentConfigLoaderTest {
 
     @Test
     fun `load multiple configs from directory`() {
-        writeConfigFile(tempDir, "reviewer.yaml", "Code Reviewer", "Reviews code", "read_file, search_code")
-        writeConfigFile(tempDir, "explorer.yml", "Code Explorer", "Explores code", "glob_files")
+        writeConfigFile(tempDir, "reviewer.yaml", "My Reviewer", "Reviews code", "read_file, search_code")
+        writeConfigFile(tempDir, "explorer.yml", "My Explorer", "Explores code", "glob_files")
 
         loader.loadFromDisk(tempDir)
 
-        val configs = loader.getAllCachedConfigs()
-        assertEquals(2, configs.size)
-        assertNotNull(loader.getCachedConfig("Code Reviewer"))
-        assertNotNull(loader.getCachedConfig("Code Explorer"))
+        // User configs loaded (bundled agents also present)
+        assertNotNull(loader.getCachedConfig("My Reviewer"))
+        assertNotNull(loader.getCachedConfig("My Explorer"))
+        // At least 2 user + 8 bundled
+        assertTrue(loader.getAllCachedConfigs().size >= 10)
     }
 
     @Test
@@ -237,9 +236,12 @@ class AgentConfigLoaderTest {
 
         loader.loadFromDisk(tempDir)
 
-        val configs = loader.getAllCachedConfigs()
-        assertEquals(1, configs.size)
-        assertEquals("Valid Agent", configs.first().name)
+        // User config loaded, .txt and .json ignored
+        assertNotNull(loader.getCachedConfig("Valid Agent"))
+        // json and txt should NOT produce configs — only yaml/yml/md are scanned
+        val allNames = loader.getAllCachedConfigs().map { it.name.lowercase() }
+        assertFalse(allNames.contains("readme"))
+        assertFalse(allNames.contains("config"))
     }
 
     @Test
@@ -250,7 +252,9 @@ class AgentConfigLoaderTest {
         loader.loadFromDisk(subDir)
 
         assertTrue(Files.isDirectory(subDir))
-        assertTrue(loader.getAllCachedConfigs().isEmpty())
+        // No user configs in the new empty dir, but bundled agents are loaded
+        val bundledCount = loader.getAllCachedConfigs().count { it.bundled }
+        assertTrue(bundledCount >= 8, "Bundled agents should be loaded even with empty user dir")
     }
 
     @Test
@@ -260,9 +264,11 @@ class AgentConfigLoaderTest {
 
         loader.loadFromDisk(tempDir)
 
-        val configs = loader.getAllCachedConfigs()
-        assertEquals(1, configs.size)
-        assertEquals("Good Agent", configs.first().name)
+        // Good config loaded, bad one skipped (bundled agents also present)
+        assertNotNull(loader.getCachedConfig("Good Agent"))
+        // bad.yaml should not produce a config
+        val allNames = loader.getAllCachedConfigs().map { it.name }
+        assertFalse(allNames.any { it.contains("bad", ignoreCase = true) })
     }
 
     // ── Case-Insensitive Lookup ───────────────────────────────────
@@ -375,6 +381,64 @@ class AgentConfigLoaderTest {
         AgentConfigLoader.resetForTests()
         val second = AgentConfigLoader.getInstance()
         assertNotSame(first, second)
+    }
+
+    // ── Bundled Agents ─────────────────────────────────────────────
+
+    @Test
+    fun `bundled agents are loaded from resources`() {
+        loader.loadFromDisk(tempDir)
+
+        val bundled = loader.getAllCachedConfigs().filter { it.bundled }
+        assertEquals(8, bundled.size, "Should load 8 bundled specialist agents")
+
+        val names = bundled.map { it.name }.toSet()
+        assertTrue("code-reviewer" in names)
+        assertTrue("spring-boot-engineer" in names)
+        assertTrue("devops-engineer" in names)
+        assertTrue("security-auditor" in names)
+    }
+
+    @Test
+    fun `user config overrides bundled agent with same name`() {
+        // Create a user config with the same name as a bundled agent
+        writeConfigFile(tempDir, "code-reviewer.yaml", "code-reviewer", "My custom reviewer", "read_file")
+
+        loader.loadFromDisk(tempDir)
+
+        val config = loader.getCachedConfig("code-reviewer")
+        assertNotNull(config)
+        assertEquals("My custom reviewer", config!!.description)
+        assertFalse(config.bundled, "User override should not be marked as bundled")
+    }
+
+    @Test
+    fun `bundled agents have maxTurns set`() {
+        loader.loadFromDisk(tempDir)
+
+        val springBoot = loader.getCachedConfig("spring-boot-engineer")
+        assertNotNull(springBoot)
+        assertEquals(32, springBoot!!.maxTurns)
+
+        val codeReviewer = loader.getCachedConfig("code-reviewer")
+        assertNotNull(codeReviewer)
+        assertEquals(25, codeReviewer!!.maxTurns)
+    }
+
+    @Test
+    fun `parse config with max-turns field`() {
+        val yaml = """
+            ---
+            name: "Custom Agent"
+            description: "Test"
+            tools: "read_file"
+            max-turns: 15
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(15, config.maxTurns)
     }
 
     // ── Helpers ───────────────────────────────────────────────────

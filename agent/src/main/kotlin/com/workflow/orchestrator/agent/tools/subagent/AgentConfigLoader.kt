@@ -15,8 +15,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Ported from Cline's AgentConfigLoader.ts — adapted from chokidar/zod to
  * java.nio.file.WatchService with manual YAML-frontmatter parsing.
  *
- * Config files live in `~/.workflow-orchestrator/agents/` as `.yaml` or `.yml` files
- * with YAML frontmatter delimited by `---` and a markdown body for the system prompt.
+ * Two sources:
+ * 1. Bundled: plugin resources (`agents/` dir) — 8 specialist personas shipped with the plugin
+ * 2. User: `~/.workflow-orchestrator/agents/` — custom YAML/MD configs, hot-reloaded
+ *
+ * User configs override bundled ones if they share the same name (case-insensitive).
+ * Each config registers as a `use_subagent_{name}` tool callable by the LLM.
  */
 data class AgentConfig(
     val name: String,
@@ -25,6 +29,9 @@ data class AgentConfig(
     val skills: List<String>?,
     val modelId: String?,
     val systemPrompt: String,
+    val maxTurns: Int? = null,
+    /** True for configs bundled in plugin resources, false for user-defined. */
+    val bundled: Boolean = false,
 )
 
 /**
@@ -64,14 +71,32 @@ class AgentConfigLoader private constructor() : Disposable {
     // ----- Public API -----
 
     /**
-     * Load all `.yaml` / `.yml` files from [configDir], populate caches, and start
-     * the file watcher. Safe to call multiple times — subsequent calls reload from disk.
+     * Load agent configs from both bundled resources and user directory, populate caches,
+     * and start the file watcher on the user directory.
+     *
+     * Loading order: bundled resources first, then user configs override by name.
+     * Safe to call multiple times — subsequent calls reload from disk.
      */
     fun loadFromDisk(directory: Path = configDir) {
         configDir = directory
         ensureDirectoryExists(directory)
-        val configs = scanDirectory(directory)
-        rebuildCaches(configs)
+        // 1. Load bundled agents from plugin resources (shipped with JAR)
+        val bundledConfigs = loadBundledAgents()
+        // 2. Load user-defined agents from disk (override bundled by name)
+        val userConfigs = scanDirectory(directory)
+        // Merge: user configs win on name collision (case-insensitive)
+        val merged = mutableMapOf<String, AgentConfig>()
+        for (config in bundledConfigs) {
+            merged[config.name.lowercase()] = config
+        }
+        for (config in userConfigs) {
+            val key = config.name.lowercase()
+            if (merged.containsKey(key)) {
+                log.info("User agent '${config.name}' overrides bundled agent")
+            }
+            merged[key] = config
+        }
+        rebuildCaches(merged.values.toList())
         startWatching(directory)
     }
 
@@ -161,12 +186,12 @@ class AgentConfigLoader private constructor() : Disposable {
         val description = fields["description"]
             ?: throw IllegalArgumentException("Missing required field: description")
         val toolsRaw = fields["tools"]
-            ?: throw IllegalArgumentException("Missing required field: tools")
         require(body.isNotEmpty()) { "Missing system prompt body after frontmatter" }
 
-        val tools = splitCsvField(toolsRaw)
+        val tools = toolsRaw?.let { splitCsvField(it) } ?: emptyList()
         val skills = fields["skills"]?.let { splitCsvField(it) }
         val modelId = fields["modelId"]?.takeIf { it.isNotBlank() }
+        val maxTurns = (fields["max-turns"] ?: fields["maxTurns"])?.toIntOrNull()
 
         return AgentConfig(
             name = name,
@@ -175,6 +200,7 @@ class AgentConfigLoader private constructor() : Disposable {
             skills = skills,
             modelId = modelId,
             systemPrompt = body,
+            maxTurns = maxTurns,
         )
     }
 
@@ -217,12 +243,38 @@ class AgentConfigLoader private constructor() : Disposable {
         rebuildDynamicToolMappings()
     }
 
+    /**
+     * Load bundled agent configs from plugin JAR resources (agents dir, .md files).
+     * These are the 8 specialist personas shipped with the plugin.
+     * Bundled agents have [AgentConfig.bundled] = true.
+     */
+    private fun loadBundledAgents(): List<AgentConfig> {
+        val configs = mutableListOf<AgentConfig>()
+        for (name in BUNDLED_AGENT_FILES) {
+            try {
+                val resourcePath = "/agents/$name"
+                val content = AgentConfigLoader::class.java.getResourceAsStream(resourcePath)
+                    ?.bufferedReader()?.readText()
+                if (content == null) {
+                    log.debug("Bundled agent resource not found: $resourcePath")
+                    continue
+                }
+                val config = parseAgentConfigFromYaml(content).copy(bundled = true)
+                configs.add(config)
+                log.debug("Loaded bundled agent: ${config.name}")
+            } catch (e: Exception) {
+                log.warn("Failed to parse bundled agent $name: ${e.message}")
+            }
+        }
+        return configs
+    }
+
     private fun scanDirectory(directory: Path): List<AgentConfig> {
         if (!Files.isDirectory(directory)) return emptyList()
         val configs = mutableListOf<AgentConfig>()
         Files.newDirectoryStream(directory) { entry ->
             val name = entry.fileName.toString().lowercase()
-            name.endsWith(".yaml") || name.endsWith(".yml")
+            name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".md")
         }.use { stream ->
             for (path in stream) {
                 try {
@@ -284,8 +336,13 @@ class AgentConfigLoader private constructor() : Disposable {
 
                 if (disposed.get()) break
 
-                val configs = scanDirectory(directory)
-                rebuildCaches(configs)
+                // Reload: bundled + user (same merge logic as loadFromDisk)
+                val bundled = loadBundledAgents()
+                val user = scanDirectory(directory)
+                val merged = mutableMapOf<String, AgentConfig>()
+                for (c in bundled) { merged[c.name.lowercase()] = c }
+                for (c in user) { merged[c.name.lowercase()] = c }
+                rebuildCaches(merged.values.toList())
                 notifyListeners()
             }
         } catch (_: InterruptedException) {
@@ -349,6 +406,18 @@ class AgentConfigLoader private constructor() : Disposable {
 
     companion object {
         private const val DEBOUNCE_MS = 300L
+
+        /** Bundled specialist agent files shipped in plugin resources. */
+        private val BUNDLED_AGENT_FILES = listOf(
+            "code-reviewer.md",
+            "architect-reviewer.md",
+            "test-automator.md",
+            "spring-boot-engineer.md",
+            "refactoring-specialist.md",
+            "devops-engineer.md",
+            "security-auditor.md",
+            "performance-engineer.md",
+        )
 
         @JvmStatic
         val DEFAULT_CONFIG_DIR: Path = Paths.get(
