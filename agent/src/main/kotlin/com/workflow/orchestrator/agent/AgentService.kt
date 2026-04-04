@@ -285,7 +285,8 @@ class AgentService(private val project: Project) : Disposable {
                     contextManager = ctx,
                     project = project,
                     onStreamChunk = onStreamChunk,
-                    onToolCall = onToolCall
+                    onToolCall = onToolCall,
+                    planMode = planModeActive.get()
                 )
                 currentLoop = loop
 

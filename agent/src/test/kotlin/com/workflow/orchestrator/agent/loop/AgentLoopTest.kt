@@ -151,7 +151,8 @@ class AgentLoopTest {
         tools: List<AgentTool>,
         maxIterations: Int = 200,
         onStreamChunk: (String) -> Unit = {},
-        onToolCall: (ToolCallProgress) -> Unit = {}
+        onToolCall: (ToolCallProgress) -> Unit = {},
+        planMode: Boolean = false
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
         val toolDefs = tools.map { it.toToolDefinition() }
@@ -163,7 +164,8 @@ class AgentLoopTest {
             project = project,
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
-            maxIterations = maxIterations
+            maxIterations = maxIterations,
+            planMode = planMode
         )
     }
 
@@ -291,9 +293,9 @@ class AgentLoopTest {
         }
 
         @Test
-        fun `returns Failed on API error`() = runTest {
+        fun `returns Failed on non-retryable API error`() = runTest {
             val brain = SequenceBrain(
-                listOf(ApiResult.Error(ErrorType.SERVER_ERROR, "Internal server error"))
+                listOf(ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed"))
             )
 
             val tools = listOf(completionTool())
@@ -302,7 +304,7 @@ class AgentLoopTest {
 
             assertTrue(result is LoopResult.Failed, "Expected Failed but got $result")
             val failed = result as LoopResult.Failed
-            assertTrue(failed.error.contains("Internal server error"))
+            assertTrue(failed.error.contains("Authentication failed"))
         }
     }
 
@@ -393,6 +395,183 @@ class AgentLoopTest {
             assertTrue(result is LoopResult.Failed, "Expected Failed but got $result")
             val failed = result as LoopResult.Failed
             assertTrue(failed.error.contains("iterations", ignoreCase = true))
+        }
+    }
+
+    // ---- C1: Plan mode execution guard ----
+
+    @Nested
+    inner class PlanModeGuardTests {
+
+        @Test
+        fun `plan mode blocks write tools with error message`() = runTest {
+            val brain = sequenceBrain(
+                // Model hallucinates edit_file in plan mode
+                toolCallResponse("edit_file" to """{"path":"a.kt","content":"bad"}"""),
+                // Model recovers and calls attempt_completion
+                toolCallResponse("attempt_completion" to """{"result":"Planned."}""")
+            )
+
+            val progressList = mutableListOf<ToolCallProgress>()
+            val tools = listOf(
+                fakeTool("edit_file"),
+                completionTool("Planned.")
+            )
+            val loop = buildLoop(brain, tools, planMode = true, onToolCall = { progressList.add(it) })
+            val result = loop.run("Analyze the code")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+
+            // The edit_file call should have been blocked
+            val editProgress = progressList.find { it.toolName == "edit_file" }
+            assertNotNull(editProgress, "edit_file progress should be reported")
+            assertTrue(editProgress!!.isError, "edit_file should be an error")
+            assertTrue(editProgress.result.contains("blocked in plan mode"), "Error message should mention plan mode")
+        }
+
+        @Test
+        fun `plan mode allows read tools`() = runTest {
+            val brain = sequenceBrain(
+                // Model calls read_file (allowed in plan mode)
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done reading."}""")
+            )
+
+            val progressList = mutableListOf<ToolCallProgress>()
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done reading.")
+            )
+            val loop = buildLoop(brain, tools, planMode = true, onToolCall = { progressList.add(it) })
+            val result = loop.run("Read the code")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+
+            // read_file should NOT be blocked
+            val readProgress = progressList.find { it.toolName == "read_file" }
+            assertNotNull(readProgress, "read_file progress should be reported")
+            assertFalse(readProgress!!.isError, "read_file should not be an error in plan mode")
+        }
+
+        @Test
+        fun `all write tool names are blocked in plan mode`() = runTest {
+            // Verify each write tool name is in the WRITE_TOOLS set
+            val expectedWriteTools = setOf(
+                "edit_file", "create_file", "run_command", "revert_file",
+                "kill_process", "send_stdin", "format_code", "optimize_imports",
+                "refactor_rename"
+            )
+            assertEquals(expectedWriteTools, AgentLoop.WRITE_TOOLS, "WRITE_TOOLS set should contain all write tools")
+        }
+    }
+
+    // ---- C3: API retry for transient failures ----
+
+    @Nested
+    inner class ApiRetryTests {
+
+        @Test
+        fun `retries on rate limit error and recovers`() = runTest {
+            val brain = SequenceBrain(listOf(
+                // First call: 429 rate limit
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
+                // Second call: 429 again
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
+                // Third call: success with completion
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+            ))
+
+            val tools = listOf(completionTool("Done."))
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after retry but got $result")
+        }
+
+        @Test
+        fun `retries on server error and recovers`() = runTest {
+            val brain = SequenceBrain(listOf(
+                // First call: 500 server error
+                ApiResult.Error(ErrorType.SERVER_ERROR, "Internal server error"),
+                // Second call: success
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Recovered."}"""))
+            ))
+
+            val tools = listOf(completionTool("Recovered."))
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after server error retry but got $result")
+        }
+
+        @Test
+        fun `fails after max retries exceeded`() = runTest {
+            // 6 rate limit errors — exceeds MAX_API_RETRIES (5)
+            val errors = (1..6).map {
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded") as ApiResult<ChatCompletionResponse>
+            }
+            val brain = SequenceBrain(errors)
+
+            val tools = listOf(completionTool())
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Failed, "Expected Failed after max retries but got $result")
+            val failed = result as LoopResult.Failed
+            assertTrue(failed.error.contains("Rate limit"), "Error message should contain the API error")
+        }
+
+        @Test
+        fun `does not retry on non-retryable errors`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed")
+            ))
+
+            val tools = listOf(completionTool())
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Failed, "Expected immediate Failed for auth error but got $result")
+            val failed = result as LoopResult.Failed
+            assertTrue(failed.error.contains("Authentication failed"))
+        }
+
+        @Test
+        fun `resets retry count after successful API call`() = runTest {
+            val brain = SequenceBrain(listOf(
+                // First: rate limit error
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
+                // Second: success (read_file)
+                ApiResult.Success(toolCallResponse("read_file" to """{"path":"a.kt"}""")),
+                // Third: another rate limit error (retry count should be reset)
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded"),
+                // Fourth: success (completion)
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+            ))
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed — retry count should reset between successes, but got $result")
+        }
+
+        @Test
+        fun `retries on network and timeout errors`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Connection refused"),
+                ApiResult.Error(ErrorType.TIMEOUT, "Request timed out"),
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"OK."}"""))
+            ))
+
+            val tools = listOf(completionTool("OK."))
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after network/timeout retries but got $result")
         }
     }
 }

@@ -120,6 +120,29 @@ class ContextManager(
     }
 
     /**
+     * Find a safe split point near [targetIndex] that preserves tool_call/result pairing.
+     * Searches forward from targetIndex to find the next "user" message boundary.
+     * A user message always starts a fresh turn, so splitting there is safe.
+     * If no user message found forward, searches backward.
+     */
+    internal fun findSafeSplitPoint(targetIndex: Int): Int {
+        var idx = targetIndex.coerceIn(0, messages.size)
+        // Search forward for the next user message (start of a new turn)
+        while (idx < messages.size) {
+            if (messages[idx].role == "user") return idx
+            idx++
+        }
+        // If no user message found after target, search backward
+        idx = targetIndex
+        while (idx > 0) {
+            idx--
+            if (messages[idx].role == "user") return idx
+        }
+        // Can't find safe point — don't split
+        return messages.size
+    }
+
+    /**
      * Stage 1: Replace old tool result content with a placeholder.
      * Keeps the [keepRecent] most recent tool results intact.
      */
@@ -138,21 +161,25 @@ class ContextManager(
 
     /**
      * Stage 3: Keep only the most recent fraction of messages. Last resort.
+     * Uses [findSafeSplitPoint] to avoid splitting tool_call/result pairs.
      */
     fun slidingWindow(keepFraction: Double = 0.3) {
         val keepCount = maxOf(1, (messages.size * keepFraction).toInt())
-        val toRemove = messages.size - keepCount
-        if (toRemove > 0) {
-            messages.subList(0, toRemove).clear()
+        val rawSplitPoint = messages.size - keepCount
+        if (rawSplitPoint <= 0) return
+        val safeSplitPoint = findSafeSplitPoint(rawSplitPoint)
+        if (safeSplitPoint > 0 && safeSplitPoint < messages.size) {
+            messages.subList(0, safeSplitPoint).clear()
         }
     }
 
     /**
      * Stage 2: Ask the LLM to summarize the oldest 70% of messages into structured format.
      * Replaces summarized messages with a single user message containing the summary.
+     * Uses [findSafeSplitPoint] to avoid splitting tool_call/result pairs.
      */
     private suspend fun llmSummarize(brain: LlmBrain) {
-        val splitPoint = (messages.size * 0.7).toInt()
+        val splitPoint = findSafeSplitPoint((messages.size * 0.7).toInt())
         if (splitPoint <= 0) return
 
         val oldMessages = messages.subList(0, splitPoint).toList()

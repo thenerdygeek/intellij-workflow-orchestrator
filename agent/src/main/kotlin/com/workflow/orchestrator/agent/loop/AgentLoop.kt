@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
@@ -8,6 +9,8 @@ import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,7 +33,8 @@ class AgentLoop(
     private val project: Project,
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
-    private val maxIterations: Int = 200
+    private val maxIterations: Int = 200,
+    private val planMode: Boolean = false
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -38,11 +42,29 @@ class AgentLoop(
     private val json = Json { ignoreUnknownKeys = true }
 
     companion object {
+        private val LOG = Logger.getInstance(AgentLoop::class.java)
         private const val MAX_CONSECUTIVE_EMPTIES = 3
+        private const val MAX_API_RETRIES = 5
+        private const val INITIAL_RETRY_DELAY_MS = 1000L
         private const val CONTINUATION_PROMPT =
             "Your previous response was empty. Please use the available tools to take action on the task, or call attempt_completion if you are done."
         private const val TEXT_ONLY_NUDGE =
             "Please use tools to take action, or call attempt_completion if you're done. Do not just describe what you plan to do — take action with tools."
+
+        /** Tools that mutate state — blocked when plan mode is active. */
+        val WRITE_TOOLS = setOf(
+            "edit_file", "create_file", "run_command", "revert_file",
+            "kill_process", "send_stdin", "format_code", "optimize_imports",
+            "refactor_rename"
+        )
+
+        /** Error types that are transient and safe to retry. */
+        private val RETRYABLE_ERRORS = setOf(
+            ErrorType.RATE_LIMITED,
+            ErrorType.SERVER_ERROR,
+            ErrorType.NETWORK_ERROR,
+            ErrorType.TIMEOUT
+        )
     }
 
     /**
@@ -61,6 +83,7 @@ class AgentLoop(
 
         var iteration = 0
         var consecutiveEmpties = 0
+        var apiRetryCount = 0
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -79,8 +102,16 @@ class AgentLoop(
                 }
             )
 
-            // Stage 2: Handle API errors
+            // Stage 2: Handle API errors with retry for transient failures
             if (apiResult is ApiResult.Error) {
+                if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < MAX_API_RETRIES) {
+                    apiRetryCount++
+                    val delayMs = INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1))
+                    LOG.warn("[AgentLoop] Retryable API error (${apiResult.type}), retry $apiRetryCount/$MAX_API_RETRIES after ${delayMs}ms")
+                    delay(delayMs)
+                    iteration-- // Don't count retries as iterations
+                    continue
+                }
                 return LoopResult.Failed(
                     error = apiResult.message,
                     iterations = iteration,
@@ -89,6 +120,9 @@ class AgentLoop(
             }
 
             val response = (apiResult as ApiResult.Success).data
+
+            // Reset retry count on successful API call
+            apiRetryCount = 0
 
             // Stage 3: Update token tracking
             response.usage?.let { usage ->
@@ -171,6 +205,23 @@ class AgentLoop(
             if (tool == null) {
                 // Unknown tool
                 val errorMsg = "Unknown tool: '$toolName'. Available tools: ${tools.keys.joinToString(", ")}"
+                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true)
+                onToolCall(
+                    ToolCallProgress(
+                        toolName = toolName,
+                        args = call.function.arguments,
+                        result = errorMsg,
+                        durationMs = System.currentTimeMillis() - startTime,
+                        isError = true,
+                        toolCallId = toolCallId
+                    )
+                )
+                continue
+            }
+
+            // Plan mode guard: block write tools even if the LLM hallucinates them
+            if (planMode && toolName in WRITE_TOOLS) {
+                val errorMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true)
                 onToolCall(
                     ToolCallProgress(

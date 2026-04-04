@@ -296,6 +296,156 @@ class ContextManagerTest {
         }
     }
 
+    // ---- Pair-aware compaction (C2) ----
+
+    @Nested
+    inner class PairAwareCompaction {
+
+        @Test
+        fun `findSafeSplitPoint lands on user message boundary`() {
+            // Build: user -> assistant(toolCalls) -> tool -> user -> assistant -> tool
+            cm.addUserMessage("first question")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c1", type = "function", function = FunctionCall("tool_a", "{}"))
+                    )
+                )
+            )
+            cm.addToolResult(toolCallId = "c1", content = "result1", isError = false)
+            cm.addUserMessage("second question")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c2", type = "function", function = FunctionCall("tool_b", "{}"))
+                    )
+                )
+            )
+            cm.addToolResult(toolCallId = "c2", content = "result2", isError = false)
+
+            // Target index 2 falls on a "tool" message (between assistant+toolCalls and user).
+            // findSafeSplitPoint should move forward to index 3 (the "user" message).
+            val safePoint = cm.findSafeSplitPoint(2)
+            assertEquals(3, safePoint, "Should find next user message at index 3")
+        }
+
+        @Test
+        fun `findSafeSplitPoint searches backward when no user message after target`() {
+            // Build: user -> assistant(toolCalls) -> tool -> tool
+            cm.addUserMessage("question")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c1", type = "function", function = FunctionCall("tool_a", "{}")),
+                        ToolCall(id = "c2", type = "function", function = FunctionCall("tool_b", "{}"))
+                    )
+                )
+            )
+            cm.addToolResult(toolCallId = "c1", content = "r1", isError = false)
+            cm.addToolResult(toolCallId = "c2", content = "r2", isError = false)
+
+            // Target index 2 = tool result. No user message after it. Should search backward to index 0.
+            val safePoint = cm.findSafeSplitPoint(2)
+            assertEquals(0, safePoint, "Should find user message at index 0 (backward search)")
+        }
+
+        @Test
+        fun `sliding window preserves tool call and result pairing`() {
+            // Build conversation with interleaved tool call groups
+            // Group 1: user -> assistant(toolCalls) -> tool
+            cm.addUserMessage("q1")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c1", type = "function", function = FunctionCall("tool_a", "{}"))
+                    )
+                )
+            )
+            cm.addToolResult(toolCallId = "c1", content = "r1", isError = false)
+            // Group 2: user -> assistant(toolCalls) -> tool
+            cm.addUserMessage("q2")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c2", type = "function", function = FunctionCall("tool_b", "{}"))
+                    )
+                )
+            )
+            cm.addToolResult(toolCallId = "c2", content = "r2", isError = false)
+            // Group 3: user -> assistant(toolCalls) -> tool
+            cm.addUserMessage("q3")
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant", content = null,
+                    toolCalls = listOf(
+                        ToolCall(id = "c3", type = "function", function = FunctionCall("tool_c", "{}"))
+                    )
+                )
+            )
+            cm.addToolResult(toolCallId = "c3", content = "r3", isError = false)
+
+            // 9 messages total. keepFraction=0.5 => keepCount=4, rawSplitPoint=5
+            // Index 5 is an assistant message with toolCalls — unsafe!
+            // findSafeSplitPoint(5) should find index 6 (user "q3") or 3 (user "q2")
+            cm.slidingWindow(keepFraction = 0.5)
+
+            val messages = cm.getMessages()
+            // Verify no assistant message with toolCalls exists without its matching tool result
+            for (i in messages.indices) {
+                val msg = messages[i]
+                if (msg.role == "assistant" && !msg.toolCalls.isNullOrEmpty()) {
+                    // Each tool call should have a matching tool result after it
+                    for (tc in msg.toolCalls!!) {
+                        val hasResult = messages.drop(i + 1).any { it.role == "tool" && it.toolCallId == tc.id }
+                        assertTrue(hasResult, "Tool call ${tc.id} should have a matching tool result after it")
+                    }
+                }
+            }
+        }
+
+        @Test
+        fun `llm summarization preserves tool call pairing`() = runTest {
+            val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: test\nFILES: a.kt\nDONE: something\nERRORS: none\nPENDING: nothing")
+            cm = ContextManager(maxInputTokens = 1000)
+            cm.setSystemPrompt("sys")
+
+            // Build: user -> assistant(toolCalls) -> tool -> user -> assistant(toolCalls) -> tool -> user -> assistant -> ...
+            for (i in 1..5) {
+                cm.addUserMessage("question $i")
+                cm.addAssistantMessage(
+                    ChatMessage(
+                        role = "assistant", content = null,
+                        toolCalls = listOf(
+                            ToolCall(id = "call_$i", type = "function", function = FunctionCall("tool_$i", "{}"))
+                        )
+                    )
+                )
+                cm.addToolResult(toolCallId = "call_$i", content = "result $i", isError = false)
+            }
+
+            // Force compaction by reporting high utilization
+            cm.updateTokens(promptTokens = 900)
+            cm.compact(fakeBrain)
+
+            // After compaction, verify pairing integrity
+            val messages = cm.getMessages()
+            for (i in messages.indices) {
+                val msg = messages[i]
+                if (msg.role == "assistant" && !msg.toolCalls.isNullOrEmpty()) {
+                    for (tc in msg.toolCalls!!) {
+                        val hasResult = messages.drop(i + 1).any { it.role == "tool" && it.toolCallId == tc.id }
+                        assertTrue(hasResult, "After compaction, tool call ${tc.id} should have matching tool result")
+                    }
+                }
+            }
+        }
+    }
+
     // ---- Fake LlmBrain for testing ----
 
     private class FakeLlmBrain(private val summaryResponse: String) : LlmBrain {
