@@ -138,6 +138,11 @@ Tips:
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+            is LoopResult.PlanPresented -> ToolResult(
+                content = "[Agent: $description] Plan:\n${result.plan}",
+                summary = "Agent presented plan: ${result.plan.take(150)}",
+                tokenEstimate = estimateTokens(result.plan)
+            )
         }
     }
 

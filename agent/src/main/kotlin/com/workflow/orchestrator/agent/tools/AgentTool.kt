@@ -51,7 +51,17 @@ data class ToolResult(
     val artifacts: List<String> = emptyList(),
     val isError: Boolean = false,
     val isCompletion: Boolean = false,
-    val verifyCommand: String? = null
+    val verifyCommand: String? = null,
+    /** True when this result is a plan_mode_respond output (plan presentation). */
+    val isPlanResponse: Boolean = false,
+    /** True when the LLM needs more exploration before finalizing the plan. */
+    val needsMoreExploration: Boolean = false,
+    /** True when this result activates a skill via use_skill tool. */
+    val isSkillActivation: Boolean = false,
+    /** The skill name that was activated (set by UseSkillTool). */
+    val activatedSkillName: String? = null,
+    /** The full skill content that was loaded (set by UseSkillTool). */
+    val activatedSkillContent: String? = null
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5

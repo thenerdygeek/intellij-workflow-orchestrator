@@ -224,6 +224,18 @@ class AgentController(
                         status = RichStreamingPanel.SessionStatus.CANCELLED
                     )
                 }
+
+                is LoopResult.PlanPresented -> {
+                    // Plan presented for user review — show the plan and keep session active
+                    dashboard.appendCompletionSummary(result.plan, null)
+                    dashboard.completeSession(
+                        tokensUsed = result.tokensUsed,
+                        iterations = result.iterations,
+                        filesModified = emptyList(),
+                        durationMs = durationMs,
+                        status = RichStreamingPanel.SessionStatus.SUCCESS
+                    )
+                }
             }
 
             dashboard.setBusy(false)

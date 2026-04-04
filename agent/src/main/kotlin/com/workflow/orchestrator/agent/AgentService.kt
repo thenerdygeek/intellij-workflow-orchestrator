@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
@@ -124,6 +125,9 @@ class AgentService(private val project: Project) : Disposable {
         safeRegister { AskUserInputTool() }
         safeRegister { ProjectContextTool() }
         safeRegister { CurrentTimeTool() }
+        safeRegister { PlanModeRespondTool() }
+        safeRegister { ActModeRespondTool() }
+        safeRegister { UseSkillTool() }
 
         // VCS tools
         safeRegister { GitTool() }
@@ -274,6 +278,13 @@ class AgentService(private val project: Project) : Disposable {
                 // I7: Always re-set system prompt (plan mode may have changed between turns)
                 val projectName = project.name
                 val projectPath = project.basePath ?: ""
+
+                // Load project instructions (CLAUDE.md) and bundled skills
+                val projectInstructions = InstructionLoader.loadProjectInstructions(projectPath)
+                val bundledSkills = InstructionLoader.loadBundledSkills()
+                val availableSkills = bundledSkills.map { it.name to it.description }
+                    .ifEmpty { null }
+
                 val systemPrompt = SystemPrompt.build(
                     projectName = projectName,
                     projectPath = projectPath,
@@ -283,19 +294,28 @@ class AgentService(private val project: Project) : Disposable {
                     else
                         System.getenv("SHELL") ?: "/bin/bash",
                     planModeEnabled = planModeActive.get(),
+                    additionalContext = projectInstructions,
+                    availableSkills = availableSkills,
+                    activeSkillContent = ctx.getActiveSkill(),
                     taskProgress = ctx.getTaskProgress()
                 )
                 ctx.setSystemPrompt(systemPrompt)
 
-                // Build tool definitions, filtering write tools if plan mode is active
+                // Build tool definitions, filtering by mode.
+                // Plan mode: remove write tools + act_mode_respond, keep plan_mode_respond.
+                // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools.
+                // Ported from Cline's mode-specific tool schema filtering.
                 val tools = registry.allTools().associateBy { it.name }
-                val toolDefs = if (planModeActive.get()) {
-                    tools.values
-                        .filter { it.name !in writeToolNames }
-                        .map { it.toToolDefinition() }
-                } else {
-                    tools.values.map { it.toToolDefinition() }
-                }
+                val isPlanMode = planModeActive.get()
+                val toolDefs = tools.values
+                    .filter { tool ->
+                        if (isPlanMode) {
+                            tool.name !in writeToolNames && tool.name != "act_mode_respond"
+                        } else {
+                            tool.name != "plan_mode_respond"
+                        }
+                    }
+                    .map { it.toToolDefinition() }
 
                 // Track the message count before this turn, so we can
                 // checkpoint only newly-added messages (JSONL append).
@@ -367,12 +387,14 @@ class AgentService(private val project: Project) : Disposable {
                     is LoopResult.Completed -> result.tokensUsed
                     is LoopResult.Failed -> result.tokensUsed
                     is LoopResult.Cancelled -> result.tokensUsed
+                    is LoopResult.PlanPresented -> result.tokensUsed
                 }
                 session = session.copy(
                     status = when (result) {
                         is LoopResult.Completed -> SessionStatus.COMPLETED
                         is LoopResult.Failed -> SessionStatus.FAILED
                         is LoopResult.Cancelled -> SessionStatus.CANCELLED
+                        is LoopResult.PlanPresented -> SessionStatus.ACTIVE
                     },
                     lastMessageAt = System.currentTimeMillis(),
                     totalTokens = tokensUsed,

@@ -18,6 +18,23 @@ sealed class LoopResult {
         val iterations: Int,
         val tokensUsed: Int = 0
     ) : LoopResult()
+
+    /**
+     * Plan presented to user for review — loop pauses until user approves or gives feedback.
+     *
+     * Ported from Cline's plan mode flow:
+     * - When plan_mode_respond is called with needs_more_exploration=false, the loop
+     *   returns this result so the UI can show the plan and collect feedback.
+     * - The plan text is displayed in the chat UI.
+     * - On approval, the caller switches to act mode and re-runs the loop.
+     * - On feedback, the caller re-runs the loop in plan mode with the feedback.
+     */
+    data class PlanPresented(
+        val plan: String,
+        val needsMoreExploration: Boolean = false,
+        val iterations: Int,
+        val tokensUsed: Int = 0
+    ) : LoopResult()
 }
 
 data class ToolCallProgress(

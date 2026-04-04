@@ -60,6 +60,13 @@ class AgentLoop(
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
 
+    /**
+     * Tracks the last tool name called — used to enforce act_mode_respond
+     * consecutive-call constraint (ported from Cline: act_mode_respond cannot
+     * be called twice in a row).
+     */
+    private var lastToolName: String? = null
+
     private val json = Json { ignoreUnknownKeys = true }
 
     companion object {
@@ -368,6 +375,26 @@ class AgentLoop(
                 continue
             }
 
+            // act_mode_respond consecutive-call guard (ported from Cline).
+            // Cline: "This tool cannot be called consecutively — each use must be
+            // followed by a different tool call or completion."
+            if (toolName == "act_mode_respond" && lastToolName == "act_mode_respond") {
+                val errorMsg = "Error: act_mode_respond cannot be called consecutively. " +
+                    "Use a different tool or call attempt_completion."
+                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
+                onToolCall(
+                    ToolCallProgress(
+                        toolName = toolName,
+                        args = call.function.arguments,
+                        result = errorMsg,
+                        durationMs = System.currentTimeMillis() - startTime,
+                        isError = true,
+                        toolCallId = toolCallId
+                    )
+                )
+                continue
+            }
+
             // Parse arguments
             val params: JsonObject = try {
                 json.decodeFromString<JsonObject>(call.function.arguments)
@@ -449,6 +476,9 @@ class AgentLoop(
                 )
             )
 
+            // Track last tool name for consecutive-call guards
+            lastToolName = toolName
+
             // Check for completion
             if (toolResult.isCompletion) {
                 return LoopResult.Completed(
@@ -457,6 +487,28 @@ class AgentLoop(
                     tokensUsed = totalTokensUsed,
                     verifyCommand = toolResult.verifyCommand
                 )
+            }
+
+            // Check for plan response (plan_mode_respond tool)
+            // Ported from Cline's plan mode flow:
+            // - If needs_more_exploration=true, continue the loop (LLM will explore more)
+            // - If needs_more_exploration=false, return PlanPresented so user can review
+            if (toolResult.isPlanResponse) {
+                if (!toolResult.needsMoreExploration) {
+                    return LoopResult.PlanPresented(
+                        plan = toolResult.content,
+                        needsMoreExploration = false,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed
+                    )
+                }
+                // needs_more_exploration=true: loop continues, LLM will use more tools
+            }
+
+            // Store active skill in ContextManager for compaction survival
+            // (ported from Cline: skill content is re-injected after compaction)
+            if (toolResult.isSkillActivation && toolResult.activatedSkillContent != null) {
+                contextManager.setActiveSkill(toolResult.activatedSkillContent)
             }
         }
         return null
