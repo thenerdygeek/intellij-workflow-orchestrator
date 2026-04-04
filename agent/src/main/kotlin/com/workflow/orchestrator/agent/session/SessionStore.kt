@@ -34,12 +34,54 @@ class SessionStore(private val baseDir: File) {
     private val compactJson = Json { ignoreUnknownKeys = true }
     private val sessionsDir: File get() = File(baseDir, "sessions")
 
+    /**
+     * Write content to a file atomically using write-then-rename.
+     *
+     * Ported from Cline's atomicWriteFile in disk.ts: write to a temporary file
+     * in the same directory, then rename to the target path. Rename is atomic on
+     * most filesystems (POSIX guarantees, NTFS on same volume), preventing
+     * partial/corrupt files on crash or power loss.
+     */
+    private fun atomicWrite(targetFile: File, content: String) {
+        val tempFile = File(targetFile.parent, "${targetFile.name}.tmp")
+        try {
+            tempFile.writeText(content)
+            if (!tempFile.renameTo(targetFile)) {
+                // renameTo can fail on some platforms (e.g., cross-device);
+                // fall back to copy + delete
+                tempFile.copyTo(targetFile, overwrite = true)
+                tempFile.delete()
+            }
+        } catch (e: Exception) {
+            tempFile.delete()
+            throw e
+        }
+    }
+
+    /**
+     * Write content to a file atomically using a BufferedWriter via write-then-rename.
+     * Used for multi-line writes (JSONL files with many messages).
+     */
+    private fun atomicWriteBuffered(targetFile: File, writer: (java.io.BufferedWriter) -> Unit) {
+        val tempFile = File(targetFile.parent, "${targetFile.name}.tmp")
+        try {
+            tempFile.bufferedWriter().use(writer)
+            if (!tempFile.renameTo(targetFile)) {
+                tempFile.copyTo(targetFile, overwrite = true)
+                tempFile.delete()
+            }
+        } catch (e: Exception) {
+            tempFile.delete()
+            throw e
+        }
+    }
+
     // ── Session metadata (Cline's HistoryItem equivalent) ─────────────
 
     fun save(session: Session) {
         sessionsDir.mkdirs()
         val file = File(sessionsDir, "${session.id}.json")
-        file.writeText(json.encodeToString(session))
+        atomicWrite(file, json.encodeToString(session))
     }
 
     fun load(sessionId: String): Session? {
@@ -139,7 +181,7 @@ class SessionStore(private val baseDir: File) {
         val dir = sessionDataDir(sessionId)
         dir.mkdirs()
         val file = messagesFile(sessionId)
-        file.bufferedWriter().use { writer ->
+        atomicWriteBuffered(file) { writer ->
             for (msg in messages) {
                 writer.write(compactJson.encodeToString(msg))
                 writer.newLine()
@@ -193,16 +235,16 @@ class SessionStore(private val baseDir: File) {
         val dir = checkpointsDir(sessionId)
         dir.mkdirs()
 
-        // Save messages as JSONL
+        // Save messages as JSONL (atomic write-then-rename for crash safety)
         val file = checkpointFile(sessionId, checkpointId)
-        file.bufferedWriter().use { writer ->
+        atomicWriteBuffered(file) { writer ->
             for (msg in messages) {
                 writer.write(compactJson.encodeToString(msg))
                 writer.newLine()
             }
         }
 
-        // Save metadata
+        // Save metadata (atomic write-then-rename for crash safety)
         val meta = CheckpointInfo(
             id = checkpointId,
             createdAt = System.currentTimeMillis(),
@@ -210,7 +252,7 @@ class SessionStore(private val baseDir: File) {
             description = description
         )
         val metaFile = checkpointMetaFile(sessionId, checkpointId)
-        metaFile.writeText(json.encodeToString(meta))
+        atomicWrite(metaFile, json.encodeToString(meta))
     }
 
     /**

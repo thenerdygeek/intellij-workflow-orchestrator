@@ -572,6 +572,26 @@ class AgentService(private val project: Project) : Disposable {
                 )
                 sessionStore.save(session)
 
+                // TASK_COMPLETE hook — fire-and-forget, observation-only (non-cancellable).
+                // Fires when a task completes successfully. Matching Cline's 8th hook type.
+                if (result is LoopResult.Completed && hookManager.hasHooks(HookType.TASK_COMPLETE)) {
+                    try {
+                        hookManager.dispatch(
+                            HookEvent(
+                                type = HookType.TASK_COMPLETE,
+                                data = mapOf(
+                                    "sessionId" to sid,
+                                    "summary" to result.summary,
+                                    "iterations" to result.iterations,
+                                    "tokensUsed" to result.tokensUsed
+                                )
+                            )
+                        )
+                    } catch (e: Exception) {
+                        log.warn("AgentService: TASK_COMPLETE hook failed (non-fatal)", e)
+                    }
+                }
+
                 onComplete(result)
             } catch (e: CancellationException) {
                 session = session.copy(

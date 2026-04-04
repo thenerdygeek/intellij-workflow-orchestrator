@@ -4,7 +4,7 @@ package com.workflow.orchestrator.agent.hooks
  * All valid hook types that can be created and executed.
  *
  * Faithful port of Cline's VALID_HOOK_TYPES from hooks/utils.ts:
- * - TaskStart, TaskResume, TaskCancel correspond to task lifecycle
+ * - TaskStart, TaskResume, TaskCancel, TaskComplete correspond to task lifecycle
  * - PreToolUse, PostToolUse wrap every tool execution
  * - UserPromptSubmit intercepts user input before processing
  * - PreCompact fires before context compaction
@@ -17,6 +17,7 @@ enum class HookType {
     TASK_RESUME,
     PRE_COMPACT,
     TASK_CANCEL,
+    TASK_COMPLETE,
     PRE_TOOL_USE,
     POST_TOOL_USE;
 
@@ -33,7 +34,7 @@ enum class HookType {
         /** Whether this hook type supports cancellation (non-zero exit = cancel). */
         fun isCancellable(type: HookType): Boolean = when (type) {
             TASK_START, USER_PROMPT_SUBMIT, TASK_RESUME, PRE_COMPACT, PRE_TOOL_USE -> true
-            TASK_CANCEL, POST_TOOL_USE -> false
+            TASK_CANCEL, TASK_COMPLETE, POST_TOOL_USE -> false
         }
 
         /**

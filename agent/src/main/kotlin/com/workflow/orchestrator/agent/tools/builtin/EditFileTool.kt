@@ -19,6 +19,12 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 
+/**
+ * Edit file via exact string replacement (old_string -> new_string).
+ * Uses Claude Code's Edit pattern (exact match replacement), not Cline's
+ * SEARCH/REPLACE diff block format. The old_string must match exactly once
+ * in the file unless replace_all is true.
+ */
 class EditFileTool : AgentTool {
 
     companion object {
@@ -88,7 +94,7 @@ class EditFileTool : AgentTool {
             )
         }
 
-        // Capture content before edit for diff generation (ported from Cline's DiffViewProvider)
+        // Capture content before edit for unified diff generation
         val contentBeforeEdit = content
 
         // Compute new content for syntax validation and fallback writes
@@ -156,7 +162,7 @@ class EditFileTool : AgentTool {
         val occurrenceSuffix = if (replaceAll && occurrences > 1) " ($occurrences occurrences)" else ""
         val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath$occurrenceSuffix"
 
-        // Generate unified diff for UI display (ported from Cline's DiffViewProvider)
+        // Generate unified diff for UI display
         val editDiff = try {
             DiffUtil.unifiedDiff(contentBeforeEdit, newContent, rawPath)
         } catch (_: Exception) { null }

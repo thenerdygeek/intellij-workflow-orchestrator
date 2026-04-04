@@ -322,6 +322,87 @@ class SessionStoreTest {
         }
     }
 
+    // ── Atomic write safety ──────────────────────────────────────────
+
+    @Nested
+    inner class AtomicWriteSafety {
+
+        @Test
+        fun `save uses atomic write - no temp file left behind on success`() {
+            val store = SessionStore(tempDir)
+            val session = Session(id = "atomic-1", title = "Atomic test", createdAt = 1000L)
+
+            store.save(session)
+
+            // The session file should exist
+            val sessionFile = File(tempDir, "sessions/atomic-1.json")
+            assertTrue(sessionFile.exists(), "Session file should exist after save")
+
+            // No .tmp file should remain
+            val tmpFile = File(tempDir, "sessions/atomic-1.json.tmp")
+            assertFalse(tmpFile.exists(), "Temp file should not remain after successful atomic write")
+
+            // Data should be correct
+            val loaded = store.load("atomic-1")
+            assertNotNull(loaded)
+            assertEquals("Atomic test", loaded!!.title)
+        }
+
+        @Test
+        fun `saveMessages uses atomic write - no temp file left behind`() {
+            val store = SessionStore(tempDir)
+
+            store.saveMessages("atomic-2", listOf(
+                ChatMessage(role = "user", content = "hello"),
+                ChatMessage(role = "assistant", content = "world")
+            ))
+
+            // Messages should be readable
+            val loaded = store.loadMessages("atomic-2")
+            assertEquals(2, loaded.size)
+
+            // No .tmp file should remain
+            val tmpFile = File(tempDir, "sessions/atomic-2/messages.jsonl.tmp")
+            assertFalse(tmpFile.exists(), "Temp file should not remain after successful atomic write")
+        }
+
+        @Test
+        fun `saveCheckpoint uses atomic write - no temp files left behind`() {
+            val store = SessionStore(tempDir)
+            val messages = listOf(ChatMessage(role = "user", content = "checkpoint msg"))
+
+            store.saveCheckpoint("atomic-3", "cp-1", messages, "Test checkpoint")
+
+            // Checkpoint should be loadable
+            val loaded = store.loadCheckpoint("atomic-3", "cp-1")
+            assertNotNull(loaded)
+            assertEquals(1, loaded!!.size)
+
+            // No .tmp files should remain
+            val cpTmp = File(tempDir, "sessions/atomic-3/checkpoints/cp-1.jsonl.tmp")
+            val metaTmp = File(tempDir, "sessions/atomic-3/checkpoints/cp-1.meta.json.tmp")
+            assertFalse(cpTmp.exists(), "Checkpoint JSONL temp file should not remain")
+            assertFalse(metaTmp.exists(), "Checkpoint meta temp file should not remain")
+        }
+
+        @Test
+        fun `atomic write overwrites existing file correctly`() {
+            val store = SessionStore(tempDir)
+
+            // First write
+            store.save(Session(id = "overwrite-1", title = "Version 1", createdAt = 1000L))
+            assertEquals("Version 1", store.load("overwrite-1")!!.title)
+
+            // Overwrite via atomic write
+            store.save(Session(id = "overwrite-1", title = "Version 2", createdAt = 1000L))
+            assertEquals("Version 2", store.load("overwrite-1")!!.title)
+
+            // No temp files
+            val tmpFile = File(tempDir, "sessions/overwrite-1.json.tmp")
+            assertFalse(tmpFile.exists())
+        }
+    }
+
     // ── Conversation checkpoint simulation ──────────────────────────
 
     @Nested

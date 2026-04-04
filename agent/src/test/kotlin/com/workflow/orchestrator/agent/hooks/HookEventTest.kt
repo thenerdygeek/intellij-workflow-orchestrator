@@ -12,6 +12,7 @@ class HookEventTest {
         assertEquals("TaskResume", HookType.TASK_RESUME.hookName)
         assertEquals("PreCompact", HookType.PRE_COMPACT.hookName)
         assertEquals("TaskCancel", HookType.TASK_CANCEL.hookName)
+        assertEquals("TaskComplete", HookType.TASK_COMPLETE.hookName)
         assertEquals("PreToolUse", HookType.PRE_TOOL_USE.hookName)
         assertEquals("PostToolUse", HookType.POST_TOOL_USE.hookName)
     }
@@ -28,6 +29,7 @@ class HookEventTest {
     @Test
     fun `isCancellable returns false for observation-only hooks`() {
         assertFalse(HookType.isCancellable(HookType.TASK_CANCEL))
+        assertFalse(HookType.isCancellable(HookType.TASK_COMPLETE))
         assertFalse(HookType.isCancellable(HookType.POST_TOOL_USE))
     }
 
@@ -66,5 +68,31 @@ class HookEventTest {
     fun `HookEvent cancellable can be overridden`() {
         val event = HookEvent(type = HookType.PRE_TOOL_USE, data = emptyMap(), cancellable = false)
         assertFalse(event.cancellable)
+    }
+
+    @Test
+    fun `TASK_COMPLETE hook is observation-only and not cancellable`() {
+        val event = HookEvent(
+            type = HookType.TASK_COMPLETE,
+            data = mapOf(
+                "sessionId" to "sess-123",
+                "summary" to "Task completed successfully",
+                "iterations" to 5,
+                "tokensUsed" to 12000
+            )
+        )
+        assertFalse(event.cancellable, "TASK_COMPLETE must be non-cancellable (observation-only)")
+        assertEquals("TaskComplete", event.type.hookName)
+    }
+
+    @Test
+    fun `fromString parses TASK_COMPLETE in both formats`() {
+        assertEquals(HookType.TASK_COMPLETE, HookType.fromString("TASK_COMPLETE"))
+        assertEquals(HookType.TASK_COMPLETE, HookType.fromString("TaskComplete"))
+    }
+
+    @Test
+    fun `all 8 hook types are present`() {
+        assertEquals(8, HookType.entries.size, "Should have 8 hook types matching Cline's full set")
     }
 }
