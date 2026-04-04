@@ -24,17 +24,17 @@ import kotlin.coroutines.coroutineContext
 
 class RunCommandTool : AgentTool {
     override val name = "run_command"
-    override val description = "Execute a shell command in the project directory. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact. Default timeout: 120s, output limit: 30000 chars. Dangerous commands are blocked."
+    override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output for the idle timeout period), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact with it. Dangerous commands are blocked by the safety analyzer."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "command" to ParameterProperty(type = "string", description = "The shell command to execute. Use syntax matching the 'shell' parameter."),
+            "command" to ParameterProperty(type = "string", description = "The CLI command to execute. This should be valid for the current operating system and the specified shell. Ensure the command is properly formatted and does not contain any harmful instructions."),
             "shell" to ParameterProperty(
                 type = "string",
-                description = "Shell to execute the command in. Use ONLY shells listed as available in your environment. bash = Unix/Git Bash syntax (ls, grep, cat). cmd = Windows cmd.exe syntax (dir, type, findstr). powershell = PowerShell syntax (Get-ChildItem, Select-String).",
+                description = "Shell to execute the command in. Use ONLY shells listed as available in your environment. bash = Unix/Git Bash syntax (ls, grep, cat, &&). cmd = Windows cmd.exe syntax (dir, type, findstr). powershell = PowerShell syntax (Get-ChildItem, Select-String).",
                 enumValues = listOf("bash", "cmd", "powershell")
             ),
             "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"),
-            "description" to ParameterProperty(type = "string", description = "Brief description of what this command does (5-10 words, for logging/UI)"),
+            "description" to ParameterProperty(type = "string", description = "A clear explanation of what the command does and why (shown to user in approval dialog)."),
             "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600."),
             "idle_timeout" to ParameterProperty(type = "integer", description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds.")
         ),

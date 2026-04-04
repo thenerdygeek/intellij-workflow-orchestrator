@@ -22,11 +22,11 @@ import kotlin.coroutines.coroutineContext
 
 class GlobFilesTool : AgentTool {
     override val name = "glob_files"
-    override val description = "Find files by name pattern. Returns file paths sorted by modification time (newest first). Use for file discovery — 'what files exist matching X?'. For searching file CONTENTS, use search_code instead."
+    override val description = "List files and directories matching a glob pattern within a specified directory. Returns file paths sorted by modification time (newest first). If a recursive pattern (e.g., '**/*.kt') is used, it will list all matching files recursively. Use this for file discovery — finding what files exist matching a name pattern. Do not use this tool to confirm the existence of files you may have created, as the tool result will let you know if the files were created successfully. For searching file CONTENTS, use search_code instead."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "pattern" to ParameterProperty(type = "string", description = "Glob pattern (e.g., '**/*.kt', 'src/**/*.java', '*.xml', 'build.gradle*')"),
-            "path" to ParameterProperty(type = "string", description = "Directory to search. Defaults to project root."),
+            "pattern" to ParameterProperty(type = "string", description = "Glob pattern to match files against (e.g., '**/*.kt' for all Kotlin files, 'src/**/*.java' for Java files under src, '*.xml' for top-level XML files, 'build.gradle*' for Gradle build files)."),
+            "path" to ParameterProperty(type = "string", description = "The path of the directory to list contents for (absolute or relative to the project root). Defaults to project root."),
             "max_results" to ParameterProperty(type = "integer", description = "Maximum files to return. Default: 50.")
         ),
         required = listOf("pattern")

@@ -49,11 +49,11 @@ data class QuestionResult(
 
 class AskQuestionsTool : AgentTool {
     override val name = "ask_questions"
-    override val description = "Ask the user structured questions with predefined options. Use when you need user input to make decisions (e.g., choosing a framework, selecting features, confirming approaches). Questions are shown as an interactive wizard in the IDE. Each question has a type ('single' for radio buttons, 'multiple' for checkboxes) and a list of options."
+    override val description = "Ask the user a question to gather additional information needed to complete the task. This tool should be used when you encounter ambiguities, need clarification, or require more details to proceed effectively. It allows for interactive problem-solving by enabling direct communication with the user. Use this tool judiciously to maintain a balance between gathering necessary information and avoiding excessive back-and-forth. Questions are shown as an interactive wizard in the IDE with structured options. Each question has a type ('single' for radio buttons, 'multiple' for checkboxes) and a list of options for the user to choose from."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "title" to ParameterProperty(type = "string", description = "Optional title for the question wizard"),
-            "questions" to ParameterProperty(type = "string", description = "JSON array of questions. Each question: {\"id\":\"q1\",\"question\":\"Your question?\",\"type\":\"single|multiple\",\"options\":[{\"id\":\"o1\",\"label\":\"Option\",\"description\":\"Optional detail\"}]}")
+            "title" to ParameterProperty(type = "string", description = "Optional title for the question wizard. Should be a clear, specific title that addresses the information you need."),
+            "questions" to ParameterProperty(type = "string", description = "JSON array of questions. Each question should be clear and specific, addressing the information you need. Format: [{\"id\":\"q1\",\"question\":\"Your question?\",\"type\":\"single|multiple\",\"options\":[{\"id\":\"o1\",\"label\":\"Option\",\"description\":\"Optional detail\"}]}]. Provide 2-5 options per question where possible to save the user from typing.")
         ),
         required = listOf("questions")
     )

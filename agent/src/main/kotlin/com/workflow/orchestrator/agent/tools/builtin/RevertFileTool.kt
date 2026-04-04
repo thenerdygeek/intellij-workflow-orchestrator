@@ -15,21 +15,17 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class RevertFileTool : AgentTool {
     override val name = "revert_file"
-    override val description = """Revert a single file to its original state before the agent modified it. This is a surgical operation — only the specified file is reverted, all other changes remain intact.
-
-Parameters:
-- file_path: Absolute or relative path to the file to revert
-- description: Why you are reverting this file (for audit trail)"""
+    override val description = """Use to undo changes made to a file. Reverts a single file to its original state before the agent modified it (via git checkout). This is a surgical operation — only the specified file is reverted, all other changes remain intact. Use this when an edit introduced bugs, broke tests, or went in the wrong direction. This is safer than trying to manually reverse edits with edit_file, as it restores the exact original content."""
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "file_path" to ParameterProperty(
                 type = "string",
-                description = "Path to the file to revert (absolute or relative to project root)."
+                description = "Path to the file to revert (absolute or relative to the project root). The file must be tracked by git."
             ),
             "description" to ParameterProperty(
                 type = "string",
-                description = "Reason for reverting this file (recorded in audit trail)."
+                description = "Why you are reverting this file. This is recorded in the audit trail and shown to the user."
             )
         ),
         required = listOf("file_path", "description")

@@ -25,16 +25,13 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class CreateFileTool : AgentTool {
     override val name = "create_file"
-    override val description = "Create a new file with specified content. " +
-        "Use this for creating new source files, test files, config files, etc. " +
-        "Parent directories are created automatically. " +
-        "Fails if file already exists unless overwrite=true."
+    override val description = "Create a new file with specified content at the specified path. If the file exists, it will fail unless overwrite=true. If the file doesn't exist, it will be created. This tool will automatically create any directories needed to write the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified. Prefer edit_file for modifying existing files — only use create_file for new files or complete rewrites with overwrite=true."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path for the new file"),
-            "content" to ParameterProperty(type = "string", description = "Content to write to the new file"),
-            "overwrite" to ParameterProperty(type = "boolean", description = "Allow overwrite if file already exists. Default: false"),
-            "description" to ParameterProperty(type = "string", description = "Brief description of what this file is for (shown in approval dialog)")
+            "path" to ParameterProperty(type = "string", description = "The path of the file to create (absolute or relative to the project root)."),
+            "content" to ParameterProperty(type = "string", description = "The content to write to the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified."),
+            "overwrite" to ParameterProperty(type = "boolean", description = "Allow overwrite if file already exists. Default: false. Set to true for complete rewrites."),
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this file is for (shown in approval dialog).")
         ),
         required = listOf("path", "content", "description")
     )

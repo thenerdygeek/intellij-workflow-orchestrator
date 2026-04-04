@@ -30,14 +30,14 @@ class EditFileTool : AgentTool {
     }
 
     override val name = "edit_file"
-    override val description = "Perform an exact string replacement in a file. The old_string must match exactly once unless replace_all is true."
+    override val description = "Make targeted edits to an existing file using exact string replacement. This tool should be used when you need to make targeted changes to specific parts of a file. The old_string must match EXACTLY — character-for-character including whitespace, indentation, and line endings. Include enough surrounding context (3-5 lines) to ensure old_string matches uniquely in the file. If old_string matches multiple times, the edit will fail — provide a larger context to disambiguate, or set replace_all=true to replace all occurrences. You MUST read the file with read_file before editing to see the exact content. Keep edits concise — include just the changing lines, and a few surrounding lines if needed for uniqueness. Do not include long runs of unchanging lines. Prefer this over create_file for modifying existing files."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path"),
-            "old_string" to ParameterProperty(type = "string", description = "The exact text to find and replace. Must be unique in the file."),
-            "new_string" to ParameterProperty(type = "string", description = "The replacement text."),
+            "path" to ParameterProperty(type = "string", description = "The path of the file to modify (absolute or relative to the project root)."),
+            "old_string" to ParameterProperty(type = "string", description = "The exact text to find in the file. Must match character-for-character including whitespace, indentation, and line endings. Include just enough lines to uniquely match the section that needs to change. If the file content came from read_file with line numbers (e.g., '42\tconst x = 1'), do NOT include the line number prefix — match only the raw file text."),
+            "new_string" to ParameterProperty(type = "string", description = "The new content to replace old_string with. To delete code, use an empty string."),
             "replace_all" to ParameterProperty(type = "boolean", description = "Replace all occurrences of old_string instead of requiring a unique match. Default: false."),
-            "description" to ParameterProperty(type = "string", description = "Brief description of what this action does and why (shown to user in approval dialog)")
+            "description" to ParameterProperty(type = "string", description = "Brief description of what this edit does and why (shown to user in approval dialog).")
         ),
         required = listOf("path", "old_string", "new_string", "description")
     )

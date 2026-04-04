@@ -33,7 +33,7 @@ class SpawnAgentTool(
 
     override val name = "agent"
 
-    override val description = """Launch a sub-agent to handle a task in its own context window.
+    override val description = """Launch a focused sub-agent to handle a task in its own context window. Each sub-agent gets its own prompt and returns a comprehensive result. Use this for broad exploration when reading many files would consume your main context window, or to delegate self-contained implementation work. You do not need to launch multiple sub-agents every time — using one sub-agent is valid when it avoids unnecessary context usage for focused work.
 
 The sub-agent gets a FRESH context — it cannot see your conversation history. You MUST include all necessary context in the prompt: file paths, class names, what to look for or change, and why.
 
@@ -52,8 +52,6 @@ Scopes:
 - "research": Read-only exploration. Use for understanding code, finding patterns, analyzing architecture.
 - "implement": Full write access. Use for coding — editing files, creating files, running commands, running tests.
 - "review": Read + diagnostics. Use for code review, finding bugs, checking quality.
-
-The sub-agent's full response is returned as this tool's result. Only the summary is included — not the sub-agent's internal reasoning or tool calls.
 
 Tips:
 - Be specific in the prompt. "Fix the bug in UserService" is bad. "In src/main/kotlin/com/example/UserService.kt, the login() method at line 45 throws NPE when email is null. Add a null check and return an error result." is good.

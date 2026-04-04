@@ -17,13 +17,13 @@ import kotlin.coroutines.coroutineContext
 
 class SearchCodeTool : AgentTool {
     override val name = "search_code"
-    override val description = "Search for a pattern across project files. Supports three output modes: 'files' (paths only), 'content' (matching lines with context), 'count' (match counts per file)."
+    override val description = "Perform a regex search across files in a specified directory, providing context-rich results. This tool searches for patterns or specific content across multiple files, displaying each match with encapsulating context. Use this for finding code patterns, function definitions, imports, error messages, or any text content across the codebase. Supports three output modes: 'files' (paths only — default, lightweight), 'content' (matching lines with context), 'count' (match counts per file)."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "pattern" to ParameterProperty(type = "string", description = "Search string or regex pattern"),
-            "path" to ParameterProperty(type = "string", description = "File or directory to search. Defaults to project root."),
-            "output_mode" to ParameterProperty(type = "string", description = "Output mode: 'files' (file paths only, default), 'content' (matching lines with context), 'count' (match counts per file)"),
-            "file_type" to ParameterProperty(type = "string", description = "File extension filter (e.g., 'kt', 'java', 'xml'). Only search files with this extension."),
+            "pattern" to ParameterProperty(type = "string", description = "The regular expression pattern to search for. Uses standard regex syntax. Literal strings are also accepted and will be auto-escaped if they contain invalid regex."),
+            "path" to ParameterProperty(type = "string", description = "The path of the directory to search in (absolute or relative to the project root). This directory will be recursively searched. Defaults to project root."),
+            "output_mode" to ParameterProperty(type = "string", description = "Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file)."),
+            "file_type" to ParameterProperty(type = "string", description = "File extension filter (e.g., 'kt' for Kotlin files, 'java' for Java files). If not provided, it will search all files."),
             "case_insensitive" to ParameterProperty(type = "boolean", description = "Case-insensitive search. Default: false."),
             "context_lines" to ParameterProperty(type = "integer", description = "Lines of context before and after each match (only for output_mode='content'). Default: 0."),
             "max_results" to ParameterProperty(type = "integer", description = "Maximum matches to return. Default: 50.")

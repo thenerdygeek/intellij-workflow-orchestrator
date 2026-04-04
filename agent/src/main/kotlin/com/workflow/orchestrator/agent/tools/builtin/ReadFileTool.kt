@@ -13,12 +13,12 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class ReadFileTool : AgentTool {
     override val name = "read_file"
-    override val description = "Read the contents of a file by path, returning numbered lines for source code, configs, build files, or any text file. Use this tool to understand code before editing it, verify file contents, or check configuration values. Do NOT use this if the file content is already available in the conversation context from a previous read or mention. Binary files (images, JARs, ZIPs) are rejected — use search_code to find content within them. For files over 200 lines, provide offset and limit parameters to read specific sections rather than loading the entire file, as output is capped at 10MB and lines are truncated at 2000 characters."
+    override val description = "Read the contents of a file at the specified path. Use this when you need to examine the contents of an existing file you do not know the contents of, for example to analyze code, review text files, or extract information from configuration files. Returned text lines are prefixed with line numbers (e.g. '1\t', '2\t'). These labels are metadata, not part of the file content. For large files, output is automatically limited to $DEFAULT_LIMIT lines — use offset and limit to read specific sections. May not be suitable for binary files (images, JARs, ZIPs), as it returns the raw content as a string. Do NOT use this tool to list the contents of a directory — use glob_files instead. Only use this tool on files, not directories."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path"),
-            "offset" to ParameterProperty(type = "integer", description = "Starting line number (1-based). Optional."),
-            "limit" to ParameterProperty(type = "integer", description = "Max lines to read. Optional, defaults to $DEFAULT_LIMIT.")
+            "path" to ParameterProperty(type = "string", description = "The path of the file to read (absolute or relative to the project root)."),
+            "offset" to ParameterProperty(type = "integer", description = "The 1-based line number to start reading from (inclusive). Defaults to 1."),
+            "limit" to ParameterProperty(type = "integer", description = "The number of lines to read. Defaults to $DEFAULT_LIMIT. Use with offset to read specific sections of large files.")
         ),
         required = listOf("path")
     )
