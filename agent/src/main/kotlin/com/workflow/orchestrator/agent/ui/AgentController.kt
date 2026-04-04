@@ -17,6 +17,7 @@ import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.jsonObject
@@ -273,7 +274,8 @@ class AgentController(
             onPlanResponse = ::onPlanResponse,
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
-            onCheckpointSaved = ::onCheckpointSaved
+            onCheckpointSaved = ::onCheckpointSaved,
+            onSubagentProgress = ::onSubagentProgress
         )
     }
 
@@ -381,6 +383,46 @@ class AgentController(
             val checkpoints = service.listCheckpoints(sessionId)
             val checkpointsJson = buildCheckpointsJson(checkpoints)
             dashboard.updateCheckpoints(checkpointsJson)
+        }
+    }
+
+    /**
+     * Sub-agent progress callback — streams sub-agent lifecycle events to the dashboard.
+     * Called by SpawnAgentTool via AgentService when sub-agents report status changes.
+     * Not a suspend function — wraps UI updates in invokeLater.
+     */
+    private fun onSubagentProgress(agentId: String, update: SubagentProgressUpdate) {
+        invokeLater {
+            when (update.status) {
+                "running" -> {
+                    val label = update.latestToolCall ?: "Starting..."
+                    dashboard.spawnSubAgent(agentId, label)
+                }
+                "completed" -> {
+                    dashboard.completeSubAgent(
+                        agentId,
+                        update.result ?: "Completed",
+                        update.stats?.inputTokens?.plus(update.stats.outputTokens) ?: 0,
+                        isError = false
+                    )
+                }
+                "failed" -> {
+                    dashboard.completeSubAgent(
+                        agentId,
+                        update.error ?: "Failed",
+                        update.stats?.inputTokens?.plus(update.stats.outputTokens) ?: 0,
+                        isError = true
+                    )
+                }
+                else -> {
+                    update.latestToolCall?.let { toolCall ->
+                        dashboard.addSubAgentToolCall(agentId, toolCall, "")
+                    }
+                    update.stats?.let { stats ->
+                        dashboard.updateSubAgentIteration(agentId, stats.toolCalls)
+                    }
+                }
+            }
         }
     }
 

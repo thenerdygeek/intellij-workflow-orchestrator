@@ -36,8 +36,8 @@ class SpawnAgentTool(
     private val brainProvider: suspend () -> LlmBrain,
     private val toolRegistry: ToolRegistry,
     private val project: Project,
-    private val contextBudget: Int = DEFAULT_CONTEXT_BUDGET,
-    private val onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null
+    var contextBudget: Int = DEFAULT_CONTEXT_BUDGET,
+    var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null
 ) : AgentTool {
 
     override val name = "agent"

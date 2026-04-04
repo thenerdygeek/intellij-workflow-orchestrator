@@ -34,6 +34,8 @@ import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
+import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.tools.psi.*
 import com.workflow.orchestrator.agent.tools.runtime.*
 import com.workflow.orchestrator.agent.tools.vcs.*
@@ -98,6 +100,14 @@ class AgentService(private val project: Project) : Disposable {
         hookManager.loadFromConfigFile(basePath)
 
         registerAllTools()
+
+        // Task 7: Load dynamic agent configurations and register lifecycle
+        val configLoader = AgentConfigLoader.getInstance()
+        val configs = configLoader.getAllCachedConfigsWithToolNames()
+        if (configs.isNotEmpty()) {
+            log.info("[AgentService] Loaded ${configs.size} dynamic agent config(s): ${configs.keys.toList()}")
+        }
+        com.intellij.openapi.util.Disposer.register(this, configLoader)
     }
 
     // ── Brain ──────────────────────────────────────────────────────────────
@@ -168,7 +178,7 @@ class AgentService(private val project: Project) : Disposable {
         // tool_search itself is core (the LLM needs it to discover deferred tools)
         safeRegisterCore { ToolSearchTool(registry) }
 
-        // Sub-agent delegation tool
+        // Sub-agent delegation tool — progress callback wired at task level
         safeRegisterCore { SpawnAgentTool(
             brainProvider = { createBrain() },
             toolRegistry = registry,
@@ -244,8 +254,7 @@ class AgentService(private val project: Project) : Disposable {
         // Only registered when the service URL is configured in ConnectionSettings
         registerConditionalIntegrationTools()
 
-        log.info("AgentService: registered ${registry.count()} tools " +
-            "(${registry.coreCount()} core, ${registry.deferredCount()} deferred)")
+        log.info("[Agent] Registered ${registry.coreCount()} core + ${registry.deferredCount()} deferred tools")
     }
 
     /**
@@ -342,7 +351,25 @@ class AgentService(private val project: Project) : Disposable {
          * Used in plan mode: after plan presentation, the loop waits on this channel
          * for the user to send a message, add comments, or approve.
          */
-        userInputChannel: kotlinx.coroutines.channels.Channel<String>? = null
+        userInputChannel: kotlinx.coroutines.channels.Channel<String>? = null,
+        /**
+         * Optional approval gate for write tool executions.
+         * When set, the loop suspends before write tools and waits for user approval.
+         * When null (e.g. in sub-agents or handoff sessions), write tools execute without approval.
+         */
+        approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        /**
+         * Optional callback fired after a write checkpoint is saved.
+         * Used by the UI to update the checkpoint timeline display.
+         *
+         * @param sessionId the session the checkpoint belongs to
+         */
+        onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
+        /**
+         * Optional callback for sub-agent progress updates.
+         * Streams sub-agent status (running/completed/failed) and tool calls to the dashboard.
+         */
+        onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -353,6 +380,7 @@ class AgentService(private val project: Project) : Disposable {
         sessionStore.save(session)
 
         val job = scope.launch {
+            var brainRef: LlmBrain? = null
             try {
                 // TASK_START hook (ported from Cline's TaskStart hook)
                 // Fires before the agent loop begins. Cancellable: can abort the task.
@@ -381,6 +409,21 @@ class AgentService(private val project: Project) : Disposable {
 
                 // I3: Create a fresh brain each time to pick up settings changes
                 val brain = createBrain()
+                brainRef = brain
+                log.info("[Agent] Task started: sessionId=$sid, model=${brain.modelId}")
+
+                // Wire API debug dumps — save request/response JSON per session
+                val basePath = project.basePath ?: System.getProperty("user.home")
+                val sessionDebugDir = java.io.File(
+                    ProjectIdentifier.agentDir(basePath),
+                    "sessions/$sid"
+                )
+                if (brain is OpenAiCompatBrain) {
+                    brain.setApiDebugDir(sessionDebugDir)
+                    brain.resetApiCallCounter()
+                    log.debug("[Agent] API debug dir: ${sessionDebugDir.absolutePath}/api-debug/")
+                }
+
                 val agentSettings = AgentSettings.getInstance(project)
 
                 // Build context manager
@@ -442,6 +485,15 @@ class AgentService(private val project: Project) : Disposable {
                         .map { it.toToolDefinition() }
                 }
 
+                // Wire sub-agent progress callback for this task execution
+                val spawnAgentTool = registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
+                if (spawnAgentTool != null) {
+                    spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
+                    spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
+                        { agentId, update -> onSubagentProgress(agentId, update) }
+                    } else null
+                }
+
                 // Initial tool definitions (also used as fallback in AgentLoop)
                 val toolDefs = toolDefinitionProvider()
                 // Tool map for execution — use registry.get() to resolve any tool including deferred
@@ -470,6 +522,7 @@ class AgentService(private val project: Project) : Disposable {
                     sessionId = sid,
                     onPlanResponse = onPlanResponse,
                     userInputChannel = userInputChannel,
+                    approvalGate = approvalGate,
                     onWriteCheckpoint = { toolName, args ->
                         // Create named checkpoint after write operations (ported from Cline)
                         writeCheckpointCounter++
@@ -482,6 +535,9 @@ class AgentService(private val project: Project) : Disposable {
                                 messages = ctx.exportMessages(),
                                 description = description
                             )
+                            log.debug("[Agent] Checkpoint saved: $sid/$checkpointId")
+                            // Notify UI to update checkpoint timeline
+                            onCheckpointSaved?.invoke(sid)
                         } catch (e: Exception) {
                             log.warn("AgentService: write checkpoint save failed (non-fatal)", e)
                         }
@@ -512,6 +568,7 @@ class AgentService(private val project: Project) : Disposable {
                                 lastToolCallId = allMessages.lastOrNull { it.role == "tool" }?.toolCallId
                             )
                             sessionStore.save(session)
+                            log.debug("[Agent] Session saved: $sid")
                         } catch (e: Exception) {
                             log.warn("AgentService: checkpoint save failed (non-fatal)", e)
                         }
@@ -571,6 +628,7 @@ class AgentService(private val project: Project) : Disposable {
                     messageCount = ctx.messageCount()
                 )
                 sessionStore.save(session)
+                log.info("[Agent] Task ended: status=${session.status}, iterations=${ctx.messageCount()}, tokens=$tokensUsed")
 
                 // TASK_COMPLETE hook — fire-and-forget, observation-only (non-cancellable).
                 // Fires when a task completes successfully. Matching Cline's 8th hook type.
@@ -610,6 +668,10 @@ class AgentService(private val project: Project) : Disposable {
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
             } finally {
                 activeTask.set(null)
+                // Clear API debug dir so the brain doesn't dump after task ends
+                (brainRef as? OpenAiCompatBrain)?.setApiDebugDir(null)
+                // Clear per-task sub-agent progress callback
+                (registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool)?.onSubagentProgress = null
             }
         }
         return job
@@ -694,7 +756,7 @@ class AgentService(private val project: Project) : Disposable {
         // Restore plan mode state from session
         planModeActive.set(session.planModeEnabled)
 
-        log.info("AgentService.resumeSession: restoring session $sessionId with ${savedMessages.size} messages")
+        log.info("[Agent] Resuming session: $sessionId (${savedMessages.size} messages)")
 
         // TASK_RESUME hook (ported from Cline's TaskResume hook)
         // Cancellable: can prevent session resumption.
