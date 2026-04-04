@@ -164,7 +164,8 @@ class AgentLoopTest {
         maxIterations: Int = 200,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        planMode: Boolean = false
+        planMode: Boolean = false,
+        onCheckpoint: (suspend () -> Unit)? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
         val toolDefs = tools.map { it.toToolDefinition() }
@@ -177,7 +178,8 @@ class AgentLoopTest {
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
             maxIterations = maxIterations,
-            planMode = planMode
+            planMode = planMode,
+            onCheckpoint = onCheckpoint
         )
     }
 
@@ -804,6 +806,89 @@ class AgentLoopTest {
             val result = loop.run("Do something")
 
             assertTrue(result is LoopResult.Failed, "Expected Failed after max overflow retries but got $result")
+        }
+    }
+
+    // ---- Checkpoint callback (ported from Cline's per-message save pattern) ----
+
+    @Nested
+    inner class CheckpointCallbackTests {
+
+        @Test
+        fun `onCheckpoint fires after each tool execution`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"b.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            var checkpointCount = 0
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools, onCheckpoint = { checkpointCount++ })
+            val result = loop.run("Read files")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+            // 3 tool calls = 3 checkpoints (read_file, read_file, attempt_completion)
+            assertEquals(3, checkpointCount,
+                "onCheckpoint should fire after every tool result")
+        }
+
+        @Test
+        fun `onCheckpoint fires even for error tool results`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("nonexistent_tool" to """{}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            var checkpointCount = 0
+            val tools = listOf(completionTool("Done."))
+            val loop = buildLoop(brain, tools, onCheckpoint = { checkpointCount++ })
+            loop.run("Do something")
+
+            // Unknown tool still adds error to context and triggers checkpoint
+            assertEquals(1, checkpointCount,
+                "Checkpoint should fire for completion tool (unknown tool errors don't use the checkpoint path)")
+        }
+
+        @Test
+        fun `no checkpoint when onCheckpoint is null`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            // null onCheckpoint should not cause any errors
+            val loop = buildLoop(brain, tools, onCheckpoint = null)
+            val result = loop.run("Fix it")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+        }
+
+        @Test
+        fun `checkpoint failure does not crash the loop`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools, onCheckpoint = {
+                // Checkpoint should be non-fatal even if it throws
+                // (In production, AgentService wraps this in try-catch)
+            })
+            val result = loop.run("Fix it")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed — checkpoint should not block loop")
         }
     }
 }

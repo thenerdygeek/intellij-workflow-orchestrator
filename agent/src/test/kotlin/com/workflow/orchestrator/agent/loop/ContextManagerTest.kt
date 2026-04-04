@@ -898,4 +898,163 @@ class ContextManagerTest {
 
         override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
     }
+
+    // ---- Checkpoint persistence (ported from Cline's state persistence) ----
+
+    @Nested
+    inner class CheckpointPersistence {
+
+        @Test
+        fun `exportMessages returns all non-system messages in order`() {
+            cm.setSystemPrompt("system prompt")
+            cm.addUserMessage("user msg 1")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "reply 1"))
+            cm.addUserMessage("user msg 2")
+
+            val exported = cm.exportMessages()
+
+            assertEquals(3, exported.size)
+            assertEquals("user", exported[0].role)
+            assertEquals("user msg 1", exported[0].content)
+            assertEquals("assistant", exported[1].role)
+            assertEquals("reply 1", exported[1].content)
+            assertEquals("user", exported[2].role)
+            assertEquals("user msg 2", exported[2].content)
+        }
+
+        @Test
+        fun `exportMessages does not include system prompt`() {
+            cm.setSystemPrompt("secret system prompt")
+            cm.addUserMessage("hello")
+
+            val exported = cm.exportMessages()
+
+            assertEquals(1, exported.size)
+            assertTrue(exported.none { it.role == "system" })
+        }
+
+        @Test
+        fun `restoreMessages replaces current conversation`() {
+            cm.setSystemPrompt("sys")
+            cm.addUserMessage("old msg 1")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "old reply"))
+
+            assertEquals(2, cm.messageCount())
+
+            val savedMessages = listOf(
+                ChatMessage(role = "user", content = "restored msg 1"),
+                ChatMessage(role = "assistant", content = "restored reply"),
+                ChatMessage(role = "user", content = "restored msg 2")
+            )
+
+            cm.restoreMessages(savedMessages)
+
+            assertEquals(3, cm.messageCount())
+            val all = cm.getMessages()
+            // System prompt should still be first
+            assertEquals("system", all[0].role)
+            assertEquals("sys", all[0].content)
+            // Then restored messages
+            assertEquals("restored msg 1", all[1].content)
+            assertEquals("restored reply", all[2].content)
+            assertEquals("restored msg 2", all[3].content)
+        }
+
+        @Test
+        fun `restoreMessages invalidates token tracking`() {
+            cm = ContextManager(maxInputTokens = 1000)
+            cm.updateTokens(900) // Set high token count
+            assertTrue(cm.shouldCompact())
+
+            // Restore with fewer messages — should invalidate stale token count
+            cm.restoreMessages(listOf(
+                ChatMessage(role = "user", content = "short")
+            ))
+
+            // Utilization should now be based on byte estimate of "short", not stale 900
+            assertFalse(cm.shouldCompact(), "Token count should be invalidated after restore")
+        }
+
+        @Test
+        fun `restoreMessages rebuilds file read indices`() {
+            cm.setSystemPrompt("sys")
+
+            // Restore messages that include file reads
+            val savedMessages = listOf(
+                ChatMessage(role = "assistant", content = null, toolCalls = listOf(
+                    ToolCall(id = "c1", type = "function",
+                        function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                )),
+                ChatMessage(role = "tool", content = "[read_file for 'a.kt'] Result:\ncode v1",
+                    toolCallId = "c1"),
+                ChatMessage(role = "assistant", content = null, toolCalls = listOf(
+                    ToolCall(id = "c2", type = "function",
+                        function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                )),
+                ChatMessage(role = "tool", content = "[read_file for 'a.kt'] Result:\ncode v2",
+                    toolCallId = "c2")
+            )
+
+            cm.restoreMessages(savedMessages)
+
+            // Dedup should work on restored messages (proves file read indices were rebuilt)
+            val savedPercent = cm.deduplicateFileReads()
+            assertTrue(savedPercent > 0.0,
+                "Dedup should work after restore (indices rebuilt)")
+
+            val toolResults = cm.getMessages().filter { it.role == "tool" }
+            assertTrue(toolResults[0].content!!.contains("previously read"),
+                "First read should be deduped after restore")
+            assertTrue(toolResults[1].content!!.contains("code v2"),
+                "Latest read should be preserved after restore")
+        }
+
+        @Test
+        fun `getSystemPromptContent returns system prompt text`() {
+            cm.setSystemPrompt("My custom prompt")
+
+            assertEquals("My custom prompt", cm.getSystemPromptContent())
+        }
+
+        @Test
+        fun `getSystemPromptContent returns null when no system prompt set`() {
+            assertNull(cm.getSystemPromptContent())
+        }
+
+        @Test
+        fun `export then restore roundtrip preserves full conversation`() {
+            cm.setSystemPrompt("sys")
+            cm.addUserMessage("task description")
+            cm.addAssistantMessage(ChatMessage(
+                role = "assistant", content = null,
+                toolCalls = listOf(
+                    ToolCall(id = "call_1", type = "function",
+                        function = FunctionCall("read_file", """{"path":"a.kt"}"""))
+                )
+            ))
+            cm.addToolResult(toolCallId = "call_1", content = "file contents here", isError = false, toolName = "read_file")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "I see the file."))
+            cm.addUserMessage("Now fix it")
+
+            // Export
+            val exported = cm.exportMessages()
+            val systemPromptContent = cm.getSystemPromptContent()
+
+            // Create a new ContextManager (simulating a fresh start after crash)
+            val cm2 = ContextManager(maxInputTokens = 1000)
+            cm2.setSystemPrompt(systemPromptContent!!)
+            cm2.restoreMessages(exported)
+
+            // Verify round-trip
+            val original = cm.getMessages()
+            val restored = cm2.getMessages()
+            assertEquals(original.size, restored.size)
+            for (i in original.indices) {
+                assertEquals(original[i].role, restored[i].role)
+                assertEquals(original[i].content, restored[i].content)
+                assertEquals(original[i].toolCallId, restored[i].toolCallId)
+                assertEquals(original[i].toolCalls?.size, restored[i].toolCalls?.size)
+            }
+        }
+    }
 }

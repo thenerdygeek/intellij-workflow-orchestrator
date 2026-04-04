@@ -542,6 +542,42 @@ class ContextManager(
         }
     }
 
+    // ---- Checkpoint persistence (ported from Cline's task/message-state persistence) ----
+
+    /**
+     * Export all non-system messages for checkpoint persistence.
+     *
+     * Port of Cline's pattern: Cline stores apiConversationHistory as an array of
+     * MessageParam — system prompt is NOT included in the saved history because
+     * it's rebuilt from task settings on resume. We follow the same pattern.
+     *
+     * @return all conversation messages (excluding system prompt) in order
+     */
+    fun exportMessages(): List<ChatMessage> = messages.toList()
+
+    /**
+     * Restore messages from a checkpoint, replacing current conversation state.
+     *
+     * Port of Cline's setApiConversationHistory(newHistory) from message-state.ts:
+     * replaces the in-memory message list and rebuilds derived indices.
+     *
+     * Used during session resume: SessionStore loads the JSONL file, then this
+     * method restores the ContextManager to the checkpointed state.
+     *
+     * @param savedMessages messages loaded from JSONL checkpoint
+     */
+    fun restoreMessages(savedMessages: List<ChatMessage>) {
+        messages.clear()
+        messages.addAll(savedMessages)
+        rebuildFileReadIndices()
+        invalidateTokens()
+    }
+
+    /**
+     * Export the system prompt content (for persisting in Session metadata).
+     */
+    fun getSystemPromptContent(): String? = systemPrompt?.content
+
     companion object {
         /** Tools that read/write files and whose results contain file content. */
         private val FILE_READ_TOOLS = setOf(

@@ -246,6 +246,68 @@ class AgentController(
         dashboard.focusInput()
     }
 
+    /**
+     * Resume a previous session from its checkpoint.
+     *
+     * Port of Cline's task resumption flow:
+     * - Cline's webview sends "resumeTask" with taskId
+     * - ClineProvider loads HistoryItem + apiConversationHistory from disk
+     * - Creates new Task instance with restored state
+     * - Task picks up execution from the checkpoint
+     *
+     * We replicate this: load session + messages from SessionStore,
+     * rebuild ContextManager, and re-enter the agent loop.
+     */
+    fun resumeSession(sessionId: String) {
+        LOG.info("AgentController.resumeSession: $sessionId")
+
+        // Cancel any running task first
+        if (currentJob?.isActive == true) {
+            service.cancelCurrentTask()
+        }
+        currentJob = null
+
+        // Reset UI for the resumed session
+        dashboard.reset()
+        dashboard.setBusy(true)
+        dashboard.setInputLocked(true)
+        taskStartTime = System.currentTimeMillis()
+
+        // Show that we're resuming
+        dashboard.appendStatus("Resuming session...", RichStreamingPanel.StatusType.INFO)
+
+        // Attempt resume — AgentService rebuilds the ContextManager from JSONL checkpoint
+        val job = service.resumeSession(
+            sessionId = sessionId,
+            onStreamChunk = ::onStreamChunk,
+            onToolCall = ::onToolCall,
+            onComplete = ::onComplete
+        )
+
+        if (job != null) {
+            currentJob = job
+            // Reset contextManager — the resumed session creates its own
+            contextManager = null
+        } else {
+            // Resume failed — notify user
+            dashboard.appendError("Could not resume session. The session may have been deleted or has no saved messages.")
+            dashboard.setBusy(false)
+            dashboard.setInputLocked(false)
+            dashboard.focusInput()
+        }
+    }
+
+    /**
+     * List resumable sessions for the session history panel.
+     * Returns sessions that were interrupted (not completed).
+     */
+    fun listResumableSessions(): List<com.workflow.orchestrator.agent.session.Session> {
+        return service.sessionStore.list().filter {
+            it.status != com.workflow.orchestrator.agent.session.SessionStatus.COMPLETED &&
+            it.messageCount > 0
+        }
+    }
+
     private fun togglePlanMode(enabled: Boolean) {
         LOG.info("AgentController.togglePlanMode: $enabled")
         AgentService.planModeActive.set(enabled)

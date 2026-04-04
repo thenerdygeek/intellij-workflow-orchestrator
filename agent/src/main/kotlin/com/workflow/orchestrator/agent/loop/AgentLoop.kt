@@ -27,6 +27,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - Loop detection (from Cline): warns at 3, fails at 5 identical consecutive tool calls.
  * - Context overflow detection: catches API errors for context exceeded, compacts + retries.
  */
+/**
+ * Core ReAct loop: call LLM -> execute tools -> repeat.
+ *
+ * Checkpoint callback (ported from Cline's message-state.ts):
+ * Cline calls saveApiConversationHistory after every addToApiConversationHistory,
+ * persisting the full conversation to disk after every tool result. We do the same
+ * via [onCheckpoint]: after each tool result is added to context, the callback fires
+ * to persist state without blocking the loop (caller runs on IO dispatcher).
+ *
+ * @param onCheckpoint called after every tool result is added to context.
+ *   Matches Cline's "persist after every state change" pattern from message-state.ts.
+ */
 class AgentLoop(
     private val brain: LlmBrain,
     private val tools: Map<String, AgentTool>,
@@ -36,7 +48,8 @@ class AgentLoop(
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
     private val maxIterations: Int = 200,
-    private val planMode: Boolean = false
+    private val planMode: Boolean = false,
+    private val onCheckpoint: (suspend () -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -403,6 +416,11 @@ class AgentLoop(
                 isError = toolResult.isError,
                 toolName = toolName
             )
+
+            // Checkpoint: persist state after every tool result (Cline's pattern).
+            // Cline calls saveApiConversationHistory inside addToApiConversationHistory.
+            // We fire the callback here so AgentService can persist asynchronously.
+            onCheckpoint?.invoke()
 
             // Notify callback
             onToolCall(
