@@ -11,9 +11,11 @@ import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
+import com.workflow.orchestrator.agent.loop.PlanParser
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import kotlinx.coroutines.*
 
 /**
@@ -37,6 +39,10 @@ class AgentController(
     private var contextManager: ContextManager? = null
     private var currentJob: Job? = null
     private var taskStartTime: Long = 0L
+    /** Last task text for retry button. Gap 17. */
+    private var lastTaskText: String? = null
+    /** Current plan text, stored for the approve/revise flow. Priority 1. */
+    private var currentPlan: String? = null
 
     init {
         wireCallbacks()
@@ -55,7 +61,7 @@ class AgentController(
             onChangeModel = ::changeModel,
             onTogglePlanMode = ::togglePlanMode,
             onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
-            onActivateSkill = { /* Skills not wired in lean rewrite */ },
+            onActivateSkill = { skillName -> executeTask("/skill $skillName") },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
@@ -68,11 +74,44 @@ class AgentController(
             onPromptSubmitted = ::executeTask
         )
 
-        // Plan approval callbacks (no-op stubs — plan lifecycle not in lean rewrite)
+        // Plan approval callbacks — full plan lifecycle (Priority 1)
         dashboard.setCefPlanCallbacks(
-            onApprove = { LOG.info("Plan approved — not implemented in lean rewrite") },
-            onRevise = { LOG.info("Plan revised — not implemented in lean rewrite") }
+            onApprove = ::approvePlan,
+            onRevise = ::revisePlan
         )
+
+        // Tool kill callback — Gap 5
+        dashboard.setCefKillCallback { toolCallId ->
+            LOG.info("AgentController: kill requested for tool call $toolCallId")
+            ProcessRegistry.kill(toolCallId)
+        }
+
+        // Gap 11: Wire AskQuestionsTool to dashboard question wizard
+        com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
+            invokeLater { dashboard.showQuestions(questionsJson) }
+        }
+        dashboard.setCefQuestionCallbacks(
+            onAnswered = { _, _ -> /* Individual answers handled by wizard */ },
+            onSkipped = { _ -> /* Individual skips handled by wizard */ },
+            onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
+            onSubmitted = {
+                // User submitted all answers — resolve the pending deferred
+                // The answers are collected by the React webview and passed as JSON
+                com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions("{}")
+            },
+            onCancelled = {
+                com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.cancelQuestions()
+            },
+            onEdit = { _ -> /* Re-editing handled by wizard */ }
+        )
+
+        // Gap 11: Wire AskUserInputTool's show callback to dashboard process input view
+        com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.showInputCallback = { processId, description, prompt, command ->
+            invokeLater { dashboard.showProcessInput(processId, description, prompt, command) }
+        }
+        dashboard.setCefProcessInputCallbacks { input ->
+            com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input)
+        }
 
         // File navigation — open file in editor when user clicks a path in chat
         dashboard.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
@@ -102,6 +141,9 @@ class AgentController(
         if (task.isBlank()) return
 
         LOG.info("AgentController.executeTask: ${task.take(80)}")
+
+        // Gap 15+17: Track last task for retry and session title
+        lastTaskText = task
 
         // USER_PROMPT_SUBMIT hook (ported from Cline's UserPromptSubmit hook)
         // Fires after user input, before processing. Cancellable: can block the message.
@@ -227,10 +269,19 @@ class AgentController(
                             RichStreamingPanel.StatusType.INFO
                         )
                     }
+                    // Gap 21: Show edit stats if any changes were made
+                    if (result.linesAdded > 0 || result.linesRemoved > 0) {
+                        dashboard.updateEditStats(
+                            result.linesAdded,
+                            result.linesRemoved,
+                            result.filesModified.size
+                        )
+                    }
+                    // Gap 1+14: Pass actual modified files from loop tracking
                     dashboard.completeSession(
                         tokensUsed = result.tokensUsed,
                         iterations = result.iterations,
-                        filesModified = emptyList(), // File tracking not in lean rewrite
+                        filesModified = result.filesModified,
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.SUCCESS
                     )
@@ -249,10 +300,12 @@ class AgentController(
                     dashboard.completeSession(
                         tokensUsed = result.tokensUsed,
                         iterations = result.iterations,
-                        filesModified = emptyList(),
+                        filesModified = result.filesModified,
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.FAILED
                     )
+                    // Gap 17: Show retry button so user can re-execute the last task
+                    lastTaskText?.let { dashboard.showRetryButton(it) }
                 }
 
                 is LoopResult.Cancelled -> {
@@ -260,22 +313,37 @@ class AgentController(
                     dashboard.completeSession(
                         tokensUsed = result.tokensUsed,
                         iterations = result.iterations,
-                        filesModified = emptyList(),
+                        filesModified = result.filesModified,
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.CANCELLED
                     )
                 }
 
                 is LoopResult.PlanPresented -> {
-                    // Plan presented for user review — show the plan and keep session active
-                    dashboard.appendCompletionSummary(result.plan, null)
-                    dashboard.completeSession(
-                        tokensUsed = result.tokensUsed,
-                        iterations = result.iterations,
-                        filesModified = emptyList(),
-                        durationMs = durationMs,
-                        status = RichStreamingPanel.SessionStatus.SUCCESS
-                    )
+                    // Priority 1: Plan presented for user review — render plan card, keep session alive.
+                    // Do NOT call completeSession() — the session stays active for approve/revise.
+                    currentPlan = result.plan
+
+                    // Parse the free-text plan into structured JSON for the JCEF plan card
+                    val planJson = PlanParser.parseToJson(result.plan)
+                    dashboard.renderPlan(planJson)
+
+                    // Display token usage so far
+                    if (result.inputTokens > 0 || result.outputTokens > 0) {
+                        val inputK = formatTokenCount(result.inputTokens)
+                        val outputK = formatTokenCount(result.outputTokens)
+                        dashboard.appendStatus(
+                            "Plan exploration used ${inputK} input + ${outputK} output tokens",
+                            RichStreamingPanel.StatusType.INFO
+                        )
+                    }
+
+                    // Unlock input so the user can interact with the plan (approve/comment)
+                    dashboard.setBusy(false)
+                    dashboard.setInputLocked(false)
+                    dashboard.focusInput()
+                    currentJob = null
+                    return@invokeLater // Skip the common unlock at the bottom
                 }
 
                 is LoopResult.SessionHandoff -> {
@@ -338,6 +406,8 @@ class AgentController(
         // Reset conversation state
         contextManager = null
         taskStartTime = 0L
+        currentPlan = null
+        lastTaskText = null
 
         // Reset dashboard UI
         dashboard.reset()
@@ -463,6 +533,88 @@ class AgentController(
             dashboard.setInputLocked(false)
             dashboard.focusInput()
         }
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Plan mode lifecycle — Priority 1
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * User approved the plan — switch to act mode and implement it.
+     *
+     * Flow: plan_mode_respond -> PlanPresented -> user clicks Approve ->
+     * switch to act mode -> send approved plan to LLM -> LLM implements step by step.
+     */
+    private fun approvePlan() {
+        LOG.info("AgentController.approvePlan")
+        val plan = currentPlan
+        if (plan == null) {
+            LOG.warn("AgentController.approvePlan: no plan to approve")
+            return
+        }
+
+        // Switch to act mode
+        AgentService.planModeActive.set(false)
+        dashboard.setPlanMode(false)
+
+        // Clear the stored plan
+        currentPlan = null
+
+        // Send the approved plan as a user message to continue the loop
+        val instruction = buildString {
+            appendLine("The user approved this plan. Now switch to ACT MODE and implement it step by step.")
+            appendLine()
+            appendLine("APPROVED PLAN:")
+            appendLine(plan)
+            appendLine()
+            appendLine("Execute each step in order. Use tools to implement the changes. " +
+                "Call attempt_completion when all steps are done.")
+        }
+        executeTask(instruction)
+    }
+
+    /**
+     * User submitted per-step comments on the plan — send to LLM for revision.
+     *
+     * Flow: plan_mode_respond -> PlanPresented -> user adds comments ->
+     * send comments to LLM -> LLM revises plan -> PlanPresented (revised).
+     *
+     * @param commentsJson JSON array of step comments: [{"stepId":"1","comment":"..."}]
+     */
+    private fun revisePlan(commentsJson: String) {
+        LOG.info("AgentController.revisePlan: $commentsJson")
+
+        // Parse the comments JSON into a human-readable revision request
+        val revisionMessage = buildString {
+            appendLine("I have comments on your plan. Please revise it:")
+            appendLine()
+            try {
+                val comments = kotlinx.serialization.json.Json.parseToJsonElement(commentsJson)
+                if (comments is kotlinx.serialization.json.JsonArray) {
+                    for (item in comments) {
+                        if (item is kotlinx.serialization.json.JsonObject) {
+                            val stepId = item["stepId"]?.let {
+                                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+                            } ?: "?"
+                            val comment = item["comment"]?.let {
+                                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+                            } ?: ""
+                            if (comment.isNotBlank()) {
+                                appendLine("- Step $stepId: $comment")
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // If JSON parsing fails, use the raw text
+                appendLine(commentsJson)
+            }
+            appendLine()
+            appendLine("Please revise the plan and present the updated version using plan_mode_respond.")
+        }
+
+        // Keep plan mode active — the LLM will explore more if needed and present a revised plan
+        executeTask(revisionMessage)
     }
 
     private fun togglePlanMode(enabled: Boolean) {

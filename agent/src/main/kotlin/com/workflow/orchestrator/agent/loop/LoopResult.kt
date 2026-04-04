@@ -1,6 +1,13 @@
 package com.workflow.orchestrator.agent.loop
 
 sealed class LoopResult {
+    /** Files modified during the agent loop (collected from tool artifacts). */
+    abstract val filesModified: List<String>
+    /** Lines added during the agent loop (from edit/create diffs). */
+    abstract val linesAdded: Int
+    /** Lines removed during the agent loop (from edit diffs). */
+    abstract val linesRemoved: Int
+
     data class Completed(
         val summary: String,
         val iterations: Int,
@@ -9,7 +16,10 @@ sealed class LoopResult {
         /** Cumulative input (prompt) tokens across all API calls. Ported from Cline's tokensIn. */
         val inputTokens: Int = 0,
         /** Cumulative output (completion) tokens across all API calls. Ported from Cline's tokensOut. */
-        val outputTokens: Int = 0
+        val outputTokens: Int = 0,
+        override val filesModified: List<String> = emptyList(),
+        override val linesAdded: Int = 0,
+        override val linesRemoved: Int = 0
     ) : LoopResult()
 
     data class Failed(
@@ -17,14 +27,20 @@ sealed class LoopResult {
         val iterations: Int = 0,
         val tokensUsed: Int = 0,
         val inputTokens: Int = 0,
-        val outputTokens: Int = 0
+        val outputTokens: Int = 0,
+        override val filesModified: List<String> = emptyList(),
+        override val linesAdded: Int = 0,
+        override val linesRemoved: Int = 0
     ) : LoopResult()
 
     data class Cancelled(
         val iterations: Int,
         val tokensUsed: Int = 0,
         val inputTokens: Int = 0,
-        val outputTokens: Int = 0
+        val outputTokens: Int = 0,
+        override val filesModified: List<String> = emptyList(),
+        override val linesAdded: Int = 0,
+        override val linesRemoved: Int = 0
     ) : LoopResult()
 
     /**
@@ -43,7 +59,10 @@ sealed class LoopResult {
         val iterations: Int,
         val tokensUsed: Int = 0,
         val inputTokens: Int = 0,
-        val outputTokens: Int = 0
+        val outputTokens: Int = 0,
+        override val filesModified: List<String> = emptyList(),
+        override val linesAdded: Int = 0,
+        override val linesRemoved: Int = 0
     ) : LoopResult()
 
     /**
@@ -61,7 +80,10 @@ sealed class LoopResult {
         val iterations: Int,
         val tokensUsed: Int = 0,
         val inputTokens: Int = 0,
-        val outputTokens: Int = 0
+        val outputTokens: Int = 0,
+        override val filesModified: List<String> = emptyList(),
+        override val linesAdded: Int = 0,
+        override val linesRemoved: Int = 0
     ) : LoopResult()
 }
 
