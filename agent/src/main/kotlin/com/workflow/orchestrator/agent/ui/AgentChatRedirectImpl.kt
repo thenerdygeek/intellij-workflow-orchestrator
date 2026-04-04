@@ -26,7 +26,6 @@ class AgentChatRedirectImpl : AgentChatRedirect {
             log.warn("[AgentRedirect] AgentController not initialized — open the Agent tab first")
             return
         }
-        // TODO: Wire to new AgentController when reimplemented
         controller.executeTask(prompt)
     }
 }

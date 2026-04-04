@@ -13,7 +13,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
-import com.workflow.orchestrator.agent.AgentService
 import java.beans.PropertyChangeListener
 import javax.swing.Icon
 import javax.swing.JComponent
@@ -63,7 +62,12 @@ class AgentChatEditor(
     private val panel = AgentDashboardPanel(parentDisposable = disposer)
 
     init {
-        // TODO: Wire to new AgentController when reimplemented
+        // Register this panel as a mirror of the primary dashboard
+        val controller = AgentControllerRegistry.getInstance(project).controller
+        controller?.addMirrorPanel(panel)
+        Disposer.register(disposer, Disposable {
+            controller?.removeMirrorPanel(panel)
+        })
     }
 
     override fun getComponent(): JComponent = panel
