@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), ~70 registered tools in 3-tier ToolRegistry (core/deferred/active via tool_search), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 7 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond`/`act_mode_respond`, skill system (`use_skill`), session handoff (`new_task`), JSONL session persistence with checkpoint reversion (SessionStore), task progress (FocusChain), cost tracking, diff view, sub-agent delegation (`spawn_agent`), JCEF chat UI |
+| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), ~70 registered tools in 3-tier ToolRegistry (core/deferred/active via tool_search), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 7 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond`/`act_mode_respond`, skill system (`use_skill`), session handoff (`new_task`), JSONL session persistence with checkpoint reversion (SessionStore), task progress (FocusChain), cost tracking, diff view, sub-agent delegation (`spawn_agent`) with parallel research subagents (up to 5 concurrent), dynamic agent configs via YAML (`AgentConfigLoader`), configurable context budget, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -140,6 +140,7 @@ Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
 - File writes: `WriteCommandAction.runWriteCommandAction()`
 - User operations: `runBackgroundableTask`
 - Background polling: `CoroutineScope` + `SupervisorJob` tied to `Disposable`
+- Parallel subagents: `supervisorScope` + `async` for research scope (up to 5 concurrent)
 - Use coroutine scope, not `runBlocking`, in Swing callbacks
 
 ## Authentication
@@ -166,6 +167,25 @@ All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (compu
 | Logs | `logs/agent-YYYY-MM-DD.jsonl` | 7 days |
 
 Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`.
+
+## Dynamic Agent Configs
+
+YAML config files in `~/.workflow-orchestrator/agents/` define custom subagent personas with hot-reload.
+Each `.yaml` file has YAML frontmatter (name, description, tools, skills, modelId) and a markdown body
+that becomes the system prompt. Loaded by `AgentConfigLoader` on startup, file-watched for changes.
+
+Example:
+```yaml
+---
+name: "Code Reviewer"
+description: "Reviews code for bugs and quality"
+tools: "read_file, search_code, find_references"
+modelId: "optional/model-override"
+---
+You are a code review specialist. Analyze code for...
+```
+
+Registered as dynamic tools (`use_subagent_code_reviewer`) callable by the LLM.
 
 **Persistence pattern** (ported from Cline's `message-state.ts`): JSONL append after every tool execution
 for conversation history. Session metadata updated atomically after each checkpoint. Named checkpoints
