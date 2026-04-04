@@ -110,7 +110,7 @@ class SourcegraphChatClient(
                         log.debug("[Agent:API] Models: ${parsed.data.size} available")
                         ApiResult.Success(parsed)
                     }
-                    else -> mapErrorResponse(response.code, body)
+                    else -> mapErrorResponse(response.code, body, response)
                 }
             }
         } catch (e: IOException) {
@@ -307,7 +307,7 @@ class SourcegraphChatClient(
                 if (!response.isSuccessful) {
                     activeCall.set(null)
                     val body = response.body?.string() ?: ""
-                    return@withContext mapErrorResponse(response.code, body)
+                    return@withContext mapErrorResponse(response.code, body, response)
                 }
 
                 val reader = response.body?.byteStream()?.bufferedReader()
@@ -509,7 +509,7 @@ class SourcegraphChatClient(
                         }
                         else -> {
                             dumpApiError(response.code, body)
-                            mapErrorResponse(response.code, body)
+                            mapErrorResponse(response.code, body, response)
                         }
                     }
                 }
@@ -527,15 +527,65 @@ class SourcegraphChatClient(
         }
     }
 
-    private fun <T> mapErrorResponse(code: Int, body: String): ApiResult<T> = when {
+    /**
+     * Map HTTP error codes to typed ApiResult.Error.
+     *
+     * For 429 (rate limited), parses retry-after headers from the response
+     * to provide a delay hint. Ported from Cline's retry.ts header parsing:
+     * checks retry-after, x-ratelimit-reset, ratelimit-reset in priority order.
+     *
+     * @param code HTTP status code
+     * @param body response body string
+     * @param response optional OkHttp response for extracting rate-limit headers
+     */
+    private fun <T> mapErrorResponse(code: Int, body: String, response: Response? = null): ApiResult<T> = when {
         code == 401 || code == 403 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed ($code)")
-        code == 429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limited. Retry after delay.")
+        code == 429 -> {
+            val retryAfterMs = response?.let { parseRetryAfterHeaders(it) }
+            ApiResult.Error(
+                ErrorType.RATE_LIMITED,
+                "Rate limited. Retry after delay.",
+                retryAfterMs = retryAfterMs
+            )
+        }
         body.contains("context_length", ignoreCase = true) -> ApiResult.Error(
             ErrorType.CONTEXT_LENGTH_EXCEEDED,
             "Context length exceeded ($code): $body"
         )
         code in 500..599 -> ApiResult.Error(ErrorType.SERVER_ERROR, "Server error ($code): $body")
         else -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "Unexpected response ($code): $body")
+    }
+
+    /**
+     * Parse rate-limit headers from an HTTP response.
+     *
+     * Faithful port of Cline's retry.ts header parsing:
+     * ```js
+     * const retryAfter = error.headers?.["retry-after"]
+     *     || error.headers?.["x-ratelimit-reset"]
+     *     || error.headers?.["ratelimit-reset"]
+     * ```
+     *
+     * Handles both delta-seconds and Unix timestamp formats.
+     *
+     * @return delay in milliseconds, or null if no retry-after info found
+     */
+    private fun parseRetryAfterHeaders(response: Response): Long? {
+        val headerValue = response.header("retry-after")
+            ?: response.header("x-ratelimit-reset")
+            ?: response.header("ratelimit-reset")
+            ?: return null
+
+        val retryValue = headerValue.trim().toLongOrNull() ?: return null
+
+        val nowSeconds = System.currentTimeMillis() / 1000
+        return if (retryValue > nowSeconds) {
+            // Unix timestamp
+            (retryValue * 1000 - System.currentTimeMillis()).coerceAtLeast(0)
+        } else {
+            // Delta seconds
+            retryValue * 1000
+        }
     }
 
     private class ToolCallBuilder {

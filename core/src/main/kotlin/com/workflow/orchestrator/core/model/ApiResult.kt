@@ -20,7 +20,13 @@ sealed class ApiResult<out T> {
     data class Error(
         val type: ErrorType,
         val message: String,
-        val cause: Throwable? = null
+        val cause: Throwable? = null,
+        /**
+         * Suggested retry delay in milliseconds, parsed from rate-limit response headers.
+         * Ported from Cline's retry.ts: reads retry-after, x-ratelimit-reset, ratelimit-reset.
+         * Null if no retry hint was available.
+         */
+        val retryAfterMs: Long? = null
     ) : ApiResult<Nothing>()
 
     val isSuccess: Boolean get() = this is Success
