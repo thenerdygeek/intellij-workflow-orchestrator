@@ -47,8 +47,6 @@ Use `create_plan` with two parameters:
 **Every plan MUST use this structure:**
 
 ```markdown
-> **Execution:** Use skill(skill="subagent-driven") to execute this plan — fresh subagent per task with two-stage review (spec compliance + code quality).
-
 ## Goal
 [One sentence describing what this builds]
 

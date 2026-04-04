@@ -1016,6 +1016,7 @@ class AgentController(
         // Reset plan mode on cancel
         planModeEnabled = false
         AgentService.planModeActive.set(false)
+        AgentService.pendingPlanRevision.set(false)
         dashboard.setPlanMode(false)
         // Cancel active Ralph Loop
         ralphOrchestrator.cancel()?.let { finalState ->
@@ -1056,6 +1057,7 @@ class AgentController(
         // Reset plan mode so it doesn't leak into the next session
         planModeEnabled = false
         AgentService.planModeActive.set(false)
+        AgentService.pendingPlanRevision.set(false)
         dashboard.setPlanMode(false)
         dashboard.reset()
         dashboard.focusInput()
@@ -1134,6 +1136,18 @@ class AgentController(
 
         // Set session directory for plan persistence
         currentSession.planManager.sessionDir = currentSession.store.sessionDirectory
+
+        // Handle chat messages during plan approval WITHOUT releasing the suspension.
+        // The user's message is shown in chat and a brief acknowledgment is sent back.
+        // The plan stays suspended — only Approve/Revise buttons release it.
+        currentSession.planManager.onChatDuringApproval = { message, _ ->
+            invokeLater {
+                dashboard.appendStatus(
+                    "Your comment has been noted. Use inline comments + Revise to request changes, or click Approve to start execution.",
+                    RichStreamingPanel.StatusType.INFO
+                )
+            }
+        }
 
         // Wire anchor update: sets/updates the <active_plan> system message
         currentSession.planManager.onPlanAnchorUpdate = { plan ->
@@ -1937,11 +1951,34 @@ class AgentController(
                 val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
                 val url = connections.state.sourcegraphUrl.trimEnd('/')
                 val token = credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.SOURCEGRAPH)
-                if (url.isBlank() || token.isNullOrBlank()) return@launch
+                if (url.isBlank() || token.isNullOrBlank()) {
+                    LOG.debug("SmartWorkingPhrase: skipped — no Sourcegraph connection")
+                    return@launch
+                }
 
-                // Use cheapest model (Haiku preferred)
-                val models = com.workflow.orchestrator.core.ai.ModelCache.getCached()
-                val cheapModel = com.workflow.orchestrator.core.ai.ModelCache.pickCheapest(models)?.id ?: return@launch
+                // Use cheapest model (Haiku preferred).
+                // getCached() may be empty on first session — the model list is fetched
+                // during session creation which runs concurrently. If empty, fetch it now
+                // with a short timeout so we don't block too long.
+                var models = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+                if (models.isEmpty()) {
+                    LOG.debug("SmartWorkingPhrase: model cache empty, fetching models")
+                    val tempClient = com.workflow.orchestrator.agent.api.SourcegraphChatClient(
+                        baseUrl = url,
+                        tokenProvider = { token },
+                        model = "", // not used for listModels
+                        connectTimeoutSeconds = 3,
+                        readTimeoutSeconds = 5
+                    )
+                    models = com.workflow.orchestrator.core.ai.ModelCache.getModels(tempClient)
+                }
+
+                val cheapModel = com.workflow.orchestrator.core.ai.ModelCache.pickCheapest(models)?.id
+                if (cheapModel == null) {
+                    LOG.debug("SmartWorkingPhrase: no suitable model found in ${models.size} models")
+                    return@launch
+                }
+                LOG.debug("SmartWorkingPhrase: using model $cheapModel")
 
                 val client = com.workflow.orchestrator.agent.api.SourcegraphChatClient(
                     baseUrl = url,
@@ -1984,11 +2021,17 @@ class AgentController(
                 if (result is com.workflow.orchestrator.core.model.ApiResult.Success) {
                     val phrase = result.data.choices.firstOrNull()?.message?.content?.trim()
                     if (!phrase.isNullOrBlank() && phrase.length < 100) {
+                        LOG.debug("SmartWorkingPhrase: got phrase \"$phrase\"")
                         invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                    } else {
+                        LOG.debug("SmartWorkingPhrase: empty or oversized response")
                     }
+                } else {
+                    LOG.debug("SmartWorkingPhrase: API call failed — ${(result as? com.workflow.orchestrator.core.model.ApiResult.Error)?.message}")
                 }
-            } catch (_: Exception) {
-                // Silent fallback — random phrase stays
+            } catch (e: Exception) {
+                // Silent fallback — random phrase stays, but log for debugging
+                LOG.debug("SmartWorkingPhrase: failed — ${e.message}")
             }
         }
     }

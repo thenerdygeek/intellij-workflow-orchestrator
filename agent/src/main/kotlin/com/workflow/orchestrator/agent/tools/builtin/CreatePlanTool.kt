@@ -43,6 +43,9 @@ class CreatePlanTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        // Clear revision flag — the LLM is calling create_plan as requested
+        AgentService.pendingPlanRevision.set(false)
+
         val title = params["title"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'title' parameter required", "Error: missing title", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val markdown = params["markdown"]?.jsonPrimitive?.content
@@ -93,33 +96,36 @@ class CreatePlanTool : AgentTool {
 
         return when (result) {
             is PlanApprovalResult.Approved -> {
-                val executionGuidance = if (steps.size > 2) {
-                    "Plan approved by user (${steps.size} steps). " +
-                        "Call skill(skill=\"subagent-driven\") NOW to execute — it dispatches a fresh " +
-                        "subagent per task with two-stage review (spec compliance + code quality)."
-                } else {
-                    "Plan approved by user (${steps.size} steps). " +
-                        "This is a small plan — execute directly. Mark steps with update_plan_step " +
-                        "('running' when starting, 'done' when complete, 'failed' if it fails)."
-                }
+                val executionGuidance = "Plan approved by user (${steps.size} steps). " +
+                    "Ask the user which execution approach they prefer:\n\n" +
+                    "1. **Subagent-Driven (recommended for ${if (steps.size > 2) "this plan" else "larger plans"})** — " +
+                    "Fresh subagent per task with two-stage review. Use: skill(skill=\"subagent-driven\")\n\n" +
+                    "2. **Direct Execution** — Execute tasks in this session step by step, " +
+                    "tracking progress with update_plan_step.\n\n" +
+                    "Present both options and let the user choose."
                 ToolResult(
                     content = executionGuidance,
                     summary = "Plan approved (${steps.size} steps)",
-                    tokenEstimate = 40
+                    tokenEstimate = 80
                 )
             }
             is PlanApprovalResult.Revised -> {
+                AgentService.pendingPlanRevision.set(true)
                 val comments = result.comments.entries.joinToString("\n") { "- Step ${it.key}: ${it.value}" }
                 ToolResult(
                     content = "User requested revisions to the plan. Their feedback:\n$comments\n\n" +
-                        "Please create a revised plan by calling create_plan again with updated " +
-                        "markdown incorporating this feedback.",
+                        "You MUST call create_plan now with a revised markdown addressing the feedback above. No other action is allowed.",
                     summary = "Plan revision requested",
                     tokenEstimate = TokenEstimator.estimate(comments),
                     isError = true
                 )
             }
             is PlanApprovalResult.RevisedWithContext -> {
+                // Lock down tools — only create_plan + read-only until the LLM submits a revised plan.
+                // Without this, the LLM may interpret the user's revision comment as an execution
+                // instruction and try to act on it instead of revising the plan.
+                AgentService.pendingPlanRevision.set(true)
+
                 val feedbackLines = result.revisions.joinToString("\n\n") { rev ->
                     "On: \"${rev.line}\"\n→ User: \"${rev.comment}\""
                 }
@@ -135,7 +141,7 @@ class CreatePlanTool : AgentTool {
                     append(planSection)
                     appendLine()
                     appendLine()
-                    append("Please create a revised plan by calling create_plan again, addressing all feedback above.")
+                    append("You MUST call create_plan now with a revised markdown addressing the feedback above. No other action is allowed.")
                 }
                 ToolResult(
                     content = content,
@@ -145,9 +151,9 @@ class CreatePlanTool : AgentTool {
                 )
             }
             is PlanApprovalResult.ChatMessage -> {
-                // Keep plan mode ACTIVE — do NOT auto-approve. The LLM stays constrained
-                // to read-only + plan tools, preventing accidental execution. If the user
-                // wants to approve, they should use the Approve button.
+                // UNREACHABLE: submitPlanAndWait() handles ChatMessage internally via its
+                // while-loop and re-suspends. This branch is a defensive fallback in case
+                // the loop logic changes in the future.
                 val planMarkdown = planManager.currentPlan?.markdown ?: ""
                 val stepCount = planManager.currentPlan?.steps?.size ?: 0
                 val planSection = if (planMarkdown.isNotBlank()) {

@@ -183,6 +183,17 @@ class SingleAgentSession(
             "sonar", "spring", "build"
         )
 
+        /** Tools allowed during pending plan revision. The LLM MUST call create_plan
+         *  to submit a revised plan. Read-only tools are included for research, and
+         *  think for reasoning, but no execution/write/agent/skill tools. */
+        val REVISION_ALLOWED_TOOLS = setOf(
+            "create_plan", "think",
+            "read_file", "search_code", "glob_files", "file_structure",
+            "find_definition", "find_references", "type_hierarchy", "call_hierarchy",
+            "diagnostics", "find_implementations", "get_annotations", "get_method_body",
+            "project_context"
+        )
+
         /** Source-code mutation tools blocked during plan mode.
          *  When plan mode is active, these are removed from the LLM's tool schema
          *  so it cannot attempt file modifications — only read/analyze/plan. */
@@ -624,8 +635,20 @@ class SingleAgentSession(
             }
             // Plan mode: remove source mutation tools from schema so LLM can't see them
             val planMode = AgentService.planModeActive.get()
-            val effectiveToolDefs = if (planMode) filterToolDefsForPlanMode(activeToolDefs) else activeToolDefs
-            val effectiveTools = if (planMode) filterToolsForPlanMode(activeTools) else activeTools
+            val revisionPending = AgentService.pendingPlanRevision.get()
+            val (effectiveToolDefs, effectiveTools) = when {
+                // Pending revision: only create_plan + read-only tools.
+                // Mechanically prevents the LLM from interpreting revision comments
+                // as execution instructions (e.g., "use subagent-driven development").
+                revisionPending -> {
+                    val allowed = REVISION_ALLOWED_TOOLS
+                    activeToolDefs.filter { it.function.name in allowed } to
+                        activeTools.filterKeys { it in allowed }
+                }
+                // Normal plan mode: block write tools but allow everything else
+                planMode -> filterToolDefsForPlanMode(activeToolDefs) to filterToolsForPlanMode(activeTools)
+                else -> activeToolDefs to activeTools
+            }
             val toolDefsForCall = if (shouldSuppressTools()) null else if (effectiveTools.isNotEmpty()) effectiveToolDefs else null
 
             // LLM call with retry logic for rate limits and context length exceeded
@@ -1520,6 +1543,19 @@ class SingleAgentSession(
             return Triple(toolCall, ToolResult(
                 content = msg,
                 summary = "Blocked: $toolName (plan mode)",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            ), 0L)
+        }
+
+        // Revision mode execution guard — safety net for cached tool calls from before
+        // pendingPlanRevision was set. Only create_plan + read-only tools are allowed.
+        if (AgentService.pendingPlanRevision.get() && toolName !in REVISION_ALLOWED_TOOLS) {
+            val msg = "Tool '$toolName' is blocked during plan revision. Call create_plan to submit your revised plan."
+            eventLog?.log(AgentEventType.TOOL_FAILED, "$toolName: blocked by pending revision")
+            return Triple(toolCall, ToolResult(
+                content = msg,
+                summary = "Blocked: $toolName (pending revision)",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             ), 0L)

@@ -360,6 +360,11 @@ class AgentService(
          *  Set by EnablePlanModeTool, AgentController (UI toggle), and PlanManager (on approval). */
         val planModeActive = java.util.concurrent.atomic.AtomicBoolean(false)
 
+        /** When true, the user requested a plan revision and the LLM MUST call create_plan
+         *  to submit a revised plan. All tools except create_plan + read-only are blocked.
+         *  Set by CreatePlanTool on RevisedWithContext, cleared when create_plan is called again. */
+        val pendingPlanRevision = java.util.concurrent.atomic.AtomicBoolean(false)
+
         fun getInstance(project: Project): AgentService {
             return project.service<AgentService>()
         }

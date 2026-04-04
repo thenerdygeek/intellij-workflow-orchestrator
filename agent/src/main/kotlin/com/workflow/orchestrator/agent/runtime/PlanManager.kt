@@ -90,28 +90,61 @@ class PlanManager {
      * @param timeoutMs How long to wait before auto-approving (default 60s)
      * @return [PlanApprovalResult] indicating user decision or auto-approval
      */
+    /**
+     * Callback invoked when the user sends a chat message while the plan is awaiting
+     * approval. The handler should respond to the user (e.g., answer a question) without
+     * releasing the plan suspension. Set by SingleAgentSession/AgentController.
+     */
+    var onChatDuringApproval: (suspend (message: String, plan: AgentPlan) -> Unit)? = null
+
     suspend fun submitPlanAndWait(plan: AgentPlan, timeoutMs: Long = DEFAULT_APPROVAL_TIMEOUT_MS): PlanApprovalResult {
         currentPlan = plan
-        val deferred = CompletableDeferred<PlanApprovalResult>()
-        // Store for resolve by approvePlan()/revisePlan()
-        approvalDeferred = deferred
         LOG.info("PlanManager: plan submitted (async) with ${plan.steps.size} steps, timeout=${timeoutMs}ms")
         onPlanCreated?.invoke(plan)
         sessionDir?.let { PlanPersistence.save(plan, it) }
         onPlanAnchorUpdate?.invoke(plan)
-        return try {
-            withTimeout(timeoutMs) { deferred.await() }
-        } catch (e: TimeoutCancellationException) {
-            LOG.info("PlanManager: approval timed out after ${timeoutMs / 1000}s — auto-approving")
-            currentPlan?.approved = true
-            AgentService.planModeActive.set(false)
-            currentPlan?.let {
-                onPlanAnchorUpdate?.invoke(it)
-                onPlanApproved?.invoke(it)
+
+        // Loop: re-suspend after handling chat messages. Only Approved/Revised/RevisedWithContext
+        // break the loop and return to the agent. ChatMessage is handled in-place without
+        // releasing the suspension — this prevents the LLM from attempting execution.
+        // Note: timeout is per-waiting-period, not total wall-clock. Each ChatMessage resets
+        // the timer, so active user engagement prevents auto-approval indefinitely. This is
+        // intentional — an actively chatting user should not be auto-approved.
+        while (true) {
+            val deferred = CompletableDeferred<PlanApprovalResult>()
+            approvalDeferred = deferred
+            val result = try {
+                withTimeout(timeoutMs) { deferred.await() }
+            } catch (e: TimeoutCancellationException) {
+                LOG.info("PlanManager: approval timed out after ${timeoutMs / 1000}s — auto-approving")
+                currentPlan?.approved = true
+                AgentService.planModeActive.set(false)
+                currentPlan?.let {
+                    onPlanAnchorUpdate?.invoke(it)
+                    onPlanApproved?.invoke(it)
+                }
+                return PlanApprovalResult.Approved
+            } finally {
+                approvalDeferred = null
             }
-            PlanApprovalResult.Approved
-        } finally {
-            approvalDeferred = null
+
+            when (result) {
+                is PlanApprovalResult.ChatMessage -> {
+                    // Handle the chat message WITHOUT releasing the plan suspension.
+                    // The callback responds to the user, then we loop back and re-suspend.
+                    LOG.info("PlanManager: chat message during approval — handling without releasing suspension")
+                    val currentPlanSnapshot = currentPlan
+                    if (currentPlanSnapshot != null) {
+                        try {
+                            onChatDuringApproval?.invoke(result.message, currentPlanSnapshot)
+                        } catch (e: Exception) {
+                            LOG.warn("PlanManager: onChatDuringApproval failed — ${e.message}")
+                        }
+                    }
+                    // Loop continues → creates new deferred → re-suspends
+                }
+                else -> return result // Approved, Revised, RevisedWithContext → break out
+            }
         }
     }
 
@@ -149,6 +182,7 @@ class PlanManager {
         currentPlan?.approved = true
         // Auto-exit plan mode: tools are restored on next LLM call
         AgentService.planModeActive.set(false)
+        AgentService.pendingPlanRevision.set(false)
         approvalDeferred?.complete(PlanApprovalResult.Approved)
         approvalDeferred = null
         currentPlan?.let {
@@ -251,5 +285,6 @@ class PlanManager {
         currentPlan = null
         approvalDeferred = null
         isRevisionInProgress = false
+        AgentService.pendingPlanRevision.set(false)
     }
 }
