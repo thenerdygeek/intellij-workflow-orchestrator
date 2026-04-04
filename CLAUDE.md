@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent — simple ReAct loop (AgentLoop), 68 registered tools (flat ToolRegistry), message-based ContextManager with 3-stage compaction (trim tool results > LLM summarization > sliding window), explicit completion via `attempt_completion` tool, JSON file session persistence (SessionStore), JCEF chat UI, plan mode via schema filtering |
+| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), ~70 registered tools in 3-tier ToolRegistry (core/deferred/active via tool_search), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 7 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond`/`act_mode_respond`, skill system (`use_skill`), session handoff (`new_task`), JSONL session persistence with checkpoint reversion (SessionStore), task progress (FocusChain), cost tracking, diff view, sub-agent delegation (`spawn_agent`), JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -116,16 +116,22 @@ If any answer is NO, the AI agent cannot use this feature.
 - **EventBus** — SharedFlow for cross-module events (see `WorkflowEvent.kt` for full list)
 - **CredentialStore** — PasswordSafe wrapper for all secrets
 
-## Plan Mode
+## Plan Mode (from Cline)
 
-When plan mode is active, write tools (`edit_file`, `create_file`, `format_code`, `optimize_imports`,
-`refactor_rename`, `rollback_changes`) are removed from the tool schema before each LLM call.
-Read, run, debug, runtime, analysis, and planning tools remain available.
+Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
+
+1. **Schema filtering** (AgentService): write tools (`edit_file`, `create_file`, `run_command`, `revert_file`,
+   `kill_process`, `send_stdin`, `format_code`, `optimize_imports`, `refactor_rename`) + `act_mode_respond`
+   removed from tool definitions in plan mode; `plan_mode_respond` removed in act mode
+2. **Execution guard** (AgentLoop): `WRITE_TOOLS` set blocked even if LLM hallucinates them past schema filtering
 
 - **Activation:** UI Plan button toggle
-- **Deactivation:** User unclicks Plan button, new chat, or cancel
+- **Deactivation:** User approves plan (switches to act), user unclicks Plan button, new chat, or cancel
 - **State:** `AgentService.planModeActive` (AtomicBoolean) — single source of truth
-- **Enforcement:** Schema filtering — write tools excluded from `toolDefinitions` passed to `AgentLoop`
+- **Plan flow:** LLM uses read/search tools to explore, calls `plan_mode_respond` with plan.
+  If `needsMoreExploration=true`, loop continues. If `false`, returns `LoopResult.PlanPresented` for user review.
+- **Act flow:** After plan approval, loop switches to act mode. LLM uses `act_mode_respond` for progress
+  updates (cannot be called consecutively — ported from Cline)
 
 ## Threading
 
@@ -153,10 +159,23 @@ All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (compu
 
 | Data | Path | Retention |
 |---|---|---|
-| Sessions | `agent/sessions/{sessionId}.json` | Per-session |
+| Session metadata | `agent/sessions/{sessionId}.json` | Per-session |
+| Conversation history | `agent/sessions/{sessionId}/messages.jsonl` | Per-session |
+| Checkpoints | `agent/sessions/{sessionId}/checkpoints/{cpId}.jsonl` | Per-session |
+| Checkpoint metadata | `agent/sessions/{sessionId}/checkpoints/{cpId}.meta.json` | Per-session |
 | Logs | `logs/agent-YYYY-MM-DD.jsonl` | 7 days |
 
-Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`. Sessions are stored as single JSON files via `SessionStore`.
+Project identifier format: `{dirName}-{first6OfSHA256(absolutePath)}`.
+
+**Persistence pattern** (ported from Cline's `message-state.ts`): JSONL append after every tool execution
+for conversation history. Session metadata updated atomically after each checkpoint. Named checkpoints
+created after write operations (`edit_file`, `create_file`, etc.) for checkpoint reversion support.
+
+**Hook config:** `.agent-hooks.json` in project root (7 hook types: TaskStart, UserPromptSubmit,
+TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse). See `docs/architecture/agent-architecture.md` Section 11.
+
+**Skills:** Bundled from classpath `/skills/`, project-local from `{projectPath}/.agent-skills/`,
+global from `~/.workflow-orchestrator/skills/`. Each skill is a directory with `SKILL.md` (YAML frontmatter).
 
 ## UX Constraints
 
