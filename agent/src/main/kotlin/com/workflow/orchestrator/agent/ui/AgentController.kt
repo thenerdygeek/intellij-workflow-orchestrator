@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
+import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanParser
@@ -18,6 +19,8 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Bridges the JCEF chat dashboard to [AgentService].
@@ -51,6 +54,25 @@ class AgentController(
     private var userInputChannel: Channel<String>? = null
     /** True when the loop is actively waiting for user input (plan presented, not exploring). */
     private var loopWaitingForInput = false
+
+    /**
+     * Pending approval deferred — the agent loop suspends on this while
+     * waiting for the user to approve/deny a write tool execution.
+     * Completed by the JCEF approval card callbacks.
+     */
+    private var pendingApproval: CompletableDeferred<ApprovalResult>? = null
+
+    /**
+     * The tool name associated with the current pending approval.
+     * Used when the user clicks "Allow for Session" — we need to know which tool.
+     */
+    private var pendingApprovalToolName: String? = null
+
+    /**
+     * Current session ID -- tracked so checkpoint display and revert can reference it.
+     * Set when executeTask creates or resumes a session, cleared on newChat.
+     */
+    private var currentSessionId: String? = null
 
     init {
         wireCallbacks()
@@ -92,6 +114,32 @@ class AgentController(
         dashboard.setCefKillCallback { toolCallId ->
             LOG.info("AgentController: kill requested for tool call $toolCallId")
             ProcessRegistry.kill(toolCallId)
+        }
+
+        // Approval gate callbacks — user responds to approval cards for write tools
+        dashboard.setCefApprovalCallbacks(
+            onApprove = {
+                LOG.info("AgentController: tool call approved")
+                pendingApproval?.complete(ApprovalResult.APPROVED)
+            },
+            onDeny = {
+                LOG.info("AgentController: tool call denied")
+                pendingApproval?.complete(ApprovalResult.DENIED)
+            },
+            onAllowForSession = { _ ->
+                LOG.info("AgentController: tool '${pendingApprovalToolName}' allowed for session")
+                pendingApproval?.complete(ApprovalResult.ALLOWED_FOR_SESSION)
+            }
+        )
+
+        // Checkpoint revert callback — user clicks "Revert" on a checkpoint in the timeline
+        dashboard.setCefRevertCheckpointCallback { checkpointId ->
+            val sid = currentSessionId
+            if (sid != null) {
+                revertToCheckpoint(sid, checkpointId)
+            } else {
+                LOG.warn("AgentController: revert requested but no active session")
+            }
         }
 
         // Gap 11: Wire AskQuestionsTool to dashboard question wizard
@@ -223,7 +271,9 @@ class AgentController(
             onTaskProgress = ::onTaskProgress,
             onComplete = ::onComplete,
             onPlanResponse = ::onPlanResponse,
-            userInputChannel = userInputChannel
+            userInputChannel = userInputChannel,
+            approvalGate = ::approvalGate,
+            onCheckpointSaved = ::onCheckpointSaved
         )
     }
 
@@ -234,6 +284,103 @@ class AgentController(
     private fun onStreamChunk(chunk: String) {
         invokeLater {
             dashboard.appendStreamToken(chunk)
+        }
+    }
+
+    /**
+     * Approval gate -- suspends the agent loop until the user approves, denies,
+     * or allows a write tool for the session.
+     *
+     * Ported from Cline's approval flow: Cline shows an approval card in the webview
+     * and waits for the user's response before proceeding. We use a CompletableDeferred
+     * to suspend the coroutine without blocking a thread.
+     *
+     * @param toolName the tool requesting approval (e.g. "edit_file", "run_command")
+     * @param args the raw JSON arguments string
+     * @param riskLevel "low", "medium", or "high" risk classification
+     * @return the user's decision
+     */
+    private suspend fun approvalGate(toolName: String, args: String, riskLevel: String): ApprovalResult {
+        val deferred = CompletableDeferred<ApprovalResult>()
+        pendingApproval = deferred
+        pendingApprovalToolName = toolName
+
+        // Build description, metadata, and diff content for the approval card
+        val parsedArgs = try {
+            kotlinx.serialization.json.Json.parseToJsonElement(args).jsonObject
+        } catch (_: Exception) { null }
+
+        val description: String
+        val diffContent: String?
+
+        when (toolName) {
+            "edit_file" -> {
+                val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
+                val oldString = parsedArgs?.get("old_string")?.jsonPrimitive?.content ?: ""
+                val newString = parsedArgs?.get("new_string")?.jsonPrimitive?.content ?: ""
+                val editDesc = parsedArgs?.get("description")?.jsonPrimitive?.content
+                description = editDesc ?: "Edit $path"
+                diffContent = com.workflow.orchestrator.agent.util.DiffUtil.unifiedDiff(oldString, newString, path)
+            }
+            "create_file" -> {
+                val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
+                val content = parsedArgs?.get("content")?.jsonPrimitive?.content ?: ""
+                description = "Create $path"
+                val preview = if (content.length > 2000) content.take(2000) + "\n... (${content.length} chars total)" else content
+                diffContent = com.workflow.orchestrator.agent.util.DiffUtil.unifiedDiff("", preview, path)
+            }
+            "run_command" -> {
+                val command = parsedArgs?.get("command")?.jsonPrimitive?.content ?: "unknown"
+                val shell = parsedArgs?.get("shell")?.jsonPrimitive?.content ?: ""
+                val cmdDesc = parsedArgs?.get("description")?.jsonPrimitive?.content
+                description = cmdDesc ?: "Run: $command"
+                diffContent = "$ $command\n(shell: $shell)"
+            }
+            "revert_file" -> {
+                val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
+                description = "Revert $path to last saved state"
+                diffContent = null
+            }
+            else -> {
+                description = "Execute $toolName"
+                diffContent = args.take(500)
+            }
+        }
+
+        val metadataJson = """{"tool":"$toolName","riskLevel":"$riskLevel"}"""
+
+        // Show the approval card in the dashboard (on EDT)
+        invokeLater {
+            dashboard.showApproval(
+                toolName = toolName,
+                riskLevel = riskLevel,
+                description = description,
+                metadataJson = metadataJson,
+                diffContent = diffContent
+            )
+        }
+
+        // Suspend until the user responds (approve/deny/allow for session)
+        return try {
+            deferred.await()
+        } finally {
+            pendingApproval = null
+            pendingApprovalToolName = null
+        }
+    }
+
+    /**
+     * Called by AgentService after a write checkpoint is saved.
+     * Updates the checkpoint timeline in the dashboard UI.
+     *
+     * @param sessionId the session the checkpoint belongs to
+     */
+    private fun onCheckpointSaved(sessionId: String) {
+        currentSessionId = sessionId
+        invokeLater {
+            val checkpoints = service.listCheckpoints(sessionId)
+            val checkpointsJson = buildCheckpointsJson(checkpoints)
+            dashboard.updateCheckpoints(checkpointsJson)
         }
     }
 
@@ -413,6 +560,10 @@ class AgentController(
         contextManager = null
         taskStartTime = 0L
         lastTaskText = null
+        currentSessionId = null
+        pendingApproval?.cancel()
+        pendingApproval = null
+        pendingApprovalToolName = null
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
@@ -752,6 +903,23 @@ class AgentController(
         }
     }
 
+    /**
+     * Build a JSON array of checkpoint metadata for the dashboard UI.
+     * Format: [{"id":"cp-1-123","description":"After edit_file: ...","timestamp":123456}]
+     */
+    private fun buildCheckpointsJson(
+        checkpoints: List<com.workflow.orchestrator.agent.session.CheckpointInfo>
+    ): String {
+        val sb = StringBuilder("[")
+        checkpoints.forEachIndexed { index, cp ->
+            if (index > 0) sb.append(",")
+            val escapedDesc = cp.description.replace("\"", "\\\"").replace("\n", " ")
+            sb.append("""{"id":"${cp.id}","description":"$escapedDesc","timestamp":${cp.createdAt}}""")
+        }
+        sb.append("]")
+        return sb.toString()
+    }
+
     fun dispose() {
         LOG.info("AgentController.dispose")
         if (currentJob?.isActive == true) {
@@ -759,6 +927,10 @@ class AgentController(
         }
         currentJob = null
         contextManager = null
+        currentSessionId = null
+        pendingApproval?.cancel()
+        pendingApproval = null
+        pendingApprovalToolName = null
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
