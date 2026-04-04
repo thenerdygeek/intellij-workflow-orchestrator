@@ -193,6 +193,13 @@ class AgentService(private val project: Project) : Disposable {
         // Debug tools (require AgentDebugController)
         registerDebugTools()
 
+        // Sub-agent delegation tool (depth-1: sub-agents cannot spawn further sub-agents)
+        safeRegister { SpawnAgentTool(
+            brainProvider = { createBrain() },
+            toolRegistry = registry,
+            project = project
+        ) }
+
         log.info("AgentService: registered ${registry.allTools().size} tools")
     }
 
