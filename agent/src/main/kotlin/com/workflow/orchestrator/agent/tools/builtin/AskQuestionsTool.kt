@@ -7,6 +7,8 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -60,6 +62,38 @@ class AskQuestionsTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.CODER, WorkerType.ANALYZER)
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    companion object {
+        private const val QUESTION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
+
+        /**
+         * Gap 11: Callback to show the question wizard in the dashboard UI.
+         * Set by AgentController during wiring.
+         */
+        var showQuestionsCallback: ((String) -> Unit)? = null
+
+        /**
+         * Gap 11: Deferred result that blocks tool execution until the user answers.
+         * Resolved by the dashboard's question submitted callback.
+         */
+        @Volatile
+        var pendingQuestions: CompletableDeferred<String>? = null
+
+        /**
+         * Resolve the pending questions with the user's answers JSON.
+         * Called from the dashboard's onQuestionsSubmitted callback.
+         */
+        fun resolveQuestions(answersJson: String) {
+            pendingQuestions?.complete(answersJson)
+        }
+
+        /**
+         * Cancel the pending questions (user dismissed the wizard).
+         */
+        fun cancelQuestions() {
+            pendingQuestions?.complete("""{"cancelled":true}""")
+        }
+    }
 
     /**
      * Validates the questions parameter and returns a [ToolResult] error if invalid, or null if valid.
@@ -143,10 +177,62 @@ class AskQuestionsTool : AgentTool {
         // Validate parameters
         validateQuestions(params)?.let { return it }
 
-        // TODO: Wire to new AgentLoop's question manager when reimplemented
+        val questionsJson = params["questions"]?.jsonPrimitive?.content!!
+        val title = params["title"]?.jsonPrimitive?.content
+
+        // Gap 11: If the show callback is wired, display the question wizard and wait
+        val callback = showQuestionsCallback
+        if (callback != null) {
+            // Build the full wizard JSON including title
+            val escapedTitle = title?.replace("\\", "\\\\")?.replace("\"", "\\\"")
+            val wizardJson = if (escapedTitle != null) {
+                """{"title":"$escapedTitle","questions":$questionsJson}"""
+            } else {
+                """{"questions":$questionsJson}"""
+            }
+
+            // Create deferred to block until user answers
+            val deferred = CompletableDeferred<String>()
+            pendingQuestions = deferred
+
+            // Show the question wizard in the UI
+            callback(wizardJson)
+
+            // Wait for user response with timeout
+            val answersJson = withTimeoutOrNull(QUESTION_TIMEOUT_MS) { deferred.await() }
+            pendingQuestions = null
+
+            if (answersJson == null) {
+                return ToolResult(
+                    content = "User did not respond to questions within 5 minutes. Ask in plain text instead.",
+                    summary = "ask_questions: timeout",
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+            }
+
+            // Check for cancellation
+            if (answersJson.contains("\"cancelled\":true")) {
+                return ToolResult(
+                    content = "User cancelled the question wizard. You may ask questions as plain text in the chat.",
+                    summary = "ask_questions: cancelled by user",
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = false
+                )
+            }
+
+            val content = "User answered the questions:\n$answersJson"
+            return ToolResult(
+                content = content,
+                summary = "ask_questions: user responded",
+                tokenEstimate = TokenEstimator.estimate(content)
+            )
+        }
+
+        // Fallback: no UI callback wired
         return ToolResult(
-            content = "Error: Question manager not available. Ask questions as plain text instead.",
-            summary = "ask_questions: not wired yet",
+            content = "Error: Question wizard UI not available. Ask questions as plain text instead.",
+            summary = "ask_questions: UI not available",
             tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
             isError = true
         )

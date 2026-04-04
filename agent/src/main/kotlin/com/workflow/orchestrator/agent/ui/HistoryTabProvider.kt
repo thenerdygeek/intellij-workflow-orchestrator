@@ -6,7 +6,7 @@ import javax.swing.JComponent
 
 /**
  * Tab provider that adds a "History" tab to the Workflow tool window.
- * Shows all past agent sessions across all projects.
+ * Shows all past agent sessions. Gap 9: wired to SessionStore.
  */
 class HistoryTabProvider : WorkflowTabProvider {
 
@@ -15,8 +15,11 @@ class HistoryTabProvider : WorkflowTabProvider {
     override val order: Int = 6
 
     override fun createPanel(project: Project): JComponent {
-        val panel = HistoryPanel()
-        // TODO: Wire resume session when session persistence is reimplemented
+        val panel = HistoryPanel(project)
+        // Wire resume: find the AgentController from the tool window's agent tab.
+        // The HistoryPanel's onResumeSession callback is wired by AgentToolWindowFactory
+        // when it has access to the controller. For standalone usage, the callback
+        // is set externally.
         return panel
     }
 }

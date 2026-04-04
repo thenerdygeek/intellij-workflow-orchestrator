@@ -105,6 +105,13 @@ class AgentLoop(
     /** Cumulative output (completion) tokens across all API calls in this loop. */
     private var totalOutputTokens = 0
 
+    /** Files modified during this loop run (from tool artifacts). Gap 1+14: file tracking. */
+    private val modifiedFiles = mutableSetOf<String>()
+    /** Lines added during this loop run (from edit/create diffs). Gap 21: change tracking. */
+    private var totalLinesAdded = 0
+    /** Lines removed during this loop run (from edit diffs). Gap 21: change tracking. */
+    private var totalLinesRemoved = 0
+
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
 
@@ -239,7 +246,10 @@ class AgentLoop(
                     iterations = iteration,
                     tokensUsed = totalTokensUsed,
                     inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens
+                    outputTokens = totalOutputTokens,
+                    filesModified = filesModifiedList(),
+                    linesAdded = totalLinesAdded,
+                    linesRemoved = totalLinesRemoved
                 )
             }
 
@@ -304,7 +314,10 @@ class AgentLoop(
                             iterations = iteration,
                             tokensUsed = totalTokensUsed,
                             inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens
+                            outputTokens = totalOutputTokens,
+                            filesModified = filesModifiedList(),
+                            linesAdded = totalLinesAdded,
+                            linesRemoved = totalLinesRemoved
                         )
                     }
                     contextManager.addUserMessage(CONTINUATION_PROMPT)
@@ -317,7 +330,10 @@ class AgentLoop(
                 iterations = iteration,
                 tokensUsed = totalTokensUsed,
                 inputTokens = totalInputTokens,
-                outputTokens = totalOutputTokens
+                outputTokens = totalOutputTokens,
+                filesModified = filesModifiedList(),
+                linesAdded = totalLinesAdded,
+                linesRemoved = totalLinesRemoved
             )
         }
 
@@ -326,7 +342,10 @@ class AgentLoop(
             iterations = iteration,
             tokensUsed = totalTokensUsed,
             inputTokens = totalInputTokens,
-            outputTokens = totalOutputTokens
+            outputTokens = totalOutputTokens,
+            filesModified = filesModifiedList(),
+            linesAdded = totalLinesAdded,
+            linesRemoved = totalLinesRemoved
         )
     }
 
@@ -373,7 +392,10 @@ class AgentLoop(
                     iterations = iteration,
                     tokensUsed = totalTokensUsed,
                     inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens
+                    outputTokens = totalOutputTokens,
+                    filesModified = filesModifiedList(),
+                    linesAdded = totalLinesAdded,
+                    linesRemoved = totalLinesRemoved
                 )
             }
 
@@ -407,7 +429,10 @@ class AgentLoop(
                         iterations = iteration,
                         tokensUsed = totalTokensUsed,
                         inputTokens = totalInputTokens,
-                        outputTokens = totalOutputTokens
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
                     )
                 }
                 LoopStatus.SOFT_WARNING -> {
@@ -600,6 +625,16 @@ class AgentLoop(
             // We fire the callback here so AgentService can persist asynchronously.
             onCheckpoint?.invoke()
 
+            // Gap 1+14: Track modified files from tool artifacts
+            if (toolResult.artifacts.isNotEmpty()) {
+                modifiedFiles.addAll(toolResult.artifacts)
+            }
+
+            // Gap 21: Track line changes from diffs
+            if (toolResult.diff != null) {
+                countDiffChanges(toolResult.diff)
+            }
+
             // Write checkpoint: after write operations, create a named checkpoint
             // for reversion support (ported from Cline's checkpoint reversion)
             if (!toolResult.isError && toolName in WRITE_TOOLS) {
@@ -630,7 +665,10 @@ class AgentLoop(
                     tokensUsed = totalTokensUsed,
                     verifyCommand = toolResult.verifyCommand,
                     inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens
+                    outputTokens = totalOutputTokens,
+                    filesModified = filesModifiedList(),
+                    linesAdded = totalLinesAdded,
+                    linesRemoved = totalLinesRemoved
                 )
             }
 
@@ -641,7 +679,10 @@ class AgentLoop(
                     iterations = iteration,
                     tokensUsed = totalTokensUsed,
                     inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens
+                    outputTokens = totalOutputTokens,
+                    filesModified = filesModifiedList(),
+                    linesAdded = totalLinesAdded,
+                    linesRemoved = totalLinesRemoved
                 )
             }
 
@@ -657,7 +698,10 @@ class AgentLoop(
                         iterations = iteration,
                         tokensUsed = totalTokensUsed,
                         inputTokens = totalInputTokens,
-                        outputTokens = totalOutputTokens
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
                     )
                 }
                 // needs_more_exploration=true: loop continues, LLM will use more tools
@@ -670,6 +714,24 @@ class AgentLoop(
             }
         }
         return null
+    }
+
+    /** Build the common tracking fields for LoopResult. */
+    private fun filesModifiedList(): List<String> = modifiedFiles.toList()
+
+    /**
+     * Count added/removed lines from a unified diff string.
+     * Lines starting with "+" (but not "+++") are additions.
+     * Lines starting with "-" (but not "---") are removals.
+     */
+    private fun countDiffChanges(diff: String) {
+        for (line in diff.lines()) {
+            when {
+                line.startsWith("+++") || line.startsWith("---") -> { /* file header, skip */ }
+                line.startsWith("+") -> totalLinesAdded++
+                line.startsWith("-") -> totalLinesRemoved++
+            }
+        }
     }
 
     /**
