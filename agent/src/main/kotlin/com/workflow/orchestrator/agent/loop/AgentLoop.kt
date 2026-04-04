@@ -185,15 +185,29 @@ class AgentLoop(
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
         private const val MAX_RETRY_DELAY_MS = 30_000L
-        private const val CONTINUATION_PROMPT =
-            "Your previous response was empty. If the user asked a question or greeted you, " +
-            "use the act_mode_respond tool to reply. If you need to take action, use the appropriate tool. " +
-            "If the task is complete, call attempt_completion."
+        /**
+         * Nudge for text-only responses (no tool calls).
+         * Ported from Cline's formatResponse.noToolsUsed() in responses.ts.
+         */
         private const val TEXT_ONLY_NUDGE =
-            "You responded with text but did not call any tool. " +
-            "If you are answering a question or responding conversationally, use the act_mode_respond tool. " +
-            "If you need to take action on the codebase, use the appropriate tool (read_file, edit_file, etc.). " +
-            "If the task is complete, call attempt_completion."
+            "[ERROR] You did not use a tool in your previous response! Please retry with a tool use.\n\n" +
+            "# Next Steps\n\n" +
+            "If you have completed the user's task, use the attempt_completion tool.\n" +
+            "If you require additional information from the user, use the ask_followup_question tool.\n" +
+            "If you want to respond conversationally, use the act_mode_respond tool.\n" +
+            "Otherwise, if you have not completed the task and do not need additional information, " +
+            "then proceed with the next step of the task.\n" +
+            "(This is an automated message, so do not respond to it conversationally.)"
+
+        /**
+         * Message for empty responses (no text, no tools).
+         * Ported from Cline: empty responses are treated as PROVIDER ERRORS,
+         * separate from text-only (model mistakes).
+         */
+        private const val EMPTY_RESPONSE_ERROR =
+            "Invalid API Response: The provider returned an empty or unparsable response. " +
+            "This is a provider-side issue where the model failed to generate valid output. " +
+            "Please retry — if the problem persists, check the model or provider configuration."
         private const val LOOP_SOFT_WARNING =
             "WARNING: You have called the same tool with identical arguments multiple times in a row. " +
             "This is not making progress. Please try a different approach, use different parameters, " +
@@ -256,6 +270,8 @@ class AgentLoop(
 
         var iteration = 0
         var consecutiveEmpties = 0
+        var consecutiveMistakes = 0  // Cline: consecutiveMistakeCount — tracks text-only (no tool) responses
+        val maxConsecutiveMistakes = 3  // Cline: configurable via settings. At max, asks user for feedback.
         var apiRetryCount = 0
         var contextOverflowRetries = 0
 
@@ -361,31 +377,55 @@ class AgentLoop(
                 // Case A: Tool calls present — execute them
                 hasToolCalls -> {
                     consecutiveEmpties = 0
+                    consecutiveMistakes = 0  // Tool use resets mistake count
                     val completionResult = executeToolCalls(assistantMessage.toolCalls!!, iteration)
                     if (completionResult != null) return completionResult
                 }
 
-                // Case B: Text only — in plan mode, wait for user input; in act mode, nudge to use tools
+                // Case B: Text only (no tool calls) — Cline pattern: inject nudge, increment mistake count
+                // Ported from Cline index.ts line 3201-3207: noToolsUsed + consecutiveMistakeCount++
                 hasContent -> {
                     consecutiveEmpties = 0
-                    LOG.info("[Loop] Text-only response (no tool calls) -- nudging")
+                    consecutiveMistakes++
+                    LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
+
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
-                        // Notify UI so the streamed text is visible, then wait for user input.
                         val userMessage = userInputChannel.receive()
                         contextManager.addUserMessage(userMessage)
+                        consecutiveMistakes = 0
+                    } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
+                        // Cline pattern: at max mistakes, ask user for feedback instead of failing
+                        LOG.warn("[Loop] Max consecutive mistakes ($maxConsecutiveMistakes) — waiting for user feedback")
+                        val userMessage = userInputChannel.receive()
+                        contextManager.addUserMessage(userMessage)
+                        consecutiveMistakes = 0
+                    } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
+                        // No user input channel (sub-agent) — fail
+                        return LoopResult.Failed(
+                            error = "Agent failed to use tools after $maxConsecutiveMistakes attempts.",
+                            iterations = iteration,
+                            tokensUsed = totalTokensUsed,
+                            inputTokens = totalInputTokens,
+                            outputTokens = totalOutputTokens,
+                            filesModified = filesModifiedList(),
+                            linesAdded = totalLinesAdded,
+                            linesRemoved = totalLinesRemoved
+                        )
                     } else {
+                        // Below max — inject nudge and continue (Cline: noToolsUsed message)
                         contextManager.addUserMessage(TEXT_ONLY_NUDGE)
                     }
                 }
 
-                // Case C: Empty response — inject continuation, track consecutive count
+                // Case C: Empty response — provider error (Cline treats separately from text-only)
+                // Ported from Cline: empty = provider error, NOT a model mistake
                 else -> {
                     consecutiveEmpties++
-                    LOG.warn("[Loop] Empty response from LLM (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
+                    LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
                         return LoopResult.Failed(
-                            error = "Failed after $MAX_CONSECUTIVE_EMPTIES consecutive empty responses from model.",
+                            error = "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
                             iterations = iteration,
                             tokensUsed = totalTokensUsed,
                             inputTokens = totalInputTokens,
@@ -395,7 +435,7 @@ class AgentLoop(
                             linesRemoved = totalLinesRemoved
                         )
                     }
-                    contextManager.addUserMessage(CONTINUATION_PROMPT)
+                    contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
                 }
             }
         }
