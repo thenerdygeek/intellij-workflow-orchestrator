@@ -180,12 +180,33 @@ class AgentConfigLoader private constructor() : Disposable {
 
     // ----- Internal -----
 
+    /**
+     * Rebuild dynamic tool name mappings with collision handling.
+     * Port of rebuildDynamicToolMappings() in AgentConfigLoader.ts:330-354.
+     * If two agents produce the same tool name, suffix incrementing (_2, _3, etc.) resolves it.
+     */
     internal fun rebuildDynamicToolMappings() {
-        toolNameToAgentName.clear()
-        for ((_, config) in configCache) {
-            val toolName = SubagentToolName.build(config.name)
-            toolNameToAgentName[toolName] = config.name
+        val sorted = configCache.entries.sortedBy { it.key }
+        val usedToolNames = mutableSetOf<String>()
+        val newToolNameToAgent = mutableMapOf<String, String>()
+
+        for ((_, config) in sorted) {
+            val baseName = SubagentToolName.build(config.name)
+            var candidate = baseName
+            var suffix = 2
+            while (candidate in usedToolNames) {
+                val suffixText = "_$suffix"
+                suffix++
+                val maxBaseLength = maxOf(1, 64 - suffixText.length)
+                candidate = "${baseName.take(maxBaseLength)}$suffixText"
+            }
+
+            usedToolNames.add(candidate)
+            newToolNameToAgent[candidate] = config.name
         }
+
+        toolNameToAgentName.clear()
+        toolNameToAgentName.putAll(newToolNameToAgent)
     }
 
     private fun rebuildCaches(configs: List<AgentConfig>) {
