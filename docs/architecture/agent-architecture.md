@@ -920,7 +920,10 @@ Ported from Cline's `FocusChainManager` + `focus-chain-utils.ts`:
 | `finish_reason: length` handling | -- | -- | Yes |
 | 3-tier tool registry | -- | -- | Yes (from Claude Code) |
 | `tool_search` deferred loading | -- | -- | Yes (from Claude Code) |
-| `spawn_agent` sub-agent | -- | -- | Yes (from Claude Code) |
+| `agent` sub-agent tool | -- | -- | Yes (from Cline `use_subagents` + Claude Code patterns) |
+| Parallel research subagents (up to 5) | Yes (from Cline) | `supervisorScope` + `async` | `SubagentRunner` wraps `AgentLoop` |
+| Dynamic agent configs (YAML) | Yes (from Cline `AgentConfigLoader`) | `.md` bundled + `.yaml` user | 8 bundled specialist personas |
+| 3-tier memory system | -- | -- | Yes (from Letta/MemGPT + Codex + Goose) |
 | Cost tracking (tokens) | Yes | -- | -- |
 | Diff view | Yes | LCS algorithm | -- |
 | JSONL persistence | -- | Cline uses JSON array | Efficient append |
