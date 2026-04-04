@@ -133,6 +133,19 @@ class AgentLoop(
             val choice = response.choices.firstOrNull() ?: continue
             val assistantMessage = choice.message
 
+            // Stage 3.5: Handle truncated response (finish_reason: length)
+            if (choice.finishReason == "length") {
+                // Response was truncated — don't try to parse partial tool calls
+                contextManager.addAssistantMessage(
+                    ChatMessage(role = "assistant", content = assistantMessage.content ?: "")
+                )
+                contextManager.addUserMessage(
+                    "Your response was cut short due to output length limits. " +
+                    "Please continue from where you left off, using smaller steps."
+                )
+                continue
+            }
+
             // Stage 4: Add assistant message to context
             contextManager.addAssistantMessage(assistantMessage)
 
@@ -254,6 +267,15 @@ class AgentLoop(
                 )
                 continue
             }
+
+            // Fire start callback (empty result, zero duration = RUNNING)
+            onToolCall(
+                ToolCallProgress(
+                    toolName = toolName,
+                    args = call.function.arguments,
+                    toolCallId = toolCallId
+                )
+            )
 
             // Execute tool
             val toolResult = try {

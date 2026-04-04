@@ -7,10 +7,10 @@ data class Session(
     val id: String,
     val title: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    var lastMessageAt: Long = createdAt,
-    var messageCount: Int = 0,
-    var status: SessionStatus = SessionStatus.ACTIVE,
-    var totalTokens: Int = 0
+    val lastMessageAt: Long = createdAt,
+    val messageCount: Int = 0,
+    val status: SessionStatus = SessionStatus.ACTIVE,
+    val totalTokens: Int = 0
 )
 
 @Serializable

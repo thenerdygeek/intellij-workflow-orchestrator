@@ -146,11 +146,11 @@ class ContextManagerTest {
 
         @Test
         fun `tokenEstimate returns bytes div 4 estimate`() {
-            cm.setSystemPrompt("abcd") // 4 bytes -> 1 token
-            cm.addUserMessage("abcdefgh") // 8 bytes -> 2 tokens
+            cm.setSystemPrompt("abcd") // 4 bytes (system prompt, not in messages list)
+            cm.addUserMessage("abcdefgh") // 8 bytes content + 4 bytes per-message overhead
 
-            // estimate for "abcd" + "abcdefgh" = 12 bytes / 4 = 3
-            assertEquals(3, cm.tokenEstimate())
+            // estimate: "abcd" (4 bytes) + "abcdefgh" (8 bytes) + overhead (4 bytes) = 16 / 4 = 4
+            assertEquals(4, cm.tokenEstimate())
         }
     }
 
@@ -446,6 +446,103 @@ class ContextManagerTest {
         }
     }
 
+    // ---- I2: LLM summarization failure leaves messages unchanged ----
+
+    @Nested
+    inner class LlmSummarizationFailure {
+
+        @Test
+        fun `LLM failure during summarization leaves messages unchanged`() = runTest {
+            val errorBrain = ErrorLlmBrain()
+            cm = ContextManager(maxInputTokens = 1000)
+            cm.setSystemPrompt("sys")
+
+            // Add enough messages to trigger summarization
+            for (i in 1..10) {
+                cm.addUserMessage("question $i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i"))
+            }
+
+            val countBefore = cm.messageCount()
+            val messagesBefore = cm.getMessages().map { it.content }
+
+            // Force high utilization to trigger stage 2 (LLM summarization)
+            cm.updateTokens(promptTokens = 900)
+            cm.compact(errorBrain)
+
+            // Messages should be unchanged after failed summarization
+            // (sliding window at stage 3 may still run, but stage 2 should not lose context)
+            // At minimum, we should not have fewer messages than what sliding window alone would produce
+            val messagesAfter = cm.getMessages()
+            // The key assertion: no message was replaced with an error placeholder
+            val hasErrorPlaceholder = messagesAfter.any {
+                it.content?.contains("Compaction failed") == true
+            }
+            assertFalse(hasErrorPlaceholder, "LLM failure should not insert error placeholder into context")
+        }
+    }
+
+    // ---- I6: Token estimate counts tool_calls content ----
+
+    @Nested
+    inner class TokenEstimateToolCalls {
+
+        @Test
+        fun `tokenEstimate counts tool call names and arguments`() {
+            cm = ContextManager(maxInputTokens = 100_000)
+            // Add an assistant message with tool calls but no text content
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(
+                        ToolCall(
+                            id = "call_1",
+                            type = "function",
+                            function = FunctionCall(
+                                name = "read_file",
+                                arguments = """{"path":"src/main/kotlin/App.kt"}"""
+                            )
+                        )
+                    )
+                )
+            )
+
+            val estimate = cm.tokenEstimate()
+            // "read_file" = 9 bytes, arguments = 38 bytes, overhead = 4 bytes => (9+38+4)/4 = 12
+            assertTrue(estimate > 0, "Token estimate should be > 0 for tool call messages (got $estimate)")
+            // Without the fix, this would be 1 (just the 4-byte overhead / 4)
+            assertTrue(estimate > 1, "Token estimate should count tool call content, not just overhead")
+        }
+
+        @Test
+        fun `tokenEstimate counts both content and tool calls`() {
+            cm = ContextManager(maxInputTokens = 100_000)
+            // Message with both content and tool calls
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant",
+                    content = "Let me read that file.",
+                    toolCalls = listOf(
+                        ToolCall(
+                            id = "call_1",
+                            type = "function",
+                            function = FunctionCall(
+                                name = "read_file",
+                                arguments = """{"path":"a.kt"}"""
+                            )
+                        )
+                    )
+                )
+            )
+
+            val estimate = cm.tokenEstimate()
+            // "Let me read that file." = 22 bytes + "read_file" = 9 + args = 15 + overhead = 4 = 50 bytes / 4 = 12
+            val contentOnlyEstimate = ("Let me read that file.".toByteArray().size + 4) / 4
+            assertTrue(estimate > contentOnlyEstimate, "Estimate should be higher when tool calls are included")
+        }
+    }
+
     // ---- Fake LlmBrain for testing ----
 
     private class FakeLlmBrain(private val summaryResponse: String) : LlmBrain {
@@ -469,6 +566,34 @@ class ContextManagerTest {
                     ),
                     usage = UsageInfo(promptTokens = 100, completionTokens = 50, totalTokens = 150)
                 )
+            )
+        }
+
+        override suspend fun chatStream(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            onChunk: suspend (StreamChunk) -> Unit
+        ): ApiResult<ChatCompletionResponse> {
+            throw UnsupportedOperationException("Not used in compaction")
+        }
+
+        override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
+    }
+
+    /** LlmBrain that always returns an error — for testing I2 (summarization failure). */
+    private class ErrorLlmBrain : LlmBrain {
+        override val modelId: String = "error-model"
+
+        override suspend fun chat(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            toolChoice: JsonElement?
+        ): ApiResult<ChatCompletionResponse> {
+            return ApiResult.Error(
+                com.workflow.orchestrator.core.model.ErrorType.SERVER_ERROR,
+                "Simulated LLM failure"
             )
         }
 

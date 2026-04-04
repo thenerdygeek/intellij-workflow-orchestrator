@@ -41,6 +41,7 @@ import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Central agent service — wires the AgentLoop, ToolRegistry, ContextManager,
@@ -57,9 +58,10 @@ class AgentService(private val project: Project) : Disposable {
     val registry = ToolRegistry()
     val sessionStore: SessionStore
 
-    private var brain: LlmBrain? = null
-    private var currentJob: Job? = null
-    private var currentLoop: AgentLoop? = null
+    /** Atomic reference tracking both the loop and job together to avoid race conditions. */
+    private data class ActiveTask(val loop: AgentLoop, val job: Job)
+    private val activeTask = AtomicReference<ActiveTask?>(null)
+
     private var debugController: AgentDebugController? = null
 
     /** Tool names that are blocked in plan mode (write/mutate tools). */
@@ -79,12 +81,10 @@ class AgentService(private val project: Project) : Disposable {
     // ── Brain ──────────────────────────────────────────────────────────────
 
     /**
-     * Creates or returns the cached LLM brain.
-     * Uses AgentSettings for the model (falls back to LlmBrainFactory auto-resolution).
+     * Creates a fresh LLM brain for each task execution.
+     * Never cached — always picks up the latest settings (model, URL, token).
      */
-    private suspend fun getOrCreateBrain(): LlmBrain {
-        brain?.let { return it }
-
+    private suspend fun createBrain(): LlmBrain {
         val agentSettings = AgentSettings.getInstance(project)
         val connections = ConnectionSettings.getInstance()
         val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
@@ -93,19 +93,15 @@ class AgentService(private val project: Project) : Disposable {
 
         val model = agentSettings.state.sourcegraphChatModel
         if (!model.isNullOrBlank() && sgUrl.isNotBlank()) {
-            val newBrain = OpenAiCompatBrain(
+            return OpenAiCompatBrain(
                 sourcegraphUrl = sgUrl,
                 tokenProvider = tokenProvider,
                 model = model
             )
-            brain = newBrain
-            return newBrain
         }
 
         // Fall back to factory auto-resolution
-        val resolved = LlmBrainFactory.create(project)
-        brain = resolved
-        return resolved
+        return LlmBrainFactory.create(project)
     }
 
     // ── Tool Registration ──────────────────────────────────────────────────
@@ -239,7 +235,7 @@ class AgentService(private val project: Project) : Disposable {
         onComplete: (LoopResult) -> Unit = {}
     ): Job {
         val sessionId = UUID.randomUUID().toString()
-        val session = Session(
+        var session = Session(
             id = sessionId,
             title = task.take(100),
             status = SessionStatus.ACTIVE
@@ -248,7 +244,8 @@ class AgentService(private val project: Project) : Disposable {
 
         val job = scope.launch {
             try {
-                val brain = getOrCreateBrain()
+                // I3: Create a fresh brain each time to pick up settings changes
+                val brain = createBrain()
                 val agentSettings = AgentSettings.getInstance(project)
 
                 // Build context manager
@@ -256,17 +253,15 @@ class AgentService(private val project: Project) : Disposable {
                     maxInputTokens = agentSettings.state.maxInputTokens
                 )
 
-                // Set system prompt if this is a fresh conversation
-                if (contextManager == null) {
-                    val projectName = project.name
-                    val projectPath = project.basePath ?: ""
-                    val systemPrompt = SystemPrompt.build(
-                        projectName = projectName,
-                        projectPath = projectPath,
-                        planModeEnabled = planModeActive.get()
-                    )
-                    ctx.setSystemPrompt(systemPrompt)
-                }
+                // I7: Always re-set system prompt (plan mode may have changed between turns)
+                val projectName = project.name
+                val projectPath = project.basePath ?: ""
+                val systemPrompt = SystemPrompt.build(
+                    projectName = projectName,
+                    projectPath = projectPath,
+                    planModeEnabled = planModeActive.get()
+                )
+                ctx.setSystemPrompt(systemPrompt)
 
                 // Build tool definitions, filtering write tools if plan mode is active
                 val tools = registry.allTools().associateBy { it.name }
@@ -288,41 +283,49 @@ class AgentService(private val project: Project) : Disposable {
                     onToolCall = onToolCall,
                     planMode = planModeActive.get()
                 )
-                currentLoop = loop
+
+                // I4: Set activeTask atomically after both loop and job are available
+                activeTask.set(ActiveTask(loop = loop, job = coroutineContext.job))
 
                 val result = loop.run(task)
 
-                // Update session status
-                session.status = when (result) {
-                    is LoopResult.Completed -> SessionStatus.COMPLETED
-                    is LoopResult.Failed -> SessionStatus.FAILED
-                    is LoopResult.Cancelled -> SessionStatus.CANCELLED
-                }
-                session.lastMessageAt = System.currentTimeMillis()
-                session.totalTokens = when (result) {
+                // I5: Update session via .copy() (Session is now fully immutable)
+                val tokensUsed = when (result) {
                     is LoopResult.Completed -> result.tokensUsed
                     is LoopResult.Failed -> result.tokensUsed
                     is LoopResult.Cancelled -> result.tokensUsed
                 }
+                session = session.copy(
+                    status = when (result) {
+                        is LoopResult.Completed -> SessionStatus.COMPLETED
+                        is LoopResult.Failed -> SessionStatus.FAILED
+                        is LoopResult.Cancelled -> SessionStatus.CANCELLED
+                    },
+                    lastMessageAt = System.currentTimeMillis(),
+                    totalTokens = tokensUsed
+                )
                 sessionStore.save(session)
 
                 onComplete(result)
             } catch (e: CancellationException) {
-                session.status = SessionStatus.CANCELLED
-                session.lastMessageAt = System.currentTimeMillis()
+                session = session.copy(
+                    status = SessionStatus.CANCELLED,
+                    lastMessageAt = System.currentTimeMillis()
+                )
                 sessionStore.save(session)
                 onComplete(LoopResult.Cancelled(iterations = 0))
             } catch (e: Exception) {
                 log.error("AgentService: task execution failed", e)
-                session.status = SessionStatus.FAILED
-                session.lastMessageAt = System.currentTimeMillis()
+                session = session.copy(
+                    status = SessionStatus.FAILED,
+                    lastMessageAt = System.currentTimeMillis()
+                )
                 sessionStore.save(session)
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
             } finally {
-                currentLoop = null
+                activeTask.set(null)
             }
         }
-        currentJob = job
         return job
     }
 
@@ -330,10 +333,13 @@ class AgentService(private val project: Project) : Disposable {
 
     /**
      * Cancel the currently running task. Safe to call from any thread.
+     * Uses atomic ActiveTask reference to avoid race between loop and job.
      */
     fun cancelCurrentTask() {
-        currentLoop?.cancel()
-        currentJob?.cancel()
+        activeTask.get()?.let { task ->
+            task.loop.cancel()
+            task.job.cancel()
+        }
     }
 
     // ── Dispose ────────────────────────────────────────────────────────────

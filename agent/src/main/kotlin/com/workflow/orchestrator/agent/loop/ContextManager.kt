@@ -82,12 +82,19 @@ class ContextManager(
 
     /**
      * Estimate total tokens using bytes/4 heuristic (Codex CLI pattern).
+     * Counts message content AND tool call names/arguments.
      */
     fun tokenEstimate(): Int {
         var bytes = 0
         systemPrompt?.content?.let { bytes += it.toByteArray(Charsets.UTF_8).size }
         for (msg in messages) {
             msg.content?.let { bytes += it.toByteArray(Charsets.UTF_8).size }
+            msg.toolCalls?.forEach { tc ->
+                bytes += tc.function.name.toByteArray(Charsets.UTF_8).size
+                bytes += tc.function.arguments.toByteArray(Charsets.UTF_8).size
+            }
+            // Per-message overhead (role, delimiters)
+            bytes += 4
         }
         return bytes / 4
     }
@@ -205,15 +212,12 @@ class ContextManager(
 
         val result = brain.chat(summaryMessages, maxTokens = 1024)
 
-        val summaryContent = when (result) {
-            is ApiResult.Success -> {
-                result.data.choices.firstOrNull()?.message?.content
-                    ?: "[Compaction failed: no response content]"
-            }
-            is ApiResult.Error -> {
-                "[Compaction failed: ${result.message}]"
-            }
-        }
+        // On LLM failure, skip compaction entirely — leave messages as-is.
+        // The next stage (sliding window) will handle it if needed.
+        if (result is ApiResult.Error) return
+
+        val summaryContent = (result as ApiResult.Success).data.choices.firstOrNull()?.message?.content
+            ?: return // No content in response — skip compaction rather than losing context
 
         // Remove old messages, insert summary
         messages.subList(0, splitPoint).clear()

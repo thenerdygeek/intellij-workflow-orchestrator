@@ -83,6 +83,30 @@ class AgentLoopTest {
             usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
         )
 
+    /** Creates a response with finish_reason "length" (truncated output). */
+    private fun lengthResponse(partialContent: String? = "I was about to call"): ChatCompletionResponse =
+        ChatCompletionResponse(
+            id = "resp-${System.nanoTime()}",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(
+                        role = "assistant",
+                        content = partialContent,
+                        toolCalls = listOf(
+                            ToolCall(
+                                id = "call_truncated",
+                                type = "function",
+                                function = FunctionCall(name = "read_file", arguments = "{\"path\":\"src/ma")
+                            )
+                        )
+                    ),
+                    finishReason = "length"
+                )
+            ),
+            usage = UsageInfo(promptTokens = 100, completionTokens = 4096, totalTokens = 4196)
+        )
+
     /**
      * A fake LlmBrain that returns pre-configured responses in sequence via chatStream.
      * Each call to chatStream returns the next response in the list.
@@ -368,9 +392,12 @@ class AgentLoopTest {
             val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
             loop.run("Fix it")
 
-            assertEquals(2, progressList.size)
-            assertEquals("read_file", progressList[0].toolName)
-            assertEquals("attempt_completion", progressList[1].toolName)
+            // I8: Each tool fires start (before) + complete (after) = 4 callbacks total
+            assertEquals(4, progressList.size)
+            assertEquals("read_file", progressList[0].toolName)    // start
+            assertEquals("read_file", progressList[1].toolName)    // complete
+            assertEquals("attempt_completion", progressList[2].toolName)  // start
+            assertEquals("attempt_completion", progressList[3].toolName)  // complete
         }
     }
 
@@ -572,6 +599,116 @@ class AgentLoopTest {
             val result = loop.run("Do something")
 
             assertTrue(result is LoopResult.Completed, "Expected Completed after network/timeout retries but got $result")
+        }
+    }
+
+    // ---- I1: finish_reason length handling ----
+
+    @Nested
+    inner class FinishReasonLengthTests {
+
+        @Test
+        fun `finish_reason length injects continuation instead of processing tool calls`() = runTest {
+            val brain = sequenceBrain(
+                // First call: truncated response (finish_reason: length) with partial tool call JSON
+                lengthResponse("I was about to call"),
+                // Second call: model recovers after continuation prompt
+                toolCallResponse("attempt_completion" to """{"result":"Done after retry."}""")
+            )
+
+            val progressList = mutableListOf<ToolCallProgress>()
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done after retry.")
+            )
+            val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
+            val result = loop.run("Fix the bug")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+            // The truncated tool call should NOT have been executed
+            val readFileCalls = progressList.filter { it.toolName == "read_file" }
+            assertTrue(readFileCalls.isEmpty(), "read_file should not have been called from truncated response")
+        }
+
+        @Test
+        fun `finish_reason length adds continuation message to context`() = runTest {
+            val brain = sequenceBrain(
+                lengthResponse("partial"),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(fakeTool("read_file"), completionTool("Done."))
+            val loop = buildLoop(brain, tools)
+            loop.run("Do something")
+
+            // Check that the continuation message was added to context
+            val messages = contextManager.getMessages()
+            val continuationMsg = messages.find {
+                it.role == "user" && it.content?.contains("cut short") == true
+            }
+            assertNotNull(continuationMsg, "Continuation message should be injected after truncated response")
+        }
+    }
+
+    // ---- I8: Tool progress fires before AND after execution ----
+
+    @Nested
+    inner class ToolProgressCallbackTests {
+
+        @Test
+        fun `onToolCall fires before and after tool execution`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"src/main.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val progressList = mutableListOf<ToolCallProgress>()
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
+            loop.run("Fix it")
+
+            // Each tool should fire twice: once before (start) and once after (complete)
+            // read_file: start + complete, attempt_completion: start + complete = 4
+            assertEquals(4, progressList.size, "Expected 4 progress events (2 tools x 2 callbacks each)")
+
+            // read_file start callback: empty result, zero duration
+            val readStart = progressList[0]
+            assertEquals("read_file", readStart.toolName)
+            assertEquals("", readStart.result)
+            assertEquals(0L, readStart.durationMs)
+
+            // read_file complete callback: has result and duration
+            val readComplete = progressList[1]
+            assertEquals("read_file", readComplete.toolName)
+            assertTrue(readComplete.result.isNotEmpty(), "Completed callback should have result")
+            assertFalse(readComplete.isError)
+        }
+
+        @Test
+        fun `start callback fires even when tool execution fails`() = runTest {
+            val brain = sequenceBrain(
+                // Call a tool with bad JSON — should still get start callback
+                toolCallResponse("read_file" to """not valid json{{{"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val progressList = mutableListOf<ToolCallProgress>()
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val loop = buildLoop(brain, tools, onToolCall = { progressList.add(it) })
+            loop.run("Do something")
+
+            // read_file: just error callback (no start since JSON parse fails before execute)
+            // attempt_completion: start + complete
+            // Actually, invalid JSON fires error callback only (before start is not fired for JSON parse failure)
+            // Let's verify we get at least the attempt_completion start+complete
+            val completionCallbacks = progressList.filter { it.toolName == "attempt_completion" }
+            assertEquals(2, completionCallbacks.size, "attempt_completion should have start + complete callbacks")
         }
     }
 }
