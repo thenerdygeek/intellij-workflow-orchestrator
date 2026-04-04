@@ -8,6 +8,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.util.DiffUtil
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -95,11 +96,18 @@ class CreateFileTool : AgentTool {
 
         val lineCount = content.lines().size
         val summary = "Created $rawPath ($lineCount lines, ${content.length} chars)"
+
+        // Generate diff for new file (all additions — ported from Cline's DiffViewProvider)
+        val createDiff = try {
+            DiffUtil.unifiedDiff("", content, rawPath)
+        } catch (_: Exception) { null }
+
         return ToolResult(
             content = summary,
             summary = summary,
             tokenEstimate = TokenEstimator.estimate(summary),
-            artifacts = listOf(resolvedPath)
+            artifacts = listOf(resolvedPath),
+            diff = createDiff
         )
     }
 

@@ -10,6 +10,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.util.DiffUtil
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -87,6 +88,9 @@ class EditFileTool : AgentTool {
             )
         }
 
+        // Capture content before edit for diff generation (ported from Cline's DiffViewProvider)
+        val contentBeforeEdit = content
+
         // Compute new content for syntax validation and fallback writes
         val newContent = if (replaceAll) content.replace(oldString, newString)
         else content.replaceFirst(oldString, newString)
@@ -152,13 +156,19 @@ class EditFileTool : AgentTool {
         val occurrenceSuffix = if (replaceAll && occurrences > 1) " ($occurrences occurrences)" else ""
         val summary = "Replaced ${oldString.length} chars with ${newString.length} chars in $rawPath$occurrenceSuffix"
 
+        // Generate unified diff for UI display (ported from Cline's DiffViewProvider)
+        val editDiff = try {
+            DiffUtil.unifiedDiff(contentBeforeEdit, newContent, rawPath)
+        } catch (_: Exception) { null }
+
         if (syntaxWarning != null) {
             return ToolResult(
                 content = "$summary\n$syntaxWarning$contextSection",
                 summary = "$summary (${syntaxWarning.count { it == '\n' }} syntax warnings)",
                 tokenEstimate = TokenEstimator.estimate(summary + syntaxWarning + (contextLines ?: "")),
                 artifacts = listOf(resolvedPath),
-                isError = false
+                isError = false,
+                diff = editDiff
             )
         }
 
@@ -166,7 +176,8 @@ class EditFileTool : AgentTool {
             content = "$summary$contextSection",
             summary = summary,
             tokenEstimate = TokenEstimator.estimate(summary + (contextLines ?: "")),
-            artifacts = listOf(resolvedPath)
+            artifacts = listOf(resolvedPath),
+            diff = editDiff
         )
     }
 
