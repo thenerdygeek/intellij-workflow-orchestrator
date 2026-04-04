@@ -13,6 +13,8 @@ import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -47,6 +49,7 @@ class AgentLoop(
     private val project: Project,
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
+    private val onTaskProgress: (TaskProgress) -> Unit = {},
     private val maxIterations: Int = 200,
     private val planMode: Boolean = false,
     private val onCheckpoint: (suspend () -> Unit)? = null
@@ -103,6 +106,12 @@ class AgentLoop(
             Regex("token.{0,20}(limit|exceeded|overflow)", RegexOption.IGNORE_CASE),
             Regex("(input|prompt).{0,20}too.{0,10}(long|large)", RegexOption.IGNORE_CASE)
         )
+
+        /**
+         * The parameter name used by the LLM to communicate task progress.
+         * Matches Cline's `task_progress` parameter in tool calls.
+         */
+        private const val TASK_PROGRESS_PARAM = "task_progress"
     }
 
     /**
@@ -378,6 +387,12 @@ class AgentLoop(
                 continue
             }
 
+            // Extract task_progress from tool call arguments (Cline's FocusChain pattern).
+            // In Cline, task_progress is a parameter on every tool call. The LLM includes
+            // it when it wants to update the progress checklist. We extract it here,
+            // store it in ContextManager, and notify the UI.
+            extractTaskProgress(params)
+
             // Fire start callback (empty result, zero duration = RUNNING)
             onToolCall(
                 ToolCallProgress(
@@ -446,4 +461,28 @@ class AgentLoop(
         }
         return null
     }
+
+    /**
+     * Extract `task_progress` from tool call arguments and update state.
+     *
+     * Port of Cline's FocusChainManager.updateFCListFromToolResponse():
+     * - The LLM includes a `task_progress` parameter in tool call JSON
+     * - We extract it, store in ContextManager, and notify the UI callback
+     * - The progress is a markdown checklist string
+     *
+     * @param params the parsed JSON arguments from the tool call
+     */
+    private fun extractTaskProgress(params: JsonObject) {
+        val progressValue = params[TASK_PROGRESS_PARAM]
+        if (progressValue is JsonPrimitive) {
+            val markdown = progressValue.contentOrNull
+            if (!markdown.isNullOrBlank()) {
+                val parsed = contextManager.setTaskProgress(markdown)
+                if (parsed != null) {
+                    onTaskProgress(parsed)
+                }
+            }
+        }
+    }
+
 }

@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
+import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import kotlinx.coroutines.Job
@@ -126,6 +127,7 @@ class AgentController(
             contextManager = contextManager,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
+            onTaskProgress = ::onTaskProgress,
             onComplete = ::onComplete
         )
     }
@@ -137,6 +139,20 @@ class AgentController(
     private fun onStreamChunk(chunk: String) {
         invokeLater {
             dashboard.appendStreamToken(chunk)
+        }
+    }
+
+    /**
+     * Task progress callback — agent loop reports checklist updates.
+     *
+     * Port of Cline's FocusChainManager say("task_progress", ...):
+     * Cline sends the markdown checklist to the webview for display.
+     * We send it to the dashboard as a status message showing progress.
+     */
+    private fun onTaskProgress(progress: TaskProgress) {
+        invokeLater {
+            val summary = "${progress.completedCount}/${progress.totalCount} steps completed"
+            dashboard.appendStatus(summary, RichStreamingPanel.StatusType.INFO)
         }
     }
 
@@ -281,6 +297,7 @@ class AgentController(
             sessionId = sessionId,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
+            onTaskProgress = ::onTaskProgress,
             onComplete = ::onComplete
         )
 

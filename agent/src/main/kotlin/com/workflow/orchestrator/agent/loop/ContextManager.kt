@@ -53,6 +53,18 @@ class ContextManager(
      */
     private val fileReadIndices: MutableMap<String, MutableList<Int>> = mutableMapOf()
 
+    /**
+     * Current task progress markdown string.
+     *
+     * Port of Cline's `currentFocusChainChecklist` from TaskState:
+     * - Updated when the LLM includes `task_progress` in tool call params
+     * - Survives compaction: re-injected into the system prompt after compaction
+     * - Included in session checkpoint for resume
+     *
+     * @see <a href="https://github.com/cline/cline/blob/main/src/core/task/focus-chain/index.ts">Cline FocusChainManager</a>
+     */
+    private var taskProgressMarkdown: String? = null
+
     // ---- Message management ----
 
     fun setSystemPrompt(prompt: String) {
@@ -577,6 +589,48 @@ class ContextManager(
      * Export the system prompt content (for persisting in Session metadata).
      */
     fun getSystemPromptContent(): String? = systemPrompt?.content
+
+    // ---- Task progress (ported from Cline's FocusChainManager) ----
+
+    /**
+     * Update task progress from the LLM's tool call `task_progress` parameter.
+     *
+     * Port of Cline's FocusChainManager.updateFCListFromToolResponse():
+     * - Receives the raw markdown checklist from the tool call
+     * - Stores it for inclusion in the system prompt
+     * - Parses it into TaskProgress for UI consumption
+     *
+     * Called by AgentLoop after extracting `task_progress` from tool call arguments.
+     *
+     * @param markdown the raw checklist markdown from the LLM
+     * @return parsed TaskProgress for UI display, or null if markdown was blank
+     */
+    fun setTaskProgress(markdown: String): TaskProgress? {
+        val trimmed = markdown.trim()
+        if (trimmed.isBlank()) return null
+        taskProgressMarkdown = trimmed
+        return TaskProgress.fromMarkdown(trimmed)
+    }
+
+    /**
+     * Get the current task progress markdown string.
+     * Returns null if no progress has been set.
+     *
+     * Used by:
+     * - SystemPrompt.build() to inject progress into the system prompt
+     * - Session checkpoint to persist progress
+     * - AgentLoop to provide progress after compaction
+     */
+    fun getTaskProgress(): String? = taskProgressMarkdown
+
+    /**
+     * Get the current task progress as a parsed TaskProgress object.
+     * Returns null if no progress has been set.
+     */
+    fun getTaskProgressParsed(): TaskProgress? {
+        val md = taskProgressMarkdown ?: return null
+        return TaskProgress.fromMarkdown(md)
+    }
 
     companion object {
         /** Tools that read/write files and whose results contain file content. */

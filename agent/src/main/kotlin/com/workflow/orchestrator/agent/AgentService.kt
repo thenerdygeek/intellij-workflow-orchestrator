@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
+import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.agent.session.Session
@@ -248,6 +249,7 @@ class AgentService(private val project: Project) : Disposable {
         contextManager: ContextManager? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
+        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {}
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
@@ -280,7 +282,8 @@ class AgentService(private val project: Project) : Disposable {
                         System.getenv("COMSPEC") ?: "cmd.exe"
                     else
                         System.getenv("SHELL") ?: "/bin/bash",
-                    planModeEnabled = planModeActive.get()
+                    planModeEnabled = planModeActive.get(),
+                    taskProgress = ctx.getTaskProgress()
                 )
                 ctx.setSystemPrompt(systemPrompt)
 
@@ -306,6 +309,7 @@ class AgentService(private val project: Project) : Disposable {
                     project = project,
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
+                    onTaskProgress = onTaskProgress,
                     planMode = planModeActive.get(),
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
@@ -425,6 +429,7 @@ class AgentService(private val project: Project) : Disposable {
         continuationMessage: String = "Continue from where you left off. Your previous conversation history has been restored.",
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
+        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {}
     ): Job? {
         // Step 1: Load session metadata
@@ -486,6 +491,7 @@ class AgentService(private val project: Project) : Disposable {
             contextManager = ctx,
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
+            onTaskProgress = onTaskProgress,
             onComplete = onComplete
         )
     }
