@@ -31,10 +31,9 @@ class ToolPreferences : SimplePersistentStateComponent<ToolPreferences.State>(St
 
     fun getDisabledTools(): Set<String> = state.disabledTools.toSet()
 
-    fun getEnabledToolCount(): Int {
-        val allKnown = com.workflow.orchestrator.agent.tools.ToolCategoryRegistry.getAllToolNames()
-        val validDisabled = state.disabledTools.count { it in allKnown }
-        return allKnown.size - validDisabled
+    fun getEnabledToolCount(allToolNames: Set<String>): Int {
+        val validDisabled = state.disabledTools.count { it in allToolNames }
+        return allToolNames.size - validDisabled
     }
 
     companion object {
