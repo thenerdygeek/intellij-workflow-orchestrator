@@ -309,9 +309,28 @@ class MentionSearchProvider(private val project: Project) {
         return "[]"
     }
 
-    private fun searchSkills(@Suppress("UNUSED_PARAMETER") query: String): String {
-        // TODO: Wire to skill manager when AgentService is reimplemented
-        return "[]"
+    private fun searchSkills(query: String): String {
+        val skills = com.workflow.orchestrator.agent.prompt.InstructionLoader.loadBundledSkills()
+        val lowerQuery = query.lowercase()
+        val filtered = if (lowerQuery.isBlank()) {
+            skills
+        } else {
+            skills.filter { skill ->
+                skill.name.lowercase().contains(lowerQuery) ||
+                skill.description.lowercase().contains(lowerQuery)
+            }
+        }.take(MAX_RESULTS)
+
+        return buildJsonArray {
+            for (skill in filtered) {
+                add(buildJsonObject {
+                    put("type", JsonPrimitive("skill"))
+                    put("label", JsonPrimitive(skill.name))
+                    put("path", JsonPrimitive(skill.name))
+                    put("description", JsonPrimitive(skill.description.take(80)))
+                })
+            }
+        }.toString()
     }
 
     /**

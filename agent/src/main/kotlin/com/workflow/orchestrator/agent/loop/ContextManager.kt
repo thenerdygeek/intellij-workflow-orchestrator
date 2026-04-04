@@ -54,6 +54,16 @@ class ContextManager(
     private val fileReadIndices: MutableMap<String, MutableList<Int>> = mutableMapOf()
 
     /**
+     * Active skill content — set when use_skill tool is called.
+     *
+     * Ported from Cline's skill activation pattern:
+     * - Set when use_skill is invoked with a valid skill name
+     * - Survives compaction: after compaction, re-inject as a tagged user message
+     * - Cleared when a new skill is activated or the session ends
+     */
+    private var activeSkillContent: String? = null
+
+    /**
      * Current task progress markdown string.
      *
      * Port of Cline's `currentFocusChainChecklist` from TaskState:
@@ -413,6 +423,10 @@ class ContextManager(
             llmSummarize(brain)
             invalidateTokens()
         }
+
+        // After compaction: re-inject active skill so LLM retains skill instructions
+        // (ported from Cline: skill content survives compaction via re-injection)
+        reInjectActiveSkill()
     }
 
     /**
@@ -630,6 +644,58 @@ class ContextManager(
     fun getTaskProgressParsed(): TaskProgress? {
         val md = taskProgressMarkdown ?: return null
         return TaskProgress.fromMarkdown(md)
+    }
+
+    // ---- Active skill management (ported from Cline's skill system) ----
+
+    /**
+     * Set the active skill content. Called after use_skill tool executes.
+     *
+     * The active skill content survives compaction: after compaction runs,
+     * [reInjectActiveSkill] is called to ensure the LLM still has access
+     * to the skill instructions.
+     *
+     * @param content the full skill content to store
+     */
+    fun setActiveSkill(content: String) {
+        activeSkillContent = content
+    }
+
+    /**
+     * Get the current active skill content.
+     * Returns null if no skill is active.
+     */
+    fun getActiveSkill(): String? = activeSkillContent
+
+    /**
+     * Clear the active skill. Called when a session ends or is reset.
+     */
+    fun clearActiveSkill() {
+        activeSkillContent = null
+    }
+
+    /**
+     * Re-inject the active skill into the conversation after compaction.
+     *
+     * After compaction removes old messages, the skill instructions may have
+     * been lost. This re-injects them as an assistant message tagged with
+     * [Active Skill] so the LLM continues to follow the skill.
+     *
+     * Called by the compaction pipeline after any stage that removes messages.
+     */
+    internal fun reInjectActiveSkill() {
+        val skill = activeSkillContent ?: return
+        // Only re-inject if the skill content isn't already in the last few messages
+        val recentMessages = messages.takeLast(10)
+        val alreadyPresent = recentMessages.any { msg ->
+            msg.content?.contains("[Active Skill]") == true
+        }
+        if (!alreadyPresent) {
+            messages.add(ChatMessage(
+                role = "assistant",
+                content = "[Active Skill] The following skill instructions are still active:\n\n$skill"
+            ))
+        }
     }
 
     companion object {

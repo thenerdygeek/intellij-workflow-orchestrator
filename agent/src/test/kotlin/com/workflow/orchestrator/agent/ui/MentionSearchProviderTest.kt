@@ -73,10 +73,15 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `skill search returns empty when service unavailable`() {
+    fun `skill search returns matching skills from bundled resources`() {
         val provider = MentionSearchProvider(project)
         val json = provider.search("skill", "debug")
         val arr = Json.parseToJsonElement(json).jsonArray
-        assertTrue(arr.isEmpty())
+        // Should find debugging-related skills (systematic-debugging, interactive-debugging)
+        assertTrue(arr.isNotEmpty(), "should find debugging skills from bundled resources")
+        for (item in arr) {
+            val obj = item.jsonObject
+            assertEquals("skill", obj["type"]?.jsonPrimitive?.content)
+        }
     }
 }

@@ -155,7 +155,15 @@ class MentionContextBuilder(private val project: Project) {
     }
 
     private fun buildSkillContext(mention: Mention): String {
-        return "<mentioned_skill name=\"${mention.value}\">\nThe user wants you to activate the /${mention.value} skill.\n</mentioned_skill>\n\n"
+        val skillContent = com.workflow.orchestrator.agent.prompt.InstructionLoader.loadSkillContent(mention.value)
+        return if (skillContent != null) {
+            "<mentioned_skill name=\"${mention.value}\">\nThe user wants you to activate the /${mention.value} skill. " +
+                "Use the use_skill tool with skill_name=\"${mention.value}\" to load and follow its instructions.\n" +
+                "</mentioned_skill>\n\n"
+        } else {
+            "<mentioned_skill name=\"${mention.value}\">\nUnknown skill: ${mention.value}. " +
+                "Check available skills in the SKILLS section.\n</mentioned_skill>\n\n"
+        }
     }
 
     private suspend fun buildTicketContext(mention: Mention): String? {
