@@ -724,12 +724,20 @@ class AgentController(
         userInputChannel = null
         loopWaitingForInput = false
 
-        // Reset dashboard UI
-        dashboard.reset()
-        dashboard.hideSkillBanner()
-        dashboard.setBusy(false)
-        dashboard.setInputLocked(false)
-        dashboard.focusInput()
+        // Reset ALL dashboard UI components to clean state
+        dashboard.reset()                                          // Clear chat messages + replay log
+        dashboard.hideSkillBanner()                                // Dismiss any active skill banner
+        dashboard.setBusy(false)                                   // Stop spinner
+        dashboard.setInputLocked(false)                            // Unlock input bar
+        dashboard.setPlanMode(false)                                // Exit plan mode
+        dashboard.setRalphLoop(false)                              // Exit ralph loop mode
+        dashboard.setSteeringMode(false)                           // Exit steering mode
+        dashboard.updateCheckpoints("[]")                          // Clear checkpoint timeline
+        dashboard.updateEditStats(0, 0, 0)                    // Reset edit counters
+        dashboard.updateProgress("", 0, 0)                    // Reset token budget bar
+        dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
+        dashboard.finalizeToolChain()                               // Collapse any open tool chain
+        dashboard.focusInput()                                      // Focus the input bar
     }
 
     /**
