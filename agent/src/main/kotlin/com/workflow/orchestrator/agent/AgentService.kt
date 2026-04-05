@@ -593,7 +593,7 @@ class AgentService(private val project: Project) : Disposable {
                                 tool.name != "plan_mode_respond"
                             }
                         }
-                        .map { it.toToolDefinition() }
+                        .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
                 }
 
                 // Wire sub-agent progress callback and settings for this task execution

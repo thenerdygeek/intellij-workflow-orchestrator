@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionDefinition
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import kotlinx.serialization.json.JsonObject
 
@@ -42,6 +43,31 @@ interface AgentTool {
             parameters = parameters
         )
     )
+
+    companion object {
+        /** Shared task_progress property injected into every tool schema at the API call site. */
+        val TASK_PROGRESS_PROPERTY = ParameterProperty(
+            type = "string",
+            description = "A markdown checklist of plan progress (e.g. '- [x] Step 1\\n- [ ] Step 2'). " +
+                "Include this when working through a plan to keep the progress widget updated."
+        )
+
+        /**
+         * Inject task_progress into a tool definition's schema (Cline's FocusChain pattern).
+         * Called at the API boundary so the LLM sees the parameter on every tool.
+         */
+        fun injectTaskProgress(def: ToolDefinition): ToolDefinition {
+            val params = def.function.parameters
+            if ("task_progress" in params.properties) return def
+            return def.copy(
+                function = def.function.copy(
+                    parameters = params.copy(
+                        properties = params.properties + ("task_progress" to TASK_PROGRESS_PROPERTY)
+                    )
+                )
+            )
+        }
+    }
 }
 
 data class ToolResult(

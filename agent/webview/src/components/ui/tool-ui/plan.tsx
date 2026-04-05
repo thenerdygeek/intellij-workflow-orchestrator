@@ -194,6 +194,40 @@ function PlanProgressBar({
   );
 }
 
+// ---------- Collapsed Group ----------
+
+function CollapsedGroup({
+  count,
+  label,
+  todos,
+}: {
+  count: number;
+  label: string;
+  todos: PlanTodo[];
+}) {
+  if (count <= 0) return null;
+
+  return (
+    <Accordion type="single" collapsible>
+      <AccordionItem value="group" className="border-b-0">
+        <AccordionTrigger className="py-1.5 text-[11px] text-[var(--fg-muted,hsl(var(--muted-foreground)))] hover:text-[var(--fg-secondary,hsl(var(--foreground)))]">
+          <span className="flex items-center gap-1.5">
+            <MoreHorizontal className="size-3.5" />
+            {count} {label}
+          </span>
+        </AccordionTrigger>
+        <AccordionContent>
+          <div className="space-y-0.5">
+            {todos.map((todo, i) => (
+              <TodoItem key={todo.id} todo={todo} index={i} />
+            ))}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+}
+
 // ---------- Todo List ----------
 
 function TodoList({
@@ -203,41 +237,80 @@ function TodoList({
   todos: PlanTodo[];
   maxVisible: number;
 }) {
-  const visibleTodos = todos.slice(0, maxVisible);
-  const hiddenTodos = todos.slice(maxVisible);
-  const hasHidden = hiddenTodos.length > 0;
+  // Sliding window: show `maxVisible` items centered around the active step.
+  // Above the window: "+N completed" collapsed group.
+  // Below the window: "+N pending" collapsed group.
+  // Falls back to showing first `maxVisible` if no active step yet.
 
-  return (
-    <div>
+  if (todos.length <= maxVisible) {
+    // All fit — no collapsing needed
+    return (
       <div className="space-y-0.5">
-        {visibleTodos.map((todo, i) => (
+        {todos.map((todo, i) => (
           <TodoItem key={todo.id} todo={todo} index={i} />
         ))}
       </div>
+    );
+  }
 
-      {hasHidden && (
-        <Accordion type="single" collapsible>
-          <AccordionItem value="more" className="border-b-0">
-            <AccordionTrigger className="py-2 text-[11px] text-[var(--fg-muted,hsl(var(--muted-foreground)))] hover:text-[var(--fg-secondary,hsl(var(--foreground)))]">
-              <span className="flex items-center gap-1.5">
-                <MoreHorizontal className="size-3.5" />
-                {hiddenTodos.length} more step{hiddenTodos.length !== 1 ? "s" : ""}
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="space-y-0.5">
-                {hiddenTodos.map((todo, i) => (
-                  <TodoItem
-                    key={todo.id}
-                    todo={todo}
-                    index={maxVisible + i}
-                  />
-                ))}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      )}
+  // Find the active (in_progress) step, or the first pending step
+  const activeIndex = todos.findIndex(t => t.status === "in_progress");
+  const anchorIndex = activeIndex >= 0
+    ? activeIndex
+    : todos.findIndex(t => t.status === "pending");
+
+  // If everything is completed or no anchor found, anchor to the end
+  const anchor = anchorIndex >= 0 ? anchorIndex : todos.length - 1;
+
+  // Place the window so the anchor is in the middle slot.
+  // For maxVisible=3: [anchor-1, anchor, anchor+1]
+  const halfBefore = Math.floor((maxVisible - 1) / 2);
+  let windowStart = anchor - halfBefore;
+  let windowEnd = windowStart + maxVisible;
+
+  // Clamp to bounds
+  if (windowStart < 0) {
+    windowStart = 0;
+    windowEnd = maxVisible;
+  }
+  if (windowEnd > todos.length) {
+    windowEnd = todos.length;
+    windowStart = Math.max(0, windowEnd - maxVisible);
+  }
+
+  const beforeTodos = todos.slice(0, windowStart);
+  const visibleTodos = todos.slice(windowStart, windowEnd);
+  const afterTodos = todos.slice(windowEnd);
+
+  const beforeCompleted = beforeTodos.filter(t => t.status === "completed").length;
+  const beforeLabel = beforeCompleted === beforeTodos.length
+    ? `${beforeTodos.length} completed`
+    : `${beforeTodos.length} step${beforeTodos.length !== 1 ? "s" : ""}`;
+
+  const afterPending = afterTodos.filter(t => t.status === "pending").length;
+  const afterLabel = afterPending === afterTodos.length
+    ? `${afterTodos.length} pending`
+    : `${afterTodos.length} step${afterTodos.length !== 1 ? "s" : ""}`;
+
+  return (
+    <div>
+      <CollapsedGroup
+        count={beforeTodos.length}
+        label={beforeLabel}
+        todos={beforeTodos}
+      />
+
+      <div className="space-y-0.5">
+        {visibleTodos.map((todo, i) => (
+          <TodoItem key={todo.id} todo={todo} index={windowStart + i} />
+        ))}
+      </div>
+
+      <CollapsedGroup
+        count={afterTodos.length}
+        label={afterLabel}
+        todos={afterTodos}
+      />
     </div>
   );
 }

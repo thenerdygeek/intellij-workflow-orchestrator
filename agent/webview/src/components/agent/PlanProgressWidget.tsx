@@ -26,7 +26,7 @@ export function PlanProgressWidget({ plan }: PlanProgressWidgetProps) {
         id={`plan-${plan.title}`}
         title={plan.title}
         todos={todos}
-        maxVisibleTodos={8}
+        maxVisibleTodos={3}
       />
     </div>
   );
