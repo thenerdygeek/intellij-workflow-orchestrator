@@ -204,11 +204,10 @@ In each user message, the environment_details will specify the current mode. The
 
     /**
      * Section 6: Skills
-     * Ported from: skills.ts
-     */
-    /**
-     * Section 6: Skills
-     * Port of Cline's getSkillsSection from components/skills.ts.
+     *
+     * Inspired by Claude Code's "using-superpowers" meta-skill pattern:
+     * The LLM is made paranoid about missing applicable skills via explicit
+     * red-flag thoughts and a mandatory check-before-responding rule.
      *
      * activeSkillContent is our addition for compaction survival — re-injected
      * into the system prompt so the LLM retains skill instructions after compaction.
@@ -220,24 +219,37 @@ In each user message, the environment_details will specify the current mode. The
         if (availableSkills.isNullOrEmpty() && activeSkillContent.isNullOrBlank()) return null
 
         return buildString {
-            // Port of Cline's getSkillsSection (components/skills.ts)
             if (!availableSkills.isNullOrEmpty()) {
                 appendLine("SKILLS")
                 appendLine()
-                appendLine("The following skills provide specialized instructions for specific tasks. When a user's request matches a skill description, use the use_skill tool to load and activate the skill.")
+                appendLine("Skills provide specialized instructions for specific tasks. You MUST check for applicable skills BEFORE starting any work — even before asking clarifying questions.")
                 appendLine()
-                appendLine("Available skills:")
+                appendLine("## The Rule")
+                appendLine()
+                appendLine("If there is even a 1% chance a skill applies to the user's request, you MUST call use_skill to load it. This is not optional. If the loaded skill turns out to be wrong for the situation, you can ignore it — but you must check first.")
+                appendLine()
+                appendLine("## Available Skills")
+                appendLine()
                 for (skill in availableSkills) {
-                    appendLine("  - \"${skill.name}\": ${skill.description}")
+                    appendLine("- \"${skill.name}\": ${skill.description}")
                 }
                 appendLine()
-                appendLine("To use a skill:")
-                appendLine("1. Match the user's request to a skill based on its description")
-                appendLine("2. Call use_skill with the skill_name parameter set to the exact skill name")
-                appendLine("3. Follow the instructions returned by the tool")
+                appendLine("## Red Flags — stop and check for skills if you catch yourself thinking:")
+                appendLine()
+                appendLine("- \"This is just a simple question\" → Questions are tasks. Check for skills.")
+                appendLine("- \"Let me explore the codebase first\" → Skills tell you HOW to explore. Check first.")
+                appendLine("- \"I need more context first\" → Skill check comes BEFORE gathering context.")
+                appendLine("- \"This doesn't need a formal skill\" → If a skill exists for it, use it.")
+                appendLine("- \"I'll just do this one thing first\" → Check BEFORE doing anything.")
+                appendLine()
+                appendLine("## How to Use")
+                appendLine()
+                appendLine("1. Scan the skill list against the user's request")
+                appendLine("2. Call use_skill with the exact skill name")
+                appendLine("3. Follow the returned instructions — do NOT call use_skill again for the same task")
             }
 
-            // Our addition: re-inject active skill content for compaction survival
+            // Re-inject active skill content for compaction survival
             if (!activeSkillContent.isNullOrBlank()) {
                 appendLine()
                 appendLine("# Active Skill Instructions")
