@@ -248,7 +248,8 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { SpawnAgentTool(
             brainProvider = { createBrain() },
             toolRegistry = registry,
-            project = project
+            project = project,
+            configLoader = AgentConfigLoader.getInstance()
         ) }
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────
