@@ -30,8 +30,8 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var maxStdinPerProcess by property(10)
         var askUserInputTimeoutMinutes by property(5)
         var powershellEnabled by property(true)
-        /** Experimental: use Haiku to generate contextual working indicator messages. */
-        var smartWorkingIndicator by property(false)
+        /** Use Haiku to generate contextual humorous working indicator messages. */
+        var smartWorkingIndicator by property(true)
 
         // Ralph Loop defaults
         var ralphMaxIterations by property(10)

@@ -69,7 +69,8 @@ class GitDiffTool : AgentTool {
                     handler.addParameters(ref)
                 }
 
-                handler.addParameters("--stat-width=120")
+                // Full unified diff — don't use --stat, the LLM needs actual content
+                handler.addParameters("--no-color")
 
                 if (path != null) {
                     handler.addParameters("--")

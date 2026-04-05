@@ -78,7 +78,9 @@ data class ToolResult(
      * Unified diff for file changes (edit_file, create_file).
      * Sent to the UI for before/after diff display.
      */
-    val diff: String? = null
+    val diff: String? = null,
+    /** True when the LLM requests switching to plan mode via enable_plan_mode tool. */
+    val enablePlanMode: Boolean = false
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5

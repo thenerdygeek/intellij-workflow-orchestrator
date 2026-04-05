@@ -227,6 +227,7 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { AskQuestionsTool() }
         safeRegisterCore { PlanModeRespondTool() }
         safeRegisterCore { ActModeRespondTool() }
+        safeRegisterCore { EnablePlanModeTool() }
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
 
@@ -429,6 +430,11 @@ class AgentService(private val project: Project) : Disposable {
          */
         onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
         /**
+         * Callback fired when the LLM toggles plan mode via enable_plan_mode tool.
+         * Used by the UI to update the plan mode button and rebuild tool definitions.
+         */
+        onPlanModeToggled: ((Boolean) -> Unit)? = null,
+        /**
          * Channel for feeding user input into a running loop.
          * Used in plan mode: after plan presentation, the loop waits on this channel
          * for the user to send a message, add comments, or approve.
@@ -564,16 +570,17 @@ class AgentService(private val project: Project) : Disposable {
 
                 // Build tool definitions dynamically — uses getActiveTools() which grows
                 // as tool_search activates deferred tools during the session.
-                // Plan mode: remove write tools + act_mode_respond, keep plan_mode_respond.
-                // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools.
-                val isPlanMode = planModeActive.get()
+                // Plan mode: remove write tools + act_mode_respond + enable_plan_mode, keep plan_mode_respond.
+                // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools + enable_plan_mode.
+                // Re-reads planModeActive on each call so enable_plan_mode tool takes effect mid-session.
 
                 // Dynamic tool definition provider — called on each loop iteration
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
+                    val isPlanMode = planModeActive.get()
                     registry.getActiveTools().values
                         .filter { tool ->
                             if (isPlanMode) {
-                                tool.name !in writeToolNames && tool.name != "act_mode_respond"
+                                tool.name !in writeToolNames && tool.name != "act_mode_respond" && tool.name != "enable_plan_mode"
                             } else {
                                 tool.name != "plan_mode_respond"
                             }
@@ -622,6 +629,10 @@ class AgentService(private val project: Project) : Disposable {
                     sessionId = sid,
                     onTokenUpdate = onTokenUpdate,
                     onPlanResponse = onPlanResponse,
+                    onPlanModeToggle = { enabled ->
+                        planModeActive.set(enabled)
+                        onPlanModeToggled?.invoke(enabled)
+                    },
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
                     onWriteCheckpoint = { toolName, args ->

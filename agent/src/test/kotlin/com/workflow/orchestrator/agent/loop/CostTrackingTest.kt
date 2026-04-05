@@ -243,10 +243,9 @@ class CostTrackingTest {
             loop.run("Do work")
 
             assertEquals(2, updates.size, "should fire once per API call")
-            // First callback: cumulative after first call
+            // Callback receives per-call values (current context usage, not cumulative)
             assertEquals(100 to 20, updates[0])
-            // Second callback: cumulative after second call
-            assertEquals(300 to 50, updates[1])
+            assertEquals(200 to 30, updates[1])
         }
 
         @Test

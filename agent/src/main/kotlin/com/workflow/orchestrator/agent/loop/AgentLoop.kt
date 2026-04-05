@@ -151,6 +151,12 @@ class AgentLoop(
      */
     val userInputChannel: Channel<String>? = null,
     /**
+     * Callback when the LLM toggles plan mode via enable_plan_mode tool.
+     * Sets AgentService.planModeActive and updates the UI so that the next iteration
+     * rebuilds tool definitions (removes write tools, adds plan_mode_respond).
+     */
+    private val onPlanModeToggle: ((Boolean) -> Unit)? = null,
+    /**
      * Optional callback for real-time debug log entries.
      * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
      */
@@ -384,7 +390,9 @@ class AgentLoop(
                 totalInputTokens += usage.promptTokens
                 totalOutputTokens += usage.completionTokens
                 contextManager.updateTokens(usage.promptTokens)
-                onTokenUpdate?.invoke(totalInputTokens, totalOutputTokens)
+                // Pass CURRENT context usage (promptTokens = how full the context window is now)
+                // not cumulative totals — the UI shows "X / maxInputTokens" as a progress bar.
+                onTokenUpdate?.invoke(usage.promptTokens, usage.completionTokens)
                 val apiLatencyMs = System.currentTimeMillis() - iterationStartTime
                 fileLogger?.logApiCall(sessionId ?: "", apiLatencyMs, usage.promptTokens, usage.completionTokens, null)
                 sessionMetrics?.recordApiCall(apiLatencyMs, usage.promptTokens, usage.completionTokens)
@@ -930,6 +938,13 @@ class AgentLoop(
                     // Continue the loop — LLM will see the user's message and respond
                 }
                 // needs_more_exploration=true OR no channel: loop continues immediately
+            }
+
+            // Handle enable_plan_mode: activate plan mode so next iteration
+            // rebuilds tool definitions (removes write tools, adds plan_mode_respond)
+            if (toolResult.enablePlanMode) {
+                LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
+                onPlanModeToggle?.invoke(true)
             }
 
             // Store active skill in ContextManager for compaction survival
