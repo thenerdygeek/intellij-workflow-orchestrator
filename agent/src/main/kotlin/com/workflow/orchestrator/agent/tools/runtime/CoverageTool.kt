@@ -76,7 +76,7 @@ Actions and their parameters:
             ),
             "file_path" to ParameterProperty(
                 type = "string",
-                description = "Path to source file to get coverage for — for get_file_coverage"
+                description = "File path (e.g. 'src/main/java/com/example/ServiceImpl.java') or fully qualified class name (e.g. 'com.example.ServiceImpl') — for get_file_coverage"
             )
         ),
         required = listOf("action")
@@ -369,22 +369,28 @@ Actions and their parameters:
             )
         }
 
-        // Try to find the file by exact path or by filename
-        val fileName = filePath.substringAfterLast('/')
-        val entry = snapshot.files[filePath]
-            ?: snapshot.files.entries.find { it.key.endsWith(fileName) }?.value
+        // Coverage keys are fully qualified class names (e.g. "com.example.ServiceImpl").
+        // The user may pass a file path or a class name — resolve via PSI for accuracy.
+        val resolvedClassName = resolveToClassName(filePath, project)
+        val simpleClassName = filePath.substringAfterLast('/').removeSuffix(".java").removeSuffix(".kt").removeSuffix(".groovy")
+
+        val entry = snapshot.files[filePath]                                               // exact match (already a class name)
+            ?: resolvedClassName?.let { snapshot.files[it] }                               // PSI-resolved class name
+            ?: snapshot.files.entries.find { it.key.endsWith(".$simpleClassName") }?.value  // simple name suffix
             ?: return ToolResult(
-                "No coverage data found for '$filePath'. " +
-                    "Available files: ${snapshot.files.keys.joinToString(", ")}",
+                "No coverage data found for '$filePath'." +
+                    (resolvedClassName?.let { " (resolved to class: $it)" } ?: "") +
+                    "\nAvailable classes: ${snapshot.files.keys.joinToString(", ")}",
                 "File not in coverage",
                 20,
                 isError = true
             )
 
-        val content = formatFileCoverage(fileName, entry)
+        val matchedKey = snapshot.files.entries.find { it.value === entry }?.key ?: filePath
+        val content = formatFileCoverage(matchedKey, entry)
         return ToolResult(
             content = content,
-            summary = "$fileName — ${String.format("%.1f", entry.coveragePercent)}% coverage",
+            summary = "${matchedKey.substringAfterLast("/")} — ${String.format("%.1f", entry.coveragePercent)}% coverage",
             tokenEstimate = content.length / 4
         )
     }
@@ -730,6 +736,49 @@ Actions and their parameters:
     // ══════════════════════════════════════════════════════════════════════
     // Utilities
     // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve a file path to its fully qualified class name using IntelliJ's PSI.
+     * Handles both absolute and project-relative paths.
+     * Returns null if the file can't be resolved (not a Java/Kotlin file, doesn't exist, etc.).
+     */
+    private fun resolveToClassName(filePath: String, project: Project): String? {
+        return try {
+            ReadAction.compute<String?, Exception> {
+                val basePath = project.basePath ?: return@compute null
+                val absolutePath = if (filePath.startsWith("/") || filePath.contains(":\\")) filePath
+                    else "$basePath/$filePath"
+
+                val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                    .findFileByIoFile(java.io.File(absolutePath)) ?: return@compute null
+
+                val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vf) ?: return@compute null
+
+                // Java files: PsiJavaFile has packageName + class declarations
+                if (psiFile is com.intellij.psi.PsiJavaFile) {
+                    val pkg = psiFile.packageName
+                    val className = psiFile.classes.firstOrNull()?.name ?: return@compute null
+                    return@compute if (pkg.isNotBlank()) "$pkg.$className" else className
+                }
+
+                // Kotlin files: KtFile has packageFqName
+                try {
+                    val ktFileClass = Class.forName("org.jetbrains.kotlin.psi.KtFile")
+                    if (ktFileClass.isInstance(psiFile)) {
+                        val getPackageFqName = ktFileClass.getMethod("getPackageFqName")
+                        val fqName = getPackageFqName.invoke(psiFile)
+                        val pkg = fqName?.toString() ?: ""
+                        val className = vf.nameWithoutExtension
+                        return@compute if (pkg.isNotBlank()) "$pkg.$className" else className
+                    }
+                } catch (_: Exception) {}
+
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     companion object {
         private const val DEFAULT_TIMEOUT = 300L

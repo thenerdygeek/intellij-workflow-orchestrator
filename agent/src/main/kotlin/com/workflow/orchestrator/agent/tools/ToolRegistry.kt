@@ -19,6 +19,7 @@ class ToolRegistry {
 
     // Tier 2: Deferred tools — available via tool_search, NOT sent to LLM initially
     private val deferredTools = mutableMapOf<String, AgentTool>()
+    private val deferredCategories = mutableMapOf<String, String>()
 
     // Tier 3: Active deferred — loaded via tool_search during a session, sent to LLM
     private val activeDeferred = mutableMapOf<String, AgentTool>()
@@ -31,8 +32,9 @@ class ToolRegistry {
     }
 
     /** Register a deferred tool (available via tool_search, not sent initially). */
-    fun registerDeferred(tool: AgentTool) {
+    fun registerDeferred(tool: AgentTool, category: String = "Other") {
         deferredTools[tool.name] = tool
+        deferredCategories[tool.name] = category
     }
 
     /**
@@ -107,6 +109,20 @@ class ToolRegistry {
                 ?: tool.description.take(100)
             tool.name to oneLiner
         }
+    }
+
+    /**
+     * Returns deferred tools grouped by category (category → list of tool names).
+     * Compact representation for system prompt: the LLM scans by category,
+     * then uses tool_search to load the actual schema.
+     */
+    fun getDeferredCatalogGrouped(): Map<String, List<String>> {
+        val grouped = linkedMapOf<String, MutableList<String>>()
+        for ((name, _) in deferredTools) {
+            val category = deferredCategories[name] ?: "Other"
+            grouped.getOrPut(category) { mutableListOf() }.add(name)
+        }
+        return grouped
     }
 
     /** Reset active deferred tools (for new sessions). Moves them back to deferred. */

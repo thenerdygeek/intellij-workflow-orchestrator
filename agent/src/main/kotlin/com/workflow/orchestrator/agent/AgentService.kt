@@ -256,65 +256,59 @@ class AgentService(private val project: Project) : Disposable {
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────
 
-        // PSI tools beyond the core 3
-        safeRegisterDeferred { FindImplementationsTool() }
-        safeRegisterDeferred { FileStructureTool() }
-        safeRegisterDeferred { TypeHierarchyTool() }
-        safeRegisterDeferred { CallHierarchyTool() }
-        safeRegisterDeferred { TypeInferenceTool() }
-        safeRegisterDeferred { DataFlowAnalysisTool() }
-        safeRegisterDeferred { GetMethodBodyTool() }
-        safeRegisterDeferred { GetAnnotationsTool() }
-        safeRegisterDeferred { TestFinderTool() }
-        safeRegisterDeferred { StructuralSearchTool() }
-        safeRegisterDeferred { ReadWriteAccessTool() }
+        // Code Intelligence — PSI-based semantic analysis
+        safeRegisterDeferred("Code Intelligence") { FindImplementationsTool() }
+        safeRegisterDeferred("Code Intelligence") { FileStructureTool() }
+        safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool() }
+        safeRegisterDeferred("Code Intelligence") { CallHierarchyTool() }
+        safeRegisterDeferred("Code Intelligence") { TypeInferenceTool() }
+        safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool() }
+        safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool() }
+        safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool() }
+        safeRegisterDeferred("Code Intelligence") { TestFinderTool() }
+        safeRegisterDeferred("Code Intelligence") { StructuralSearchTool() }
+        safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool() }
 
-        // IDE tools beyond core
-        safeRegisterDeferred { FormatCodeTool() }
-        safeRegisterDeferred { OptimizeImportsTool() }
-        safeRegisterDeferred { RefactorRenameTool() }
-        safeRegisterDeferred { RunInspectionsTool() }
-        safeRegisterDeferred { ProblemViewTool() }
-        safeRegisterDeferred { ListQuickFixesTool() }
+        // Code Quality — formatting, refactoring, inspections
+        safeRegisterDeferred("Code Quality") { FormatCodeTool() }
+        safeRegisterDeferred("Code Quality") { OptimizeImportsTool() }
+        safeRegisterDeferred("Code Quality") { RefactorRenameTool() }
+        safeRegisterDeferred("Code Quality") { RunInspectionsTool() }
+        safeRegisterDeferred("Code Quality") { ProblemViewTool() }
+        safeRegisterDeferred("Code Quality") { ListQuickFixesTool() }
 
-        // VCS tools beyond core 3 (individual tools — GitTool meta-tool removed)
-        safeRegisterDeferred { GitBlameTool() }
-        safeRegisterDeferred { GitBranchesTool() }
-        safeRegisterDeferred { GitShowCommitTool() }
-        safeRegisterDeferred { GitShowFileTool() }
-        safeRegisterDeferred { GitStashListTool() }
-        safeRegisterDeferred { GitFileHistoryTool() }
-        safeRegisterDeferred { GitMergeBaseTool() }
-        safeRegisterDeferred { ChangelistShelveTool() }
+        // Git — history, branches, blame, shelve
+        safeRegisterDeferred("Git") { GitBlameTool() }
+        safeRegisterDeferred("Git") { GitBranchesTool() }
+        safeRegisterDeferred("Git") { GitShowCommitTool() }
+        safeRegisterDeferred("Git") { GitShowFileTool() }
+        safeRegisterDeferred("Git") { GitStashListTool() }
+        safeRegisterDeferred("Git") { GitFileHistoryTool() }
+        safeRegisterDeferred("Git") { GitMergeBaseTool() }
+        safeRegisterDeferred("Git") { ChangelistShelveTool() }
+        safeRegisterDeferred("Git") { GenerateExplanationTool() }
 
-        // Framework tools
-        safeRegisterDeferred { BuildTool() }
-        safeRegisterDeferred { SpringTool() }
+        // Build & Run — project build, run configs, coverage
+        safeRegisterDeferred("Build & Run") { BuildTool() }
+        safeRegisterDeferred("Build & Run") { SpringTool() }
+        safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
+        safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
+        safeRegisterDeferred("Build & Run") { CoverageTool() }
+        safeRegisterDeferred("Build & Run") { CreateRunConfigTool() }
+        safeRegisterDeferred("Build & Run") { ModifyRunConfigTool() }
+        safeRegisterDeferred("Build & Run") { DeleteRunConfigTool() }
 
-        // Runtime tools
-        safeRegisterDeferred { RuntimeExecTool() }
-        safeRegisterDeferred { RuntimeConfigTool() }
-        safeRegisterDeferred { CoverageTool() }
+        // Database — queries, schema, connection profiles
+        safeRegisterDeferred("Database") { DbListProfilesTool() }
+        safeRegisterDeferred("Database") { DbQueryTool() }
+        safeRegisterDeferred("Database") { DbSchemaTool() }
 
-        // Run config tools
-        safeRegisterDeferred { CreateRunConfigTool() }
-        safeRegisterDeferred { ModifyRunConfigTool() }
-        safeRegisterDeferred { DeleteRunConfigTool() }
-
-        // Database tools
-        safeRegisterDeferred { DbListProfilesTool() }
-        safeRegisterDeferred { DbQueryTool() }
-        safeRegisterDeferred { DbSchemaTool() }
-
-        // VCS explanation tool (ported from Cline's generate_explanation)
-        safeRegisterDeferred { GenerateExplanationTool() }
-
-        // Other deferred tools
-        safeRegisterDeferred { ProjectContextTool() }
-        safeRegisterDeferred { CurrentTimeTool() }
-        safeRegisterDeferred { KillProcessTool() }
-        safeRegisterDeferred { SendStdinTool() }
-        safeRegisterDeferred { AskUserInputTool() }
+        // Utilities
+        safeRegisterDeferred("Utilities") { ProjectContextTool() }
+        safeRegisterDeferred("Utilities") { CurrentTimeTool() }
+        safeRegisterDeferred("Utilities") { KillProcessTool() }
+        safeRegisterDeferred("Utilities") { SendStdinTool() }
+        safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
         // Debug tools (require AgentDebugController)
         registerDebugTools()
@@ -351,19 +345,19 @@ class AgentService(private val project: Project) : Disposable {
         val connections = ConnectionSettings.getInstance()
 
         if (connections.state.jiraUrl.isNotBlank()) {
-            safeRegisterDeferred { JiraTool() }
+            safeRegisterDeferred("Integration") { JiraTool() }
         }
         if (connections.state.bambooUrl.isNotBlank()) {
-            safeRegisterDeferred { BambooBuildsTool() }
-            safeRegisterDeferred { BambooPlansTool() }
+            safeRegisterDeferred("Integration") { BambooBuildsTool() }
+            safeRegisterDeferred("Integration") { BambooPlansTool() }
         }
         if (connections.state.sonarUrl.isNotBlank()) {
-            safeRegisterDeferred { SonarTool() }
+            safeRegisterDeferred("Integration") { SonarTool() }
         }
         if (connections.state.bitbucketUrl.isNotBlank()) {
-            safeRegisterDeferred { BitbucketPrTool() }
-            safeRegisterDeferred { BitbucketRepoTool() }
-            safeRegisterDeferred { BitbucketReviewTool() }
+            safeRegisterDeferred("Integration") { BitbucketPrTool() }
+            safeRegisterDeferred("Integration") { BitbucketRepoTool() }
+            safeRegisterDeferred("Integration") { BitbucketReviewTool() }
         }
     }
 
@@ -371,9 +365,9 @@ class AgentService(private val project: Project) : Disposable {
         try {
             val controller = AgentDebugController(project)
             debugController = controller
-            registry.registerDeferred(DebugStepTool(controller))
-            registry.registerDeferred(DebugInspectTool(controller))
-            registry.registerDeferred(DebugBreakpointsTool(controller))
+            registry.registerDeferred(DebugStepTool(controller), "Debug")
+            registry.registerDeferred(DebugInspectTool(controller), "Debug")
+            registry.registerDeferred(DebugBreakpointsTool(controller), "Debug")
         } catch (e: Exception) {
             log.warn("AgentService: failed to register debug tools: ${e.message}")
         }
@@ -387,9 +381,9 @@ class AgentService(private val project: Project) : Disposable {
         }
     }
 
-    private inline fun safeRegisterDeferred(factory: () -> AgentTool) {
+    private inline fun safeRegisterDeferred(category: String = "Other", factory: () -> AgentTool) {
         try {
-            registry.registerDeferred(factory())
+            registry.registerDeferred(factory(), category)
         } catch (e: Exception) {
             log.warn("AgentService: failed to register deferred tool: ${e.message}")
         }
@@ -558,8 +552,8 @@ class AgentService(private val project: Project) : Disposable {
                     registry.resetActiveDeferred()
                 }
 
-                // Build deferred catalog for system prompt injection
-                val deferredCatalog = registry.getDeferredCatalog()
+                // Build deferred catalog for system prompt injection (grouped by category)
+                val deferredCatalog = registry.getDeferredCatalogGrouped()
 
                 val systemPrompt = SystemPrompt.build(
                     projectName = projectName,
