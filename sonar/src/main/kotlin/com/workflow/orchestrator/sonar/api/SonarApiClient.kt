@@ -11,6 +11,7 @@ import com.workflow.orchestrator.sonar.api.dto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jetbrains.idea.maven.project.MavenProjectsManager
@@ -259,7 +260,9 @@ class SonarApiClient(
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =
         withContext(Dispatchers.IO) {
             try {
-                val request = Request.Builder().url("$baseUrl$path").get().build()
+                val request = Request.Builder().url("$baseUrl$path").get()
+                    .cacheControl(CacheControl.FORCE_NETWORK)
+                    .build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
                     when (it.code) {
