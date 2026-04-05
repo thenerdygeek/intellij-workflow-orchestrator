@@ -184,7 +184,7 @@ Tips:
 
     // ---- Debug dir for sub-agents ----
 
-    private var subagentCounter = 0
+    private val subagentCounter = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
      * Compute a unique debug dir for a sub-agent under the parent session's directory.
@@ -192,7 +192,7 @@ Tips:
      */
     private fun subagentDebugDir(description: String): java.io.File? {
         val parentDir = sessionDebugDir ?: return null
-        val idx = ++subagentCounter
+        val idx = subagentCounter.incrementAndGet()
         val safeName = description.take(40).replace(Regex("[^a-zA-Z0-9_-]"), "_").lowercase()
         return java.io.File(parentDir, "subagents/subagent-${idx}-${safeName}")
     }
@@ -228,12 +228,13 @@ Tips:
         config: AgentConfig,
         iterationOverride: Int
     ): ToolResult {
-        val brain = brainProvider()
         val resolvedTools = resolveConfigTools(config)
 
         if (resolvedTools.isEmpty()) {
             return errorResult("Agent type '${config.name}' has no resolvable tools. Config lists: ${config.tools}")
         }
+
+        val brain = brainProvider()
 
         val planMode = inferPlanMode(resolvedTools)
         val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
@@ -290,7 +291,7 @@ Tips:
 
     private fun mapSingleResult(
         description: String,
-        scope: String,
+        label: String,
         result: SubagentRunResult
     ): ToolResult {
         val statsLine = formatStatsLine(result.stats)
@@ -298,7 +299,7 @@ Tips:
         return when (result.status) {
             SubagentRunStatus.COMPLETED -> ToolResult(
                 content = "[Agent: $description]\n${result.result ?: "(no output)"}\n\n$statsLine",
-                summary = "Agent completed ($scope): ${(result.result ?: "").take(150)}",
+                summary = "Agent completed ($label): ${(result.result ?: "").take(150)}",
                 tokenEstimate = estimateTokens(result.result ?: ""),
                 verifyCommand = null
             )

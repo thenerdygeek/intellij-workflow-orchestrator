@@ -1330,5 +1330,94 @@ class SpawnAgentToolTest {
                 tempDir.toFile().deleteRecursively()
             }
         }
+
+        @Test
+        fun `agent tool is always excluded from config tools even if listed`() = runTest {
+            val tempDir = createTempDirectory("agent-config-test")
+            try {
+                tempDir.resolve("includes-agent.md").toFile().writeText("""
+                    ---
+                    name: includes-agent
+                    description: "Agent that lists agent tool"
+                    tools: read_file, agent, search_code, think, attempt_completion
+                    max-turns: 10
+                    ---
+                    You are a test agent.
+                """.trimIndent())
+                configLoader.loadFromDisk(tempDir)
+
+                var capturedToolNames: List<String>? = null
+                val capturingBrain = object : LlmBrain {
+                    override val modelId = "test-brain"
+                    override suspend fun chat(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, toolChoice: JsonElement?) = throw UnsupportedOperationException()
+                    override suspend fun chatStream(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, onChunk: suspend (StreamChunk) -> Unit): ApiResult<ChatCompletionResponse> {
+                        capturedToolNames = tools?.map { it.function.name }
+                        return ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+                    }
+                    override fun estimateTokens(text: String) = text.length / 4
+                    override fun cancelActiveRequest() {}
+                }
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = { capturingBrain },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                spawnTool.execute(
+                    params(
+                        "description" to "Test agent exclusion",
+                        "prompt" to "Do something",
+                        "agent_type" to "includes-agent"
+                    ),
+                    project
+                )
+
+                assertNotNull(capturedToolNames)
+                assertFalse("agent" in capturedToolNames!!, "agent tool must be excluded even when config lists it")
+                assertTrue("read_file" in capturedToolNames!!, "Other tools should still be present")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `agent_type with no resolvable tools returns error`() = runTest {
+            val tempDir = createTempDirectory("agent-config-test")
+            try {
+                tempDir.resolve("broken-agent.md").toFile().writeText("""
+                    ---
+                    name: broken-agent
+                    description: "Agent with no real tools"
+                    tools: nonexistent_tool_1, nonexistent_tool_2
+                    max-turns: 10
+                    ---
+                    You are a broken agent.
+                """.trimIndent())
+                configLoader.loadFromDisk(tempDir)
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = { throw IllegalStateException("Should not create brain") },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Test broken agent",
+                        "prompt" to "Do something",
+                        "agent_type" to "broken-agent"
+                    ),
+                    project
+                )
+
+                assertTrue(result.isError, "Should return error when no tools resolve")
+                assertTrue(result.content.contains("no resolvable tools"), "Error should mention no resolvable tools: ${result.content}")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
     }
 }
