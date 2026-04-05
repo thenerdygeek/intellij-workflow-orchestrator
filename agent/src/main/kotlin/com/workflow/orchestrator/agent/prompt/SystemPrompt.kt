@@ -321,10 +321,27 @@ There are two modes:
         return buildString {
             appendLine("ADDITIONAL TOOLS AVAILABLE VIA tool_search")
             appendLine()
-            appendLine("Use the tool_search tool to load any of these specialized tools when needed:")
+            appendLine("You are running inside IntelliJ IDEA, which gives you access to IDE-native tools that are faster, more accurate, and richer than shell equivalents. Use tool_search to load any of these specialized tools when needed:")
             for ((name, description) in catalog) {
                 appendLine("- $name: $description")
             }
+            appendLine()
+            appendLine("## IDE Tools vs Shell Commands")
+            appendLine()
+            appendLine("IMPORTANT: Always prefer IDE-native tools over shell commands (run_command) when both can accomplish the same task:")
+            appendLine()
+            appendLine("| Task | USE (IDE-native) | AVOID (shell) |")
+            appendLine("|------|------------------|---------------|")
+            appendLine("| Check for compilation errors | diagnostics (core) or runtime_exec compile_module (via tool_search) | mvn compile, gradle build |")
+            appendLine("| Run tests | runtime_exec run_tests (via tool_search) | mvn test, gradle test |")
+            appendLine("| Find code issues | run_inspections (via tool_search) | mvn checkstyle:check, spotbugs |")
+            appendLine("| Get problems across project | problem_view (via tool_search) | mvn verify |")
+            appendLine("| Fix imports | optimize_imports (via tool_search) | manual edit |")
+            appendLine("| Rename symbol safely | refactor_rename (via tool_search) | find-and-replace |")
+            appendLine("| Check dependencies | build maven_dependencies (via tool_search) | mvn dependency:tree |")
+            appendLine("| Read test results | runtime_exec get_test_results (via tool_search) | parse mvn output |")
+            appendLine()
+            appendLine("IDE tools use the IntelliJ PSI engine which understands code semantically — they resolve types, follow references across files, and report errors instantly without needing to spawn a build process. Use run_command only for tasks that have no IDE-native equivalent (e.g., deploying, running custom scripts, Docker operations).")
         }.trimEnd()
     }
 
@@ -356,7 +373,7 @@ There are two modes:
 - When the task specifies numerical thresholds or accuracy targets, verify your result meets the criteria before completing. If close but not passing, iterate rather than declaring completion.
 - When fixing a bug, if existing tests fail after your change, your code is likely wrong. Fix your code to pass the tests rather than modifying test assertions to match your new behavior, unless the user explicitly asks you to update tests.
 - After fixing a bug, verify your change by running the project's existing test suite rather than only a reproduction script you wrote. If you're unsure which tests to run, search for test files related to the code you changed.
-- After making code changes, consider running any available validation tools for the project (such as type checkers, linters, test suites, or build scripts) to catch errors, since you won't receive automatic diagnostics after edits.
+- After making code changes, use the diagnostics tool to check for compilation errors in the edited files. For project-wide issues, use tool_search to load run_inspections or problem_view. Prefer these IDE-native tools over shell build commands (mvn compile, gradle build) since they are faster and more precise.
 - NEVER end attempt_completion result with a question or request to engage in further conversation! The result is a concise summary card, not a conversation starter. End with actionable next steps (e.g., "Run ./gradlew test to verify") rather than questions.
 - You are STRICTLY FORBIDDEN from starting your messages with "Great", "Certainly", "Okay", "Sure". You should NOT be conversational in your responses, but rather direct and to the point. For example you should NOT say "Great, I've updated the CSS" but instead something like "I've updated the CSS". It is important you be clear and technical in your messages.
 - When presented with images, utilize your vision capabilities to thoroughly examine them and extract meaningful information. Incorporate these insights into your thought process as you accomplish the user's task.

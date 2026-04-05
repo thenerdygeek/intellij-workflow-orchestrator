@@ -24,7 +24,7 @@ class SemanticDiagnosticsTool : AgentTool {
     }
 
     override val name = "diagnostics"
-    override val description = "Check a file for errors: syntax errors, unresolved references, missing imports. When run after edit_file, only reports NEW issues near the edited lines — pre-existing issues elsewhere in the file are excluded."
+    override val description = "Check a file for compilation errors using the IDE's semantic analysis engine — syntax errors, unresolved references, type mismatches, missing imports. Faster and more precise than running mvn compile or gradle build. Use this instead of shell build commands to verify code correctness. When run after edit_file, automatically scopes to only NEW issues near the edited lines."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "File path to check (e.g., 'src/main/kotlin/UserService.kt')")

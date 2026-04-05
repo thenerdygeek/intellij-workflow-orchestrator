@@ -367,6 +367,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const id = toolCallId || nextId('tc');
       const newMap = new Map(state.activeToolCalls);
       newMap.set(id, { id, name, args, status });
+
+      // Auto-finalize any active stream — ensures text appears in messages before tool calls.
+      // Without this, text stays in activeStream (rendered at the bottom) while tool calls
+      // render above it, causing text to "accumulate at the bottom."
+      const stream = state.activeStream;
+      if (stream && stream.text.length > 0) {
+        const message: Message = { id: nextId('msg'), role: 'agent', content: stream.text, timestamp: Date.now() };
+        return {
+          messages: [...state.messages, message],
+          activeStream: null,
+          activeToolCalls: newMap,
+        };
+      }
+
       return { activeToolCalls: newMap };
     });
   },
@@ -454,11 +468,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   finalizeToolChain() {
-    // Move current active tool calls into messages as a toolchain entry
+    // Move current active tool calls into messages as a toolchain entry.
+    // Before clearing toolOutputStreams, merge any accumulated stream output
+    // into each tool call's `output` field so it survives finalization.
     const state = get();
     const tools = Array.from(state.activeToolCalls.values());
     if (tools.length === 0) return;
-    const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools };
+    const streams = state.toolOutputStreams;
+    const mergedTools = tools.map(tc => {
+      const stream = streams[tc.id];
+      if (stream && !tc.output) {
+        return { ...tc, output: stream };
+      }
+      return tc;
+    });
+    const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: mergedTools };
     set({
       messages: [...state.messages, chainMsg],
       activeToolCalls: new Map(),
@@ -693,15 +717,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string) {
-    set({
-      pendingApproval: {
+    set(state => {
+      const approval: PendingApproval = {
         toolName,
         riskLevel,
         title: `Approve ${toolName}? (${riskLevel} risk)`,
         description,
         metadata,
         diffContent,
+      };
+
+      // Auto-finalize stream + tool chain so approval card appears after all prior content.
+      const stream = state.activeStream;
+      const tools = Array.from(state.activeToolCalls.values());
+      const newMessages = [...state.messages];
+
+      if (stream && stream.text.length > 0) {
+        newMessages.push({ id: nextId('msg'), role: 'agent', content: stream.text, timestamp: Date.now() });
       }
+      if (tools.length > 0) {
+        newMessages.push({ id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools });
+      }
+
+      return {
+        pendingApproval: approval,
+        ...(stream && stream.text.length > 0 ? { activeStream: null } : {}),
+        ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {} } : {}),
+        ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
+      };
     });
   },
 

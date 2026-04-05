@@ -890,12 +890,13 @@ class AgentLoop(
                 onWriteCheckpoint?.invoke(toolName, call.function.arguments)
             }
 
-            // Notify callback (includes editDiff for file change tools — ported from Cline)
+            // Notify callback (includes editDiff for file change tools ��� ported from Cline)
             onToolCall(
                 ToolCallProgress(
                     toolName = toolName,
                     args = call.function.arguments,
                     result = toolResult.summary,
+                    output = toolResult.content.takeIf { it != toolResult.summary },
                     durationMs = durationMs,
                     isError = toolResult.isError,
                     toolCallId = toolCallId,

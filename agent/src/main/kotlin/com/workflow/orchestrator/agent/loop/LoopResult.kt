@@ -69,6 +69,8 @@ data class ToolCallProgress(
     val toolName: String,
     val args: String = "",
     val result: String = "",
+    /** Full tool output content for the expanded UI view. Falls back to [result] (summary) if null. */
+    val output: String? = null,
     val durationMs: Long = 0,
     val isError: Boolean = false,
     val toolCallId: String = "",

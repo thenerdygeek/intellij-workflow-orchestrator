@@ -416,6 +416,44 @@ export const ChatView = memo(function ChatView() {
           <ToolCallChain toolCalls={toolCallsArray} />
         )}
 
+        {/* Streaming message — right after tool calls for natural conversation flow */}
+        {streamPlaceholder && (
+          <AgentMessage
+            key="__streaming__"
+            message={streamPlaceholder}
+            isStreaming={activeStream?.isStreaming ?? false}
+            streamText={activeStream?.text}
+          />
+        )}
+
+        {/* Tool call approval — immediately after tool calls / streaming text */}
+        {pendingApproval && (
+          <div ref={approvalRef}>
+            <ApprovalView
+              toolName={pendingApproval.toolName}
+              riskLevel={pendingApproval.riskLevel}
+              title={pendingApproval.title}
+              description={pendingApproval.description}
+              metadata={pendingApproval.metadata}
+              diffContent={pendingApproval.diffContent}
+              onApprove={handleApprove}
+              onDeny={handleDeny}
+              onAllowForSession={handleAllowForSession}
+            />
+          </div>
+        )}
+
+        {/* Process input prompt — shown when ask_user_input tool requests user input */}
+        {pendingProcessInput && (
+          <ProcessInputView
+            processId={pendingProcessInput.processId}
+            description={pendingProcessInput.description}
+            prompt={pendingProcessInput.prompt}
+            command={pendingProcessInput.command}
+            onSubmit={resolveProcessInput}
+          />
+        )}
+
         {/* Rollback events */}
         {rollbackEvents.map(rb => (
           <ErrorBoundary key={rb.id}>
@@ -471,16 +509,6 @@ export const ChatView = memo(function ChatView() {
           </div>
         ))}
 
-        {/* Streaming message */}
-        {streamPlaceholder && (
-          <AgentMessage
-            key="__streaming__"
-            message={streamPlaceholder}
-            isStreaming={activeStream?.isStreaming ?? false}
-            streamText={activeStream?.text}
-          />
-        )}
-
         {/* Working indicator — always last content item while agent is active */}
         {showWorkingIndicator && <WorkingIndicator />}
 
@@ -509,34 +537,6 @@ export const ChatView = memo(function ChatView() {
               {retryMessage}
             </span>
           </div>
-        )}
-
-        {/* Tool call approval — always last so it stays at the bottom */}
-        {pendingApproval && (
-          <div ref={approvalRef}>
-            <ApprovalView
-              toolName={pendingApproval.toolName}
-              riskLevel={pendingApproval.riskLevel}
-              title={pendingApproval.title}
-              description={pendingApproval.description}
-              metadata={pendingApproval.metadata}
-              diffContent={pendingApproval.diffContent}
-              onApprove={handleApprove}
-              onDeny={handleDeny}
-              onAllowForSession={handleAllowForSession}
-            />
-          </div>
-        )}
-
-        {/* Process input prompt — shown when ask_user_input tool requests user input */}
-        {pendingProcessInput && (
-          <ProcessInputView
-            processId={pendingProcessInput.processId}
-            description={pendingProcessInput.description}
-            prompt={pendingProcessInput.prompt}
-            command={pendingProcessInput.command}
-            onSubmit={resolveProcessInput}
-          />
         )}
 
         <ChatContainerScrollAnchor />

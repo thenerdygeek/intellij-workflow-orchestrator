@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { ToolCall } from '@/bridge/types';
 import { Terminal } from '@/components/ui/tool-ui/terminal';
 import {
@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Loader2, Check, X, Clock } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
+import { useShiki } from '@/hooks/useShiki';
 
 // ── Category helpers ──
 
@@ -77,6 +78,41 @@ function StatusIcon({ status }: { status: ToolCall['status'] }) {
   }
 }
 
+// ── Language detection from tool args ──
+
+const EXT_LANG: Record<string, string> = {
+  kt: 'kotlin', kts: 'kotlin', java: 'java', py: 'python',
+  js: 'javascript', ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+  json: 'json', yaml: 'yaml', yml: 'yaml', xml: 'xml',
+  html: 'html', css: 'css', sql: 'sql', sh: 'bash', bash: 'bash',
+  go: 'go', rs: 'rust', md: 'markdown', gradle: 'kotlin',
+  toml: 'toml', tf: 'hcl', proto: 'protobuf', graphql: 'graphql',
+  swift: 'swift', rb: 'ruby', php: 'php', c: 'c', cpp: 'cpp', h: 'c',
+};
+
+/** Detect language hint for Shiki based on tool name and args. */
+function detectLanguage(toolCall: ToolCall): string {
+  const name = toolCall.name.replace(/^mcp__[^_]+_[^_]+__/, '');
+
+  // File-reading tools → derive from file extension
+  if (name === 'read_file' || name === 'Read' || name === 'git_show_file') {
+    try {
+      const args = JSON.parse(toolCall.args) as Record<string, unknown>;
+      const filePath = (args.file_path ?? args.path ?? '') as string;
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+      return EXT_LANG[ext] ?? '';
+    } catch { /* ignore */ }
+  }
+
+  // Git diff/blame output
+  if (name === 'git_diff' || name === 'git_blame') return 'diff';
+
+  return '';
+}
+
+// Max output size for syntax highlighting (skip Shiki for very large outputs)
+const HIGHLIGHT_MAX_CHARS = 50_000;
+
 // ── Simple input/output for non-terminal tools ──
 
 function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
@@ -84,6 +120,23 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
   try { input = JSON.parse(toolCall.args) as Record<string, unknown>; } catch { /* ignore */ }
 
   const displayOutput = toolCall.output || toolCall.result;
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const language = useMemo(() => detectLanguage(toolCall), [toolCall]);
+  const shouldHighlight = language !== '' && (displayOutput?.length ?? 0) <= HIGHLIGHT_MAX_CHARS;
+  const { html: shikiHtml, isLoading: shikiLoading } = useShiki(
+    shouldHighlight ? (displayOutput ?? '') : '',
+    shouldHighlight ? language : '',
+  );
+  const useHighlighted = shouldHighlight && !!shikiHtml && !shikiLoading;
+  const isError = toolCall.status === 'ERROR';
+
+  // Auto-scroll to bottom so latest output is visible; older content is above
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [displayOutput, shikiHtml]);
 
   return (
     <div className="space-y-2 py-1">
@@ -102,21 +155,32 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
         <div>
           <div
             className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-            style={{ color: toolCall.status === 'ERROR' ? 'var(--error)' : 'var(--fg-muted)' }}
+            style={{ color: isError ? 'var(--error)' : 'var(--fg-muted)' }}
           >
-            {toolCall.status === 'ERROR' ? 'Error' : 'Output'}
+            {isError ? 'Error' : 'Output'}
           </div>
-          <pre
-            className="rounded p-2 text-[11px] font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere]"
+          <div
+            ref={scrollRef}
+            className={cn(
+              'rounded overflow-x-auto overflow-y-auto',
+              useHighlighted
+                ? '[&_pre]:!m-0 [&_pre]:!p-2 [&_pre]:!text-[11px] [&_pre]:!leading-relaxed [&_code]:!text-[11px]'
+                : 'p-2 text-[11px] font-mono leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]',
+            )}
             style={{
-              backgroundColor: toolCall.status === 'ERROR' ? 'var(--diff-rem-bg)' : 'var(--code-bg)',
-              color: toolCall.status === 'ERROR' ? 'var(--error)' : 'var(--fg)',
+              backgroundColor: !useHighlighted ? (isError ? 'var(--diff-rem-bg)' : 'var(--code-bg)') : undefined,
+              color: !useHighlighted ? (isError ? 'var(--error)' : 'var(--fg)') : undefined,
               maxHeight: '300px',
-              overflowY: 'auto',
             }}
           >
-            {displayOutput}
-          </pre>
+            {useHighlighted ? (
+              <div dangerouslySetInnerHTML={{ __html: shikiHtml }} />
+            ) : (
+              <pre className="m-0 p-0 text-inherit font-inherit leading-inherit whitespace-pre-wrap [overflow-wrap:anywhere]">
+                {displayOutput}
+              </pre>
+            )}
+          </div>
         </div>
       )}
       {toolCall.status === 'RUNNING' && !displayOutput && (

@@ -4,10 +4,21 @@
  * Collapsible monospace output body.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { AnsiUp } from 'ansi_up';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Terminal as TerminalIcon, Copy, Check, ChevronDown, ChevronUp, Square } from 'lucide-react';
+
+// Singleton AnsiUp — shared across all Terminal instances
+const ansiUp = new AnsiUp();
+ansiUp.use_classes = false;
+
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1B\[[0-9;]*[a-zA-Z]/g;
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_RE, '');
+}
 
 interface TerminalProps {
   command: string;
@@ -55,6 +66,10 @@ export function Terminal({
     ? lines.slice(-maxCollapsedLines).join('\n')
     : output;
 
+  // Convert ANSI escape codes to colored HTML
+  const displayHtml = useMemo(() => ansiUp.ansi_to_html(displayOutput), [displayOutput]);
+  const hasAnsi = output !== stripAnsi(output);
+
   // Auto-scroll to bottom when output changes or when expanding
   useEffect(() => {
     if (outputRef.current) {
@@ -98,7 +113,7 @@ export function Terminal({
           variant="ghost"
           size="sm"
           className="h-5 w-5 p-0 shrink-0"
-          onClick={() => copy(output)}
+          onClick={() => copy(hasAnsi ? stripAnsi(output) : output)}
           title="Copy output"
         >
           {copied ? <Check className="h-3 w-3" style={{ color: 'var(--success)' }} /> : <Copy className="h-3 w-3" style={{ color: 'var(--fg-muted)' }} />}
@@ -121,11 +136,10 @@ export function Terminal({
         <div className="relative">
           <pre
             ref={outputRef}
-            className="px-3 py-2 text-[11px] leading-relaxed font-mono overflow-x-auto overflow-y-auto"
+            className="px-3 py-2 text-[11px] leading-relaxed font-mono overflow-x-auto overflow-y-auto whitespace-pre-wrap"
             style={{ color: 'var(--fg)', maxHeight: expanded ? '300px' : '200px' }}
-          >
-            {displayOutput}
-          </pre>
+            dangerouslySetInnerHTML={{ __html: displayHtml }}
+          />
 
           {/* Collapse/Expand toggle */}
           {needsCollapse && (
