@@ -364,7 +364,8 @@ class AgentController(
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
-            onSubagentProgress = ::onSubagentProgress
+            onSubagentProgress = ::onSubagentProgress,
+            onTokenUpdate = ::onTokenUpdate
         )
     }
 
@@ -516,6 +517,18 @@ class AgentController(
     }
 
     /**
+     * Token usage callback — agent loop reports cumulative token counts after each API call.
+     * Pushes real-time token budget utilization to the webview progress bar.
+     */
+    private fun onTokenUpdate(inputTokens: Int, outputTokens: Int) {
+        invokeLater {
+            val maxTokens = AgentSettings.getInstance(project).state.maxInputTokens
+            val totalUsed = inputTokens + outputTokens
+            dashboard.updateProgress("", totalUsed, maxTokens)
+        }
+    }
+
+    /**
      * Task progress callback — agent loop reports checklist updates.
      *
      * Port of Cline's FocusChainManager say("task_progress", ...):
@@ -553,6 +566,14 @@ class AgentController(
                     toolName = progress.toolName,
                     output = progress.result.takeIf { it.isNotBlank() }
                 )
+
+                // Show skill banner when use_skill activates a skill
+                if (progress.toolName == "skill" && !progress.isError) {
+                    val skillName = progress.result.substringAfter("'").substringBefore("'")
+                    if (skillName.isNotBlank()) {
+                        dashboard.showSkillBanner(skillName)
+                    }
+                }
             }
         }
     }
@@ -563,6 +584,10 @@ class AgentController(
         invokeLater {
             // Flush any remaining stream content
             dashboard.flushStreamBuffer()
+            // Finalize any open tool chain in the UI (collapse running indicators)
+            dashboard.finalizeToolChain()
+            // Hide skill banner on task completion
+            dashboard.hideSkillBanner()
 
             when (result) {
                 is LoopResult.Completed -> {
@@ -701,6 +726,7 @@ class AgentController(
 
         // Reset dashboard UI
         dashboard.reset()
+        dashboard.hideSkillBanner()
         dashboard.setBusy(false)
         dashboard.setInputLocked(false)
         dashboard.focusInput()
@@ -803,6 +829,9 @@ class AgentController(
 
         dashboard.appendStatus("Reverting to checkpoint...", RichStreamingPanel.StatusType.INFO)
 
+        // Collect files modified since the target checkpoint for rollback notification
+        val affectedFiles = service.getFilesModifiedSinceCheckpoint(sessionId, checkpointId)
+
         // Reset context manager — the reverted session creates its own
         contextManager = null
 
@@ -817,6 +846,13 @@ class AgentController(
 
         if (job != null) {
             currentJob = job
+            // Notify UI which files were affected by the rollback
+            if (affectedFiles.isNotEmpty()) {
+                val rollbackJson = affectedFiles.joinToString(",", """{"affectedFiles":[""", "]}") { file ->
+                    "\"${file.replace("\"", "\\\"")}\""
+                }
+                dashboard.notifyRollback(rollbackJson)
+            }
         } else {
             dashboard.appendError("Could not revert to checkpoint. The checkpoint may have been deleted.")
             dashboard.setBusy(false)

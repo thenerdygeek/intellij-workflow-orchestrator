@@ -444,7 +444,12 @@ class AgentService(private val project: Project) : Disposable {
          * Optional callback for sub-agent progress updates.
          * Streams sub-agent status (running/completed/failed) and tool calls to the dashboard.
          */
-        onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null
+        onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
+        /**
+         * Optional callback fired after each API call with cumulative token counts.
+         * Used by the UI to show real-time token budget utilization.
+         */
+        onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -597,6 +602,7 @@ class AgentService(private val project: Project) : Disposable {
                     toolResolver = { name -> registry.get(name) },
                     hookManager = if (hookManager.hasAnyHooks()) hookManager else null,
                     sessionId = sid,
+                    onTokenUpdate = onTokenUpdate,
                     onPlanResponse = onPlanResponse,
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
@@ -957,6 +963,41 @@ class AgentService(private val project: Project) : Disposable {
      */
     fun listCheckpoints(sessionId: String): List<com.workflow.orchestrator.agent.session.CheckpointInfo> {
         return sessionStore.listCheckpoints(sessionId)
+    }
+
+    /**
+     * Get files modified between a checkpoint and the current session state.
+     * Used by the UI to highlight affected files after a rollback.
+     *
+     * Extracts file paths from tool calls (edit_file, create_file) in messages
+     * that exist after the checkpoint but before the current state.
+     */
+    fun getFilesModifiedSinceCheckpoint(sessionId: String, checkpointId: String): List<String> {
+        return try {
+            val checkpointMessages = sessionStore.loadCheckpoint(sessionId, checkpointId) ?: return emptyList()
+            val currentMessages = sessionStore.loadMessages(sessionId) ?: return emptyList()
+            // Messages after the checkpoint = those beyond checkpointMessages.size
+            val afterCheckpoint = currentMessages.drop(checkpointMessages.size)
+            // Extract file paths from tool calls in assistant messages
+            val files = mutableSetOf<String>()
+            for (msg in afterCheckpoint) {
+                msg.toolCalls?.forEach { call ->
+                    if (call.function.name in AgentLoop.WRITE_TOOLS) {
+                        try {
+                            val args = kotlinx.serialization.json.Json.parseToJsonElement(call.function.arguments)
+                            val path = (args as? kotlinx.serialization.json.JsonObject)
+                                ?.get("path")
+                                ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                            if (path != null) files.add(path)
+                        } catch (_: Exception) { }
+                    }
+                }
+            }
+            files.toList()
+        } catch (e: Exception) {
+            log.debug("Failed to get files modified since checkpoint: ${e.message}")
+            emptyList()
+        }
     }
 
     // ── Session Handoff (ported from Cline's new_task) ──────────────────────
