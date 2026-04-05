@@ -119,6 +119,7 @@ interface ChatState {
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
+  addDiffExplanation(title: string, diffSource: string): void;
   addCompletionSummary(result: string, verifyCommand?: string): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
@@ -404,6 +405,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       id: nextId('diff'),
       role: 'system',
       content: JSON.stringify(diff),
+      timestamp: Date.now(),
+    };
+    set(state => ({ messages: [...state.messages, message] }));
+  },
+
+  addDiffExplanation(title: string, diffSource: string) {
+    const message: Message = {
+      id: nextId('diff-exp'),
+      role: 'system',
+      content: JSON.stringify({ type: 'diff-explanation', title, diffSource }),
       timestamp: Date.now(),
     };
     set(state => ({ messages: [...state.messages, message] }));

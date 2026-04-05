@@ -61,6 +61,11 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendDiff(filePath: string, oldLines: string[], newLines: string[], accepted: boolean | null) {
     stores?.getChatStore().addDiff({ filePath, oldLines, newLines, accepted });
   },
+  appendDiffExplanation(title: string, diffSource: string) {
+    // Preload diff2html so it's ready when the component mounts
+    preloadDiff2Html();
+    stores?.getChatStore().addDiffExplanation(title, diffSource);
+  },
   appendCompletionSummary(result: string, verifyCommand?: string) {
     stores?.getChatStore().addCompletionSummary(result, verifyCommand ?? undefined);
   },

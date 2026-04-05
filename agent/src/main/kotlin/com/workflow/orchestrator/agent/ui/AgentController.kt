@@ -740,6 +740,17 @@ class AgentController(
                         dashboard.showSkillBanner(skillName)
                     }
                 }
+
+                // Push diff explanation directly to chat UI when generate_explanation returns a diff.
+                // This renders the diff immediately as a DiffHtml component so the LLM does not
+                // need to re-output it in markdown, saving tokens.
+                if (progress.toolName == "generate_explanation" && !progress.isError && progress.editDiff != null) {
+                    val title = try {
+                        kotlinx.serialization.json.Json.parseToJsonElement(progress.args)
+                            .jsonObject["title"]?.jsonPrimitive?.content ?: "Diff"
+                    } catch (_: Exception) { "Diff" }
+                    dashboard.appendDiffExplanation(title, progress.editDiff)
+                }
             }
         }
     }

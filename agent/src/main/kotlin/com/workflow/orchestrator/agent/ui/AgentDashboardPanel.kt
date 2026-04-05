@@ -451,6 +451,12 @@ class AgentDashboardPanel(
         recordReplay { p -> p.appendEditDiff(filePath, oldText, newText, accepted) }
     }
 
+    fun appendDiffExplanation(title: String, diffSource: String) {
+        cefPanel?.appendDiffExplanation(title, diffSource)
+        mirrors.forEach { it.appendDiffExplanation(title, diffSource) }
+        recordReplay { p -> p.appendDiffExplanation(title, diffSource) }
+    }
+
     fun appendStatus(message: String, type: RichStreamingPanel.StatusType = RichStreamingPanel.StatusType.INFO) {
         cefPanel?.appendStatus(message, type) ?: fallbackPanel?.appendStatus(message, type)
         mirrors.forEach { it.appendStatus(message, type) }

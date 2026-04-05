@@ -136,7 +136,8 @@ class GenerateExplanationTool : AgentTool {
                 ToolResult(
                     content = content,
                     summary = "Diff for '$title': $comparison",
-                    tokenEstimate = TokenEstimator.estimate(content)
+                    tokenEstimate = TokenEstimator.estimate(content),
+                    diff = truncated  // raw unified diff — pushed to UI as DiffHtml
                 )
             }
         } catch (e: Exception) {

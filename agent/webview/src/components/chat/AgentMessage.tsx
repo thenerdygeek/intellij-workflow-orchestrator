@@ -4,6 +4,7 @@ import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
 import { EditDiffView } from '@/components/agent/EditDiffView';
+import { DiffHtml } from '@/components/rich/DiffHtml';
 import {
   Message as PkMessage,
   MessageAvatar,
@@ -46,6 +47,24 @@ export const AgentMessage = memo(function AgentMessage({
         return (
           <div className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
             {parsed.message}
+          </div>
+        );
+      }
+      // Diff explanation from generate_explanation tool
+      if (parsed.type === 'diff-explanation' && parsed.diffSource) {
+        return (
+          <div style={{ marginBottom: 8 }}>
+            {parsed.title && (
+              <div style={{
+                fontSize: 13,
+                fontWeight: 600,
+                marginBottom: 6,
+                color: 'var(--fg-secondary, #94a3b8)',
+              }}>
+                {parsed.title}
+              </div>
+            )}
+            <DiffHtml diffSource={parsed.diffSource} />
           </div>
         );
       }

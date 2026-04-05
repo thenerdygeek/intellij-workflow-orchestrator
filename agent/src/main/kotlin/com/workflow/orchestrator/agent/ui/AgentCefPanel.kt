@@ -721,6 +721,14 @@ class AgentCefPanel(
         callJs("appendToolOutput(${jsonStr(toolCallId)},${jsonStr(chunk)})")
     }
 
+    /**
+     * Push a diff explanation to the chat — renders immediately as DiffHtml.
+     * Used by generate_explanation tool to show the diff without waiting for LLM response.
+     */
+    fun appendDiffExplanation(title: String, diffSource: String) {
+        callJs("appendDiffExplanation(${jsonStr(title)},${jsonStr(diffSource)})")
+    }
+
     fun appendEditDiff(
         filePath: String, oldText: String, newText: String, accepted: Boolean? = null
     ) {
