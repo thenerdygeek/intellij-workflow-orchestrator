@@ -409,72 +409,71 @@ Actions and their parameters:
             val implClass = dataManager.javaClass
             diag.appendLine("CoverageDataManager: ${implClass.name}")
 
-            // Step 2: Try multiple methods to get the suites bundle
-            var suitesBundle: Any? = null
+            // Step 2: Get ProjectData — two paths:
+            //   Path A: getCurrentSuitesBundle() → bundle.getCoverageData() (no params)
+            //   Path B: getSuites() → suite.getCoverageData(manager) (takes manager param)
+            // getCurrentSuitesBundle() can return null even when suites exist — it only
+            // returns the bundle the user explicitly selected. getSuites() returns the raw
+            // CoverageSuite[] which always have data.
+            var projectData: Any? = null
 
-            // Try 1: getCurrentSuitesBundle()
-            suitesBundle = try { implClass.getMethod("getCurrentSuitesBundle").invoke(dataManager) } catch (_: Exception) { null }
-            if (suitesBundle != null) {
-                diag.appendLine("Found via getCurrentSuitesBundle()")
+            // Path A: Try bundle first (fastest when available)
+            val bundle = try { implClass.getMethod("getCurrentSuitesBundle").invoke(dataManager) } catch (_: Exception) { null }
+            if (bundle != null) {
+                diag.appendLine("getCurrentSuitesBundle(): ${bundle.javaClass.simpleName}")
+                projectData = try { bundle.javaClass.getMethod("getCoverageData").invoke(bundle) } catch (_: Exception) { null }
+                if (projectData != null) diag.appendLine("Path A: bundle.getCoverageData() OK")
+            } else {
+                diag.appendLine("getCurrentSuitesBundle() returned null")
             }
 
-            // Try 2: activeSuites() — returns Collection, take first
-            if (suitesBundle == null) {
+            // Path B: Fall back to individual suites — getSuites() returns CoverageSuite[]
+            // Each suite has getCoverageData(CoverageDataManager) which loads/caches the data
+            if (projectData == null) {
                 try {
-                    val activeSuites = implClass.getMethod("activeSuites").invoke(dataManager) as? Collection<*>
-                    diag.appendLine("activeSuites() returned ${activeSuites?.size ?: "null"} items")
-                    suitesBundle = activeSuites?.firstOrNull()
-                } catch (_: Exception) {}
-            }
-
-            // Try 3: getSuites() or similar
-            if (suitesBundle == null) {
-                for (methodName in listOf("getSuites", "getCoverageSuites", "getAllSuites")) {
-                    try {
-                        val result = implClass.getMethod(methodName).invoke(dataManager)
-                        if (result is Collection<*> && result.isNotEmpty()) {
-                            diag.appendLine("Found via $methodName() — ${result.size} items")
-                            suitesBundle = result.firstOrNull()
-                            break
-                        } else if (result is Array<*> && result.isNotEmpty()) {
-                            diag.appendLine("Found via $methodName() — ${result.size} items")
-                            suitesBundle = result.firstOrNull()
-                            break
+                    val suites = implClass.getMethod("getSuites").invoke(dataManager) as? Array<*>
+                    diag.appendLine("getSuites() returned ${suites?.size ?: "null"} suites")
+                    if (suites != null && suites.isNotEmpty()) {
+                        // Use the most recent suite (last in array)
+                        val latestSuite = suites.last()
+                        if (latestSuite != null) {
+                            diag.appendLine("Using suite: ${latestSuite.javaClass.simpleName}")
+                            // CoverageSuite.getCoverageData(CoverageDataManager) — note the parameter
+                            val getCoverageDataMethod = latestSuite.javaClass.getMethod("getCoverageData", dataManagerClass)
+                            projectData = getCoverageDataMethod.invoke(latestSuite, dataManager)
+                            if (projectData != null) {
+                                diag.appendLine("Path B: suite.getCoverageData(manager) OK")
+                            } else {
+                                diag.appendLine("Path B: suite.getCoverageData(manager) returned null")
+                            }
                         }
-                    } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    diag.appendLine("Path B failed: ${e.javaClass.simpleName}: ${e.message}")
                 }
             }
 
-            // Dump available methods if we still can't find it
-            if (suitesBundle == null) {
-                val methods = implClass.methods
-                    .filter { it.parameterCount == 0 && it.returnType != Void.TYPE }
-                    .map { "${it.name}() -> ${it.returnType.simpleName}" }
-                    .sorted()
-                diag.appendLine("No bundle found. Available no-arg methods on ${implClass.simpleName}:")
-                methods.forEach { diag.appendLine("  $it") }
+            if (projectData == null) {
+                diag.appendLine("No ProjectData from either path")
                 lastExtractionDiag = diag.toString()
                 return null
             }
 
-            diag.appendLine("SuitesBundle: ${suitesBundle.javaClass.name}")
-
-            // Step 3: Coverage data (ProjectData)
-            val getCoverageDataMethod = suitesBundle.javaClass.getMethod("getCoverageData")
-            val projectData = getCoverageDataMethod.invoke(suitesBundle)
-            if (projectData == null) { diag.append(" | getCoverageData() returned null"); lastExtractionDiag = diag.toString(); return null }
             diag.appendLine("ProjectData: ${projectData.javaClass.name}")
 
-            // Step 4: Classes map
+            // Step 3: Classes map from ProjectData
             val getClassesMethod = projectData.javaClass.getMethod("getClasses")
             val rawClasses = getClassesMethod.invoke(projectData)
-            diag.appendLine("getClasses() returned: ${rawClasses?.javaClass?.name ?: "null"}")
             @Suppress("UNCHECKED_CAST")
             val classes = rawClasses as? Map<String, Any>
-            if (classes == null) { diag.append(" | classes cast to Map<String, Any> failed"); lastExtractionDiag = diag.toString(); return null }
-            diag.appendLine("Classes count: ${classes.size}")
+            if (classes == null || classes.isEmpty()) {
+                diag.appendLine("getClasses() returned ${if (rawClasses == null) "null" else "${rawClasses.javaClass.simpleName} (empty or wrong type)"}")
+                lastExtractionDiag = diag.toString()
+                return null
+            }
+            diag.appendLine("Classes: ${classes.size}")
 
-            // Step 5: Extract per-class coverage
+            // Step 4: Extract per-class line coverage
             val files = mutableMapOf<String, FileCoverageResult>()
             var classesProcessed = 0
             var classesSkipped = 0
