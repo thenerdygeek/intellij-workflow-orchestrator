@@ -1,7 +1,7 @@
 ---
 name: interactive-debugging
 description: Live debugger control for setting breakpoints, stepping through code, inspecting variables, and evaluating expressions in a running JVM debug session. This skill is the escalation path from systematic-debugging — use it when static analysis alone cannot identify the root cause and you need to observe runtime state. Trigger phrases include "step through", "set a breakpoint", "watch this variable", "evaluate at runtime", as well as situations involving thread deadlocks, race conditions, or values that only make sense at runtime. Important — do not load this directly for initial bug investigation. Always start with systematic-debugging first and only escalate to interactive-debugging when you have a specific hypothesis to verify at runtime. This skill provides a structured protocol for strategic breakpoint placement, efficient stepping strategy, systematic variable inspection, and proper debug session lifecycle management so you do not waste time stepping blindly through unrelated code.
-user-invocable: false
+user-invocable: true
 preferred-tools: [debug_breakpoints, debug_step, debug_inspect, runtime_exec, runtime_config, create_run_config, think]
 ---
 

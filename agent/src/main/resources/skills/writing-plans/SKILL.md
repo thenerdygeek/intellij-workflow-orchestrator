@@ -1,6 +1,7 @@
 ---
 name: writing-plans
 description: Create structured implementation plans with bite-sized tasks, clear acceptance criteria, and file-level guidance that the user can review and approve before any implementation begins. You must always load this skill after calling enable_plan_mode — trigger phrases include "plan this", "create a plan", "write a plan", and "how should I implement", and you should also use it proactively whenever the task touches 2 or more files, crosses module boundaries, adds new features or API endpoints, involves refactoring or cross-module changes, or requires any non-trivial multi-step work. Do not use this for single-file fixes or simple questions that can be answered directly. For example, if the user says "Refactor the notification system" or "Add a new API endpoint with service and tests", call enable_plan_mode first and then load this skill. It walks you through a structured research-then-plan workflow where you first investigate the codebase to understand the scope and dependencies, then produce a concrete and actionable task breakdown with specific files, acceptance criteria, and implementation order that the user can review, comment on, and approve before you write any code.
+user-invocable: true
 preferred-tools: [read_file, search_code, file_structure, find_definition, find_references, type_hierarchy, diagnostics, run_command, think, enable_plan_mode, plan_mode_respond, act_mode_respond, agent]
 ---
 

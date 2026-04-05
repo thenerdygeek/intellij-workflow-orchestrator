@@ -1,6 +1,7 @@
 ---
 name: subagent-driven
 description: Execute approved implementation plans by dispatching parallel subagents — one fresh agent per task — with two-stage review gates for spec compliance and code quality. You must load this skill whenever a plan with 3 or more tasks has been approved by the user, whether they clicked the approve button on a plan card or said something like "execute the plan", "start implementing", or "run the plan". Do not attempt to execute multi-task plans manually by working through tasks sequentially yourself — this skill handles parallel dispatch, file ownership coordination between agents, progress tracking with plan step updates, and quality review gates that catch issues before integration. For plans with only 1-2 tasks, you can execute directly with update_plan_step instead. This skill gives you a complete dispatch-review-integrate workflow that maximizes throughput while preventing file conflicts between concurrent subagents.
+user-invocable: true
 preferred-tools: [agent, read_file, search_code, think, act_mode_respond, diagnostics, run_command]
 ---
 

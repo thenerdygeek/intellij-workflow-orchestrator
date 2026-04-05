@@ -1,6 +1,7 @@
 ---
 name: systematic-debugging
 description: Structured root-cause investigation that must be loaded before attempting any fix. Use this whenever you encounter any bug, test failure, build failure, runtime error, or unexpected behavior — trigger phrases include "failing", "broken", "NPE", "exception", "not working", "error", "bug", "wrong output", "unexpected", "why does this", "crash", "null pointer", as well as test failures, build failures, stack traces, CI failures, and flaky tests. You must always load this skill before proposing or attempting fixes, even if the fix seems obvious, because guessing at solutions without investigation leads to wasted iterations and incomplete fixes. For example, if the user says "Tests are failing", "This returns wrong results", or "Build broke after my change", load this skill immediately before doing anything else. It walks you through a structured investigate-hypothesize-verify workflow that uses IDE diagnostics, call hierarchy analysis, dataflow tracing, and git blame to systematically identify the actual root cause rather than treating symptoms.
+user-invocable: true
 preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, think, git_status, git_diff, git_log, runtime_exec, call_hierarchy, coverage]
 ---
 
