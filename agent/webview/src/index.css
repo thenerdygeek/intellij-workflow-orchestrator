@@ -219,9 +219,17 @@ code, pre, .font-mono {
   border-color: var(--border, #3c3c3c);
 }
 
-/* Strip bottom rounding from QuestionFlow card when "Other" option is attached below */
-.question-flow-with-other [data-slot="question-flow"] > div {
-  border-bottom-left-radius: 0 !important;
-  border-bottom-right-radius: 0 !important;
-  border-bottom: none !important;
+/* Embedded QuestionFlow: strip its internal card border/shadow/bg
+   since the parent .question-card provides the unified boundary */
+.question-flow-embedded [data-slot="question-flow"] > div {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+/* Also strip the max-width constraint so it fills the parent card */
+.question-flow-embedded [data-slot="question-flow"] {
+  max-width: none;
+  min-width: 0;
 }

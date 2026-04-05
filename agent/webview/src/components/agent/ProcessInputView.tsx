@@ -27,7 +27,7 @@ export function ProcessInputView({ processId: _processId, description, prompt, c
   return (
     <div
       className="flex flex-col gap-2 rounded-lg border px-3 py-2.5"
-      style={{ backgroundColor: 'var(--tool-bg, rgba(0,0,0,0.1))', borderColor: 'var(--accent-edit, #f59e0b)' }}
+      style={{ backgroundColor: 'var(--tool-bg, var(--bg))', borderColor: 'var(--accent-edit, #f59e0b)' }}
     >
       <div className="flex items-center gap-2">
         <span
@@ -54,7 +54,7 @@ export function ProcessInputView({ processId: _processId, description, prompt, c
 
       <div
         className="flex items-center gap-1.5 rounded px-2 py-1 text-[10px]"
-        style={{ backgroundColor: 'var(--diff-rem-bg, rgba(239,68,68,0.08))', color: 'var(--accent-edit, #f59e0b)' }}
+        style={{ backgroundColor: 'var(--badge-edit-bg, var(--tool-bg))', color: 'var(--badge-edit-fg, var(--accent-edit, #f59e0b))' }}
       >
         <span>This input will be sent to:</span>
         <code className="font-mono">{command.length > 50 ? command.slice(0, 47) + '...' : command}</code>
@@ -69,7 +69,7 @@ export function ProcessInputView({ processId: _processId, description, prompt, c
           placeholder="Enter input..."
           className="flex-1 rounded-md px-2 py-1.5 text-[12px] font-mono outline-none"
           style={{
-            backgroundColor: 'var(--input-bg, #2d2d2d)',
+            backgroundColor: 'var(--input-bg, var(--bg))',
             color: 'var(--fg)',
             border: '1px solid var(--border)',
           }}
@@ -79,7 +79,7 @@ export function ProcessInputView({ processId: _processId, description, prompt, c
           onClick={handleSubmit}
           disabled={input.length === 0}
           className="rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-40"
-          style={{ backgroundColor: 'var(--fg)', color: 'var(--bg)' }}
+          style={{ backgroundColor: 'var(--accent-edit, #f59e0b)', color: '#fff' }}
         >
           Send
         </button>

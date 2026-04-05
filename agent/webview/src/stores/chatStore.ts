@@ -132,6 +132,8 @@ interface ChatState {
   showQuestions(questions: Question[]): void;
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
+  answerQuestion(qid: string, answer: string[]): void;
+  skipQuestion(qid: string): void;
   setInputLocked(locked: boolean): void;
   setInputMode(mode: 'agent' | 'plan'): void;
   setRalphLoop(enabled: boolean): void;
@@ -555,6 +557,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   showQuestionSummary(summary: any) {
     set({ questionSummary: summary });
+  },
+
+  answerQuestion(qid: string, answer: string[]) {
+    set(state => ({
+      questions: state.questions?.map(q =>
+        q.id === qid ? { ...q, answer, skipped: false } : q
+      ) ?? null,
+    }));
+  },
+
+  skipQuestion(qid: string) {
+    set(state => ({
+      questions: state.questions?.map(q =>
+        q.id === qid ? { ...q, skipped: true, answer: undefined } : q
+      ) ?? null,
+    }));
   },
 
   setInputLocked(locked: boolean) {
