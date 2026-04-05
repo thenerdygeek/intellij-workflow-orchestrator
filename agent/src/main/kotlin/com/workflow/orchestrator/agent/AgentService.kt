@@ -468,7 +468,13 @@ class AgentService(private val project: Project) : Disposable {
          * Optional callback for real-time debug log entries.
          * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
          */
-        onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null
+        onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
+        /**
+         * Optional callback fired synchronously before the agent loop coroutine starts.
+         * Provides the session ID so callers can track the session early (e.g. before
+         * the first checkpoint fires). Called on the thread that invokes executeTask.
+         */
+        onSessionStarted: ((sessionId: String) -> Unit)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -477,6 +483,7 @@ class AgentService(private val project: Project) : Disposable {
             status = SessionStatus.ACTIVE
         )
         sessionStore.save(session)
+        onSessionStarted?.invoke(sid)
 
         val sessionMetrics = SessionMetrics()
         val sessionStartTime = System.currentTimeMillis()

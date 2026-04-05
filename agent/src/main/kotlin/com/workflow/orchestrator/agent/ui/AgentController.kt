@@ -19,6 +19,7 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.jsonObject
@@ -267,12 +268,16 @@ class AgentController(
                 )
                 val models = com.workflow.orchestrator.core.ai.ModelCache.getModels(client)
                 if (models.isNotEmpty()) {
-                    // Build JSON for the dropdown
-                    val modelsJson = models.joinToString(",", "[", "]") { m ->
+                    // Sort by tier (opus first) then by created date (newest first)
+                    val sorted = models.sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
+
+                    // Build JSON for the dropdown using formatted display names
+                    val modelsJson = sorted.joinToString(",", "[", "]") { m ->
                         val id = m.id.replace("\"", "\\\"")
-                        val name = m.modelName.replace("\"", "\\\"")
+                        val name = m.displayName.replace("\"", "\\\"")
                         val provider = m.provider.replace("\"", "\\\"")
-                        """{"id":"$id","name":"$name","provider":"$provider"}"""
+                        val thinking = m.isThinkingModel
+                        """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking}"""
                     }
 
                     // Auto-select the best model (latest Opus) if no model is configured
@@ -280,14 +285,14 @@ class AgentController(
                     val best = com.workflow.orchestrator.core.ai.ModelCache.pickBest(models)
                     if (best != null && settings.state.sourcegraphChatModel.isNullOrBlank()) {
                         settings.state.sourcegraphChatModel = best.id
-                        LOG.info("AgentController: auto-selected model: ${best.modelName} (${best.id})")
+                        LOG.info("AgentController: auto-selected model: ${best.displayName} (${best.id})")
                     }
 
                     com.intellij.openapi.application.invokeLater {
                         dashboard.updateModelList(modelsJson)
-                        // Show the active model name (auto-selected or configured)
+                        // Show the active model's formatted display name
                         val activeModel = settings.state.sourcegraphChatModel ?: best?.id ?: ""
-                        val displayName = models.find { it.id == activeModel }?.modelName ?: activeModel
+                        val displayName = models.find { it.id == activeModel }?.displayName ?: activeModel
                         if (displayName.isNotBlank()) {
                             dashboard.setModelName(displayName)
                         }
@@ -449,7 +454,8 @@ class AgentController(
             onTokenUpdate = ::onTokenUpdate,
             onDebugLog = if (debugEnabled) { level, event, detail, meta ->
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
-            } else null
+            } else null,
+            onSessionStarted = { sid -> currentSessionId = sid }
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -833,6 +839,7 @@ class AgentController(
         recentToolCalls.clear()
         currentHaikuTitle = null
         lastStreamSnippet = ""
+        contextManager?.clearActivePlanPath()
         contextManager = null
         taskStartTime = 0L
         lastTaskText = null
@@ -1006,6 +1013,29 @@ class AgentController(
      * for the user to respond (type chat, add comments, or approve).
      */
     private fun onPlanResponse(planText: String, needsMoreExploration: Boolean) {
+        // Save plan to disk and store path in ContextManager for compaction survival.
+        // Done outside invokeLater so it's synchronous and guaranteed before UI render.
+        val sid = currentSessionId
+        if (sid != null) {
+            try {
+                val basePath = project.basePath ?: System.getProperty("user.home")
+                val sessionDir = java.io.File(
+                    ProjectIdentifier.agentDir(basePath),
+                    "sessions/$sid"
+                )
+                val planFile = java.io.File(sessionDir, "plan.md")
+                planFile.parentFile?.mkdirs()
+                planFile.writeText(planText, Charsets.UTF_8)
+                // Store path in ContextManager so it survives compaction
+                contextManager?.setActivePlanPath(planFile.absolutePath)
+                LOG.info("AgentController: plan saved to ${planFile.absolutePath}")
+            } catch (e: Exception) {
+                LOG.warn("AgentController: failed to save plan to disk: ${e.message}")
+            }
+        } else {
+            LOG.warn("AgentController: onPlanResponse called but currentSessionId is null — plan not saved")
+        }
+
         invokeLater {
             // Parse and render the plan card (our custom addition on top of Cline)
             val planJson = PlanParser.parseToJson(planText)
@@ -1098,7 +1128,11 @@ class AgentController(
         LOG.info("AgentController.changeModel: $model")
         val settings = AgentSettings.getInstance(project)
         settings.state.sourcegraphChatModel = model
-        dashboard.setModelName(model)
+        // Resolve formatted display name from cache, fall back to formatModelName on the raw ID
+        val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+        val displayName = cached.find { it.id == model }?.displayName
+            ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(model.substringAfterLast("::"))
+        dashboard.setModelName(displayName)
     }
 
     private fun openSettings() {
@@ -1124,22 +1158,22 @@ class AgentController(
     fun addMirrorPanel(mirror: AgentDashboardPanel) {
         dashboard.addMirror(mirror)
 
-        // Wire the mirror's input callbacks back to this controller
+        // Wire the mirror's input callbacks identically to the primary dashboard
         mirror.setCefActionCallbacks(
             onCancel = ::cancelTask,
             onNewChat = ::newChat,
             onSendMessage = ::executeTask,
             onChangeModel = ::changeModel,
             onTogglePlanMode = ::togglePlanMode,
-            onToggleRalphLoop = {},
-            onActivateSkill = {},
-            onRequestFocusIde = {},
+            onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
+            onActivateSkill = { skillName -> executeTask("/skill $skillName") },
+            onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
         )
         mirror.setCefCallbacks(
-            onUndo = {},
-            onViewTrace = {},
+            onUndo = { LOG.info("Undo requested — not implemented in lean rewrite") },
+            onViewTrace = { LOG.info("View trace requested — not implemented in lean rewrite") },
             onPromptSubmitted = ::executeTask
         )
         mirror.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
