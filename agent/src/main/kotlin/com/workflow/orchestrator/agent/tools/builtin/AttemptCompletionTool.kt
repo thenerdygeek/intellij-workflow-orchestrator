@@ -19,7 +19,7 @@ class AttemptCompletionTool : AgentTool {
         properties = mapOf(
             "result" to ParameterProperty(
                 type = "string",
-                description = "A concise summary card (2-4 sentences max). Do NOT repeat your detailed explanation — the user already read that in your streamed text. Instead, provide: (1) a one-line summary of what was accomplished, (2) any next steps, verification commands, or follow-up suggestions. Think of this as a TL;DR + actionable next steps, not a full report."
+                description = "A short summary of what was done, explored, or found. Do NOT repeat your detailed explanation — the user already read that in your streamed text. Keep it concise."
             ),
             "command" to ParameterProperty(
                 type = "string",

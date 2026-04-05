@@ -9,8 +9,10 @@ import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
@@ -34,7 +36,9 @@ class SubagentRunner(
     private val project: Project,
     private val maxIterations: Int,
     private val planMode: Boolean,
-    private val contextBudget: Int
+    private val contextBudget: Int,
+    private val maxOutputTokens: Int? = null,
+    private val apiDebugDir: File? = null
 ) {
     private val abortRequested = AtomicBoolean(false)
 
@@ -66,6 +70,12 @@ class SubagentRunner(
         val stats = MutableSubagentStats()
 
         try {
+            // 0. Wire API debug dumps on the brain (separate subdir from main agent)
+            if (apiDebugDir != null && brain is OpenAiCompatBrain) {
+                brain.setApiDebugDir(apiDebugDir)
+                brain.resetApiCallCounter()
+            }
+
             // 1. Create fresh context manager with budget
             val contextManager = ContextManager(maxInputTokens = contextBudget)
             contextManager.setSystemPrompt(systemPrompt)
@@ -93,6 +103,7 @@ class SubagentRunner(
                 contextManager = contextManager,
                 project = project,
                 maxIterations = maxIterations,
+                maxOutputTokens = maxOutputTokens,
                 planMode = planMode,
                 onToolCall = { progress ->
                     stats.toolCalls++
