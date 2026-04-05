@@ -71,6 +71,18 @@ object ModelCache {
         return models.maxByOrNull { it.created }
     }
 
+    /** Pick Sonnet thinking model for text generation (commit messages, PR descriptions). */
+    fun pickSonnetThinking(models: List<ModelInfo>): ModelInfo? {
+        val anthropic = models.filter { it.provider == "anthropic" }
+        // Prefer Sonnet with thinking/reasoning
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") && it.isThinkingModel }
+            .maxByOrNull { it.created }?.let { return it }
+        // Fall back to any Sonnet
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") }
+            .maxByOrNull { it.created }?.let { return it }
+        return null
+    }
+
     /** Pick the cheapest available model (Haiku > Sonnet > anything) for lightweight tasks. */
     fun pickCheapest(models: List<ModelInfo>): ModelInfo? {
         if (models.isEmpty()) return null

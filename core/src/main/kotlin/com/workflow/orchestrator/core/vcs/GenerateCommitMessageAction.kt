@@ -117,17 +117,12 @@ class GenerateCommitMessageAction : AnAction(
             val settings = PluginSettings.getInstance(project)
             val ticketId = settings.state.activeTicketId.orEmpty()
 
-            // Get the actual git diff
+            // Get the actual git diff (no truncation — Sourcegraph supports 150K input tokens)
             val diff = getGitDiff(project, targetRepo)
             if (diff.isNullOrBlank()) {
                 log.warn("[AI:CommitMsg] No diff found")
                 return null
             }
-
-            // Truncate diff if too large (keep under ~8K chars for the analysis prompt)
-            val truncatedDiff = if (diff.length > 8000) {
-                diff.take(8000) + "\n... (diff truncated, ${diff.length - 8000} chars omitted)"
-            } else diff
 
             // Build a short summary of changed files for the analysis step
             val filesSummary = try {
@@ -150,18 +145,21 @@ class GenerateCommitMessageAction : AnAction(
             // Gather PSI code intelligence for changed files
             val codeContext = buildCodeContext(project)
 
-            log.info("[AI:CommitMsg] Generating: ${truncatedDiff.length} char diff, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
+            log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
 
-            val brain = LlmBrainFactory.create(project)
-            val prompt = CommitMessagePromptBuilder.build(
-                diff = truncatedDiff,
+            // Use Sonnet thinking model for better commit message quality
+            val brain = LlmBrainFactory.createForTextGeneration(project)
+            val messages = CommitMessagePromptBuilder.buildMessages(
+                diff = diff,
                 ticketId = ticketId,
                 filesSummary = filesSummary,
                 recentCommits = recentCommits,
                 codeContext = codeContext
             )
-            val messages = listOf(ChatMessage(role = "user", content = prompt))
-            val result = brain.chat(messages, tools = null)
+            // 4000 = Sourcegraph API cap. For thinking models, this budget covers
+            // both internal reasoning (~3000-3500) and output (~500). Must be set
+            // explicitly — omitting maxTokens causes Sourcegraph to return HTTP 500.
+            val result = brain.chat(messages, tools = null, maxTokens = 4000)
             when (result) {
                 is ApiResult.Success ->
                     result.data.choices.firstOrNull()?.message?.content

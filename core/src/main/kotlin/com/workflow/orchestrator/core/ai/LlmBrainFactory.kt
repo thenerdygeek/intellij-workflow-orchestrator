@@ -52,6 +52,38 @@ object LlmBrainFactory {
         return best.id
     }
 
+    /**
+     * Create an LlmBrain using Sonnet thinking model — for text generation tasks
+     * (commit messages, PR descriptions) where thinking improves quality but
+     * Opus is overkill. Falls back to the user's configured model if Sonnet
+     * thinking is not available.
+     */
+    suspend fun createForTextGeneration(project: Project): LlmBrain {
+        val connections = ConnectionSettings.getInstance()
+        val credentialStore = CredentialStore()
+        val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+        val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
+
+        val client = SourcegraphChatClient(
+            baseUrl = sgUrl,
+            tokenProvider = tokenProvider,
+            model = ""
+        )
+        val models = ModelCache.getModels(client)
+        val sonnet = ModelCache.pickSonnetThinking(models)
+        if (sonnet != null) {
+            LOG.info("LlmBrainFactory: using ${sonnet.id} for text generation")
+            return OpenAiCompatBrain(
+                sourcegraphUrl = sgUrl,
+                tokenProvider = tokenProvider,
+                model = sonnet.id
+            )
+        }
+        // Fall back to the user's configured model
+        LOG.info("LlmBrainFactory: Sonnet thinking not available, falling back to configured model")
+        return create(project)
+    }
+
     fun isAvailable(): Boolean {
         val url = ConnectionSettings.getInstance().state.sourcegraphUrl
         return !url.isNullOrBlank() && CredentialStore().hasToken(ServiceType.SOURCEGRAPH)
