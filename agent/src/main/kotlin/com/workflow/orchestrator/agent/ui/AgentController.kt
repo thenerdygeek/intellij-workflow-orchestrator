@@ -353,19 +353,37 @@ class AgentController(
         userInputChannel = Channel(Channel.RENDEZVOUS)
 
         // Launch the agent loop
+        val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
+        if (debugEnabled) {
+            dashboard.pushDebugLogEntry("session", "task_start", task.take(200), null)
+        }
         currentJob = service.executeTask(
             task = task,
             contextManager = contextManager,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
             onTaskProgress = ::onTaskProgress,
-            onComplete = ::onComplete,
+            onComplete = { result ->
+                if (AgentSettings.getInstance(project).state.showDebugLog) {
+                    val status = when (result) {
+                        is LoopResult.Completed -> "completed"
+                        is LoopResult.Cancelled -> "cancelled"
+                        is LoopResult.Failed -> "failed"
+                        is LoopResult.SessionHandoff -> "handoff"
+                    }
+                    dashboard.pushDebugLogEntry("session", "task_end", status, null)
+                }
+                onComplete(result)
+            },
             onPlanResponse = ::onPlanResponse,
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
-            onTokenUpdate = ::onTokenUpdate
+            onTokenUpdate = ::onTokenUpdate,
+            onDebugLog = if (debugEnabled) { level, event, detail, meta ->
+                dashboard.pushDebugLogEntry(level, event, detail, meta)
+            } else null
         )
     }
 
