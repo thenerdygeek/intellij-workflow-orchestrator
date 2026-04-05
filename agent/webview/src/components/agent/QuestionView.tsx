@@ -327,6 +327,19 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
 
   if (!question) return null;
 
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customText, setCustomText] = useState('');
+
+  const handleCustomSubmit = useCallback(() => {
+    if (!question || !customText.trim()) return;
+    window._questionAnswered?.(question.id, JSON.stringify([customText.trim()]));
+    setShowCustomInput(false);
+    setCustomText('');
+    if (isLastQuestion) {
+      setTimeout(() => setShowSummary(true), 300);
+    }
+  }, [question, customText, isLastQuestion]);
+
   return (
     <div className="my-3 animate-[fade-in_220ms_ease-out]">
       {/* Text input question */}
@@ -344,6 +357,48 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
           onSelect={handleSelect}
           onBack={activeIndex > 0 ? handleBack : undefined}
         />
+      )}
+
+      {/* Custom answer input — "Or tell the agent what to do instead" */}
+      {question.type !== 'text' && (
+        showCustomInput ? (
+          <div
+            className="mt-2 rounded-lg border p-3"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--tool-bg)' }}
+          >
+            <div className="text-[11px] mb-2" style={{ color: 'var(--fg-muted)' }}>
+              Type a custom answer:
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                autoFocus
+                value={customText}
+                onChange={e => setCustomText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && customText.trim()) handleCustomSubmit();
+                  if (e.key === 'Escape') { setShowCustomInput(false); setCustomText(''); }
+                }}
+                placeholder="Type your own answer..."
+                className="flex-1 text-xs px-2 py-1.5 rounded-md border bg-transparent outline-none focus:ring-1"
+                style={{ borderColor: 'var(--input-border)', color: 'var(--fg)' }}
+              />
+              <Button size="sm" className="h-7" onClick={handleCustomSubmit} disabled={!customText.trim()}>
+                <Send className="h-3 w-3 mr-1" />
+                Send
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="mt-2 w-full text-center text-[11px] py-1.5 rounded-md transition-colors"
+            style={{ color: 'var(--fg-muted)' }}
+            onClick={() => setShowCustomInput(true)}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--fg-muted)')}
+          >
+            Or type a custom answer...
+          </button>
+        )
       )}
 
       {/* Action row: Skip + Chat about + Cancel */}

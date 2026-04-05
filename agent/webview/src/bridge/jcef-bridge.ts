@@ -107,8 +107,16 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   showQuestions(questionsJson: string) {
     const parsed = JSON.parse(questionsJson);
     // Kotlin sends either { questions: [...] } wrapper or bare [...] array
-    const questions = Array.isArray(parsed) ? parsed : parsed.questions;
-    if (questions) {
+    const rawQuestions = Array.isArray(parsed) ? parsed : parsed.questions;
+    if (rawQuestions) {
+      // Map Kotlin field names to TS types: question→text, single→single-select
+      const questions = rawQuestions.map((q: any) => ({
+        ...q,
+        text: q.text ?? q.question,  // Kotlin sends 'question', TS expects 'text'
+        type: q.type === 'single' ? 'single-select'
+            : q.type === 'multiple' ? 'multi-select'
+            : q.type,
+      }));
       stores?.getChatStore().showQuestions(questions);
     }
   },
