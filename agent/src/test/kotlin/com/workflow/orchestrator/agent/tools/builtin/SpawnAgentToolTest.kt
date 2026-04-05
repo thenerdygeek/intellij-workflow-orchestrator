@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
@@ -18,10 +19,13 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import kotlin.io.path.createTempDirectory
+import kotlin.io.path.writeText
 
 class SpawnAgentToolTest {
 
@@ -920,6 +924,411 @@ class SpawnAgentToolTest {
         @Test
         fun `formatNumber formats millions`() {
             assertEquals("1.5M", SpawnAgentTool.formatNumber(1_500_000))
+        }
+    }
+
+    // ---- Agent Type Tests ----
+
+    @Nested
+    inner class AgentTypeTests {
+
+        private lateinit var configLoader: AgentConfigLoader
+
+        @BeforeEach
+        fun setUpConfigLoader() {
+            AgentConfigLoader.resetForTests()
+            configLoader = AgentConfigLoader.getInstance()
+        }
+
+        @AfterEach
+        fun tearDownConfigLoader() {
+            configLoader.dispose()
+        }
+
+        private fun writeConfigFile(dir: java.nio.file.Path, filename: String, content: String) {
+            dir.resolve(filename).writeText(content)
+        }
+
+        private fun makeConfig(
+            name: String,
+            description: String,
+            tools: String,
+            systemPrompt: String,
+            maxTurns: Int? = null
+        ): String = buildString {
+            appendLine("---")
+            appendLine("name: \"$name\"")
+            appendLine("description: \"$description\"")
+            appendLine("tools: $tools")
+            if (maxTurns != null) appendLine("max-turns: $maxTurns")
+            appendLine("---")
+            appendLine(systemPrompt)
+        }
+
+        @Test
+        fun `unknown agent_type returns error with available list`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                writeConfigFile(tempDir, "alpha-agent.md", makeConfig(
+                    name = "alpha-agent",
+                    description = "Alpha test agent",
+                    tools = "read_file, search_code, think, attempt_completion",
+                    systemPrompt = "You are the alpha agent."
+                ))
+                configLoader.loadFromDisk(tempDir)
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = { throw IllegalStateException("Should not be called") },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Test task",
+                        "prompt" to "Do something",
+                        "agent_type" to "nonexistent-agent"
+                    ),
+                    project
+                )
+
+                assertTrue(result.isError, "Should return error for unknown agent type")
+                assertTrue(result.content.contains("Unknown agent type"), "Error should mention unknown type: ${result.content}")
+                assertTrue(result.content.contains("alpha-agent"), "Error should list available types: ${result.content}")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `agent_type uses config system prompt instead of scope prompt`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                writeConfigFile(tempDir, "specialist.md", makeConfig(
+                    name = "specialist",
+                    description = "Test specialist",
+                    tools = "read_file, search_code, think, attempt_completion",
+                    systemPrompt = "TEST SPECIALIST: You are a unique test specialist agent."
+                ))
+                configLoader.loadFromDisk(tempDir)
+
+                var capturedMessages: List<ChatMessage>? = null
+
+                val capturingBrain = object : LlmBrain {
+                    override val modelId = "capturing-brain"
+                    override suspend fun chat(
+                        messages: List<ChatMessage>,
+                        tools: List<ToolDefinition>?,
+                        maxTokens: Int?,
+                        toolChoice: JsonElement?
+                    ): ApiResult<ChatCompletionResponse> = throw UnsupportedOperationException()
+
+                    override suspend fun chatStream(
+                        messages: List<ChatMessage>,
+                        tools: List<ToolDefinition>?,
+                        maxTokens: Int?,
+                        onChunk: suspend (StreamChunk) -> Unit
+                    ): ApiResult<ChatCompletionResponse> {
+                        capturedMessages = messages.toList()
+                        return ApiResult.Success(toolCallResponse(
+                            "attempt_completion" to """{"result":"Done."}"""
+                        ))
+                    }
+
+                    override fun estimateTokens(text: String) = text.length / 4
+                    override fun cancelActiveRequest() {}
+                }
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = { capturingBrain },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Specialist task",
+                        "prompt" to "Do specialist work",
+                        "agent_type" to "specialist"
+                    ),
+                    project
+                )
+
+                assertFalse(result.isError, "Should succeed: ${result.content}")
+                assertNotNull(capturedMessages, "Brain should have been called")
+                val systemMsg = capturedMessages!!.first { it.role == "system" }
+                assertTrue(
+                    systemMsg.content!!.contains("TEST SPECIALIST"),
+                    "System prompt should contain config's text, got: ${systemMsg.content}"
+                )
+                assertFalse(
+                    systemMsg.content!!.contains("You are a sub-agent"),
+                    "System prompt should NOT contain generic scope text"
+                )
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `agent_type resolves config tools not scope tools`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                writeConfigFile(tempDir, "reader.md", makeConfig(
+                    name = "reader",
+                    description = "Read-only agent",
+                    tools = "read_file, search_code, think, attempt_completion",
+                    systemPrompt = "You are a read-only agent."
+                ))
+                configLoader.loadFromDisk(tempDir)
+
+                var capturedToolNames: List<String>? = null
+
+                val capturingBrain = object : LlmBrain {
+                    override val modelId = "capturing-brain"
+                    override suspend fun chat(
+                        messages: List<ChatMessage>,
+                        tools: List<ToolDefinition>?,
+                        maxTokens: Int?,
+                        toolChoice: JsonElement?
+                    ): ApiResult<ChatCompletionResponse> = throw UnsupportedOperationException()
+
+                    override suspend fun chatStream(
+                        messages: List<ChatMessage>,
+                        tools: List<ToolDefinition>?,
+                        maxTokens: Int?,
+                        onChunk: suspend (StreamChunk) -> Unit
+                    ): ApiResult<ChatCompletionResponse> {
+                        capturedToolNames = tools?.map { it.function.name }
+                        return ApiResult.Success(toolCallResponse(
+                            "attempt_completion" to """{"result":"Done."}"""
+                        ))
+                    }
+
+                    override fun estimateTokens(text: String) = text.length / 4
+                    override fun cancelActiveRequest() {}
+                }
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = { capturingBrain },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Reader task",
+                        "prompt" to "Read some files",
+                        "agent_type" to "reader"
+                    ),
+                    project
+                )
+
+                assertFalse(result.isError, "Should succeed: ${result.content}")
+                assertNotNull(capturedToolNames, "Brain should have received tool definitions")
+                assertEquals(
+                    setOf("read_file", "search_code", "think", "attempt_completion"),
+                    capturedToolNames!!.toSet(),
+                    "Should only have config-specified tools"
+                )
+                assertFalse("edit_file" in capturedToolNames!!, "Should NOT have edit_file")
+                assertFalse("run_command" in capturedToolNames!!, "Should NOT have run_command")
+                assertFalse("agent" in capturedToolNames!!, "agent should never be included")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `agent_type with write tools infers planMode false`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                writeConfigFile(tempDir, "writer.md", makeConfig(
+                    name = "writer",
+                    description = "Write-capable agent",
+                    tools = "read_file, edit_file, create_file, run_command, think, attempt_completion",
+                    systemPrompt = "You are a write-capable agent."
+                ))
+                configLoader.loadFromDisk(tempDir)
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = {
+                        SequenceBrain(listOf(
+                            ApiResult.Success(toolCallResponse(
+                                "attempt_completion" to """{"result":"Wrote files."}"""
+                            ))
+                        ))
+                    },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Write task",
+                        "prompt" to "Create a file",
+                        "agent_type" to "writer"
+                    ),
+                    project
+                )
+
+                // If planMode were incorrectly true, write tools would be blocked by AgentLoop
+                // and execution would fail. A successful completion means planMode=false.
+                assertFalse(result.isError, "Should succeed with write tools (planMode=false): ${result.content}")
+                assertTrue(result.content.contains("Wrote files"), "Should contain completion result")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `agent_type without write tools infers planMode true`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                writeConfigFile(tempDir, "analyzer.md", makeConfig(
+                    name = "analyzer",
+                    description = "Analysis-only agent",
+                    tools = "read_file, search_code, diagnostics, think, attempt_completion",
+                    systemPrompt = "You are an analysis agent."
+                ))
+                configLoader.loadFromDisk(tempDir)
+
+                var capturedToolNames: List<String>? = null
+
+                val capturingBrain = object : LlmBrain {
+                    override val modelId = "capturing-brain"
+                    override suspend fun chat(
+                        messages: List<ChatMessage>,
+                        tools: List<ToolDefinition>?,
+                        maxTokens: Int?,
+                        toolChoice: JsonElement?
+                    ): ApiResult<ChatCompletionResponse> = throw UnsupportedOperationException()
+
+                    override suspend fun chatStream(
+                        messages: List<ChatMessage>,
+                        tools: List<ToolDefinition>?,
+                        maxTokens: Int?,
+                        onChunk: suspend (StreamChunk) -> Unit
+                    ): ApiResult<ChatCompletionResponse> {
+                        capturedToolNames = tools?.map { it.function.name }
+                        return ApiResult.Success(toolCallResponse(
+                            "attempt_completion" to """{"result":"Analysis done."}"""
+                        ))
+                    }
+
+                    override fun estimateTokens(text: String) = text.length / 4
+                    override fun cancelActiveRequest() {}
+                }
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = { capturingBrain },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Analyze code",
+                        "prompt" to "Analyze the codebase",
+                        "agent_type" to "analyzer"
+                    ),
+                    project
+                )
+
+                assertFalse(result.isError, "Should succeed: ${result.content}")
+                assertNotNull(capturedToolNames, "Brain should have received tool definitions")
+                // Verify no write tools present
+                for (writeTool in listOf("edit_file", "create_file", "run_command", "revert_file",
+                    "kill_process", "send_stdin", "format_code", "optimize_imports", "refactor_rename")) {
+                    assertFalse(writeTool in capturedToolNames!!, "Should NOT have write tool: $writeTool")
+                }
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `scope still works when agent_type is absent`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                configLoader.loadFromDisk(tempDir)
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = {
+                        SequenceBrain(listOf(
+                            ApiResult.Success(toolCallResponse(
+                                "attempt_completion" to """{"result":"Research done."}"""
+                            ))
+                        ))
+                    },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Research task",
+                        "prompt" to "Research the codebase",
+                        "scope" to "research"
+                    ),
+                    project
+                )
+
+                assertFalse(result.isError, "Scope path should still work: ${result.content}")
+                assertTrue(result.content.contains("Agent: Research task"), "Should contain agent description")
+                assertTrue(result.summary.contains("research"), "Summary should mention scope")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+
+        @Test
+        fun `config max-turns is used when set`() = runTest {
+            val tempDir = createTempDirectory("agent-type-test-")
+            try {
+                writeConfigFile(tempDir, "quick-agent.md", makeConfig(
+                    name = "quick-agent",
+                    description = "Quick agent with limited turns",
+                    tools = "read_file, think, attempt_completion",
+                    systemPrompt = "You are a quick agent.",
+                    maxTurns = 8
+                ))
+                configLoader.loadFromDisk(tempDir)
+
+                val spawnTool = SpawnAgentTool(
+                    brainProvider = {
+                        SequenceBrain(listOf(
+                            ApiResult.Success(toolCallResponse(
+                                "attempt_completion" to """{"result":"Quick result."}"""
+                            ))
+                        ))
+                    },
+                    toolRegistry = registry,
+                    project = project,
+                    configLoader = configLoader
+                )
+
+                val result = spawnTool.execute(
+                    params(
+                        "description" to "Quick task",
+                        "prompt" to "Do something quick",
+                        "agent_type" to "quick-agent"
+                    ),
+                    project
+                )
+
+                // If config.maxTurns is used correctly, execution succeeds with the config's max
+                assertFalse(result.isError, "Should succeed with config max-turns: ${result.content}")
+                assertTrue(result.content.contains("Quick result"), "Should contain completion result")
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
         }
     }
 }

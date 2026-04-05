@@ -1,13 +1,17 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.estimateTokens
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfig
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.tools.subagent.SubagentRunResult
 import com.workflow.orchestrator.agent.tools.subagent.SubagentRunStats
@@ -37,12 +41,17 @@ class SpawnAgentTool(
     private val toolRegistry: ToolRegistry,
     private val project: Project,
     var contextBudget: Int = DEFAULT_CONTEXT_BUDGET,
-    var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null
+    var maxOutputTokens: Int? = null,
+    var sessionDebugDir: java.io.File? = null,
+    var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null,
+    private val configLoader: AgentConfigLoader? = null
 ) : AgentTool {
 
     override val name = "agent"
 
-    override val description = """Launch a focused sub-agent to handle a task in its own context window. Each sub-agent gets its own prompt and returns a comprehensive result. Use this for broad exploration when reading many files would consume your main context window, or to delegate self-contained implementation work. You do not need to launch multiple sub-agents every time — using one sub-agent is valid when it avoids unnecessary context usage for focused work.
+    override val description: String
+        get() {
+            val base = """Launch a focused sub-agent to handle a task in its own context window. Each sub-agent gets its own prompt and returns a comprehensive result. Use this for broad exploration when reading many files would consume your main context window, or to delegate self-contained implementation work. You do not need to launch multiple sub-agents every time — using one sub-agent is valid when it avoids unnecessary context usage for focused work.
 
 The sub-agent gets a FRESH context — it cannot see your conversation history. You MUST include all necessary context in the prompt: file paths, class names, what to look for or change, and why.
 
@@ -73,6 +82,20 @@ Tips:
 - Include file paths. The sub-agent starts with zero context.
 - For implementation tasks, tell the agent to verify its work (run tests, check compilation)."""
 
+            val configs = configLoader?.getAllCachedConfigs()
+            if (configs.isNullOrEmpty()) return base
+
+            val suffix = buildString {
+                appendLine()
+                appendLine()
+                appendLine("Available agent types (use with agent_type parameter):")
+                for (config in configs.sortedBy { it.name }) {
+                    appendLine("- \"${config.name}\": ${config.description}")
+                }
+            }
+            return base + suffix.trimEnd()
+        }
+
     override val parameters = FunctionParameters(
         properties = mapOf(
             "description" to ParameterProperty(
@@ -99,6 +122,10 @@ Tips:
                 type = "string",
                 description = "Optional fifth research prompt (research scope only, parallel execution)."
             ),
+            "agent_type" to ParameterProperty(
+                type = "string",
+                description = "Name of a specialist agent type. When set, scope is ignored and the agent uses a curated system prompt and tool set. Use for domain-specific tasks."
+            ),
             "scope" to ParameterProperty(
                 type = "string",
                 description = "Agent scope: 'research' (read-only), 'implement' (full write access), or 'review' (read + diagnostics). Defaults to 'implement'.",
@@ -119,9 +146,18 @@ Tips:
             ?: return errorResult("Missing required parameter: description")
         val prompt = params["prompt"]?.jsonPrimitive?.content
             ?: return errorResult("Missing required parameter: prompt")
+        val agentType = params["agent_type"]?.jsonPrimitive?.content
         val scope = params["scope"]?.jsonPrimitive?.content ?: "implement"
         val maxIter = params["max_iterations"]?.jsonPrimitive?.intOrNull ?: 50
 
+        // Agent type path: use config's prompt, tools, max-turns
+        if (agentType != null) {
+            val config = configLoader?.getCachedConfig(agentType)
+                ?: return errorResult(buildUnknownAgentTypeError(agentType))
+            return executeFromConfig(description, prompt, config, maxIter)
+        }
+
+        // Scope path: existing behavior (unchanged from here)
         if (scope !in VALID_SCOPES) {
             return errorResult("Invalid scope: '$scope'. Must be one of: research, implement, review")
         }
@@ -146,6 +182,81 @@ Tips:
         }
     }
 
+    // ---- Debug dir for sub-agents ----
+
+    private var subagentCounter = 0
+
+    /**
+     * Compute a unique debug dir for a sub-agent under the parent session's directory.
+     * Layout: `sessions/{sid}/subagents/subagent-{N}-{sanitizedDesc}/`
+     */
+    private fun subagentDebugDir(description: String): java.io.File? {
+        val parentDir = sessionDebugDir ?: return null
+        val idx = ++subagentCounter
+        val safeName = description.take(40).replace(Regex("[^a-zA-Z0-9_-]"), "_").lowercase()
+        return java.io.File(parentDir, "subagents/subagent-${idx}-${safeName}")
+    }
+
+    // ---- Config-based agent execution ----
+
+    private fun resolveConfigTools(config: AgentConfig): Map<String, AgentTool> {
+        return config.tools
+            .filter { it != "agent" }
+            .mapNotNull { name ->
+                val tool = toolRegistry.get(name)
+                if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown tool: $name")
+                tool?.let { name to it }
+            }
+            .toMap()
+    }
+
+    private fun inferPlanMode(resolvedTools: Map<String, AgentTool>): Boolean {
+        return resolvedTools.keys.none { it in AgentLoop.WRITE_TOOLS }
+    }
+
+    private fun buildUnknownAgentTypeError(name: String): String {
+        val available = configLoader?.getAllCachedConfigs()
+            ?.sortedBy { it.name }
+            ?.joinToString(", ") { it.name }
+            ?: "(none loaded)"
+        return "Unknown agent type '$name'. Available: $available"
+    }
+
+    private suspend fun executeFromConfig(
+        description: String,
+        prompt: String,
+        config: AgentConfig,
+        iterationOverride: Int
+    ): ToolResult {
+        val brain = brainProvider()
+        val resolvedTools = resolveConfigTools(config)
+
+        if (resolvedTools.isEmpty()) {
+            return errorResult("Agent type '${config.name}' has no resolvable tools. Config lists: ${config.tools}")
+        }
+
+        val planMode = inferPlanMode(resolvedTools)
+        val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
+
+        val runner = SubagentRunner(
+            brain = brain,
+            tools = resolvedTools,
+            systemPrompt = config.systemPrompt,
+            project = project,
+            maxIterations = maxIter,
+            planMode = planMode,
+            contextBudget = contextBudget,
+            maxOutputTokens = maxOutputTokens,
+            apiDebugDir = subagentDebugDir(description)
+        )
+
+        val result = runner.run(prompt) { progress ->
+            onSubagentProgress?.invoke(description, progress)
+        }
+
+        return mapSingleResult(description, config.name, result)
+    }
+
     // ---- Single subagent execution ----
 
     private suspend fun executeSingle(
@@ -165,7 +276,9 @@ Tips:
             project = project,
             maxIterations = maxIterations,
             planMode = scope != "implement",
-            contextBudget = contextBudget
+            contextBudget = contextBudget,
+            maxOutputTokens = maxOutputTokens,
+            apiDebugDir = subagentDebugDir(description)
         )
 
         val result = runner.run(prompt) { progress ->
@@ -230,7 +343,9 @@ Tips:
                         project = project,
                         maxIterations = maxIterations,
                         planMode = true, // research scope is always plan mode
-                        contextBudget = contextBudget
+                        contextBudget = contextBudget,
+                        maxOutputTokens = maxOutputTokens,
+                        apiDebugDir = subagentDebugDir("${description}-${idx + 1}")
                     )
 
                     entries[idx].status = "running"
@@ -406,6 +521,8 @@ Tips:
     )
 
     companion object {
+        private val LOG = Logger.getInstance(SpawnAgentTool::class.java)
+
         const val DEFAULT_CONTEXT_BUDGET = 150_000
         const val MAX_PARALLEL_PROMPTS = 5
         val PROMPT_KEYS = listOf("prompt", "prompt_2", "prompt_3", "prompt_4", "prompt_5")
