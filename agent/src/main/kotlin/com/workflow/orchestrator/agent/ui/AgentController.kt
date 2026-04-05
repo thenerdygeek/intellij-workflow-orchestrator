@@ -19,9 +19,13 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
+import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
+import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -77,6 +81,13 @@ class AgentController(
      */
     private var currentSessionId: String? = null
 
+    /**
+     * Structured plan data from the last plan_mode_respond call.
+     * Populated in [onPlanResponse] via [PlanParser.parseToPlanJson] and used by
+     * [openPlanInEditor] to open the plan in a full JCEF editor tab.
+     */
+    private var currentPlanData: PlanParser.PlanJson? = null
+
     /** Recent tool calls for Haiku phrase context (FIFO, max 3). */
     private val recentToolCalls = mutableListOf<Pair<String, String>>()
 
@@ -124,6 +135,18 @@ class AgentController(
             onApprove = ::approvePlan,
             onRevise = ::revisePlan
         )
+
+        // "View Plan" button — opens the plan in a full JCEF editor tab
+        dashboard.setCefFocusPlanEditorCallback {
+            openPlanInEditor()
+        }
+
+        // "Revise" button in the chat card — delegates to the open plan editor tab
+        dashboard.setCefRevisePlanFromEditorCallback {
+            val editors = FileEditorManager.getInstance(project).allEditors
+            val planEditor = editors.filterIsInstance<AgentPlanEditor>().firstOrNull()
+            planEditor?.triggerRevise()
+        }
 
         // Tool kill callback — Gap 5
         dashboard.setCefKillCallback { toolCallId ->
@@ -844,6 +867,7 @@ class AgentController(
         taskStartTime = 0L
         lastTaskText = null
         currentSessionId = null
+        currentPlanData = null
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
@@ -1037,8 +1061,10 @@ class AgentController(
         }
 
         invokeLater {
-            // Parse and render the plan card (our custom addition on top of Cline)
-            val planJson = PlanParser.parseToJson(planText)
+            // Parse plan into structured object (used by openPlanInEditor) and render card
+            val planData = PlanParser.parseToPlanJson(planText)
+            currentPlanData = planData
+            val planJson = Json.encodeToString(planData)
             dashboard.renderPlan(planJson)
 
             if (!needsMoreExploration) {
@@ -1207,6 +1233,31 @@ class AgentController(
         }
     }
 
+    /**
+     * Open the current plan in a full JCEF editor tab (AgentPlanEditor).
+     * Wires approve/revise/comment-count callbacks so the editor tab stays in sync
+     * with the chat panel's plan card.
+     *
+     * Called when the user clicks "View Plan" in the chat plan card.
+     */
+    private fun openPlanInEditor() {
+        val plan = currentPlanData ?: return
+        val sid = currentSessionId ?: "unknown"
+        val vf = AgentPlanVirtualFile(plan, sid)
+
+        invokeLater {
+            val editors = FileEditorManager.getInstance(project).openFile(vf, true)
+            val planEditor = editors.filterIsInstance<AgentPlanEditor>().firstOrNull()
+            if (planEditor != null) {
+                planEditor.onApprove = ::approvePlan
+                planEditor.onRevise = ::revisePlan
+                planEditor.onCommentCountChanged = { count ->
+                    dashboard.setPlanCommentCount(count)
+                }
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════
@@ -1370,6 +1421,7 @@ class AgentController(
         phraseTimerJob = null
         contextManager = null
         currentSessionId = null
+        currentPlanData = null
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null

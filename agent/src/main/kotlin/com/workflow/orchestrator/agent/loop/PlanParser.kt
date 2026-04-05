@@ -51,10 +51,21 @@ object PlanParser {
      * @return JSON string: {"summary": "...", "steps": [{"id": "1", "title": "...", ...}]}
      */
     fun parseToJson(planText: String): String {
+        val planJson = parseToPlanJson(planText)
+        return json.encodeToString(planJson)
+    }
+
+    /**
+     * Parse a free-text plan into a structured [PlanJson] object.
+     * Use this when you need the typed object rather than raw JSON string.
+     *
+     * @param planText the raw markdown plan from the LLM
+     * @return structured [PlanJson] with summary and steps
+     */
+    fun parseToPlanJson(planText: String): PlanJson {
         val steps = parse(planText)
         val summary = extractSummary(planText, steps)
-        val planJson = PlanJson(summary = summary, steps = steps)
-        return json.encodeToString(planJson)
+        return PlanJson(summary = summary, steps = steps)
     }
 
     /**
