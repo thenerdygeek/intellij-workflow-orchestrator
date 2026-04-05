@@ -40,7 +40,7 @@ import com.workflow.orchestrator.core.model.ApiResult
  * @see <a href="https://github.com/cline/cline/blob/main/src/core/context/context-management/ContextManager.ts">Cline source</a>
  */
 class ContextManager(
-    private val maxInputTokens: Int = 150_000,
+    val maxInputTokens: Int = 150_000,
     private val compactionThreshold: Double = 0.85
 ) {
     private val LOG = Logger.getInstance(ContextManager::class.java)

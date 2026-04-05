@@ -15,8 +15,10 @@ import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
 import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
 import com.workflow.orchestrator.agent.session.SessionStore
@@ -671,6 +673,16 @@ class AgentService(private val project: Project) : Disposable {
                     onDebugLog = onDebugLog,
                     fileLogger = fileLogger,
                     sessionMetrics = sessionMetrics,
+                    environmentDetailsProvider = {
+                        val pluginSettings = PluginSettings.getInstance(project)
+                        EnvironmentDetailsBuilder.build(
+                            project = project,
+                            planModeEnabled = planModeActive.get(),
+                            contextManager = ctx,
+                            activeTicketId = pluginSettings.state.activeTicketId,
+                            activeTicketSummary = pluginSettings.state.activeTicketSummary
+                        )
+                    },
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where

@@ -164,7 +164,17 @@ class AgentLoop(
     /** Optional file logger for structured JSONL agent logs. Always active when provided. */
     private val fileLogger: AgentFileLogger? = null,
     /** Optional per-session metrics accumulator. Records tool durations, API latencies, counts. */
-    private val sessionMetrics: SessionMetrics? = null
+    private val sessionMetrics: SessionMetrics? = null,
+    /**
+     * Optional provider that returns the environment_details XML block to append to user messages.
+     * Called at each real user input injection point (initial task, plan mode feedback,
+     * mistake recovery). Returns null to skip injection (e.g. in sub-agents).
+     *
+     * Port of Cline's getEnvironmentDetails(): lightweight IDE context auto-injected
+     * at the entry point of every user message — current mode, open editor, open tabs,
+     * context usage, active plan, active ticket.
+     */
+    val environmentDetailsProvider: (() -> String?)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -292,7 +302,9 @@ class AgentLoop(
             TokenEstimator.estimateToolDefinitions(toolDefinitions)
         )
 
-        contextManager.addUserMessage(task)
+        val envDetails = environmentDetailsProvider?.invoke()
+        val taskWithEnv = if (envDetails != null) "$task\n\n$envDetails" else task
+        contextManager.addUserMessage(taskWithEnv)
 
         var iteration = 0
         var consecutiveEmpties = 0
@@ -441,13 +453,17 @@ class AgentLoop(
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
                         val userMessage = userInputChannel.receive()
-                        contextManager.addUserMessage(userMessage)
+                        val envDetails = environmentDetailsProvider?.invoke()
+                        val messageWithEnv = if (envDetails != null) "$userMessage\n\n$envDetails" else userMessage
+                        contextManager.addUserMessage(messageWithEnv)
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
                         // Cline pattern: at max mistakes, ask user for feedback instead of failing
                         LOG.warn("[Loop] Max consecutive mistakes ($maxConsecutiveMistakes) — waiting for user feedback")
                         val userMessage = userInputChannel.receive()
-                        contextManager.addUserMessage(userMessage)
+                        val envDetails = environmentDetailsProvider?.invoke()
+                        val messageWithEnv = if (envDetails != null) "$userMessage\n\n$envDetails" else userMessage
+                        contextManager.addUserMessage(messageWithEnv)
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
@@ -934,7 +950,9 @@ class AgentLoop(
                     // The user can: type in chat, add step comments, or click approve.
                     // Each sends a message into the channel, which resumes the loop.
                     val userMessage = userInputChannel.receive()
-                    contextManager.addUserMessage(userMessage)
+                    val envDetails = environmentDetailsProvider?.invoke()
+                    val messageWithEnv = if (envDetails != null) "$userMessage\n\n$envDetails" else userMessage
+                    contextManager.addUserMessage(messageWithEnv)
                     // Continue the loop — LLM will see the user's message and respond
                 }
                 // needs_more_exploration=true OR no channel: loop continues immediately
