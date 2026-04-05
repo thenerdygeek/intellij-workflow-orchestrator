@@ -43,6 +43,8 @@ export interface ToolCall {
   result?: string;
   output?: string;
   durationMs?: number;
+  /** Unified diff for file edit/create tools — rendered as DiffHtml when expanded */
+  diff?: string;
   /** True if this tool call's changes have been rolled back */
   rolledBack?: boolean;
 }

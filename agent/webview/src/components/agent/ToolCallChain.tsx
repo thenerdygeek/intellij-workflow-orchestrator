@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useEffect, useMemo } from 'react';
+import { memo, useCallback, useRef, useEffect, useMemo, lazy, Suspense } from 'react';
 import type { ToolCall } from '@/bridge/types';
 import { Terminal } from '@/components/ui/tool-ui/terminal';
 import {
@@ -12,6 +12,9 @@ import { cn } from '@/lib/utils';
 import { Loader2, Check, X, Clock } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import { useShiki } from '@/hooks/useShiki';
+
+// Lazy-load DiffHtml — only needed when expanding edit/write tool calls
+const DiffHtml = lazy(() => import('@/components/rich/DiffHtml').then(m => ({ default: m.DiffHtml })));
 
 // ── Category helpers ──
 
@@ -240,6 +243,7 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
   const target = extractTarget(tc.args);
   const isRunning = tc.status === 'RUNNING';
   const isCmdTool = category === 'CMD';
+  const hasDiff = !!(tc.diff) && (category === 'EDIT' || category === 'WRITE');
   const isRolledBack = tc.rolledBack === true;
 
   return (
@@ -293,6 +297,12 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
         <ChainOfThoughtContent>
           {isCmdTool ? (
             <TerminalContent toolCall={tc} />
+          ) : hasDiff ? (
+            <Suspense fallback={<div className="p-2 text-[11px] italic" style={{ color: 'var(--fg-muted)' }}>Loading diff view...</div>}>
+              <div className="max-h-[400px] overflow-y-auto rounded" style={{ backgroundColor: 'var(--code-bg)' }}>
+                <DiffHtml diffSource={tc.diff!} />
+              </div>
+            </Suspense>
           ) : (
             <ToolCallDetails toolCall={tc} />
           )}

@@ -436,12 +436,12 @@ class AgentDashboardPanel(
 
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0,
-        toolName: String = "", output: String? = null
+        toolName: String = "", output: String? = null, diff: String? = null
     ) {
-        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output)
+        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
-        mirrors.forEach { it.updateLastToolCall(status, result, durationMs, toolName, output) }
-        recordReplay { p -> p.updateLastToolCall(status, result, durationMs, toolName, output) }
+        mirrors.forEach { it.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
+        recordReplay { p -> p.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {

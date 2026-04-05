@@ -747,7 +747,8 @@ class AgentController(
                     result = progress.result,
                     durationMs = progress.durationMs,
                     toolName = progress.toolName,
-                    output = progress.output ?: progress.result.takeIf { it.isNotBlank() }
+                    output = progress.output ?: progress.result.takeIf { it.isNotBlank() },
+                    diff = progress.editDiff
                 )
 
                 // Show skill banner when use_skill activates a skill

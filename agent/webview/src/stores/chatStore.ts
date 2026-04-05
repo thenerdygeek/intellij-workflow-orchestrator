@@ -116,7 +116,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
@@ -386,7 +386,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string) {
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
       // Find the first RUNNING tool call with this name (for parallel calls,
@@ -406,10 +406,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
-        newMap.set(targetKey, { ...existing, status, result, output, durationMs });
+        newMap.set(targetKey, { ...existing, status, result, output, durationMs, ...(diff ? { diff } : {}) });
       } else {
         const id = nextId('tc');
-        newMap.set(id, { id, name, args: '', status, result, output, durationMs });
+        newMap.set(id, { id, name, args: '', status, result, output, durationMs, ...(diff ? { diff } : {}) });
       }
       return { activeToolCalls: newMap };
     });
