@@ -227,12 +227,19 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
     /**
      * Section 6: Skills
      *
-     * Inspired by Claude Code's "using-superpowers" meta-skill pattern:
-     * The LLM is made paranoid about missing applicable skills via explicit
-     * red-flag thoughts and a mandatory check-before-responding rule.
+     * Two-layer design mirroring Claude Code's superpowers pattern:
      *
-     * activeSkillContent is our addition for compaction survival — re-injected
-     * into the system prompt so the LLM retains skill instructions after compaction.
+     * 1. **Meta-skill** ("using-skills") — auto-injected into the system prompt.
+     *    Teaches the LLM HOW to use skills: red flags, priority ordering,
+     *    workflow triggers, rigid vs flexible distinction. Cannot be loaded via
+     *    use_skill (chicken-and-egg: you can't tell the LLM to load the skill
+     *    that teaches it how to load skills).
+     *
+     * 2. **Available skills listing** — lean, just names + descriptions.
+     *    The LLM scans this list and calls use_skill to load the full content.
+     *
+     * activeSkillContent is for compaction survival — re-injected so the LLM
+     * retains skill instructions after context trimming.
      */
     private fun skills(
         availableSkills: List<SkillMetadata>?,
@@ -244,45 +251,24 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
             if (!availableSkills.isNullOrEmpty()) {
                 appendLine("SKILLS")
                 appendLine()
-                appendLine("Skills provide specialized instructions for specific tasks. They are loaded dynamically — bundled skills ship with the plugin, project skills live in .agent-skills/, and personal skills in ~/.workflow-orchestrator/skills/. All are listed below.")
-                appendLine()
-                appendLine("## The Rule")
-                appendLine()
-                appendLine("Invoke relevant skills BEFORE any response or action. Even a 1% chance a skill might apply means you should call use_skill to check. If the loaded skill turns out to be wrong for the situation, you don't have to follow it — but you MUST check first.")
-                appendLine()
+
+                // Auto-inject the meta-skill content (the "how to use skills" guide).
+                // This is the equivalent of Claude Code's superpowers:using-superpowers
+                // being pre-injected rather than loaded via the Skill tool.
+                val metaSkillContent = InstructionLoader.loadMetaSkillContent()
+                if (metaSkillContent != null) {
+                    appendLine(metaSkillContent)
+                    appendLine()
+                }
+
+                // Lean skills listing — just names and descriptions
                 appendLine("## Available Skills")
                 appendLine()
                 for (skill in availableSkills) {
+                    // Skip the meta-skill from the listing — it's already injected above
+                    if (skill.name == InstructionLoader.META_SKILL_NAME) continue
                     appendLine("- \"${skill.name}\": ${skill.description}")
                 }
-                appendLine()
-                appendLine("## Skill Priority")
-                appendLine()
-                appendLine("When multiple skills could apply, use this order:")
-                appendLine("1. Process skills first (systematic-debugging, brainstorm, writing-plans) — these determine HOW to approach the task")
-                appendLine("2. Implementation skills second (tdd, git-workflow, interactive-debugging) — these guide execution")
-                appendLine("3. Delegation skills last (subagent-driven) — these orchestrate multi-step work")
-                appendLine()
-                appendLine("\"Fix this bug\" → systematic-debugging first, then tdd for regression test.")
-                appendLine("\"Add a new feature\" → brainstorm first, then writing-plans, then subagent-driven or tdd.")
-                appendLine()
-                appendLine("## Red Flags — STOP and check for skills if you catch yourself thinking:")
-                appendLine()
-                appendLine("- \"This is just a simple question\" → Questions are tasks. Check for skills.")
-                appendLine("- \"Let me explore the codebase first\" → Skills tell you HOW to explore. Check first.")
-                appendLine("- \"I need more context first\" → Skill check comes BEFORE gathering context.")
-                appendLine("- \"This doesn't need a formal skill\" → If a skill exists for it, use it.")
-                appendLine("- \"I'll just do this one thing first\" → Check BEFORE doing anything.")
-                appendLine("- \"Let me just fix this quickly\" → systematic-debugging exists for a reason. Load it.")
-                appendLine("- \"I know how to write tests\" → tdd skill enforces test-FIRST discipline. Load it.")
-                appendLine("- \"I can plan this in my head\" → writing-plans ensures nothing is missed. Load it.")
-                appendLine()
-                appendLine("## How to Use")
-                appendLine()
-                appendLine("1. Read the user's request and scan the skill list for matches")
-                appendLine("2. Call use_skill(skill_name=\"exact-name\") — the skill content loads into your context")
-                appendLine("3. Follow the returned instructions directly — do NOT call use_skill again for the same task")
-                appendLine("4. If the skill has a preferred-tools list, prioritize those tools but you are not restricted to them")
             }
 
             // Re-inject active skill content for compaction survival
@@ -362,14 +348,6 @@ Do not propose changes to code you haven't read. If the task involves modifying 
 - Before executing actions, consider reversibility and blast radius. Freely take local, reversible actions (edit files, run tests). For hard-to-reverse actions (force push, delete branches, drop tables, kill processes), confirm with the user first.
 - run_command with destructive operations (rm -rf, git reset --hard, DROP TABLE, kubectl delete) always requires user approval. Think before running.
 - When executing commands, do not assume success when output is missing. Run follow-up checks before proceeding.
-
-# Skill-Driven Workflows
-When the task matches a skill, load the skill BEFORE starting work. Key triggers:
-- Encountering a bug, test failure, or unexpected behavior → load systematic-debugging before attempting any fix
-- Adding new functionality or writing tests → load tdd before writing code
-- Planning multi-step work (2+ files, cross-module, new features) → switch to plan mode, load writing-plans
-- Executing an approved plan with 3+ tasks → load subagent-driven
-- Git operations (branches, diffs, history) → load git-workflow
 
 # Task Execution
 - When starting a task, use project_context to understand current state before making changes.

@@ -75,11 +75,20 @@ class UseSkillTool : AgentTool {
             )
         }
 
+        // Block loading the meta-skill via use_skill — it's auto-injected into the system prompt
+        if (skillName == InstructionLoader.META_SKILL_NAME) {
+            return ToolResult(
+                content = "The '${InstructionLoader.META_SKILL_NAME}' skill is already active — it's auto-injected into your system prompt. You don't need to load it.",
+                summary = "Meta-skill already active",
+                tokenEstimate = 10
+            )
+        }
+
         val skillContent = InstructionLoader.getSkillContent(skillName, availableSkills)
 
         if (skillContent == null) {
             // Port of Cline: list available skill names in error message
-            val availableNames = availableSkills.joinToString(", ") { it.name }
+            val availableNames = availableSkills.filter { it.name != InstructionLoader.META_SKILL_NAME }.joinToString(", ") { it.name }
             return ToolResult(
                 content = "Error: Skill \"$skillName\" not found. Available skills: $availableNames",
                 summary = "use_skill failed: skill '$skillName' not found",

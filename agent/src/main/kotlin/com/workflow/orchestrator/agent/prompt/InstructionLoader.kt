@@ -33,6 +33,7 @@ object InstructionLoader {
      * Adaptation: Cline has no bundled skills — these ship with our plugin.
      */
     private val BUNDLED_SKILL_DIRS = listOf(
+        "using-skills",
         "brainstorm",
         "create-skill",
         "git-workflow",
@@ -42,6 +43,9 @@ object InstructionLoader {
         "tdd",
         "writing-plans"
     )
+
+    /** Name of the meta-skill that is auto-injected into the system prompt. */
+    const val META_SKILL_NAME = "using-skills"
 
     // ---- Project instructions ----
 
@@ -166,6 +170,27 @@ object InstructionLoader {
             )
         } catch (e: Exception) {
             LOG.warn("InstructionLoader: failed to load skill content for '${skill.name}': ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Load the meta-skill content for auto-injection into the system prompt.
+     *
+     * The "using-skills" meta-skill teaches the LLM HOW to use skills.
+     * It's auto-injected (not loaded via use_skill) because you can't tell
+     * the LLM to "load the skill that teaches you how to load skills."
+     *
+     * @return the meta-skill instructions body, or null if not found
+     */
+    fun loadMetaSkillContent(): String? {
+        val resourcePath = "/skills/$META_SKILL_NAME/SKILL.md"
+        return try {
+            val content = loadClasspathResource(resourcePath) ?: return null
+            val (_, body) = parseYamlFrontmatter(content)
+            body.trim().takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            LOG.warn("InstructionLoader: failed to load meta-skill: ${e.message}")
             null
         }
     }
