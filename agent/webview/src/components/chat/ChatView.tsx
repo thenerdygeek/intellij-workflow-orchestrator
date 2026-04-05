@@ -315,10 +315,29 @@ export const ChatView = memo(function ChatView() {
   const queuedSteeringMessages = useChatStore(s => s.queuedSteeringMessages);
 
   const approvalRef = useRef<HTMLDivElement>(null);
+  const lastAgentMsgRef = useRef<HTMLDivElement>(null);
+  const wasStreamingRef = useRef(false);
 
   const handleApprove = useCallback(() => resolveApproval('approve'), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
+
+  // When streaming ends, scroll to the TOP of the last agent message if it's taller than the viewport.
+  // This lets the user read a long response (like an implementation plan) from the beginning.
+  useEffect(() => {
+    const isStreaming = activeStream?.isStreaming ?? false;
+    if (wasStreamingRef.current && !isStreaming && lastAgentMsgRef.current) {
+      const el = lastAgentMsgRef.current;
+      const viewportHeight = el.closest('[role="log"]')?.clientHeight ?? window.innerHeight;
+      // Only scroll to top if the message is taller than 60% of the viewport
+      if (el.offsetHeight > viewportHeight * 0.6) {
+        requestAnimationFrame(() => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [activeStream?.isStreaming]);
 
   // Auto-scroll to approval gate when it appears
   useEffect(() => {
@@ -378,9 +397,14 @@ export const ChatView = memo(function ChatView() {
               </ErrorBoundary>
             );
           }
+          // Attach ref to the last agent message for scroll-to-top on stream end
+          const isLastAgent = msg.role === 'agent' && i === messages.length - 1;
           return (
             <ErrorBoundary key={msg.id}>
-              <div style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}>
+              <div
+                ref={isLastAgent ? lastAgentMsgRef : undefined}
+                style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
+              >
                 <AgentMessage message={msg} />
               </div>
             </ErrorBoundary>
