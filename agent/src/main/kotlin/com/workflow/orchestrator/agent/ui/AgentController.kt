@@ -545,7 +545,8 @@ class AgentController(
     private fun onToolCall(progress: ToolCallProgress) {
         invokeLater {
             if (progress.result.isEmpty() && progress.durationMs == 0L) {
-                // Tool call starting
+                // Tool call starting — update smart working phrase
+                dashboard.setSmartWorkingPhrase(buildWorkingPhrase(progress.toolName, progress.args))
                 dashboard.appendToolCall(
                     toolCallId = progress.toolCallId,
                     toolName = progress.toolName,
@@ -588,6 +589,8 @@ class AgentController(
             dashboard.finalizeToolChain()
             // Hide skill banner on task completion
             dashboard.hideSkillBanner()
+            // Clear working phrase
+            dashboard.setSmartWorkingPhrase("")
 
             when (result) {
                 is LoopResult.Completed -> {
@@ -837,6 +840,9 @@ class AgentController(
 
         dashboard.appendStatus("Reverting to checkpoint...", RichStreamingPanel.StatusType.INFO)
 
+        // Restore the last task text in the input bar so user can edit and re-send
+        lastTaskText?.let { dashboard.restoreInputText(it) }
+
         // Collect files modified since the target checkpoint for rollback notification
         val affectedFiles = service.getFilesModifiedSinceCheckpoint(sessionId, checkpointId)
 
@@ -1075,6 +1081,42 @@ class AgentController(
             "${tokens / 1000}K"
         } else {
             tokens.toString()
+        }
+    }
+
+    /**
+     * Build a contextual working phrase from the current tool call.
+     * Shown in the UI status area while the agent is executing tools.
+     */
+    private fun buildWorkingPhrase(toolName: String, args: String): String {
+        val parsedArgs = try {
+            kotlinx.serialization.json.Json.parseToJsonElement(args) as? kotlinx.serialization.json.JsonObject
+        } catch (_: Exception) { null }
+
+        val path = parsedArgs?.get("path")?.jsonPrimitive?.content
+            ?.substringAfterLast("/")
+
+        return when (toolName) {
+            "read_file" -> "Reading ${path ?: "file"}..."
+            "edit_file" -> "Editing ${path ?: "file"}..."
+            "create_file" -> "Creating ${path ?: "file"}..."
+            "search_code" -> {
+                val query = parsedArgs?.get("query")?.jsonPrimitive?.content?.take(30)
+                "Searching${query?.let { " for \"$it\"" } ?: ""}..."
+            }
+            "glob_files" -> "Finding files..."
+            "run_command" -> {
+                val cmd = parsedArgs?.get("command")?.jsonPrimitive?.content?.take(40)
+                "Running${cmd?.let { " $it" } ?: " command"}..."
+            }
+            "think" -> "Thinking..."
+            "attempt_completion" -> "Completing..."
+            "agent" -> "Delegating to sub-agent..."
+            "find_definition" -> "Finding definition..."
+            "find_references" -> "Finding references..."
+            "diagnostics" -> "Running diagnostics..."
+            "run_inspections" -> "Running inspections..."
+            else -> "Using $toolName..."
         }
     }
 
