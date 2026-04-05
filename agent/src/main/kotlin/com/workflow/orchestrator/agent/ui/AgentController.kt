@@ -16,6 +16,7 @@ import com.workflow.orchestrator.agent.loop.PlanParser
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import kotlinx.coroutines.*
@@ -74,6 +75,12 @@ class AgentController(
      * Set when executeTask creates or resumes a session, cleared on newChat.
      */
     private var currentSessionId: String? = null
+
+    /** Recent tool calls for Haiku phrase context (FIFO, max 3). */
+    private val recentToolCalls = mutableListOf<Pair<String, String>>()
+
+    /** Coroutine job for the 30s Haiku phrase timer. */
+    private var phraseTimerJob: Job? = null
 
     init {
         wireCallbacks()
@@ -147,17 +154,31 @@ class AgentController(
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
             invokeLater { dashboard.showQuestions(questionsJson) }
         }
+        // Accumulate individual question answers so we can pass them on submit
+        val collectedAnswers = mutableMapOf<String, String>()
         dashboard.setCefQuestionCallbacks(
-            onAnswered = { _, _ -> /* Individual answers handled by wizard */ },
-            onSkipped = { _ -> /* Individual skips handled by wizard */ },
+            onAnswered = { questionId, selectedOptionsJson ->
+                collectedAnswers[questionId] = selectedOptionsJson
+            },
+            onSkipped = { questionId ->
+                collectedAnswers[questionId] = "[]"
+            },
             onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
             onSubmitted = {
-                // User submitted all answers — resolve the pending deferred
-                // The answers are collected by the React webview and passed as JSON
-                com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions("{}")
+                // Build JSON from accumulated answers and resolve the pending deferred
+                val answersJson = buildString {
+                    append("{")
+                    collectedAnswers.entries.joinTo(this) { (qid, opts) ->
+                        "\"$qid\":$opts"
+                    }
+                    append("}")
+                }
+                com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(answersJson)
+                collectedAnswers.clear()
             },
             onCancelled = {
                 com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.cancelQuestions()
+                collectedAnswers.clear()
             },
             onEdit = { _ -> /* Re-editing handled by wizard */ }
         )
@@ -376,6 +397,7 @@ class AgentController(
                 onComplete(result)
             },
             onPlanResponse = ::onPlanResponse,
+            onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
@@ -385,6 +407,9 @@ class AgentController(
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null
         )
+
+        // Start 30s Haiku phrase timer (if smart working indicator is enabled)
+        startPhraseTimer(task)
     }
 
     // ═══════════════════════════════════════════════════
@@ -535,14 +560,15 @@ class AgentController(
     }
 
     /**
-     * Token usage callback — agent loop reports cumulative token counts after each API call.
-     * Pushes real-time token budget utilization to the webview progress bar.
+     * Token usage callback — agent loop reports per-call token counts after each API call.
+     * The first argument is the current prompt token count (how full the context window is),
+     * NOT a cumulative total. The progress bar shows "promptTokens / maxInputTokens".
      */
-    private fun onTokenUpdate(inputTokens: Int, outputTokens: Int) {
+    private fun onTokenUpdate(promptTokens: Int, completionTokens: Int) {
         invokeLater {
             val maxTokens = AgentSettings.getInstance(project).state.maxInputTokens
-            val totalUsed = inputTokens + outputTokens
-            dashboard.updateProgress("", totalUsed, maxTokens)
+            // promptTokens = current context window usage (what matters for the progress bar)
+            dashboard.updateProgress("", promptTokens, maxTokens)
         }
     }
 
@@ -561,6 +587,19 @@ class AgentController(
     }
 
     private fun onToolCall(progress: ToolCallProgress) {
+        // Track recent tool calls for Haiku phrase generator
+        if (progress.result.isEmpty() && progress.durationMs == 0L) {
+            val filePath = try {
+                kotlinx.serialization.json.Json.parseToJsonElement(progress.args)
+                    .jsonObject["path"]?.jsonPrimitive?.content
+                    ?.substringAfterLast("/") ?: ""
+            } catch (_: Exception) { "" }
+            synchronized(recentToolCalls) {
+                recentToolCalls.add(progress.toolName to filePath)
+                if (recentToolCalls.size > 3) recentToolCalls.removeAt(0)
+            }
+        }
+
         invokeLater {
             if (progress.result.isEmpty() && progress.durationMs == 0L) {
                 // Tool call starting — update smart working phrase
@@ -587,7 +626,7 @@ class AgentController(
                 )
 
                 // Show skill banner when use_skill activates a skill
-                if (progress.toolName == "skill" && !progress.isError) {
+                if (progress.toolName == "use_skill" && !progress.isError) {
                     val skillName = progress.result.substringAfter("'").substringBefore("'")
                     if (skillName.isNotBlank()) {
                         dashboard.showSkillBanner(skillName)
@@ -598,6 +637,9 @@ class AgentController(
     }
 
     private fun onComplete(result: LoopResult) {
+        phraseTimerJob?.cancel()
+        phraseTimerJob = null
+
         val durationMs = System.currentTimeMillis() - taskStartTime
 
         invokeLater {
@@ -732,6 +774,9 @@ class AgentController(
             service.cancelCurrentTask()
         }
         currentJob = null
+        phraseTimerJob?.cancel()
+        phraseTimerJob = null
+        recentToolCalls.clear()
 
         // Reset conversation state
         contextManager = null
@@ -1103,6 +1148,33 @@ class AgentController(
     }
 
     /**
+     * Start a 30-second timer that generates humorous contextual working phrases via Haiku.
+     * Fire-and-forget: failures are silently ignored (the current phrase stays).
+     * Gated by smartWorkingIndicator setting.
+     */
+    private fun startPhraseTimer(task: String) {
+        phraseTimerJob?.cancel()
+
+        if (!AgentSettings.getInstance(project).state.smartWorkingIndicator) return
+
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        phraseTimerJob = scope.launch {
+            // Wait 30s before the first joke (let the static phrase show first)
+            delay(30_000)
+            while (isActive) {
+                try {
+                    val tools = synchronized(recentToolCalls) { recentToolCalls.toList() }
+                    val phrase = HaikuPhraseGenerator.generate(task, tools)
+                    if (phrase != null) {
+                        invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                    }
+                } catch (_: Exception) { /* non-fatal */ }
+                delay(30_000)
+            }
+        }
+    }
+
+    /**
      * Build a contextual working phrase from the current tool call.
      * Shown in the UI status area while the agent is executing tools.
      */
@@ -1161,6 +1233,8 @@ class AgentController(
             service.cancelCurrentTask()
         }
         currentJob = null
+        phraseTimerJob?.cancel()
+        phraseTimerJob = null
         contextManager = null
         currentSessionId = null
         pendingApproval?.cancel()
