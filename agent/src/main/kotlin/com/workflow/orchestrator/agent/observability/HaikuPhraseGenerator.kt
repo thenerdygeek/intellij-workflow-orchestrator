@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.observability
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
+import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
@@ -19,7 +20,37 @@ object HaikuPhraseGenerator {
 
     private val LOG = Logger.getInstance(HaikuPhraseGenerator::class.java)
 
-    private const val SYSTEM_PROMPT = """You write short, humorous loading messages for an AI coding assistant that appear while the AI is working. Think witty dev humor — like commit messages written by a comedian. Keep it relatable to what's actually happening. No emoji. Always end with "..." """
+    private const val SYSTEM_PROMPT = """You generate one short, funny loading message for a developer IDE. No preamble, no quotes, no explanation — just the message text ending with "..."
+
+VOICE: You are a tired, self-aware senior dev with mass Slack energy. Deadpan, self-deprecating, observational. Funniest person in the standup channel, not a corporate chatbot.
+
+RULES:
+- Every message has a SETUP (familiar dev situation) then a TWIST (unexpected, specific, true)
+- The funny word goes LAST — that is where the snap is
+- Be SPECIFIC: "The PR with 47 files and the message 'small fix'" not "The PR"
+- Reference REAL pain: merge conflicts, flaky tests, Jira estimates, TODO comments from 2019, the one file nobody dares touch, code reviews at 4:59pm
+- Maximum 12 words. Shorter hits harder.
+- First person ("I", "we") or second person ("your") only. Never narrate in third person.
+- End with "..."
+
+NEVER:
+- "Verbing the noun..." format (e.g. "Compiling thoughts...", "Debugging reality...", "Optimizing vibes...")
+- Puns or wordplay — they read as dad jokes
+- The words "magic", "wizard", or "journey"
+- Anything a LinkedIn post would say about coding
+- Generic filler that could apply to any task
+
+EXAMPLES OF THE EXACT TONE:
+- "The tests pass. I don't know why. Don't ask..."
+- "Whoever wrote this owes me an apology. Oh wait, it was me..."
+- "Sprint planning: the fiction we agree to believe..."
+- "Your TODO from 2019 says 'fix later'. It's later..."
+- "git blame says it was me all along..."
+- "Jira says this was a 2-point story. Jira lies..."
+- "Rebasing. Praying. Same thing really..."
+- "The deployment succeeded first try. I'm suspicious..."
+- "Code review at 4:58pm on a Friday. Bold..."
+- "The intern's code works. The architect's doesn't. Classic..." """
 
     /**
      * Generate a humorous working phrase based on the current task context.
@@ -35,9 +66,18 @@ object HaikuPhraseGenerator {
             if (sgUrl.isBlank()) return null
 
             val tokenProvider = { CredentialStore().getToken(ServiceType.SOURCEGRAPH) }
+            if (tokenProvider() == null) return null
 
-            // Use cached models only — never fetch just for jokes
-            val models = ModelCache.getCached()
+            // Use cached models, but populate cache if empty and credentials are available
+            var models = ModelCache.getCached()
+            if (models.isEmpty()) {
+                val client = SourcegraphChatClient(
+                    baseUrl = sgUrl,
+                    tokenProvider = tokenProvider,
+                    model = ""
+                )
+                models = ModelCache.getModels(client)
+            }
             val cheapModel = ModelCache.pickCheapest(models)?.id ?: return null
 
             val brain = OpenAiCompatBrain(
@@ -51,7 +91,7 @@ object HaikuPhraseGenerator {
                 recentTools.joinToString(", ") { (name, arg) -> "$name(${arg.take(40)})" }
             } else "just started"
 
-            val userPrompt = "The user asked: \"${task.take(150)}\"\nRecent activity: $toolContext\n\nWrite ONE short funny loading message (under 60 chars):"
+            val userPrompt = "Task: \"${task.take(150)}\"\nI just did: $toolContext\n\nOne funny message about what I'm actually doing (under 12 words):"
 
             val result = brain.chat(
                 messages = listOf(

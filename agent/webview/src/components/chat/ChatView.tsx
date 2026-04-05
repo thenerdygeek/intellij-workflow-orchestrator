@@ -447,9 +447,6 @@ export const ChatView = memo(function ChatView() {
           </div>
         ))}
 
-        {/* Working indicator — always visible at bottom while agent is active */}
-        {showWorkingIndicator && <WorkingIndicator />}
-
         {/* Streaming message */}
         {streamPlaceholder && (
           <AgentMessage
@@ -459,6 +456,9 @@ export const ChatView = memo(function ChatView() {
             streamText={activeStream?.text}
           />
         )}
+
+        {/* Working indicator — always last content item while agent is active */}
+        {showWorkingIndicator && <WorkingIndicator />}
 
         {/* Retry button — shown after agent failure */}
         {retryMessage && !busy && (
