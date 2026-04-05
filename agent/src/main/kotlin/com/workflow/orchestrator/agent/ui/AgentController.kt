@@ -187,6 +187,9 @@ class AgentController(
 
         // Fetch available models from Sourcegraph and populate the dropdown
         loadModelList()
+
+        // Push available skills to the chat UI for autocomplete/suggestions
+        loadSkillsList()
     }
 
     /**
@@ -244,6 +247,31 @@ class AgentController(
             } catch (e: Exception) {
                 LOG.debug("AgentController: failed to load model list: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * Push available skills to the dashboard for chat input autocomplete.
+     * Skills are loaded from bundled resources + user directories.
+     * The React webview uses this list for /skill suggestions and toolbar dropdown.
+     */
+    private fun loadSkillsList() {
+        val basePath = project.basePath ?: return
+        try {
+            val allSkills = com.workflow.orchestrator.agent.prompt.InstructionLoader.loadAllSkills(basePath)
+            if (allSkills.isNotEmpty()) {
+                val skillsJson = allSkills.joinToString(",", "[", "]") { skill ->
+                    val name = skill.name.replace("\"", "\\\"")
+                    val desc = skill.description.replace("\"", "\\\"").take(200)
+                    """{"name":"$name","description":"$desc"}"""
+                }
+                invokeLater {
+                    dashboard.updateSkillsList(skillsJson)
+                }
+                LOG.info("AgentController: pushed ${allSkills.size} skills to chat UI")
+            }
+        } catch (e: Exception) {
+            LOG.debug("AgentController: failed to load skills list: ${e.message}")
         }
     }
 
