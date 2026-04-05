@@ -44,7 +44,9 @@ data class Session(
     // Checkpoint/resume fields (ported from Cline's TaskState + task settings persistence)
     val systemPrompt: String = "",
     val planModeEnabled: Boolean = false,
-    val lastToolCallId: String? = null
+    val lastToolCallId: String? = null,
+    /** Per-session execution metrics. Null for pre-v2 sessions (backward compatible). */
+    val metrics: com.workflow.orchestrator.agent.observability.SessionMetrics.MetricsSnapshot? = null
 )
 
 @Serializable

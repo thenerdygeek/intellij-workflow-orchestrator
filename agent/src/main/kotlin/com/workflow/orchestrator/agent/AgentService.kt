@@ -26,6 +26,8 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
 import com.workflow.orchestrator.agent.memory.CoreMemory
+import com.workflow.orchestrator.agent.observability.AgentFileLogger
+import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.tools.builtin.*
 import com.workflow.orchestrator.agent.tools.config.*
 import com.workflow.orchestrator.agent.tools.database.*
@@ -76,6 +78,11 @@ class AgentService(private val project: Project) : Disposable {
     /** Atomic reference tracking both the loop and job together to avoid race conditions. */
     private data class ActiveTask(val loop: AgentLoop, val job: Job)
     private val activeTask = AtomicReference<ActiveTask?>(null)
+
+    /** Dedicated structured agent log file — one per project, lives for plugin lifetime. */
+    private val fileLogger: AgentFileLogger by lazy {
+        AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
+    }
 
     private var debugController: AgentDebugController? = null
     private var coreMemory: CoreMemory? = null
@@ -449,7 +456,12 @@ class AgentService(private val project: Project) : Disposable {
          * Optional callback fired after each API call with cumulative token counts.
          * Used by the UI to show real-time token budget utilization.
          */
-        onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null
+        onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
+        /**
+         * Optional callback for real-time debug log entries.
+         * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
+         */
+        onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -458,6 +470,9 @@ class AgentService(private val project: Project) : Disposable {
             status = SessionStatus.ACTIVE
         )
         sessionStore.save(session)
+
+        val sessionMetrics = SessionMetrics()
+        val sessionStartTime = System.currentTimeMillis()
 
         val job = scope.launch {
             var brainRef: LlmBrain? = null
@@ -580,6 +595,9 @@ class AgentService(private val project: Project) : Disposable {
                 // Tool map for execution — use registry.get() to resolve any tool including deferred
                 val tools = registry.getActiveTools()
 
+                // Log session start with actual tool count
+                fileLogger.logSessionStart(sid, task, toolDefs.size)
+
                 // Track the message count before this turn, so we can
                 // checkpoint only newly-added messages (JSONL append).
                 var lastCheckpointedCount = ctx.messageCount()
@@ -625,6 +643,9 @@ class AgentService(private val project: Project) : Disposable {
                             log.warn("AgentService: write checkpoint save failed (non-fatal)", e)
                         }
                     },
+                    onDebugLog = onDebugLog,
+                    fileLogger = fileLogger,
+                    sessionMetrics = sessionMetrics,
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where
@@ -708,10 +729,27 @@ class AgentService(private val project: Project) : Disposable {
                     totalTokens = tokensUsed,
                     inputTokens = inputTokens,
                     outputTokens = outputTokens,
-                    messageCount = ctx.messageCount()
+                    messageCount = ctx.messageCount(),
+                    metrics = sessionMetrics.snapshot()
                 )
                 sessionStore.save(session)
                 log.info("[Agent] Task ended: status=${session.status}, iterations=${ctx.messageCount()}, tokens=$tokensUsed")
+
+                // Log session end to structured file logger
+                val sessionDurationMs = System.currentTimeMillis() - sessionStartTime
+                val iterations = when (result) {
+                    is LoopResult.Completed -> result.iterations
+                    is LoopResult.Failed -> result.iterations
+                    is LoopResult.Cancelled -> result.iterations
+                    is LoopResult.SessionHandoff -> result.iterations
+                }
+                fileLogger.logSessionEnd(
+                    sessionId = sid,
+                    iterations = iterations,
+                    totalTokens = tokensUsed,
+                    durationMs = sessionDurationMs,
+                    error = if (result is LoopResult.Failed) result.error else null
+                )
 
                 // TASK_COMPLETE hook — fire-and-forget, observation-only (non-cancellable).
                 // Fires when a task completes successfully. Matching Cline's 8th hook type.
@@ -740,6 +778,7 @@ class AgentService(private val project: Project) : Disposable {
                     lastMessageAt = System.currentTimeMillis()
                 )
                 sessionStore.save(session)
+                fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime)
                 onComplete(LoopResult.Cancelled(iterations = 0))
             } catch (e: Exception) {
                 log.error("AgentService: task execution failed", e)
@@ -748,6 +787,7 @@ class AgentService(private val project: Project) : Disposable {
                     lastMessageAt = System.currentTimeMillis()
                 )
                 sessionStore.save(session)
+                fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime, error = e.message)
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
             } finally {
                 activeTask.set(null)
