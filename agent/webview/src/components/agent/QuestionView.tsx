@@ -236,6 +236,8 @@ interface QuestionViewProps {
 export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const [showSummary, setShowSummary] = useState(false);
   const [chatAbout, setChatAbout] = useState<{ qid: string; label: string } | null>(null);
+  const [customText, setCustomText] = useState('');
+  const [customSelected, setCustomSelected] = useState(false);
 
   const question = questions[activeIndex];
   const isLastQuestion = activeIndex === questions.length - 1;
@@ -249,10 +251,9 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     return set;
   }, [questions]);
 
-  // Check if all questions answered → show summary
   const allAnswered = answeredIndices.size === questions.length;
 
-  // Map options to QuestionFlow format
+  // Map options to QuestionFlow format (no "Other" — rendered separately with inline input)
   const flowOptions: QuestionFlowOption[] = useMemo(() => {
     if (!question) return [];
     return question.options.map(opt => ({
@@ -272,12 +273,22 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   // Handlers
   const handleSelect = useCallback((optionIds: string[]) => {
     if (!question) return;
+    setCustomSelected(false);
     window._questionAnswered?.(question.id, JSON.stringify(optionIds));
-    // If last question, show summary after a brief delay
     if (isLastQuestion) {
       setTimeout(() => setShowSummary(true), 300);
     }
   }, [question, isLastQuestion]);
+
+  const handleCustomSubmit = useCallback(() => {
+    if (!question || !customText.trim()) return;
+    window._questionAnswered?.(question.id, JSON.stringify([customText.trim()]));
+    setCustomSelected(false);
+    setCustomText('');
+    if (isLastQuestion) {
+      setTimeout(() => setShowSummary(true), 300);
+    }
+  }, [question, customText, isLastQuestion]);
 
   const handleTextAnswer = useCallback((text: string) => {
     if (!question) return;
@@ -290,16 +301,19 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const handleBack = useCallback(() => {
     if (activeIndex <= 0) return;
     setShowSummary(false);
+    setCustomSelected(false);
     window._editQuestion?.(questions[activeIndex - 1]!.id);
   }, [activeIndex, questions]);
 
   const handleSkip = useCallback(() => {
     if (!question) return;
+    setCustomSelected(false);
     window._questionSkipped?.(question.id);
   }, [question]);
 
   const handleEditFromSummary = useCallback((index: number) => {
     setShowSummary(false);
+    setCustomSelected(false);
     window._editQuestion?.(questions[index]!.id);
   }, [questions]);
 
@@ -308,13 +322,14 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   }, []);
 
   const handleCancel = useCallback(() => {
+    setCustomSelected(false);
     window._questionsCancelled?.();
   }, []);
 
   // Summary page when all questions are answered
   if (showSummary || allAnswered) {
     return (
-      <div className="my-3 animate-[fade-in_220ms_ease-out]">
+      <div className="question-view my-3 animate-[fade-in_220ms_ease-out]">
         <SummaryPage
           questions={questions}
           onEdit={handleEditFromSummary}
@@ -327,78 +342,87 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
 
   if (!question) return null;
 
-  const [showCustomInput, setShowCustomInput] = useState(false);
-  const [customText, setCustomText] = useState('');
-
-  const handleCustomSubmit = useCallback(() => {
-    if (!question || !customText.trim()) return;
-    window._questionAnswered?.(question.id, JSON.stringify([customText.trim()]));
-    setShowCustomInput(false);
-    setCustomText('');
-    if (isLastQuestion) {
-      setTimeout(() => setShowSummary(true), 300);
-    }
-  }, [question, customText, isLastQuestion]);
-
   return (
-    <div className="my-3 animate-[fade-in_220ms_ease-out]">
+    <div className="question-view my-3 animate-[fade-in_220ms_ease-out]">
       {/* Text input question */}
       {question.type === 'text' ? (
         <TextQuestion question={question} onAnswer={handleTextAnswer} />
       ) : (
-        /* Select question via tool-ui QuestionFlow */
-        <QuestionFlow
-          id={`question-${question.id}`}
-          step={activeIndex + 1}
-          title={question.text}
-          options={flowOptions}
-          selectionMode={selectionMode}
-          defaultValue={defaultValue}
-          onSelect={handleSelect}
-          onBack={activeIndex > 0 ? handleBack : undefined}
-        />
-      )}
+        <>
+          {/* Select question via tool-ui QuestionFlow */}
+          <QuestionFlow
+            id={`question-${question.id}`}
+            step={activeIndex + 1}
+            title={question.text}
+            options={flowOptions}
+            selectionMode={selectionMode}
+            defaultValue={defaultValue}
+            onSelect={handleSelect}
+            onBack={activeIndex > 0 ? handleBack : undefined}
+          />
 
-      {/* Custom answer input — "Or tell the agent what to do instead" */}
-      {question.type !== 'text' && (
-        showCustomInput ? (
+          {/* "Other" option with inline text input — visually attached to the card above */}
           <div
-            className="mt-2 rounded-lg border p-3"
-            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--tool-bg)' }}
+            className="-mt-3 rounded-b-2xl border border-t-0 px-5 pb-4 pt-2"
+            style={{
+              borderColor: 'var(--border)',
+              backgroundColor: 'var(--toolbar-bg, var(--card))',
+            }}
           >
-            <div className="text-[11px] mb-2" style={{ color: 'var(--fg-muted)' }}>
-              Type a custom answer:
-            </div>
-            <div className="flex gap-1.5">
-              <input
-                autoFocus
-                value={customText}
-                onChange={e => setCustomText(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && customText.trim()) handleCustomSubmit();
-                  if (e.key === 'Escape') { setShowCustomInput(false); setCustomText(''); }
+            <div className="border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+              <button
+                className="flex items-start gap-3 w-full text-left group"
+                onClick={() => {
+                  setCustomSelected(!customSelected);
                 }}
-                placeholder="Type your own answer..."
-                className="flex-1 text-xs px-2 py-1.5 rounded-md border bg-transparent outline-none focus:ring-1"
-                style={{ borderColor: 'var(--input-border)', color: 'var(--fg)' }}
-              />
-              <Button size="sm" className="h-7" onClick={handleCustomSubmit} disabled={!customText.trim()}>
-                <Send className="h-3 w-3 mr-1" />
-                Send
-              </Button>
+              >
+                <span className="flex h-6 items-center">
+                  <span
+                    className="flex size-4 shrink-0 items-center justify-center border-2 rounded-full transition-colors"
+                    style={{
+                      borderColor: customSelected ? 'var(--accent, #0078d4)' : 'var(--fg-muted)',
+                      backgroundColor: customSelected ? 'var(--accent, #0078d4)' : 'transparent',
+                    }}
+                  >
+                    {customSelected && (
+                      <span className="size-2 rounded-full bg-white" />
+                    )}
+                  </span>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium leading-6" style={{ color: 'var(--fg)' }}>Other</span>
+                  {!customSelected && (
+                    <span className="text-sm ml-1" style={{ color: 'var(--fg-muted)' }}>— type a custom answer</span>
+                  )}
+                </div>
+              </button>
+
+              {customSelected && (
+                <div className="mt-2 ml-7 flex gap-1.5 animate-[fade-in_150ms_ease-out]">
+                  <input
+                    autoFocus
+                    value={customText}
+                    onChange={e => setCustomText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && customText.trim()) handleCustomSubmit();
+                      if (e.key === 'Escape') { setCustomSelected(false); setCustomText(''); }
+                    }}
+                    placeholder="Type a custom answer..."
+                    className="flex-1 text-sm px-3 py-1.5 rounded-lg border bg-transparent outline-none focus:ring-1"
+                    style={{
+                      borderColor: 'var(--accent, #0078d4)',
+                      color: 'var(--fg)',
+                    }}
+                  />
+                  <Button size="sm" className="h-8 question-view-btn" onClick={handleCustomSubmit} disabled={!customText.trim()}>
+                    <Send className="h-3 w-3 mr-1" />
+                    Submit
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
-        ) : (
-          <button
-            className="mt-2 w-full text-center text-[11px] py-1.5 rounded-md transition-colors"
-            style={{ color: 'var(--fg-muted)' }}
-            onClick={() => setShowCustomInput(true)}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'var(--fg-muted)')}
-          >
-            Or type a custom answer...
-          </button>
-        )
+        </>
       )}
 
       {/* Action row: Skip + Chat about + Cancel */}

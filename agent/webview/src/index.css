@@ -168,3 +168,53 @@ code, pre, .font-mono {
   bottom: 60px !important;
   transform: translateX(var(--popper-fix-x, 0px)) !important;
 }
+
+/* ============================================================
+   QUESTION VIEW — VS Code Dark+ / GitHub Light inspired theme
+   Overrides shadcn tokens inside question components for proper
+   contrast on buttons and cards.
+   ============================================================ */
+
+/* Card: dark elevated surface (VS Code Dark+: #252526 card on #1e1e1e bg) */
+.question-view [data-slot="question-flow"] {
+  --card: var(--toolbar-bg, #252526);
+  --card-foreground: var(--fg, #d4d4d4);
+}
+
+/* Next/Complete/Submit buttons: high-contrast accent (VS Code Dark+ blue) */
+.question-view [data-slot="question-flow"] button[class*="bg-primary"],
+.question-view .question-view-btn {
+  background-color: var(--accent, #0078d4) !important;
+  color: #fff !important;
+  opacity: 1;
+}
+
+.question-view [data-slot="question-flow"] button[class*="bg-primary"]:disabled,
+.question-view .question-view-btn:disabled {
+  background-color: var(--fg-muted, #5a5a5a) !important;
+  color: var(--bg, #1e1e1e) !important;
+  opacity: 0.5;
+}
+
+/* Step label — muted but readable */
+.question-view [data-slot="question-flow"] [aria-label*="Step"] {
+  color: var(--fg-secondary, #969696);
+}
+
+/* Selected option indicator — accent color */
+.question-view [data-slot="question-flow"] [aria-selected="true"] .rounded-full,
+.question-view [data-slot="question-flow"] [aria-selected="true"] .rounded {
+  border-color: var(--accent, #0078d4);
+  background-color: var(--accent, #0078d4);
+}
+
+/* Option hover — subtle highlight */
+.question-view [data-slot="question-flow"] [role="option"]:hover .absolute {
+  background-color: color-mix(in srgb, var(--accent, #0078d4) 8%, transparent) !important;
+}
+
+/* Summary page — match card styling */
+.question-view .rounded-xl {
+  background-color: var(--toolbar-bg, #252526);
+  border-color: var(--border, #3c3c3c);
+}
