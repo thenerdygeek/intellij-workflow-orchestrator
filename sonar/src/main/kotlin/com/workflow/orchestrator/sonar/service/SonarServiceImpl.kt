@@ -191,29 +191,18 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings."
         )
 
-        // Fetch project-level measures for coverage metrics
+        // Use project-level measures API (not component_tree) for accurate aggregate coverage
         val metricKeys = "coverage,branch_coverage,lines_to_cover,uncovered_lines"
-        return when (val result = api.getMeasures(projectKey, branch = branch, metricKeys = metricKeys)) {
+        return when (val result = api.getProjectMeasures(projectKey, branch = branch, metricKeys = metricKeys)) {
             is ApiResult.Success -> {
-                // Aggregate measures across all components
-                var totalLinesToCover = 0
-                var totalUncoveredLines = 0
-                var lineCoverage = 0.0
-                var branchCoverage = 0.0
+                val measures = result.data.associate { it.metric to it.effectiveValue() }
 
-                // For project-level, we look at the first component or aggregate
-                for (comp in result.data) {
-                    for (measure in comp.measures) {
-                        when (measure.metric) {
-                            "coverage" -> lineCoverage = measure.value.toDoubleOrNull() ?: 0.0
-                            "branch_coverage" -> branchCoverage = measure.value.toDoubleOrNull() ?: 0.0
-                            "lines_to_cover" -> totalLinesToCover += measure.value.toIntOrNull() ?: 0
-                            "uncovered_lines" -> totalUncoveredLines += measure.value.toIntOrNull() ?: 0
-                        }
-                    }
-                }
+                val lineCoverage = measures["coverage"]?.toDoubleOrNull() ?: 0.0
+                val branchCoverage = measures["branch_coverage"]?.toDoubleOrNull() ?: 0.0
+                val totalLinesToCover = measures["lines_to_cover"]?.toIntOrNull() ?: 0
+                val uncoveredLines = measures["uncovered_lines"]?.toIntOrNull() ?: 0
+                val coveredLines = totalLinesToCover - uncoveredLines
 
-                val coveredLines = totalLinesToCover - totalUncoveredLines
                 val data = CoverageData(
                     lineCoverage = lineCoverage,
                     branchCoverage = branchCoverage,
@@ -221,8 +210,9 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     coveredLines = coveredLines
                 )
 
+                val branchLabel = branch?.let { " ($it)" } ?: ""
                 val summary = buildString {
-                    append("Coverage for $projectKey")
+                    append("Coverage for $projectKey$branchLabel")
                     append("\nLine: ${"%.1f".format(lineCoverage)}% | Branch: ${"%.1f".format(branchCoverage)}%")
                     append("\nCovered: $coveredLines / $totalLinesToCover lines")
                 }
@@ -852,14 +842,21 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             fileMeasures = measuresDeferred.await()
         }
 
-        // Map quality gate
+        // Map quality gate — filter to new code conditions only for branch report
         val qualityGate = when (gate) {
-            is ApiResult.Success -> QualityGateData(
-                status = gate.data.status,
-                conditions = gate.data.conditions.map { c ->
-                    QualityCondition(metric = c.metricKey, operator = c.comparator, value = c.actualValue, status = c.status)
+            is ApiResult.Success -> {
+                val newCodeConditions = gate.data.conditions.filter { c ->
+                    c.metricKey.startsWith("new_")
                 }
-            )
+                QualityGateData(
+                    status = if (newCodeConditions.any { it.status == "ERROR" }) "ERROR"
+                             else if (newCodeConditions.any { it.status == "WARN" }) "WARN"
+                             else gate.data.status,
+                    conditions = newCodeConditions.map { c ->
+                        QualityCondition(metric = c.metricKey, operator = c.comparator, value = c.actualValue, status = c.status)
+                    }
+                )
+            }
             is ApiResult.Error -> QualityGateData(status = "ERROR")
         }
 
@@ -908,7 +905,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
 
         val fileInfos = when (fileMeasures) {
             is ApiResult.Success -> fileMeasures.data.mapNotNull { comp ->
-                val m = comp.measures.associate { it.metric to it.value }
+                val m = comp.measures.associate { it.metric to it.effectiveValue() }
                 val uncoveredLines = m["new_uncovered_lines"]?.toIntOrNull() ?: 0
                 val uncoveredConds = m["new_uncovered_conditions"]?.toIntOrNull() ?: 0
                 val dupLines = m["new_duplicated_lines"]?.toIntOrNull() ?: 0
@@ -931,23 +928,22 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         val truncated = fileInfos.size > maxFiles
         val filesToDrill = fileInfos.take(maxFiles)
 
-        // Coverage summary from aggregated file info
-        val totalNewUncoveredLines = fileInfos.sumOf { it.newUncoveredLines }
-        val totalNewUncoveredConditions = fileInfos.sumOf { it.newUncoveredConditions }
-
         // Get project-level new code coverage from measures/component
-        val projectNewCodeMetrics = "new_line_coverage,new_branch_coverage,new_duplicated_lines_density"
+        // Fetch uncovered counts from project-level API (not file sums) to avoid undercounting
+        // when component_tree is paginated (ps=500)
+        val projectNewCodeMetrics = "new_line_coverage,new_branch_coverage,new_duplicated_lines_density," +
+            "new_uncovered_lines,new_uncovered_conditions"
         val projectMeasures = api.getProjectMeasures(projectKey, branch, projectNewCodeMetrics)
         val projM = when (projectMeasures) {
-            is ApiResult.Success -> projectMeasures.data.associate { it.metric to it.value }
+            is ApiResult.Success -> projectMeasures.data.associate { it.metric to it.effectiveValue() }
             is ApiResult.Error -> emptyMap()
         }
 
         val coverageSummary = NewCodeCoverageSummary(
             lineCoverage = projM["new_line_coverage"]?.toDoubleOrNull(),
             branchCoverage = projM["new_branch_coverage"]?.toDoubleOrNull(),
-            newUncoveredLines = totalNewUncoveredLines,
-            newUncoveredConditions = totalNewUncoveredConditions,
+            newUncoveredLines = projM["new_uncovered_lines"]?.toIntOrNull() ?: 0,
+            newUncoveredConditions = projM["new_uncovered_conditions"]?.toIntOrNull() ?: 0,
             duplicatedLinesDensity = projM["new_duplicated_lines_density"]?.toDoubleOrNull()
         )
 

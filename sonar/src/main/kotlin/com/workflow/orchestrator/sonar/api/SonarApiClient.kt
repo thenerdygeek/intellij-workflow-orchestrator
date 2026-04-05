@@ -159,9 +159,12 @@ class SonarApiClient(
         log.info("[Sonar:API] GET /api/measures/component_tree for project '$projectKey' branch='${branch ?: "default"}'")
         val metrics = metricKeys.ifBlank { DEFAULT_METRIC_KEYS }
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
+        // additionalFields=period is required for new_* metrics (SonarQube returns them in period.value, not value)
+        val needsPeriod = metrics.contains("new_")
+        val additionalFields = if (needsPeriod) "&additionalFields=period" else ""
         return get<SonarMeasureSearchResult>(
             "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
-                "&metricKeys=$metrics&qualifiers=FIL&ps=500$branchParam"
+                "&metricKeys=$metrics&qualifiers=FIL&ps=500$branchParam$additionalFields"
         ).map { it.components }
     }
 
@@ -177,9 +180,12 @@ class SonarApiClient(
     ): ApiResult<List<SonarMeasureDto>> {
         log.info("[Sonar:API] GET /api/measures/component for project '$projectKey' branch='${branch ?: "default"}'")
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
+        // additionalFields=period is required for new_* metrics (SonarQube returns them in period.value, not value)
+        val needsPeriod = metricKeys.contains("new_")
+        val additionalFields = if (needsPeriod) "&additionalFields=period" else ""
         return get<SonarComponentMeasureResponse>(
             "/api/measures/component?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
-                "&metricKeys=$metricKeys$branchParam"
+                "&metricKeys=$metricKeys$branchParam$additionalFields"
         ).map { it.component.measures }
     }
 

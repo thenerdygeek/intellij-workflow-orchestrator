@@ -99,11 +99,16 @@ class ToolTestingPanel(
     // ── UI Construction ──────────────────────────────────────────────────
 
     private fun buildUI() {
-        val splitter = JBSplitter(false, 0.25f).apply {
-            firstComponent = buildLeftPanel()
-            secondComponent = buildRightPanel()
+        // Three vertical panes: Tool List | Params | Results
+        val rightSplitter = JBSplitter(false, 0.5f).apply {
+            firstComponent = buildMiddlePanel()
+            secondComponent = buildResultPanel()
         }
-        add(splitter, BorderLayout.CENTER)
+        val outerSplitter = JBSplitter(false, 0.2f).apply {
+            firstComponent = buildLeftPanel()
+            secondComponent = rightSplitter
+        }
+        add(outerSplitter, BorderLayout.CENTER)
     }
 
     private fun buildLeftPanel(): JComponent {
@@ -133,7 +138,6 @@ class ToolTestingPanel(
             foreground = UIUtil.getContextHelpForeground()
         }
         panel.add(countLabel, BorderLayout.SOUTH)
-        // Update count after tools load
         toolList.model.addListDataListener(object : javax.swing.event.ListDataListener {
             override fun intervalAdded(e: javax.swing.event.ListDataEvent) { countLabel.text = "${toolListModel.size()} tools" }
             override fun intervalRemoved(e: javax.swing.event.ListDataEvent) { countLabel.text = "${toolListModel.size()} tools" }
@@ -143,7 +147,7 @@ class ToolTestingPanel(
         return panel
     }
 
-    private fun buildRightPanel(): JComponent {
+    private fun buildMiddlePanel(): JComponent {
         val panel = JPanel(BorderLayout())
         panel.border = JBUI.Borders.empty(0, 8, 0, 0)
 
@@ -154,24 +158,15 @@ class ToolTestingPanel(
         toolInfoLabel.font = toolInfoLabel.font.deriveFont(Font.BOLD, 16f)
         infoPanel.add(toolInfoLabel, BorderLayout.NORTH)
         val descScroll = JBScrollPane(descriptionArea).apply {
-            preferredSize = Dimension(0, 80)
-            minimumSize = Dimension(0, 60)
+            preferredSize = Dimension(0, 70)
+            minimumSize = Dimension(0, 50)
         }
         infoPanel.add(descScroll, BorderLayout.CENTER)
 
-        // ── Middle: Params + Execute ──
-        val paramsWrapper = JPanel(BorderLayout())
-        paramsWrapper.border = BorderFactory.createTitledBorder(
-            JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0),
-            "Parameters",
-            TitledBorder.LEFT,
-            TitledBorder.TOP
-        )
+        // ── Params ──
         val paramScroll = JBScrollPane(paramFormPanel).apply {
-            preferredSize = Dimension(0, 200)
             border = JBUI.Borders.empty()
         }
-        paramsWrapper.add(paramScroll, BorderLayout.CENTER)
 
         // Buttons
         val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
@@ -181,16 +176,17 @@ class ToolTestingPanel(
         buttonPanel.add(executeButton)
         buttonPanel.add(clearButton)
         buttonPanel.add(copyButton)
-        paramsWrapper.add(buttonPanel, BorderLayout.SOUTH)
 
-        // ── Bottom: Results ──
-        val resultPanel = JPanel(BorderLayout())
-        resultPanel.border = BorderFactory.createTitledBorder(
-            JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0),
-            "Result (exact LLM output)",
-            TitledBorder.LEFT,
-            TitledBorder.TOP
-        )
+        panel.add(infoPanel, BorderLayout.NORTH)
+        panel.add(paramScroll, BorderLayout.CENTER)
+        panel.add(buttonPanel, BorderLayout.SOUTH)
+
+        return panel
+    }
+
+    private fun buildResultPanel(): JComponent {
+        val panel = JPanel(BorderLayout())
+        panel.border = JBUI.Borders.empty(0, 8, 0, 0)
 
         val resultHeader = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -199,17 +195,8 @@ class ToolTestingPanel(
             add(summaryLabel)
             add(metadataLabel)
         }
-        resultPanel.add(resultHeader, BorderLayout.NORTH)
-        resultPanel.add(JBScrollPane(contentArea), BorderLayout.CENTER)
-
-        // Assemble right side with inner splitter for params/results
-        val innerSplitter = JBSplitter(true, 0.4f).apply {
-            firstComponent = paramsWrapper
-            secondComponent = resultPanel
-        }
-
-        panel.add(infoPanel, BorderLayout.NORTH)
-        panel.add(innerSplitter, BorderLayout.CENTER)
+        panel.add(resultHeader, BorderLayout.NORTH)
+        panel.add(JBScrollPane(contentArea), BorderLayout.CENTER)
 
         return panel
     }

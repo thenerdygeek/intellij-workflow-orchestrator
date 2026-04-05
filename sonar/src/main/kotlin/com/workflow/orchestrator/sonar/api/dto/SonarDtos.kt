@@ -115,10 +115,25 @@ data class SonarMeasureComponentDto(
 )
 
 @Serializable
+data class SonarMeasurePeriodDto(
+    val value: String = "",
+    val bestValue: Boolean = false
+)
+
+@Serializable
 data class SonarMeasureDto(
     val metric: String,
-    val value: String = ""
-)
+    val value: String = "",
+    val period: SonarMeasurePeriodDto? = null
+) {
+    /**
+     * Returns the effective value for this measure.
+     * SonarQube returns new code metrics (new_*) in the `period` field, not `value`.
+     * Overall metrics are in `value` directly.
+     */
+    fun effectiveValue(): String =
+        if (metric.startsWith("new_") && period != null) period.value else value
+}
 
 // --- Project-level Measures (aggregate, not file-level) ---
 

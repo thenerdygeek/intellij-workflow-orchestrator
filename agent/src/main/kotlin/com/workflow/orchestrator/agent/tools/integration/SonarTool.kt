@@ -32,17 +32,17 @@ SonarQube code quality — issues, coverage, quality gates, analysis, security h
 
 Actions and their parameters:
 - issues(project_key, file?, branch?, new_code_only?) → Code issues (optionally filter by file path; set new_code_only=true to see only issues in new code period)
-- quality_gate(project_key, branch?) → Quality gate status
-- coverage(project_key, branch?) → Code coverage metrics
+- quality_gate(project_key, branch?) → Quality gate status (includes both overall and new code conditions)
+- coverage(project_key, branch?) → **Overall** code coverage metrics (line %, branch %, covered/total lines). This returns the full project coverage, NOT new code coverage. For new code coverage, use branch_quality_report instead.
 - search_projects(query) → Search SonarQube projects
 - analysis_tasks(project_key) → Recent analysis task status
 - branches(project_key) → Analyzed branches
-- project_measures(project_key, branch?) → All project metrics
-- source_lines(component_key, from?, to?, branch?) → Source code with metrics (from/to are line numbers)
+- project_measures(project_key, branch?) → All project metrics (ratings, debt, overall coverage, duplication)
+- source_lines(component_key, from?, to?, branch?) → Source code with per-line coverage status (from/to are line numbers)
 - issues_paged(project_key, page?, page_size?, branch?, new_code_only?) → Paginated issues (default page 1, 100/page, max 500; set new_code_only=true for new code only)
 - security_hotspots(project_key, branch?) → Security hotspots
 - duplications(component_key, branch?) → Code duplications
-- branch_quality_report(project_key, branch, max_files?) → **Consolidated new-code quality report** — one call gets: quality gate, all issues (bugs/smells/vulnerabilities), security hotspots, coverage summary, plus exact uncovered line numbers, uncovered branch line numbers, and duplicated line ranges per file. Default max_files=20. Use this instead of calling issues+quality_gate+coverage+hotspots separately.
+- branch_quality_report(project_key, branch, max_files?) → **Consolidated new-code quality report** — one call gets: new-code quality gate conditions, new-code issues (bugs/smells/vulnerabilities), security hotspots, new-code coverage (line %, branch %, uncovered lines/conditions, duplication density), plus per-file drill-down with exact uncovered line numbers, uncovered branch line numbers, and duplicated line ranges. Default max_files=20. **Use this for new code / branch quality analysis** instead of calling issues+quality_gate+coverage+hotspots separately.
 
 Common optional: repo_name for multi-repo projects.
 """.trimIndent()
