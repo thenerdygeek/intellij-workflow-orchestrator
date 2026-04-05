@@ -187,30 +187,43 @@ class AgentController(
         // executeTask() intercepts it and resolves the deferred directly.
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
             invokeLater {
-                val display = buildString {
-                    append(question)
-                    if (!optionsJson.isNullOrBlank()) {
-                        try {
-                            val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
-                            if (options.isNotEmpty()) {
-                                append("\n\n**Options:**")
-                                options.forEachIndexed { i, opt -> append("\n${i + 1}. $opt") }
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-                // Flush any in-progress stream, then finalize any open tool chain
-                // so the question appears AFTER prior tool calls, not mixed in
+                // Flush any in-progress stream + finalize tool chain so the question
+                // appears AFTER prior tool calls, not mixed in
                 dashboard.flushStreamBuffer()
                 dashboard.finalizeToolChain()
-                // Show question as an agent message (not a status line) — renders as
-                // markdown in the chat, visually distinct from info/token status lines
-                dashboard.appendStreamToken(display)
-                dashboard.flushStreamBuffer()
-                // Unlock input so user can type their answer
-                dashboard.setBusy(false)
-                dashboard.setInputLocked(false)
-                dashboard.focusInput()
+
+                // Parse options if provided
+                val options = if (!optionsJson.isNullOrBlank()) {
+                    try {
+                        kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
+                    } catch (_: Exception) { emptyList() }
+                } else emptyList()
+
+                if (options.isNotEmpty()) {
+                    // Questions WITH options → use the QuestionView wizard UI
+                    // (clickable radio buttons with descriptions, Skip/Cancel actions)
+                    val wizardJson = buildString {
+                        append("""{"questions":[{"id":"q1","question":""")
+                        append(escapeJsonForBridge(question))
+                        append(""","type":"single","options":[""")
+                        options.forEachIndexed { i, opt ->
+                            if (i > 0) append(",")
+                            append("""{"id":"o${i + 1}","label":""")
+                            append(escapeJsonForBridge(opt))
+                            append("}")
+                        }
+                        append("]}]}")
+                    }
+                    dashboard.showQuestions(wizardJson)
+                } else {
+                    // Questions WITHOUT options → show as agent message,
+                    // user types their answer freely in the chat input
+                    dashboard.appendStreamToken(question)
+                    dashboard.flushStreamBuffer()
+                    dashboard.setBusy(false)
+                    dashboard.setInputLocked(false)
+                    dashboard.focusInput()
+                }
             }
         }
         // Wizard mode: structured multi-question UI
@@ -1358,6 +1371,11 @@ class AgentController(
      * Format token count for display: "45K" for large counts, exact for small.
      * Ported from Cline's webview token display pattern.
      */
+    private fun escapeJsonForBridge(s: String): String {
+        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        return "\"$escaped\""
+    }
+
     private fun formatTokenCount(tokens: Int): String {
         return if (tokens >= 1000) {
             "${tokens / 1000}K"
