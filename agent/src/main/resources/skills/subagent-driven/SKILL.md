@@ -1,7 +1,7 @@
 ---
 name: subagent-driven
 description: Execute approved implementation plans by dispatching parallel subagents — one fresh agent per task — with two-stage review gates for spec compliance and code quality. You must load this skill whenever a plan with 3 or more tasks has been approved by the user, whether they clicked the approve button on a plan card or said something like "execute the plan", "start implementing", or "run the plan". Do not attempt to execute multi-task plans manually by working through tasks sequentially yourself — this skill handles parallel dispatch, file ownership coordination between agents, progress tracking with plan step updates, and quality review gates that catch issues before integration. For plans with only 1-2 tasks, you can execute directly with update_plan_step instead. This skill gives you a complete dispatch-review-integrate workflow that maximizes throughput while preventing file conflicts between concurrent subagents.
-preferred-tools: [agent, read_file, search_code, think, create_plan, update_plan_step, diagnostics, run_command]
+preferred-tools: [agent, read_file, search_code, think, act_mode_respond, diagnostics, run_command]
 ---
 
 # Subagent-Driven Development
@@ -14,7 +14,7 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
 
 ## When to Use
 
-- Have an approved implementation plan (from `create_plan`)
+- Have an approved implementation plan (from plan mode: `enable_plan_mode` + `plan_mode_respond`)
 - Tasks are mostly independent
 - Want to stay in this session (not switch to a separate session)
 
@@ -30,27 +30,46 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
    e. If spec issues found → implementer fixes → reviewer re-reviews
    f. Dispatch code quality reviewer subagent (reviewer type)
    g. If quality issues found → implementer fixes → reviewer re-reviews
-   h. Mark task complete with update_plan_step
+   h. Update progress with act_mode_respond and task_progress checklist
 3. After all tasks: dispatch final reviewer for entire implementation
 ```
 
-## Subagent Type Selection
+## Subagent Selection: Scopes vs Agent Types
 
-Use the appropriate `subagent_type` for each role:
+There are two ways to configure a subagent:
 
-| Role | subagent_type | Why |
-|------|--------------|-----|
-| **Implementer** | `coder` | Needs edit/test/compile tools |
-| **Spec reviewer** | `reviewer` | Read-only code inspection |
-| **Code quality reviewer** | `reviewer` | Read-only code inspection |
-| **Final reviewer** | `reviewer` | Read-only full codebase review |
+**Option 1: `scope`** — generic roles with automatic tool sets:
+
+| Role | scope | Tools |
+|------|-------|-------|
+| **Implementer** | `implement` | Full write access (edit, create, run, test) |
+| **Spec reviewer** | `review` | Read-only + diagnostics/inspections |
+| **Code quality reviewer** | `review` | Read-only + diagnostics/inspections |
+| **Explorer** | `research` | Read-only (supports up to 5 parallel prompts) |
+
+**Option 2: `agent_type`** — specialist personas with curated prompts and tool sets. Prefer these when the task matches a specialist's domain:
+
+| agent_type | Use For |
+|-----------|---------|
+| `code-reviewer` | Comprehensive code review (PR diffs, commit ranges, branch comparisons) |
+| `architect-reviewer` | Architecture review (module boundaries, dependencies, layering) |
+| `test-automator` | Writing test suites (JUnit 5, MockK, slice tests, integration tests, TDD) |
+| `spring-boot-engineer` | Spring Boot features (endpoints, services, JPA, security, migrations) |
+| `refactoring-specialist` | Safe refactoring with tests before/after and rollback on failure |
+| `devops-engineer` | CI/CD, Docker, deployment scripts, build system |
+| `security-auditor` | OWASP Top 10, dependency vulnerabilities, auth review |
+| `performance-engineer` | Profiling, bottleneck identification, query optimization |
+
+When `agent_type` is set, `scope` is ignored — the agent type provides its own curated system prompt and tool set.
+
+**Decision rule:** If a bundled agent type matches the task, use it. The specialist prompt gives better results than a generic scope. Fall back to `scope` for tasks that don't fit any specialist.
 
 ## Implementer Prompt Template
 
-When dispatching an implementer subagent:
+When dispatching an implementer subagent. Use `scope="implement"` for general tasks, or a specialist `agent_type` if the task matches one (e.g., `agent_type="spring-boot-engineer"` for Spring features, `agent_type="test-automator"` for writing tests):
 
 ```
-agent(subagent_type="coder", description="Implement Task N: [name]", prompt="""
+agent(scope="implement", description="Implement Task N: [name]", prompt="""
 You are implementing Task N: [task name]
 
 ## Task Description
@@ -106,7 +125,7 @@ Never silently produce work you're unsure about.
 After implementer reports DONE, dispatch a spec compliance reviewer:
 
 ```
-agent(subagent_type="reviewer", description="Review spec compliance for Task N", prompt="""
+agent(scope="review", description="Review spec compliance for Task N", prompt="""
 You are reviewing whether an implementation matches its specification.
 
 ## What Was Requested
@@ -145,10 +164,10 @@ Report:
 
 ## Code Quality Reviewer Prompt Template
 
-After spec compliance passes, dispatch a code quality reviewer:
+After spec compliance passes, dispatch a code quality reviewer. For thorough reviews, prefer `agent_type="code-reviewer"` over generic `scope="review"`:
 
 ```
-agent(subagent_type="reviewer", description="Code quality review for Task N", prompt="""
+agent(agent_type="code-reviewer", description="Code quality review for Task N", prompt="""
 Review the implementation for code quality.
 
 ## What Was Implemented
@@ -192,8 +211,8 @@ Review the implementation for code quality.
 ## Review Loops
 
 If a reviewer finds issues:
-1. Implementer (same subagent via `agent(resume="agentId", prompt="fix: ...")`) fixes them
-2. Reviewer reviews again
+1. Dispatch a **new** implementer subagent with the fix instructions (sub-agents cannot be resumed — spawn a fresh one with the reviewer's findings in the prompt)
+2. Dispatch reviewer again to re-review the fixes
 3. Repeat until approved
 4. Don't skip the re-review
 
@@ -224,8 +243,8 @@ Spec reviewer: Pass — all requirements met
 [Dispatch reviewer for code quality]
 Code reviewer: Approved. Minor: FQN could use import.
 
-[Implementer fixes minor issue]
-[Mark Task 1 complete via update_plan_step]
+[Dispatch new implementer to fix minor issue]
+[Update progress: act_mode_respond(task_progress="- [x] Task 1: Create SkillTool.kt\n- [ ] Task 2: ...")]
 
 Task 2: ...
 ```
@@ -234,7 +253,7 @@ Task 2: ...
 
 - Skip reviews (spec compliance OR code quality)
 - Proceed with unfixed issues
-- Dispatch multiple implementers in parallel (file conflicts)
+- Dispatch multiple implementers in parallel (file conflicts — implement scope is sequential only)
 - Make subagent read plan file (provide full text instead)
 - Skip context (subagent needs to understand where task fits)
 - Ignore subagent questions

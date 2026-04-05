@@ -2,7 +2,6 @@ package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
-import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -31,6 +30,7 @@ class SpawnAgentToolTest {
 
     private lateinit var project: Project
     private lateinit var registry: ToolRegistry
+    private lateinit var configLoader: AgentConfigLoader
     private lateinit var tool: SpawnAgentTool
 
     @BeforeEach
@@ -39,11 +39,23 @@ class SpawnAgentToolTest {
         every { project.name } returns "TestProject"
         every { project.basePath } returns "/tmp/test-project"
         registry = buildTestRegistry()
+        AgentConfigLoader.resetForTests()
+        configLoader = AgentConfigLoader.getInstance()
+        // Load bundled agents (explorer, general-purpose, code-reviewer, etc.)
+        val tempDir = createTempDirectory("spawn-agent-test-")
+        configLoader.loadFromDisk(tempDir)
+        tempDir.toFile().deleteRecursively()
         tool = SpawnAgentTool(
-            brainProvider = { throw IllegalStateException("Brain should not be created in scope tests") },
+            brainProvider = { throw IllegalStateException("Brain should not be created in metadata tests") },
             toolRegistry = registry,
-            project = project
+            project = project,
+            configLoader = configLoader
         )
+    }
+
+    @AfterEach
+    fun tearDown() {
+        AgentConfigLoader.resetForTests()
     }
 
     // ---- Helpers ----
@@ -197,206 +209,14 @@ class SpawnAgentToolTest {
         override fun cancelActiveRequest() {}
     }
 
-    // ---- Scope Tests ----
+    // ---- Agent Type Defaults ----
 
     @Nested
-    inner class ResearchScopeTests {
+    inner class AgentTypeDefaultTests {
 
         @Test
-        fun `research scope includes only read-only tools`() {
-            val scoped = tool.resolveScopedTools("research")
-
-            // Verify read tools present
-            assertTrue("read_file" in scoped, "research should include read_file")
-            assertTrue("search_code" in scoped, "research should include search_code")
-            assertTrue("glob_files" in scoped, "research should include glob_files")
-            assertTrue("think" in scoped, "research should include think")
-            assertTrue("attempt_completion" in scoped, "research should include attempt_completion")
-            assertTrue("project_context" in scoped, "research should include project_context")
-            assertTrue("current_time" in scoped, "research should include current_time")
-            assertTrue("ask_followup_question" in scoped, "research should include ask_questions")
-        }
-
-        @Test
-        fun `research scope includes PSI read tools`() {
-            val scoped = tool.resolveScopedTools("research")
-
-            for (psiTool in listOf(
-                "find_definition", "find_references", "find_implementations",
-                "file_structure", "type_hierarchy", "call_hierarchy",
-                "type_inference", "get_method_body", "get_annotations",
-                "read_write_access", "structural_search", "test_finder",
-                "dataflow_analysis"
-            )) {
-                assertTrue(psiTool in scoped, "research should include PSI tool: $psiTool")
-            }
-        }
-
-        @Test
-        fun `research scope includes VCS read tools`() {
-            val scoped = tool.resolveScopedTools("research")
-
-            for (vcsTool in listOf(
-                "git_status", "git_diff", "git_log", "git_blame",
-                "git_show_file", "git_file_history", "git_show_commit",
-                "git_branches", "changelist_shelve", "git_stash_list",
-                "git_merge_base"
-            )) {
-                assertTrue(vcsTool in scoped, "research should include VCS tool: $vcsTool")
-            }
-        }
-
-        @Test
-        fun `research scope excludes write tools`() {
-            val scoped = tool.resolveScopedTools("research")
-
-            for (writeTool in listOf(
-                "edit_file", "create_file", "run_command", "revert_file",
-                "kill_process", "send_stdin"
-            )) {
-                assertFalse(writeTool in scoped, "research should NOT include write tool: $writeTool")
-            }
-        }
-
-        @Test
-        fun `research scope excludes IDE write tools`() {
-            val scoped = tool.resolveScopedTools("research")
-
-            for (ideTool in listOf("format_code", "optimize_imports", "refactor_rename")) {
-                assertFalse(ideTool in scoped, "research should NOT include IDE write tool: $ideTool")
-            }
-        }
-    }
-
-    @Nested
-    inner class ImplementScopeTests {
-
-        @Test
-        fun `implement scope includes write tools`() {
-            val scoped = tool.resolveScopedTools("implement")
-
-            for (writeTool in listOf(
-                "edit_file", "create_file", "run_command", "revert_file",
-                "kill_process", "send_stdin"
-            )) {
-                assertTrue(writeTool in scoped, "implement should include write tool: $writeTool")
-            }
-        }
-
-        @Test
-        fun `implement scope includes read tools`() {
-            val scoped = tool.resolveScopedTools("implement")
-
-            assertTrue("read_file" in scoped, "implement should include read_file")
-            assertTrue("search_code" in scoped, "implement should include search_code")
-            assertTrue("glob_files" in scoped, "implement should include glob_files")
-        }
-
-        @Test
-        fun `implement scope includes IDE and runtime tools`() {
-            val scoped = tool.resolveScopedTools("implement")
-
-            assertTrue("format_code" in scoped, "implement should include format_code")
-            assertTrue("optimize_imports" in scoped, "implement should include optimize_imports")
-            assertTrue("runtime_exec" in scoped, "implement should include runtime_exec")
-            assertTrue("build" in scoped, "implement should include build")
-        }
-
-        @Test
-        fun `implement scope excludes integration tools`() {
-            val scoped = tool.resolveScopedTools("implement")
-
-            for (intTool in listOf(
-                "jira", "bamboo_builds", "bamboo_plans",
-                "bitbucket_pr", "bitbucket_repo", "bitbucket_review", "sonar"
-            )) {
-                assertFalse(intTool in scoped, "implement should NOT include integration tool: $intTool")
-            }
-        }
-
-        @Test
-        fun `implement scope excludes database tools`() {
-            val scoped = tool.resolveScopedTools("implement")
-
-            for (dbTool in listOf("db_query", "db_schema", "db_list_profiles")) {
-                assertFalse(dbTool in scoped, "implement should NOT include database tool: $dbTool")
-            }
-        }
-
-        @Test
-        fun `implement scope excludes ask_user_input`() {
-            val scoped = tool.resolveScopedTools("implement")
-            assertFalse("ask_user_input" in scoped, "implement should NOT include ask_user_input")
-        }
-    }
-
-    @Nested
-    inner class ReviewScopeTests {
-
-        @Test
-        fun `review scope includes research tools`() {
-            val scoped = tool.resolveScopedTools("review")
-
-            assertTrue("read_file" in scoped, "review should include read_file")
-            assertTrue("search_code" in scoped, "review should include search_code")
-            assertTrue("find_definition" in scoped, "review should include find_definition")
-            assertTrue("git_diff" in scoped, "review should include git_diff")
-        }
-
-        @Test
-        fun `review scope includes diagnostic tools`() {
-            val scoped = tool.resolveScopedTools("review")
-
-            for (diagTool in listOf(
-                "diagnostics", "run_inspections", "problem_view",
-                "list_quickfixes", "coverage"
-            )) {
-                assertTrue(diagTool in scoped, "review should include diagnostic tool: $diagTool")
-            }
-        }
-
-        @Test
-        fun `review scope excludes write tools`() {
-            val scoped = tool.resolveScopedTools("review")
-
-            for (writeTool in listOf(
-                "edit_file", "create_file", "run_command", "revert_file",
-                "kill_process", "send_stdin"
-            )) {
-                assertFalse(writeTool in scoped, "review should NOT include write tool: $writeTool")
-            }
-        }
-    }
-
-    // ---- Recursion Prevention ----
-
-    @Nested
-    inner class RecursionPreventionTests {
-
-        @Test
-        fun `agent tool is never in research scope`() {
-            val scoped = tool.resolveScopedTools("research")
-            assertFalse("agent" in scoped, "agent tool must NEVER be in research scope")
-        }
-
-        @Test
-        fun `agent tool is never in implement scope`() {
-            val scoped = tool.resolveScopedTools("implement")
-            assertFalse("agent" in scoped, "agent tool must NEVER be in implement scope")
-        }
-
-        @Test
-        fun `agent tool is never in review scope`() {
-            val scoped = tool.resolveScopedTools("review")
-            assertFalse("agent" in scoped, "agent tool must NEVER be in review scope")
-        }
-
-        @Test
-        fun `agent tool is excluded from all valid scopes`() {
-            for (scope in SpawnAgentTool.VALID_SCOPES) {
-                val scoped = tool.resolveScopedTools(scope)
-                assertFalse("agent" in scoped, "agent tool must be excluded from scope: $scope")
-            }
+        fun `default agent type is general-purpose`() {
+            assertEquals("general-purpose", SpawnAgentTool.DEFAULT_AGENT_TYPE)
         }
     }
 
@@ -426,17 +246,17 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `invalid scope returns error`() = runTest {
+        fun `unknown agent_type returns error`() = runTest {
             val result = tool.execute(
                 params(
                     "description" to "Test",
                     "prompt" to "Do something",
-                    "scope" to "invalid_scope"
+                    "agent_type" to "nonexistent"
                 ),
                 project
             )
-            assertTrue(result.isError, "Should return error for invalid scope")
-            assertTrue(result.content.contains("Invalid scope"))
+            assertTrue(result.isError, "Should return error for unknown agent type")
+            assertTrue(result.content.contains("Unknown agent type"), "Error should mention unknown type: ${result.content}")
         }
     }
 
@@ -481,14 +301,15 @@ class SpawnAgentToolTest {
             val spawnTool = SpawnAgentTool(
                 brainProvider = { brain },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             val result = spawnTool.execute(
                 params(
                     "description" to "Find bug",
                     "prompt" to "Search for the bug in src/main.kt",
-                    "scope" to "research"
+                    "agent_type" to "explorer"
                 ),
                 project
             )
@@ -496,7 +317,7 @@ class SpawnAgentToolTest {
             assertFalse(result.isError, "Sub-agent should complete successfully")
             assertTrue(result.content.contains("Agent: Find bug"), "Result should contain agent description")
             assertTrue(result.content.contains("Found the bug in line 42"), "Result should contain agent output")
-            assertTrue(result.summary.contains("research"), "Summary should mention scope")
+            assertTrue(result.summary.contains("explorer"), "Summary should mention agent type")
         }
 
         @Test
@@ -508,14 +329,15 @@ class SpawnAgentToolTest {
             val spawnTool = SpawnAgentTool(
                 brainProvider = { brain },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             val result = spawnTool.execute(
                 params(
                     "description" to "Fix bug",
                     "prompt" to "Fix the bug in UserService.kt",
-                    "scope" to "implement"
+                    "agent_type" to "general-purpose"
                 ),
                 project
             )
@@ -565,14 +387,15 @@ class SpawnAgentToolTest {
             val spawnTool = SpawnAgentTool(
                 brainProvider = { capturingBrain },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             spawnTool.execute(
                 params(
                     "description" to "Research task",
                     "prompt" to "Analyze the codebase structure",
-                    "scope" to "research"
+                    "agent_type" to "explorer"
                 ),
                 project
             )
@@ -587,13 +410,13 @@ class SpawnAgentToolTest {
                 "User message should be the task prompt"
             )
             assertTrue(
-                capturedMessages!![0].content!!.contains("sub-agent"),
-                "System prompt should identify as sub-agent"
+                capturedMessages!![0].content!!.contains("explorer"),
+                "System prompt should contain the agent config content"
             )
         }
 
         @Test
-        fun `implement scope sub-agent has write tools available`() = runTest {
+        fun `general-purpose agent has write tools available`() = runTest {
             var capturedToolNames: List<String>? = null
 
             val capturingBrain = object : LlmBrain {
@@ -627,28 +450,28 @@ class SpawnAgentToolTest {
             val spawnTool = SpawnAgentTool(
                 brainProvider = { capturingBrain },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             spawnTool.execute(
                 params(
                     "description" to "Implement feature",
                     "prompt" to "Add null check to UserService.kt",
-                    "scope" to "implement"
+                    "agent_type" to "general-purpose"
                 ),
                 project
             )
 
             assertNotNull(capturedToolNames, "Brain should have received tool definitions")
-            assertTrue("edit_file" in capturedToolNames!!, "implement scope should have edit_file")
-            assertTrue("create_file" in capturedToolNames!!, "implement scope should have create_file")
-            assertTrue("run_command" in capturedToolNames!!, "implement scope should have run_command")
+            assertTrue("edit_file" in capturedToolNames!!, "general-purpose should have edit_file")
+            assertTrue("create_file" in capturedToolNames!!, "general-purpose should have create_file")
+            assertTrue("run_command" in capturedToolNames!!, "general-purpose should have run_command")
             assertFalse("agent" in capturedToolNames!!, "agent tool must not be in sub-agent tools")
-            assertFalse("jira" in capturedToolNames!!, "integration tools must not be in sub-agent tools")
         }
 
         @Test
-        fun `default scope is implement when not specified`() = runTest {
+        fun `default agent_type is general-purpose when not specified`() = runTest {
             var capturedToolNames: List<String>? = null
 
             val capturingBrain = object : LlmBrain {
@@ -682,10 +505,11 @@ class SpawnAgentToolTest {
             val spawnTool = SpawnAgentTool(
                 brainProvider = { capturingBrain },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
-            // No scope specified -- should default to "implement"
+            // No agent_type specified -- should default to "general-purpose"
             spawnTool.execute(
                 params(
                     "description" to "Fix something",
@@ -695,7 +519,7 @@ class SpawnAgentToolTest {
             )
 
             assertNotNull(capturedToolNames)
-            assertTrue("edit_file" in capturedToolNames!!, "Default scope should be implement with write tools")
+            assertTrue("edit_file" in capturedToolNames!!, "Default agent type (general-purpose) should have write tools")
         }
     }
 
@@ -715,14 +539,10 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `scope parameter has enum values`() {
-            val scopeParam = tool.parameters.properties["scope"]
-            assertNotNull(scopeParam, "scope parameter should exist")
-            assertEquals(
-                listOf("research", "implement", "review"),
-                scopeParam!!.enumValues,
-                "scope should have research/implement/review enum values"
-            )
+        fun `agent_type parameter exists`() {
+            val agentTypeParam = tool.parameters.properties["agent_type"]
+            assertNotNull(agentTypeParam, "agent_type parameter should exist")
+            assertEquals("string", agentTypeParam!!.type, "agent_type should be a string")
         }
 
         @Test
@@ -761,7 +581,7 @@ class SpawnAgentToolTest {
     inner class ParallelExecutionTests {
 
         @Test
-        fun `research scope with multiple prompts runs all prompts`() = runTest {
+        fun `explorer agent with multiple prompts runs all prompts in parallel`() = runTest {
             var brainCallCount = 0
 
             val spawnTool = SpawnAgentTool(
@@ -774,7 +594,8 @@ class SpawnAgentToolTest {
                     ))
                 },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             val result = spawnTool.execute(
@@ -783,7 +604,7 @@ class SpawnAgentToolTest {
                     "prompt" to "Research question 1",
                     "prompt_2" to "Research question 2",
                     "prompt_3" to "Research question 3",
-                    "scope" to "research"
+                    "agent_type" to "explorer"
                 ),
                 project
             )
@@ -795,7 +616,7 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `implement scope ignores extra prompts`() = runTest {
+        fun `write-capable agent ignores extra prompts`() = runTest {
             val spawnTool = SpawnAgentTool(
                 brainProvider = {
                     SequenceBrain(listOf(
@@ -805,7 +626,8 @@ class SpawnAgentToolTest {
                     ))
                 },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             val result = spawnTool.execute(
@@ -813,16 +635,16 @@ class SpawnAgentToolTest {
                     "description" to "Implement feature",
                     "prompt" to "Implement the feature",
                     "prompt_2" to "This should be ignored",
-                    "scope" to "implement"
+                    "agent_type" to "general-purpose"
                 ),
                 project
             )
 
             assertFalse(result.isError, "Should complete successfully")
-            // Single execution: should NOT contain "Subagent results:" or "Parallel agents"
+            // Single execution: should NOT contain "Parallel agents"
             assertFalse(
                 result.content.contains("Parallel agents"),
-                "implement scope should not use parallel execution"
+                "Write-capable agent should not use parallel execution"
             )
             assertTrue(
                 result.content.contains("Agent: Implement feature"),
@@ -831,7 +653,7 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `parallel research reports stats in summary`() = runTest {
+        fun `parallel explorer reports stats in summary`() = runTest {
             var brainCallCount = 0
 
             val spawnTool = SpawnAgentTool(
@@ -844,7 +666,8 @@ class SpawnAgentToolTest {
                     ))
                 },
                 toolRegistry = registry,
-                project = project
+                project = project,
+                configLoader = configLoader
             )
 
             val result = spawnTool.execute(
@@ -852,7 +675,7 @@ class SpawnAgentToolTest {
                     "description" to "Two research tasks",
                     "prompt" to "First research",
                     "prompt_2" to "Second research",
-                    "scope" to "research"
+                    "agent_type" to "explorer"
                 ),
                 project
             )
@@ -1253,7 +1076,7 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `scope still works when agent_type is absent`() = runTest {
+        fun `omitting agent_type defaults to general-purpose`() = runTest {
             val tempDir = createTempDirectory("agent-type-test-")
             try {
                 configLoader.loadFromDisk(tempDir)
@@ -1262,7 +1085,7 @@ class SpawnAgentToolTest {
                     brainProvider = {
                         SequenceBrain(listOf(
                             ApiResult.Success(toolCallResponse(
-                                "attempt_completion" to """{"result":"Research done."}"""
+                                "attempt_completion" to """{"result":"Done via default."}"""
                             ))
                         ))
                     },
@@ -1273,16 +1096,15 @@ class SpawnAgentToolTest {
 
                 val result = spawnTool.execute(
                     params(
-                        "description" to "Research task",
-                        "prompt" to "Research the codebase",
-                        "scope" to "research"
+                        "description" to "Default task",
+                        "prompt" to "Do something without specifying agent_type"
                     ),
                     project
                 )
 
-                assertFalse(result.isError, "Scope path should still work: ${result.content}")
-                assertTrue(result.content.contains("Agent: Research task"), "Should contain agent description")
-                assertTrue(result.summary.contains("research"), "Summary should mention scope")
+                assertFalse(result.isError, "Default agent_type should work: ${result.content}")
+                assertTrue(result.content.contains("Agent: Default task"), "Should contain agent description")
+                assertTrue(result.summary.contains("general-purpose"), "Summary should mention general-purpose")
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
@@ -1383,7 +1205,7 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `agent_type with no resolvable tools returns error`() = runTest {
+        fun `agent_type with no resolvable config tools still gets attempt_completion`() = runTest {
             val tempDir = createTempDirectory("agent-config-test")
             try {
                 tempDir.resolve("broken-agent.md").toFile().writeText("""
@@ -1397,8 +1219,20 @@ class SpawnAgentToolTest {
                 """.trimIndent())
                 configLoader.loadFromDisk(tempDir)
 
+                var capturedToolNames: List<String>? = null
+                val capturingBrain = object : LlmBrain {
+                    override val modelId = "test-brain"
+                    override suspend fun chat(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, toolChoice: JsonElement?) = throw UnsupportedOperationException()
+                    override suspend fun chatStream(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, onChunk: suspend (StreamChunk) -> Unit): ApiResult<ChatCompletionResponse> {
+                        capturedToolNames = tools?.map { it.function.name }
+                        return ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+                    }
+                    override fun estimateTokens(text: String) = text.length / 4
+                    override fun cancelActiveRequest() {}
+                }
+
                 val spawnTool = SpawnAgentTool(
-                    brainProvider = { throw IllegalStateException("Should not create brain") },
+                    brainProvider = { capturingBrain },
                     toolRegistry = registry,
                     project = project,
                     configLoader = configLoader
@@ -1413,8 +1247,14 @@ class SpawnAgentToolTest {
                     project
                 )
 
-                assertTrue(result.isError, "Should return error when no tools resolve")
-                assertTrue(result.content.contains("no resolvable tools"), "Error should mention no resolvable tools: ${result.content}")
+                // Even with no config tools resolving, attempt_completion is auto-added
+                assertFalse(result.isError, "Should succeed since attempt_completion is always available: ${result.content}")
+                assertNotNull(capturedToolNames, "Brain should have been called")
+                assertEquals(
+                    listOf("attempt_completion"),
+                    capturedToolNames,
+                    "Only attempt_completion should be available when no config tools resolve"
+                )
             } finally {
                 tempDir.toFile().deleteRecursively()
             }

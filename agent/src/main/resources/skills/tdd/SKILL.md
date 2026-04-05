@@ -1,7 +1,7 @@
 ---
 name: tdd
 description: Disciplined red-green-refactor TDD workflow that writes the test first from requirements, watches it fail to confirm it tests the right thing, writes minimal production code to make it pass, then refactors with confidence. Use this when the user asks for test-driven development or test-first approaches — trigger phrases include "TDD", "test first", "test-driven", "write tests for", "add tests", "test this", and "cover this with tests". Also use this when adding new functionality that needs test coverage or when fixing bugs that should have regression tests to prevent recurrence. Do not use this for exploratory changes where the requirements are still unclear, or when the user explicitly says they will write tests later. For example, if the user says "Write tests for the new service method", "Add test coverage for the parser", or "Fix this bug with a regression test", load this skill first. It enforces a disciplined cycle where tests are written from requirements and specifications rather than from the implementation, ensuring they actually validate intended behavior and catch real regressions instead of just mirroring what the code already does.
-preferred-tools: [read_file, edit_file, search_code, run_command, diagnostics, think, find_definition, find_references]
+preferred-tools: [read_file, edit_file, search_code, run_command, runtime_exec, diagnostics, think, find_definition, find_references]
 ---
 
 # Test-Driven Development (TDD)
@@ -44,6 +44,120 @@ Write code before the test? Delete it. Start over.
 - Delete means delete
 
 Implement fresh from tests. Period.
+
+## Agent-Specific TDD Rules
+
+AI agents fail at TDD in specific, predictable ways. These rules prevent the most common failures:
+
+1. **Write tests from requirements, NOT from implementation.** Do NOT read the implementation file before writing test assertions. Read the spec, ticket, or user request. The test defines what the code SHOULD do, not what it DOES do.
+
+2. **Context isolation.** Open the test file first. Write all assertions. Only THEN open implementation files. If you read the implementation first, you'll unconsciously mirror it in your tests.
+
+3. **Tests are the spec.** Without test constraints, you will over-engineer. The test defines the exact boundary of what to build — nothing more.
+
+4. **One test at a time.** Write one test, watch it fail, make it pass. Do NOT generate all tests upfront. Each RED-GREEN cycle teaches you something about the design.
+
+5. **Unit tests in the agent loop, integration tests at the end.** Fast unit tests give immediate RED-GREEN feedback. Run integration tests after all unit tests pass.
+
+## Outside-In TDD for REST Endpoints
+
+For creating or modifying REST endpoints, use outside-in (double-loop) TDD:
+
+```
+Outer loop: Acceptance test defining full behavior (stays RED until all layers are done)
+  Inner loop 1: Controller slice test → implement controller (RED → GREEN)
+  Inner loop 2: Service unit test → implement service (RED → GREEN)
+  Inner loop 3: Repository test → implement repository (RED → GREEN)
+Outer loop: Acceptance test turns GREEN
+```
+
+### Step-by-step workflow:
+
+1. **Define the API contract** — create request/response DTOs as data classes
+2. **Write the acceptance test** (`@SpringBootTest`) — full end-to-end behavior
+3. **Run it — RED** (endpoint doesn't exist)
+4. **Write controller slice test** (`@WebMvcTest`) — request mapping, status codes, response structure
+5. **Implement controller** — minimal, delegates to service
+6. **Write service unit test** — business logic, validation
+7. **Implement service** — minimal code to pass
+8. **Write repository test** (`@DataJpaTest`) — only if custom queries are needed
+9. **Implement repository**
+10. **Run acceptance test — GREEN** (full stack works)
+11. **Refactor**
+
+### CRUD TDD Checklist
+
+When TDD-ing a CRUD endpoint, cover these scenarios:
+
+**CREATE (POST):**
+- Valid request → 201 + response body with generated ID
+- Missing required field → 400 + field-level error
+- Invalid data (bad format, out of range) → 400
+- Duplicate (if uniqueness constraint) → 409
+
+**READ (GET one):**
+- Existing entity → 200 + full response body
+- Non-existent ID → 404
+
+**READ (GET list):**
+- Returns list → 200 + array (may be empty)
+- Pagination params work correctly
+
+**UPDATE (PUT/PATCH):**
+- Valid update → 200 + updated response body
+- Non-existent ID → 404
+- Invalid data → 400
+
+**DELETE:**
+- Existing entity → 204 (no body)
+- Non-existent ID → 404
+- Verify GET after delete → 404
+
+### Spring Boot Test Annotation Decision Tree
+
+| Testing | Annotation | Speed | Mocks |
+|---------|-----------|-------|-------|
+| Controller (request/response mapping) | `@WebMvcTest(FooController::class)` | Fast | `@MockkBean` for service |
+| Service (business logic) | `@ExtendWith(MockKExtension::class)` | Very fast | `mockk<Repository>()` |
+| Repository (custom queries) | `@DataJpaTest` | Medium | Real H2 or Testcontainers |
+| Full stack (end-to-end) | `@SpringBootTest(RANDOM_PORT)` | Slow | Real everything |
+| Security (auth/authz rules) | `@WebMvcTest` + `@WithMockUser` | Fast | Mock user with roles |
+
+**Default to the fastest annotation that covers what you're testing.** Don't use `@SpringBootTest` when `@WebMvcTest` suffices.
+
+## Kotlin Test Data Factories
+
+Kotlin eliminates the need for Java-style Builder classes. Use factory functions with default parameters:
+
+```kotlin
+// src/test/kotlin/com/example/TestFixtures.kt
+object TestFixtures {
+    fun user(
+        id: Long = 1L,
+        name: String = "Alice",
+        email: String = "alice@test.com",
+        role: Role = Role.USER
+    ) = User(id, name, email, role)
+
+    fun createUserRequest(
+        name: String = "Alice",
+        email: String = "alice@test.com"
+    ) = CreateUserRequest(name, email)
+}
+```
+
+Usage — override only what matters for THIS test:
+```kotlin
+val admin = TestFixtures.user(role = Role.ADMIN)
+val noEmail = TestFixtures.user(email = "")
+val customName = TestFixtures.user().copy(name = "Bob")
+```
+
+**Rules:**
+- One factory per entity, vary with named parameters
+- Each test sets up exactly the data it needs (no shared mutable state)
+- Define test data as code, not SQL or JSON files
+- For complex object graphs, compose: `order(user = user(role = Role.ADMIN))`
 
 ## Red-Green-Refactor
 
@@ -93,8 +207,14 @@ Vague name, tests mock not code
 
 **MANDATORY. Never skip.**
 
-```bash
-./gradlew :module:test --tests "*.RetryTest.retries failed operations 3 times"
+Use `runtime_exec` for structured results (activate with `tool_search(query="runtime")` first):
+```
+runtime_exec(action="run_tests", class_name="com.example.RetryTest", method="retries failed operations 3 times")
+```
+
+Or via shell if `runtime_exec` is not available:
+```
+run_command(command="./gradlew :module:test --tests '*.RetryTest.retries failed operations 3 times'")
 ```
 
 Confirm:
@@ -141,8 +261,13 @@ Don't add features, refactor other code, or "improve" beyond the test.
 
 **MANDATORY.**
 
-```bash
-./gradlew :module:test --tests "*.RetryTest"
+```
+runtime_exec(action="run_tests", class_name="com.example.RetryTest")
+```
+
+Then check results:
+```
+runtime_exec(action="get_test_results", config_name="RetryTest", status_filter="FAILED")
 ```
 
 Confirm:
@@ -184,7 +309,7 @@ fun `parses sprint board from API response`() {
 }
 ```
 
-Run: `./gradlew :module:test --tests "*.ParserTest"`
+Run: `runtime_exec(action="run_tests", class_name="com.example.ParserTest")`
 
 ### Spring Boot Slice Tests
 For testing specific layers in isolation when the user is building Spring applications.
@@ -278,7 +403,7 @@ class SkillToolTest {
 }
 ```
 
-Run: `./gradlew :agent:test --tests "*.SkillToolTest"`
+Run: `runtime_exec(action="run_tests", class_name="com.workflow.orchestrator.agent.tools.builtin.SkillToolTest")`
 
 ## Good Tests
 
@@ -334,14 +459,18 @@ The "waste" is keeping code you can't trust.
 
 ## Testing Anti-Patterns
 
-When adding mocks or test utilities, avoid:
-- **Testing mock behavior** instead of real behavior — if asserting on mock elements, you're testing the mock
-- **Test-only methods in production classes** — put cleanup/helpers in test utilities instead
-- **Mocking without understanding** — understand dependencies before mocking; mock at the right level
-- **Incomplete mocks** — mirror real data structures completely, not just fields you think you need
-- **Integration tests as afterthought** — testing is part of implementation, not optional follow-up
+The patterns AI agents fall into most often (ranked by risk):
 
-**Core rule:** Test what the code does, not what the mocks do.
+| Anti-Pattern | Agent Risk | What Goes Wrong | Fix |
+|-------------|-----------|-----------------|-----|
+| **The Mockery** | **HIGHEST** | Mocking everything, asserting on mock call counts instead of real outcomes | Mock only external systems; assert on returned values and state changes |
+| **Testing implementation** | **HIGH** | Tests break when you refactor internals, even if behavior is unchanged | Test observable behavior and public contracts only |
+| **The Liar** | **HIGH** | Tests pass without actually verifying the intended thing | Always verify RED step; check the failure message makes sense |
+| **The Giant** | **HIGH** | One test with many assertions testing multiple behaviors | One behavior per test; "and" in the name means split it |
+| **Over-coverage** | **HIGH** | Pursuing 100% coverage instead of testing critical paths | Focus on business logic, edge cases, error paths |
+| **Test-only methods** | **MEDIUM** | Adding getters/helpers in production classes just for tests | Test through public interfaces; put helpers in test utilities |
+
+**Core rule:** Test what the code does, not what the mocks do. If you're asserting on `verify(exactly = 3) { mock() }`, you're testing the mock.
 
 ## Verification Checklist
 
@@ -351,10 +480,12 @@ Before marking work complete:
 - [ ] Watched each test fail before implementing
 - [ ] Each test failed for expected reason (feature missing, not typo)
 - [ ] Wrote minimal code to pass each test
-- [ ] All tests pass
-- [ ] Output pristine (no errors, warnings)
+- [ ] All tests pass: `runtime_exec(action="run_tests")`
+- [ ] No compilation errors: `runtime_exec(action="compile_module")`
+- [ ] No IDE warnings: `diagnostics` on changed files
 - [ ] Tests use real code (mocks only if unavoidable)
 - [ ] Edge cases and errors covered
+- [ ] Coverage adequate (optional): `coverage(action="run_with_coverage")` on the test class
 
 Can't check all boxes? You skipped TDD. Start over.
 

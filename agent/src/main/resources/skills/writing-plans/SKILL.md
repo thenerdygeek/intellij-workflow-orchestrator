@@ -1,7 +1,7 @@
 ---
 name: writing-plans
 description: Create structured implementation plans with bite-sized tasks, clear acceptance criteria, and file-level guidance that the user can review and approve before any implementation begins. You must always load this skill after calling enable_plan_mode — trigger phrases include "plan this", "create a plan", "write a plan", and "how should I implement", and you should also use it proactively whenever the task touches 2 or more files, crosses module boundaries, adds new features or API endpoints, involves refactoring or cross-module changes, or requires any non-trivial multi-step work. Do not use this for single-file fixes or simple questions that can be answered directly. For example, if the user says "Refactor the notification system" or "Add a new API endpoint with service and tests", call enable_plan_mode first and then load this skill. It walks you through a structured research-then-plan workflow where you first investigate the codebase to understand the scope and dependencies, then produce a concrete and actionable task breakdown with specific files, acceptance criteria, and implementation order that the user can review, comment on, and approve before you write any code.
-preferred-tools: [read_file, search_code, file_structure, find_definition, find_references, type_hierarchy, diagnostics, run_command, think, create_plan, update_plan_step, agent]
+preferred-tools: [read_file, search_code, file_structure, find_definition, find_references, type_hierarchy, diagnostics, run_command, think, enable_plan_mode, plan_mode_respond, act_mode_respond, agent]
 ---
 
 # Writing Plans
@@ -13,6 +13,25 @@ Write comprehensive implementation plans assuming the engineer has zero context 
 Assume they are a skilled developer, but know almost nothing about our toolset or problem domain. Assume they don't know good test design very well.
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
+
+Note: `file_structure` and `type_hierarchy` are deferred tools — activate with `tool_search(query="file structure")` or `tool_search(query="type hierarchy")` before use.
+
+## How the Plan UI Works
+
+Your plan flows through a specific UI pipeline. Understanding this ensures your plan renders correctly:
+
+1. **You call `plan_mode_respond(response=plan_markdown, task_progress=checklist)`**
+2. **PlanParser** extracts steps from your markdown — it recognizes three formats:
+   - `### Task N: Title` (headers — **recommended**, best for detailed plans)
+   - `1. Title` (numbered lists — good for simple plans)
+   - `- Title` (bullets — fallback)
+   Lines between step headers become the step's description.
+3. **Plan card** renders in chat — shows summary, step count, "Approve" and "View Plan" buttons
+4. **Plan editor** opens as a full tab when user clicks "View Plan" — the user sees the full markdown with line numbers and can **add inline comments on specific lines**
+5. **Approval** switches to act mode and feeds a checklist into the loop. You then include `task_progress` in tool calls to update step status in the UI.
+6. **Revision** sends the user's line-level comments back to you. You revise and call `plan_mode_respond` again.
+
+**Critical: `task_progress` items sync with plan steps by INDEX.** If your plan has 5 `### Task` headers, your `task_progress` must have exactly 5 items, in the same order, with matching titles. The UI maps item 0 → step 1, item 1 → step 2, etc.
 
 ## Scope Check
 
@@ -38,61 +57,76 @@ This structure informs the task decomposition. Each task should produce self-con
 - "Run the tests and make sure they pass" - step
 - "Commit" - step
 
-## Plan Structure
+## Plan Markdown Format
 
-Use `create_plan` with two parameters:
-1. `title` — short display title for the plan card
-2. `markdown` — full plan as a markdown document
+Use `### Task N: Title` headers for steps. This is the format PlanParser handles best — each header becomes a plan step with its own title, description, and comment target in the plan editor.
 
 **Every plan MUST use this structure:**
 
 ```markdown
-## Goal
-[One sentence describing what this builds]
+Implementation plan for [feature name].
 
-## Architecture
-[2-3 sentences about approach and key technologies]
-
-### Task N: [Component Name]
+### Task 1: [Component Name]
 
 **Files:**
 - Create: `exact/path/to/File.kt`
 - Modify: `exact/path/to/Existing.kt`
 - Test: `exact/path/to/FileTest.kt`
 
-- [ ] **Step 1: Write the failing test**
+**Steps:**
+1. Write the failing test
+2. Run test — verify it fails
+3. Write minimal implementation
+4. Run test — verify it passes
+5. Commit
 
-```kotlin
-@Test
-fun `specific behavior description`() {
-    val result = function(input)
-    assertEquals(expected, result)
-}
-```
+**Test code:**
+[actual test code block]
 
-- [ ] **Step 2: Run test to verify it fails**
+**Implementation code:**
+[actual implementation code block]
 
-Run: `./gradlew :module:test --tests "...Test.specific behavior description"`
-Expected: FAIL with "function not defined"
+### Task 2: [Next Component]
+...
 
-- [ ] **Step 3: Write minimal implementation**
-
-```kotlin
-fun function(input: Type): ReturnType {
-    return expected
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `./gradlew :module:test --tests "...Test.specific behavior description"`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-## Testing
+### Testing
 [How to verify the full implementation works end-to-end]
 ```
+
+**Key format rules:**
+- Text BEFORE the first `### Task` header becomes the plan summary (shown in the plan card)
+- Each `### Task N:` header becomes a step the user can comment on individually
+- Keep task titles short and descriptive — they appear in the progress checklist
+- Put detailed code blocks and commands INSIDE the task (below the header) — they become the step's description
+
+## Presenting the Plan
+
+Call `plan_mode_respond` with both `response` and `task_progress`:
+
+```
+plan_mode_respond(
+  response="Implementation plan for user management API.\n\n### Task 1: Create UserRequest and UserResponse DTOs\n...\n\n### Task 2: Write controller slice test\n...\n\n### Task 3: Implement UserController\n...",
+  task_progress="- [ ] Task 1: Create UserRequest and UserResponse DTOs\n- [ ] Task 2: Write controller slice test\n- [ ] Task 3: Implement UserController"
+)
+```
+
+The `task_progress` titles MUST match the `### Task N:` titles exactly (by index). The UI syncs them to show completion status.
+
+## Handling User Comments
+
+After presenting the plan, the user may:
+
+1. **Approve** — you receive an approval message with the task checklist. Switch to implementation.
+2. **Add comments** — the user opens the plan in the editor tab and adds inline comments on specific lines. You receive a revision message like:
+   ```
+   I have comments on your plan. Please revise it:
+   - Line 15 (### Task 2: Write controller test): "Add a test for 400 validation error too"
+   - Line 32 (```kotlin): "Use @WebMvcTest not @SpringBootTest here"
+   Please revise the plan and present the updated version using plan_mode_respond.
+   ```
+3. **Type a chat message** — freeform feedback while still in plan mode.
+
+When you receive comments, revise the plan and call `plan_mode_respond` again. The plan card updates with the new version.
 
 ## No Placeholders
 
@@ -107,7 +141,7 @@ Every step must contain the actual content an engineer needs. These are **plan f
 ## Remember
 - Exact file paths always
 - Complete code in every step — if a step changes code, show the code
-- Exact commands with expected output
+- Exact tool calls with expected output (use `runtime_exec(action="run_tests")` not `./gradlew`)
 - DRY, YAGNI, TDD, frequent commits
 - Kotlin/JVM conventions (JUnit 5, MockK, suspend funs, IntelliJ APIs)
 
@@ -121,16 +155,20 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
 
+**4. task_progress sync:** Count your `### Task` headers. Does your `task_progress` have exactly that many items? Do the titles match?
+
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Execution Handoff
 
-After calling `create_plan`, once the user approves, offer execution choice:
+After the user approves the plan, the session switches back to act mode. You receive an approval message containing the task checklist. Offer the execution choice:
 
 **"Plan approved. Two execution options:**
 
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task with two-stage review (spec compliance + code quality). Use: `skill(skill="subagent-driven")`
+**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task with two-stage review (spec compliance + code quality). Use: `use_skill(skill_name="subagent-driven")`
 
-**2. Direct Execution** — I execute tasks in this session step by step, tracking progress with `update_plan_step`.
+**2. Direct Execution** — I execute tasks in this session step by step, tracking progress with `act_mode_respond(task_progress="- [x] Task 1: ...\n- [ ] Task 2: ...\n...")`.
 
 **Which approach?"**
+
+During execution (either approach), include `task_progress` in your tool calls to update the plan UI. As you complete each task, mark it `[x]` in the checklist. The plan card and plan editor tab update in real-time to show step completion with spinner/check icons.

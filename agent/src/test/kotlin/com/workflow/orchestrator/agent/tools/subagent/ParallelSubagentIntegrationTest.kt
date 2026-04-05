@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -35,6 +36,7 @@ class ParallelSubagentIntegrationTest {
 
     private lateinit var project: Project
     private lateinit var registry: ToolRegistry
+    private lateinit var configLoader: AgentConfigLoader
 
     @BeforeEach
     fun setUp() {
@@ -42,6 +44,17 @@ class ParallelSubagentIntegrationTest {
         every { project.name } returns "TestProject"
         every { project.basePath } returns "/tmp/test-project"
         registry = buildTestRegistry()
+        AgentConfigLoader.resetForTests()
+        configLoader = AgentConfigLoader.getInstance()
+        // Load bundled agents (explorer is read-only, needed for parallel tests)
+        val tempDir = java.nio.file.Files.createTempDirectory("parallel-subagent-test-")
+        configLoader.loadFromDisk(tempDir)
+        tempDir.toFile().deleteRecursively()
+    }
+
+    @AfterEach
+    fun tearDown() {
+        AgentConfigLoader.resetForTests()
     }
 
     // ---- Helpers ----
@@ -214,7 +227,8 @@ class ParallelSubagentIntegrationTest {
             contextBudget = 50_000,
             onSubagentProgress = { agentId, update ->
                 progressUpdates.add(agentId to update)
-            }
+            },
+            configLoader = configLoader
         )
 
         val result = spawnTool.execute(
@@ -223,7 +237,7 @@ class ParallelSubagentIntegrationTest {
                 "prompt" to "Research question 1",
                 "prompt_2" to "Research question 2",
                 "prompt_3" to "Research question 3",
-                "scope" to "research"
+                "agent_type" to "explorer"
             ),
             project
         )
@@ -280,7 +294,8 @@ class ParallelSubagentIntegrationTest {
             },
             toolRegistry = registry,
             project = project,
-            contextBudget = 50_000
+            contextBudget = 50_000,
+            configLoader = configLoader
         )
 
         val result = spawnTool.execute(
@@ -289,7 +304,7 @@ class ParallelSubagentIntegrationTest {
                 "prompt" to "Research task 1",
                 "prompt_2" to "Research task 2 (will fail)",
                 "prompt_3" to "Research task 3",
-                "scope" to "research"
+                "agent_type" to "explorer"
             ),
             project
         )

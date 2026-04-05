@@ -63,7 +63,7 @@ class DebugBreakpointsTool(private val controller: AgentDebugController) : Agent
 Breakpoint management — add, remove, list breakpoints, and start/attach debug sessions.
 
 Actions and their parameters:
-- add_breakpoint(file, line, condition?, log_expression?, temporary?) → Add line breakpoint
+- add_breakpoint(file, line, condition?, log_expression?, temporary?, suspend_policy?, pass_count?) → Add line breakpoint
 - method_breakpoint(class_name, method_name, watch_entry?, watch_exit?) → Add method breakpoint
 - exception_breakpoint(exception_class, caught?, uncaught?, condition?) → Break on exception
 - field_watchpoint(class_name, field_name, file?, watch_read?, watch_write?) → Watch field access/modification
@@ -104,6 +104,15 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
             "temporary" to ParameterProperty(
                 type = "boolean",
                 description = "If true, breakpoint removed after first hit — for add_breakpoint"
+            ),
+            "suspend_policy" to ParameterProperty(
+                type = "string",
+                description = "Thread suspension policy: 'all' (pause all threads, default) or 'thread' (pause only the hitting thread — use for concurrent debugging) — for add_breakpoint",
+                enumValues = listOf("all", "thread", "none")
+            ),
+            "pass_count" to ParameterProperty(
+                type = "integer",
+                description = "Break only on every Nth hit (e.g., pass_count=100 breaks on the 100th hit). Useful for loops and high-traffic code — for add_breakpoint"
             ),
             "class_name" to ParameterProperty(
                 type = "string",
@@ -211,6 +220,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
         val condition = params["condition"]?.jsonPrimitive?.content
         val logExpression = params["log_expression"]?.jsonPrimitive?.content
         val temporary = params["temporary"]?.jsonPrimitive?.booleanOrNull ?: false
+        val suspendPolicyStr = params["suspend_policy"]?.jsonPrimitive?.content
+        val passCount = params["pass_count"]?.jsonPrimitive?.intOrNull
 
         if (line < 1) {
             return ToolResult("Line number must be >= 1, got: $line", "Invalid line", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -251,17 +262,53 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                         bp.suspendPolicy = SuspendPolicy.NONE
                     }
 
+                    // Apply suspend policy (explicit param overrides log_expression default)
+                    if (suspendPolicyStr != null) {
+                        bp.suspendPolicy = when (suspendPolicyStr.lowercase()) {
+                            "thread" -> SuspendPolicy.THREAD
+                            "none" -> SuspendPolicy.NONE
+                            else -> SuspendPolicy.ALL
+                        }
+                    }
+
+                    // Apply pass count via Java-specific breakpoint properties.
+                    // XBreakpoint doesn't expose pass count; it's on JavaBreakpointProperties
+                    // (COUNT_FILTER / COUNT_FILTER_ENABLED fields).
+                    if (passCount != null && passCount > 1) {
+                        try {
+                            val javaDebugger = com.intellij.debugger.DebuggerManagerEx.getInstanceEx(project)
+                            val javaBp = javaDebugger.breakpointManager.breakpoints
+                                .filterIsInstance<com.intellij.debugger.ui.breakpoints.Breakpoint<*>>()
+                                .find { jBp -> jBp.xBreakpoint === bp }
+                            if (javaBp != null) {
+                                // Use reflection for API compatibility across IDE versions
+                                try {
+                                    javaBp.javaClass.getMethod("setCountFilterEnabled", Boolean::class.javaPrimitiveType).invoke(javaBp, true)
+                                    javaBp.javaClass.getMethod("setCountFilter", Int::class.javaPrimitiveType).invoke(javaBp, passCount)
+                                } catch (_: Exception) { /* API not available */ }
+                            }
+                        } catch (_: Exception) {
+                            // Java-specific API not available (non-Java debugger); ignore silently
+                        }
+                    }
+
                     controller.trackBreakpoint(bp)
 
                     val fileName = vFile.name
                     val sb = StringBuilder("Breakpoint added at $fileName:$line")
                     if (condition != null) sb.append("\n  Condition: $condition")
                     if (logExpression != null) sb.append("\n  Log expression: $logExpression")
+                    if (passCount != null) sb.append("\n  Pass count: every ${passCount}th hit")
                     val traits = mutableListOf<String>()
                     if (condition != null) traits.add("conditional")
                     if (logExpression != null) traits.add("log")
                     if (temporary) traits.add("temporary")
-                    val suspendType = if (logExpression != null) "non-suspend" else "suspend"
+                    if (passCount != null) traits.add("pass_count=$passCount")
+                    val suspendType = when (bp.suspendPolicy) {
+                        SuspendPolicy.NONE -> "non-suspend"
+                        SuspendPolicy.THREAD -> "suspend-thread"
+                        else -> "suspend-all"
+                    }
                     traits.add(suspendType)
                     sb.append("\n  Type: ${traits.joinToString(", ")}")
 

@@ -20,13 +20,14 @@ class DebugInspectToolTest {
     }
 
     @Test
-    fun `action enum contains all 8 actions`() {
+    fun `action enum contains all 9 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(8, actions!!.size)
+        assertEquals(9, actions!!.size)
         assertTrue("evaluate" in actions)
         assertTrue("get_stack_frames" in actions)
         assertTrue("get_variables" in actions)
+        assertTrue("set_value" in actions)
         assertTrue("thread_dump" in actions)
         assertTrue("memory_view" in actions)
         assertTrue("hotswap" in actions)

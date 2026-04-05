@@ -3,7 +3,7 @@ name: create-skill
 description: Create a new custom skill for this project or personal use. Use when the user says "create a skill", "make a skill", "turn this into a skill", "I want a workflow for X", or when you identify a repeatable workflow worth capturing. Guides through intent capture, tool selection, and SKILL.md generation.
 disable-model-invocation: true
 user-invocable: true
-preferred-tools: [think, ask_questions, edit_file, read_file, search_code]
+preferred-tools: [think, ask_followup_question, edit_file, read_file, search_code]
 ---
 
 # Skill Creator
@@ -12,7 +12,7 @@ Create custom skills (SKILL.md files) that extend the agent with project-specifi
 
 ## Overview
 
-Skills are markdown files with YAML frontmatter that provide workflow instructions. When activated, the skill's instructions are injected into your context and the preferred tools are prioritized.
+Skills are markdown files with YAML frontmatter that provide workflow instructions. When activated via `use_skill`, the skill's instructions are injected into your context.
 
 **Skill format:**
 ```yaml
@@ -20,46 +20,65 @@ Skills are markdown files with YAML frontmatter that provide workflow instructio
 name: my-skill
 description: When to trigger and what it does (be specific and a bit pushy)
 preferred-tools: [tool1, tool2, tool3]
-disable-model-invocation: false
 user-invocable: true
 ---
 # Instructions here
 ```
 
+**Supported frontmatter fields:**
+- `name` (required) — unique skill identifier, must match directory name
+- `description` (required) — used by the agent to decide when to auto-trigger the skill
+- `preferred-tools` — list of tool names to prioritize (documentation, not enforced)
+- `user-invocable` — if true, user can type `/skill-name` to trigger manually
+- `disable-model-invocation` — if true, only user can trigger (not auto-triggered)
+
 **Skill locations:**
-- Project: `.workflow/skills/{name}/SKILL.md` (committed to VCS, shared with team)
+- Project: `.agent-skills/{name}/SKILL.md` (committed to VCS, shared with team)
 - Personal: `~/.workflow-orchestrator/skills/{name}/SKILL.md` (your preferences only)
+
+Override precedence: global > project > bundled. A personal skill with the same name overrides a project skill.
 
 ## Process
 
 ### Step 1: Capture Intent
 
-If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the steps, tools used, and corrections made. Otherwise, use `ask_questions` to gather:
+If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the steps, tools used, and corrections made. Otherwise, use `ask_followup_question` to gather:
 
 ```
-Questions:
-1. What should this skill help you do? (free text)
-2. Scope: Project skill (shared with team) or Personal skill? (single select)
-3. Should this skill trigger automatically when the agent detects a relevant task, or only when you type /skill-name? (single select: auto + manual, manual only)
+ask_followup_question(questions='[
+  {"id":"purpose","question":"What should this skill help you do?","type":"single","options":[
+    {"id":"workflow","label":"Automate a multi-step workflow","description":"E.g. hotfix, deploy, review prep"},
+    {"id":"checklist","label":"Enforce a checklist/process","description":"E.g. pre-merge checks, standup prep"},
+    {"id":"other","label":"Something else","description":"I will explain in chat"}
+  ]},
+  {"id":"scope","question":"Where should this skill live?","type":"single","options":[
+    {"id":"project","label":"Project skill (.agent-skills/)","description":"Shared with team via VCS"},
+    {"id":"personal","label":"Personal skill (~/.workflow-orchestrator/skills/)","description":"Only for you"}
+  ]}
+]')
 ```
 
 ### Step 2: Identify Tools
 
-Use `think` to analyze which of the 68 registered tools (15 meta-tools with 144 actions) are relevant to this workflow.
+Use `think` to analyze which tools are relevant to this workflow. You can also use `tool_search` to discover tools by keyword.
 
-The agent has 68 registered tools across 10 categories. Use `think` to identify relevant tools, or refer to the tool list in the system prompt. Key categories:
-- **Core:** read_file, edit_file, search_code, run_command, diagnostics, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, agent, think
-- **IDE Intelligence:** run_inspections, refactor_rename, list_quickfixes, find_implementations, semantic_diagnostics
-- **Runtime & Debug:** runtime_config (get/create/modify/delete run configs), runtime_exec (run_tests, compile_module, get_test_results, get_run_output), debug_breakpoints, debug_step, debug_inspect
-- **VCS:** git (actions: status, blame, diff, log, branches, show_file, show_commit, merge_base, file_history, stash_list, shelve)
-- **Spring & Framework:** spring (actions: context, endpoints, bean_graph, config, jpa_entities, etc.), build (actions: maven_dependencies, gradle_dependencies, etc.)
-- **Jira:** jira (actions: get_ticket, get_transitions, transition, comment, log_work, get_worklogs, search_issues, etc.)
+The agent has tools across 11 categories:
+
+- **Core:** read_file, edit_file, create_file, search_code, glob_files, run_command, think, agent, project_context, revert_file
+- **IDE:** diagnostics, format_code, optimize_imports, refactor_rename, run_inspections, list_quickfixes, problem_view
+- **PSI / Code Intelligence:** find_definition, find_references, find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, structural_search, dataflow_analysis, get_method_body, get_annotations, read_write_access, test_finder
+- **Runtime & Debug:** runtime_exec (actions: run_tests, compile_module, get_test_results, get_run_output, get_running_processes), runtime_config (actions: get_run_configurations, create_run_config, modify_run_config), debug_breakpoints, debug_step, debug_inspect, coverage
+- **VCS:** git (actions: status, blame, diff, log, branches, show_file, show_commit, merge_base, file_history, stash_list, shelve), changelist_shelve
+- **Framework:** spring (actions: context, endpoints, bean_graph, config, jpa_entities, etc.), build (actions: maven_dependencies, gradle_dependencies, etc.)
+- **Jira:** jira (actions: get_ticket, get_transitions, transition, comment, log_work, search_issues, etc.)
 - **Bamboo:** bamboo_builds (actions: build_status, get_build, trigger_build, get_build_log, get_test_results, etc.), bamboo_plans
 - **SonarQube:** sonar (actions: issues, quality_gate, coverage, search_projects, analysis_tasks, etc.)
 - **Bitbucket:** bitbucket_pr (actions: create_pr, get_pr_diff, get_pr_changes, get_pr_commits, etc.), bitbucket_review, bitbucket_repo
-- **Planning:** create_plan, update_plan_step, ask_questions, archival_memory_insert, skill
+- **Memory:** core_memory_append, core_memory_replace, core_memory_read, archival_memory_insert, archival_memory_search, save_memory, conversation_search
+- **Planning & Communication:** enable_plan_mode, plan_mode_respond, act_mode_respond, ask_followup_question, attempt_completion, use_skill
+- **Database:** db_schema, db_query, db_list_profiles
 
-Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't restrictions — just priorities.
+Select the 3-8 most relevant tools for the `preferred-tools` field. These are documentation for readers and the agent — not hard restrictions.
 
 ### Step 3: Write the SKILL.md
 
@@ -70,12 +89,6 @@ Select the 3-8 most relevant tools for the `preferred-tools` field. These aren't
 - Be explicit about the workflow steps
 - Include `$ARGUMENTS` placeholder if the skill accepts input (e.g., ticket ID)
 - Explain WHY steps matter, not just WHAT to do
-
-**Advanced frontmatter fields** (use when needed):
-- `allowed-tools` — hard tool whitelist; overrides all tool selection when skill is active
-- `context: fork` — run the skill in an isolated worker session (10 iterations, 5 min timeout)
-- `agent` — subagent type to use when `context: fork` (e.g., `coder`, `explorer`)
-- `argument-hint` — autocomplete hint shown for skill arguments in the UI
 
 **Description writing tips:**
 - Be pushy — the description is how the agent decides to auto-trigger the skill
@@ -89,7 +102,7 @@ Based on the scope chosen in Step 1:
 
 **Project skill:**
 ```
-.workflow/skills/{name}/SKILL.md
+.agent-skills/{name}/SKILL.md
 ```
 
 **Personal skill:**
@@ -106,9 +119,12 @@ After saving, inform the user:
 
 ### Step 5: Use archival_memory_insert to Remember
 
-Call `archival_memory_insert` with tags ["skills-created"] to note what skills exist:
+Call `archival_memory_insert` to note what skills exist:
 ```
-Created skill '{name}' at {path}. Purpose: {description}. Tools: {preferred-tools}.
+archival_memory_insert(
+  content="Created skill '{name}' at {path}. Purpose: {description}. Tools: {preferred-tools}.",
+  tags="skills-created"
+)
 ```
 
 This helps the agent remember available skills across sessions.
@@ -153,7 +169,6 @@ preferred-tools: [sonar, runtime_exec, diagnostics]
 name: standup
 description: Gather context for daily standup — current ticket, recent commits, build status. Use when the user asks about their work, standup, or what they did yesterday.
 user-invocable: true
-disable-model-invocation: false
 preferred-tools: [jira, git, bamboo_builds]
 ---
 ## Standup Context

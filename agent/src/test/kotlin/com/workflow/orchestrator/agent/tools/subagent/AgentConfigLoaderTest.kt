@@ -224,8 +224,8 @@ class AgentConfigLoaderTest {
         // User configs loaded (bundled agents also present)
         assertNotNull(loader.getCachedConfig("My Reviewer"))
         assertNotNull(loader.getCachedConfig("My Explorer"))
-        // At least 2 user + 8 bundled
-        assertTrue(loader.getAllCachedConfigs().size >= 10)
+        // At least 2 user + 10 bundled
+        assertTrue(loader.getAllCachedConfigs().size >= 12)
     }
 
     @Test
@@ -254,7 +254,7 @@ class AgentConfigLoaderTest {
         assertTrue(Files.isDirectory(subDir))
         // No user configs in the new empty dir, but bundled agents are loaded
         val bundledCount = loader.getAllCachedConfigs().count { it.bundled }
-        assertTrue(bundledCount >= 8, "Bundled agents should be loaded even with empty user dir")
+        assertTrue(bundledCount >= 10, "Bundled agents should be loaded even with empty user dir")
     }
 
     @Test
@@ -390,9 +390,11 @@ class AgentConfigLoaderTest {
         loader.loadFromDisk(tempDir)
 
         val bundled = loader.getAllCachedConfigs().filter { it.bundled }
-        assertEquals(8, bundled.size, "Should load 8 bundled specialist agents")
+        assertEquals(10, bundled.size, "Should load 10 bundled agents")
 
         val names = bundled.map { it.name }.toSet()
+        assertTrue("explorer" in names)
+        assertTrue("general-purpose" in names)
         assertTrue("code-reviewer" in names)
         assertTrue("spring-boot-engineer" in names)
         assertTrue("devops-engineer" in names)
@@ -413,16 +415,17 @@ class AgentConfigLoaderTest {
     }
 
     @Test
-    fun `bundled agents have maxTurns set`() {
+    fun `bundled agents have expected maxTurns`() {
         loader.loadFromDisk(tempDir)
 
         val springBoot = loader.getCachedConfig("spring-boot-engineer")
         assertNotNull(springBoot)
-        assertEquals(32, springBoot!!.maxTurns)
+        // Bundled configs currently have no max-turns (uses spawn default)
+        assertNull(springBoot!!.maxTurns, "spring-boot-engineer should have no max-turns (uses spawn default)")
 
         val codeReviewer = loader.getCachedConfig("code-reviewer")
         assertNotNull(codeReviewer)
-        assertEquals(25, codeReviewer!!.maxTurns)
+        assertNull(codeReviewer!!.maxTurns, "code-reviewer should have no max-turns (uses spawn default)")
     }
 
     @Test

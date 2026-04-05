@@ -189,6 +189,61 @@ class AgentDebugController(private val project: Project) : Disposable {
         return computeChildren(frame, maxDepth, charCounter)
     }
 
+    /**
+     * Find a raw XValue by name in the frame's direct children.
+     * Used by set_value to get the XValueModifier for direct modification.
+     * Returns null if not found.
+     */
+    suspend fun findXValueByName(frame: XStackFrame, name: String): XValue? {
+        return withTimeoutOrNull(5000L) {
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { /* timeout cleanup */ }
+                var found: XValue? = null
+
+                frame.computeChildren(object : XCompositeNode {
+                    override fun addChildren(children: XValueChildrenList, last: Boolean) {
+                        if (found == null) {
+                            for (i in 0 until children.size()) {
+                                if (children.getName(i) == name) {
+                                    found = children.getValue(i)
+                                    break
+                                }
+                            }
+                        }
+                        if (last) cont.resume(found)
+                    }
+
+                    override fun tooManyChildren(remaining: Int) {
+                        cont.resume(found)
+                    }
+
+                    override fun tooManyChildren(remaining: Int, childrenAdder: Runnable) {
+                        cont.resume(found)
+                    }
+
+                    override fun setAlreadySorted(alreadySorted: Boolean) {}
+
+                    override fun setErrorMessage(errorMessage: String) {
+                        cont.resume(null)
+                    }
+
+                    override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
+                        cont.resume(null)
+                    }
+
+                    override fun setMessage(
+                        message: String,
+                        icon: Icon?,
+                        attributes: SimpleTextAttributes,
+                        link: XDebuggerTreeNodeHyperlink?
+                    ) {}
+
+                    override fun isObsolete(): Boolean = false
+                })
+            }
+        }
+    }
+
     private suspend fun computeChildren(
         node: XValueContainer,
         depth: Int,
@@ -314,21 +369,31 @@ class AgentDebugController(private val project: Project) : Disposable {
         val evaluator = frame.evaluator
             ?: return EvaluationResult(expression, "No evaluator available for current frame", "error", isError = true)
 
-        return suspendCancellableCoroutine { cont ->
+        // The evaluate callback gives us an XValue, not a displayable string.
+        // We must resolve its presentation (type + value) via the async computePresentation API.
+        val evalResult: Result<XValue> = suspendCancellableCoroutine { cont ->
             evaluator.evaluate(
                 expression,
                 object : XDebuggerEvaluator.XEvaluationCallback {
                     override fun evaluated(result: XValue) {
-                        cont.resume(EvaluationResult(expression, result.toString(), "value"))
+                        cont.resume(Result.success(result))
                     }
 
                     override fun errorOccurred(errorMessage: String) {
-                        cont.resume(EvaluationResult(expression, errorMessage, "error", isError = true))
+                        cont.resume(Result.failure(RuntimeException(errorMessage)))
                     }
                 },
                 null
             )
         }
+
+        val xValue = evalResult.getOrElse { error ->
+            return EvaluationResult(expression, error.message ?: "Evaluation failed", "error", isError = true)
+        }
+
+        // Resolve the XValue's presentation to get displayable type + value strings
+        val presentation = resolvePresentation(xValue)
+        return EvaluationResult(expression, presentation.second, presentation.first)
     }
 
     /**

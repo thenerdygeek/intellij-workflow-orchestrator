@@ -20,14 +20,16 @@ class DebugStepToolTest {
     }
 
     @Test
-    fun `action enum contains all 8 actions`() {
+    fun `action enum contains all 10 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(8, actions!!.size)
+        assertEquals(10, actions!!.size)
         assertTrue("get_state" in actions)
         assertTrue("step_over" in actions)
         assertTrue("step_into" in actions)
         assertTrue("step_out" in actions)
+        assertTrue("force_step_into" in actions)
+        assertTrue("force_step_over" in actions)
         assertTrue("resume" in actions)
         assertTrue("pause" in actions)
         assertTrue("run_to_cursor" in actions)

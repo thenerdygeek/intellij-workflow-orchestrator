@@ -22,7 +22,9 @@ import kotlin.coroutines.coroutineContext
 /**
  * Debug session navigation — stepping, state, and lifecycle control.
  *
- * 8 actions with only 4 parameters (action, session_id, file, line).
+ * 10 actions with only 4 parameters (action, session_id, file, line).
+ * Includes force_step_into (bypasses step filters for framework code)
+ * and force_step_over (ignores breakpoints in called methods).
  */
 class DebugStepTool(private val controller: AgentDebugController) : AgentTool {
 
@@ -36,6 +38,8 @@ Actions and their parameters:
 - step_over(session_id?) → Step over current line
 - step_into(session_id?) → Step into method call
 - step_out(session_id?) → Step out of current method
+- force_step_into(session_id?) → Step into even library/framework code (bypasses step filters — use to enter Spring proxies, CGLIB, reflection)
+- force_step_over(session_id?) → Step over, ignoring any breakpoints in called methods
 - resume(session_id?) → Resume execution
 - pause(session_id?) → Pause execution
 - run_to_cursor(file, line, session_id?) → Run to specific line
@@ -51,6 +55,7 @@ All actions accept optional session_id (defaults to active session).
                 description = "Operation to perform",
                 enumValues = listOf(
                     "get_state", "step_over", "step_into", "step_out",
+                    "force_step_into", "force_step_over",
                     "resume", "pause", "run_to_cursor", "stop"
                 )
             ),
@@ -91,12 +96,14 @@ All actions accept optional session_id (defaults to active session).
             "step_over" -> executeStepAction(params, "step_over") { it.stepOver(false) }
             "step_into" -> executeStepAction(params, "step_into") { it.stepInto() }
             "step_out" -> executeStepAction(params, "step_out") { it.stepOut() }
+            "force_step_into" -> executeStepAction(params, "force_step_into") { it.forceStepInto() }
+            "force_step_over" -> executeStepAction(params, "force_step_over") { it.stepOver(true) }
             "resume" -> executeResume(params, project)
             "pause" -> executePause(params, project)
             "run_to_cursor" -> executeRunToCursor(params, project)
             "stop" -> executeStop(params, project)
             else -> ToolResult(
-                content = "Unknown action '$action'. Valid actions: get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop",
+                content = "Unknown action '$action'. Valid actions: get_state, step_over, step_into, step_out, force_step_into, force_step_over, resume, pause, run_to_cursor, stop",
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true

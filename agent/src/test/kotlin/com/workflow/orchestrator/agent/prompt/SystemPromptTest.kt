@@ -17,7 +17,7 @@ class SystemPromptTest {
         val prompt = defaultPrompt()
 
         assertTrue(
-            prompt.contains("highly skilled software engineer"),
+            prompt.contains("AI coding agent running inside IntelliJ IDEA"),
             "should contain agent role description"
         )
         assertTrue(
@@ -38,8 +38,8 @@ class SystemPromptTest {
             "should recommend edit_file as default"
         )
         assertTrue(
-            prompt.contains("Auto-formatting Considerations"),
-            "should include auto-formatting section"
+            prompt.contains("auto-format"),
+            "should include auto-formatting note"
         )
     }
 
@@ -70,12 +70,12 @@ class SystemPromptTest {
 
         assertTrue(prompt.contains("RULES"), "should contain RULES heading")
         assertTrue(
-            prompt.contains("current working directory"),
+            prompt.contains("Working directory:"),
             "should mention working directory constraint"
         )
         assertTrue(
-            prompt.contains("STRICTLY FORBIDDEN"),
-            "should include conversational tone prohibition"
+            prompt.contains("Be direct and technical"),
+            "should include communication rules"
         )
         assertTrue(
             prompt.contains("attempt_completion"),
@@ -101,7 +101,7 @@ class SystemPromptTest {
 
         assertTrue(prompt.contains("OBJECTIVE"), "should contain OBJECTIVE heading")
         assertTrue(
-            prompt.contains("accomplish a given task iteratively"),
+            prompt.contains("Accomplish the user's task iteratively"),
             "should describe iterative approach"
         )
         assertTrue(
@@ -130,26 +130,26 @@ class SystemPromptTest {
     // ---- Plan mode tests ----
 
     @Test
-    fun `act mode shows ACT as current mode`() {
+    fun `act mode mentions ACT MODE`() {
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", planModeEnabled = false
         )
 
         assertTrue(
-            prompt.contains("**ACT MODE**"),
-            "should indicate ACT MODE is current"
+            prompt.contains("ACT MODE"),
+            "should mention ACT MODE"
         )
     }
 
     @Test
-    fun `plan mode shows PLAN as current mode`() {
+    fun `plan mode mentions PLAN MODE`() {
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", planModeEnabled = true
         )
 
         assertTrue(
-            prompt.contains("**PLAN MODE**"),
-            "should indicate PLAN MODE is current"
+            prompt.contains("PLAN MODE"),
+            "should mention PLAN MODE"
         )
     }
 

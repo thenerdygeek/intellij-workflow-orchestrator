@@ -3,7 +3,6 @@ package com.workflow.orchestrator.agent.tools.debug
 import com.intellij.debugger.DebuggerManagerEx
 import com.intellij.debugger.engine.SuspendContextImpl
 import com.intellij.debugger.ui.HotSwapUI
-import com.intellij.debugger.ui.HotSwapUIImpl
 import com.intellij.debugger.ui.HotSwapStatusListener
 import com.intellij.debugger.impl.DebuggerSession
 import com.intellij.openapi.project.Project
@@ -13,8 +12,11 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import com.intellij.openapi.application.EDT
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
@@ -24,10 +26,10 @@ import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
 /**
- * Debug inspection and advanced operations — evaluate, variables, stack frames,
- * thread dump, memory view, hotswap, force return, drop frame.
+ * Debug inspection and advanced operations — evaluate, variables, set value,
+ * stack frames, thread dump, memory view, hotswap, force return, drop frame.
  *
- * 8 actions covering runtime inspection and advanced debugging.
+ * 9 actions covering runtime inspection and advanced debugging.
  */
 class DebugInspectTool(private val controller: AgentDebugController) : AgentTool {
 
@@ -42,6 +44,7 @@ Actions and their parameters:
 - get_variables(session_id?, variable_name?, max_depth?) → Inspect local variables
 - thread_dump(session_id?, max_frames?, include_stacks?, include_daemon?) → Full thread dump
 - memory_view(class_name, session_id?, max_instances?) → Count/inspect live instances
+- set_value(variable_name, new_value, session_id?) → Modify a variable's value at runtime (test hypotheses without restarting)
 - hotswap(session_id?, compile_first?) → Hot-reload changed classes
 - force_return(session_id?, return_value?, return_type?) → Force method to return immediately
 - drop_frame(session_id?, frame_index?) → Rewind execution to frame start
@@ -55,8 +58,8 @@ Most actions require a suspended session. session_id defaults to active session.
                 type = "string",
                 description = "Operation to perform",
                 enumValues = listOf(
-                    "evaluate", "get_stack_frames", "get_variables", "thread_dump",
-                    "memory_view", "hotswap", "force_return", "drop_frame"
+                    "evaluate", "get_stack_frames", "get_variables", "set_value",
+                    "thread_dump", "memory_view", "hotswap", "force_return", "drop_frame"
                 )
             ),
             "session_id" to ParameterProperty(
@@ -81,7 +84,11 @@ Most actions require a suspended session. session_id defaults to active session.
             ),
             "variable_name" to ParameterProperty(
                 type = "string",
-                description = "Specific variable name to deep-inspect — for get_variables"
+                description = "Specific variable name to deep-inspect — for get_variables, set_value"
+            ),
+            "new_value" to ParameterProperty(
+                type = "string",
+                description = "Expression to set as the variable's new value (e.g., '42', '\"hello\"', 'null', 'listOf(1,2,3)') — for set_value"
             ),
             "include_stacks" to ParameterProperty(
                 type = "boolean",
@@ -140,13 +147,14 @@ Most actions require a suspended session. session_id defaults to active session.
             "evaluate" -> executeEvaluate(params, project)
             "get_stack_frames" -> executeGetStackFrames(params, project)
             "get_variables" -> executeGetVariables(params, project)
+            "set_value" -> executeSetValue(params, project)
             "thread_dump" -> executeThreadDump(params, project)
             "memory_view" -> executeMemoryView(params, project)
             "hotswap" -> executeHotSwap(params, project)
             "force_return" -> executeForceReturn(params, project)
             "drop_frame" -> executeDropFrame(params, project)
             else -> ToolResult(
-                content = "Unknown action '$action'. Valid actions: evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame",
+                content = "Unknown action '$action'. Valid actions: evaluate, get_stack_frames, get_variables, set_value, thread_dump, memory_view, hotswap, force_return, drop_frame",
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
@@ -338,6 +346,115 @@ Most actions require a suspended session. session_id defaults to active session.
         }
     }
 
+    // ── set_value ───────────────────────────────────────────────────────────
+
+    /**
+     * Modify a variable's value at runtime using XValueModifier.
+     *
+     * Finds the named variable in the current frame's children, gets its
+     * XValueModifier, and calls setValue from EDT (as required by the API).
+     * Falls back to evaluate-with-assignment if the variable has no modifier
+     * (e.g., computed properties, watch expressions).
+     */
+    private suspend fun executeSetValue(params: JsonObject, project: Project): ToolResult {
+        val variableName = params["variable_name"]?.jsonPrimitive?.content ?: return missingParam("variable_name")
+        val newValue = params["new_value"]?.jsonPrimitive?.content ?: return missingParam("new_value")
+        val sessionId = params["session_id"]?.jsonPrimitive?.content
+
+        val session = controller.getSession(sessionId)
+            ?: return ToolResult(
+                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
+                "No session",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
+        if (!session.isSuspended) {
+            return ToolResult(
+                "Session is not suspended. Cannot set variable while running.",
+                "Not suspended",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        return try {
+            val frame = session.currentStackFrame
+                ?: return ToolResult("No active stack frame.", "No frame", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
+            // Find the XValue for this variable name in the frame's children
+            val xValue = controller.findXValueByName(frame, variableName)
+
+            if (xValue != null) {
+                val modifier = xValue.modifier
+                if (modifier != null) {
+                    // Use XValueModifier — the correct API for setting values.
+                    // Documented: "this method is called from the Event Dispatch Thread"
+                    val modifyResult: Result<Unit> = withContext(Dispatchers.EDT) {
+                        suspendCancellableCoroutine { cont ->
+                            modifier.setValue(
+                                com.intellij.xdebugger.impl.breakpoints.XExpressionImpl.fromText(newValue),
+                                object : com.intellij.xdebugger.frame.XValueModifier.XModificationCallback {
+                                    override fun valueModified() {
+                                        cont.resume(Result.success(Unit))
+                                    }
+
+                                    override fun errorOccurred(errorMessage: String) {
+                                        cont.resume(Result.failure(RuntimeException(errorMessage)))
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    modifyResult.getOrElse { error ->
+                        return ToolResult(
+                            "Failed to set '$variableName': ${error.message}",
+                            "Set value failed",
+                            ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                    }
+
+                    // Verify by reading back
+                    val verifyResult = controller.evaluate(session, variableName, 0)
+                    val content = buildString {
+                        append("Variable '$variableName' set to: ${verifyResult.result}\n")
+                        append("Type: ${verifyResult.type}\n")
+                        append("Method: XValueModifier (direct)")
+                    }
+                    return ToolResult(content, "Set $variableName = $newValue", TokenEstimator.estimate(content))
+                }
+            }
+
+            // Fallback: variable not found in frame children or has no modifier.
+            // Try evaluate-with-assignment (works for Java where assignment is an expression).
+            val assignExpression = "$variableName = $newValue"
+            val evalResult = controller.evaluate(session, assignExpression, 0)
+
+            if (evalResult.isError) {
+                return ToolResult(
+                    "Failed to set '$variableName': ${evalResult.result}\n" +
+                        "Variable may not exist in the current frame, or may be final/val.",
+                    "Set value failed",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+            }
+
+            // Verify the new value
+            val verifyResult = controller.evaluate(session, variableName, 0)
+            val content = buildString {
+                append("Variable '$variableName' set to: ${verifyResult.result}\n")
+                append("Type: ${verifyResult.type}\n")
+                append("Method: evaluate fallback (assignment expression)")
+            }
+            ToolResult(content, "Set $variableName = $newValue", TokenEstimator.estimate(content))
+        } catch (e: Exception) {
+            ToolResult("Error setting variable: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        }
+    }
+
     // ── thread_dump ─────────────────────────────────────────────────────────
 
     private suspend fun executeThreadDump(params: JsonObject, project: Project): ToolResult {
@@ -524,7 +641,13 @@ Most actions require a suspended session. session_id defaults to active session.
         return try {
             val hotSwapUI = HotSwapUI.getInstance(project)
             val debuggerManager = DebuggerManagerEx.getInstanceEx(project)
-            val debuggerSession = debuggerManager.sessions.firstOrNull()
+
+            // Correlate the XDebugSession with the correct DebuggerSession.
+            // When multiple sessions exist, sessions.firstOrNull() would pick the wrong one.
+            val xSession = controller.getSession(sessionId)
+            val debuggerSession = debuggerManager.sessions.find { ds ->
+                ds.xDebugSession === xSession
+            } ?: debuggerManager.sessions.firstOrNull()
                 ?: return ToolResult(
                     "No active debugger session found in DebuggerManagerEx.",
                     "No debugger session",
@@ -534,7 +657,8 @@ Most actions require a suspended session. session_id defaults to active session.
 
             val status = withTimeoutOrNull(60_000L) {
                 suspendCancellableCoroutine { cont ->
-                    (hotSwapUI as HotSwapUIImpl).reloadChangedClasses(
+                    // Use the abstract HotSwapUI API directly (not HotSwapUIImpl cast)
+                    hotSwapUI.reloadChangedClasses(
                         debuggerSession, compileFirst,
                         object : HotSwapStatusListener {
                             override fun onSuccess(sessions: MutableList<DebuggerSession>) { cont.resume("success") }

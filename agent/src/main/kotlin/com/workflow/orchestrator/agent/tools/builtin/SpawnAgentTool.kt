@@ -27,15 +27,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Claude Code-style sub-agent delegation tool.
+ * Unified sub-agent delegation tool.
  *
- * The parent LLM calls `agent` to delegate a task to a sub-agent that runs
- * in its own AgentLoop with a fresh ContextManager (context isolation).
- * The sub-agent's result flows back as a single ToolResult.
+ * All delegation goes through agent configs (bundled or user-defined).
+ * The parent LLM specifies `agent_type` to pick a specialist, or omits it
+ * to get the default `general-purpose` agent.
  *
  * Depth-1 hard limit: sub-agents CANNOT spawn further sub-agents.
  *
- * Supports up to 5 parallel prompts in research scope for fan-out research.
+ * Read-only agents (no write tools) support parallel prompts for fan-out research.
  */
 class SpawnAgentTool(
     private val brainProvider: suspend () -> LlmBrain,
@@ -67,16 +67,11 @@ Do NOT use this when:
 - A single tool call would suffice (don't over-delegate)
 - You need interactive back-and-forth (sub-agents can't ask you questions)
 
-Scopes:
-- "research": Read-only exploration. Use for understanding code, finding patterns, analyzing architecture.
-- "implement": Full write access. Use for coding — editing files, creating files, running commands, running tests.
-- "review": Read + diagnostics. Use for code review, finding bugs, checking quality.
-
-Parallel execution (research scope only):
-- In research scope, you can provide up to 5 prompts (prompt, prompt_2, ..., prompt_5).
+Parallel execution (read-only agents only):
+- For read-only agents (like "explorer"), you can provide up to 5 prompts (prompt, prompt_2, ..., prompt_5).
 - Each prompt runs as a separate parallel subagent with its own context.
 - Use this to fan out multiple research questions simultaneously.
-- For implement/review scopes, only the primary prompt is used (sequential).
+- For agents with write tools, only the primary prompt is used (sequential).
 
 Tips:
 - Be specific in the prompt. "Fix the bug in UserService" is bad. "In src/main/kotlin/com/example/UserService.kt, the login() method at line 45 throws NPE when email is null. Add a null check and return an error result." is good.
@@ -109,28 +104,23 @@ Tips:
             ),
             "prompt_2" to ParameterProperty(
                 type = "string",
-                description = "Optional second research prompt (research scope only, parallel execution)."
+                description = "Optional second prompt (parallel execution, read-only agents only)."
             ),
             "prompt_3" to ParameterProperty(
                 type = "string",
-                description = "Optional third research prompt (research scope only, parallel execution)."
+                description = "Optional third prompt (parallel execution, read-only agents only)."
             ),
             "prompt_4" to ParameterProperty(
                 type = "string",
-                description = "Optional fourth research prompt (research scope only, parallel execution)."
+                description = "Optional fourth prompt (parallel execution, read-only agents only)."
             ),
             "prompt_5" to ParameterProperty(
                 type = "string",
-                description = "Optional fifth research prompt (research scope only, parallel execution)."
+                description = "Optional fifth prompt (parallel execution, read-only agents only)."
             ),
             "agent_type" to ParameterProperty(
                 type = "string",
-                description = "Name of a specialist agent type. When set, scope is ignored and the agent uses a curated system prompt and tool set. Use for domain-specific tasks."
-            ),
-            "scope" to ParameterProperty(
-                type = "string",
-                description = "Agent scope: 'research' (read-only), 'implement' (full write access), or 'review' (read + diagnostics). Defaults to 'implement'.",
-                enumValues = listOf("research", "implement", "review")
+                description = "Agent type to use. Defaults to 'general-purpose' if not specified. Each type has a curated system prompt and tool set."
             ),
             "max_iterations" to ParameterProperty(
                 type = "integer",
@@ -147,26 +137,21 @@ Tips:
             ?: return errorResult("Missing required parameter: description")
         val prompt = params["prompt"]?.jsonPrimitive?.content
             ?: return errorResult("Missing required parameter: prompt")
-        val agentType = params["agent_type"]?.jsonPrimitive?.content
-        val scope = params["scope"]?.jsonPrimitive?.content ?: "implement"
+        val agentType = params["agent_type"]?.jsonPrimitive?.content ?: DEFAULT_AGENT_TYPE
         val maxIter = params["max_iterations"]?.jsonPrimitive?.intOrNull ?: 50
 
-        // Agent type path: use config's prompt, tools, max-turns
-        if (agentType != null) {
-            val config = configLoader?.getCachedConfig(agentType)
-                ?: return errorResult(buildUnknownAgentTypeError(agentType))
-            return executeFromConfig(description, prompt, config, maxIter)
+        val config = configLoader?.getCachedConfig(agentType)
+            ?: return errorResult(buildUnknownAgentTypeError(agentType))
+
+        val resolvedTools = resolveConfigTools(config)
+        if (resolvedTools.isEmpty()) {
+            return errorResult("Agent type '${config.name}' has no resolvable tools. Config lists: ${config.tools}")
         }
 
-        // Scope path: existing behavior (unchanged from here)
-        if (scope !in VALID_SCOPES) {
-            return errorResult("Invalid scope: '$scope'. Must be one of: research, implement, review")
-        }
+        val isReadOnly = inferPlanMode(resolvedTools)
 
-        val clampedIterations = maxIter.coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
-
-        // Collect prompts: for research scope, gather from all PROMPT_KEYS; otherwise just primary
-        val prompts = if (scope == "research") {
+        // Collect parallel prompts for read-only agents
+        val prompts = if (isReadOnly) {
             PROMPT_KEYS.mapNotNull { key -> params[key]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } }
         } else {
             listOf(prompt)
@@ -177,9 +162,9 @@ Tips:
         }
 
         return if (prompts.size == 1) {
-            executeSingle(description, prompts.first(), scope, clampedIterations)
+            executeSingle(description, prompts.first(), config, resolvedTools, isReadOnly, maxIter)
         } else {
-            executeParallel(description, prompts, scope, clampedIterations)
+            executeParallel(description, prompts, config, resolvedTools, maxIter)
         }
     }
 
@@ -218,16 +203,26 @@ Tips:
     // ---- Config-based agent execution ----
 
     private fun resolveConfigTools(config: AgentConfig): Map<String, AgentTool> {
-        return config.tools
-            .filter { it != "agent" }
+        val resolved = config.tools
+            .filter { it != "agent" }  // Depth-1 enforcement
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
                 if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown tool: $name")
                 tool?.let { name to it }
             }
             .toMap()
+            .toMutableMap()
+        // Always include attempt_completion — sub-agents MUST be able to terminate
+        if ("attempt_completion" !in resolved) {
+            toolRegistry.get("attempt_completion")?.let { resolved["attempt_completion"] = it }
+        }
+        return resolved
     }
 
+    /**
+     * Infer plan mode from tools: if no write tools are present, the agent is read-only.
+     * Read-only agents run in plan mode (no file mutations) and support parallel execution.
+     */
     private fun inferPlanMode(resolvedTools: Map<String, AgentTool>): Boolean {
         return resolvedTools.keys.none { it in AgentLoop.WRITE_TOOLS }
     }
@@ -240,21 +235,17 @@ Tips:
         return "Unknown agent type '$name'. Available: $available"
     }
 
-    private suspend fun executeFromConfig(
+    // ---- Single subagent execution ----
+
+    private suspend fun executeSingle(
         description: String,
         prompt: String,
         config: AgentConfig,
+        resolvedTools: Map<String, AgentTool>,
+        planMode: Boolean,
         iterationOverride: Int
     ): ToolResult {
-        val resolvedTools = resolveConfigTools(config)
-
-        if (resolvedTools.isEmpty()) {
-            return errorResult("Agent type '${config.name}' has no resolvable tools. Config lists: ${config.tools}")
-        }
-
         val brain = brainProvider()
-
-        val planMode = inferPlanMode(resolvedTools)
         val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
 
         val runner = SubagentRunner(
@@ -276,42 +267,6 @@ Tips:
                 onSubagentProgress?.invoke(description, progress)
             }
             return mapSingleResult(description, config.name, result)
-        } finally {
-            runningAgents.remove(agentId)
-        }
-    }
-
-    // ---- Single subagent execution ----
-
-    private suspend fun executeSingle(
-        description: String,
-        prompt: String,
-        scope: String,
-        maxIterations: Int
-    ): ToolResult {
-        val brain = brainProvider()
-        val scopedTools = resolveScopedTools(scope)
-        val systemPrompt = buildSubAgentPrompt(scope)
-
-        val runner = SubagentRunner(
-            brain = brain,
-            tools = scopedTools,
-            systemPrompt = systemPrompt,
-            project = project,
-            maxIterations = maxIterations,
-            planMode = scope != "implement",
-            contextBudget = contextBudget,
-            maxOutputTokens = maxOutputTokens,
-            apiDebugDir = subagentDebugDir(description)
-        )
-
-        val agentId = generateAgentId()
-        runningAgents[agentId] = runner
-        try {
-            val result = runner.run(prompt) { progress ->
-                onSubagentProgress?.invoke(description, progress)
-            }
-            return mapSingleResult(description, scope, result)
         } finally {
             runningAgents.remove(agentId)
         }
@@ -340,16 +295,16 @@ Tips:
         }
     }
 
-    // ---- Parallel subagent execution (research scope only) ----
+    // ---- Parallel subagent execution (read-only agents only) ----
 
     private suspend fun executeParallel(
         description: String,
         prompts: List<String>,
-        scope: String,
-        maxIterations: Int
+        config: AgentConfig,
+        resolvedTools: Map<String, AgentTool>,
+        iterationOverride: Int
     ): ToolResult {
-        val scopedTools = resolveScopedTools(scope)
-        val systemPrompt = buildSubAgentPrompt(scope)
+        val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
 
         // Create status entries for each prompt
         val entries = prompts.mapIndexed { idx, p ->
@@ -367,11 +322,11 @@ Tips:
                     val brain = brainProvider()
                     val runner = SubagentRunner(
                         brain = brain,
-                        tools = scopedTools,
-                        systemPrompt = systemPrompt,
+                        tools = resolvedTools,
+                        systemPrompt = config.systemPrompt,
                         project = project,
-                        maxIterations = maxIterations,
-                        planMode = true, // research scope is always plan mode
+                        maxIterations = maxIter,
+                        planMode = true, // read-only agents are always plan mode
                         contextBudget = contextBudget,
                         maxOutputTokens = maxOutputTokens,
                         apiDebugDir = subagentDebugDir("${description}-${idx + 1}")
@@ -490,60 +445,6 @@ Tips:
         )
     }
 
-    // ---- Tool scoping ----
-
-    /**
-     * Resolve the tool subset appropriate for the given scope.
-     * The `agent` tool is NEVER included in any scope (depth-1 enforcement).
-     */
-    internal fun resolveScopedTools(scope: String): Map<String, AgentTool> {
-        val allTools = toolRegistry.allTools().associateBy { it.name }
-
-        val allowed = when (scope) {
-            "research" -> allTools.filterKeys { it in RESEARCH_TOOLS }
-            "implement" -> allTools.filterKeys { it !in EXCLUDED_FROM_IMPLEMENT }
-            "review" -> allTools.filterKeys { it in RESEARCH_TOOLS || it in REVIEW_EXTRA_TOOLS }
-            else -> emptyMap()
-        }
-
-        return allowed
-    }
-
-    // ---- Sub-agent system prompt ----
-
-    private fun buildSubAgentPrompt(scope: String): String = buildString {
-        appendLine("You are a sub-agent working inside an IDE on project '${project.name}'.")
-        appendLine("Project path: ${project.basePath}")
-        appendLine()
-        appendLine("## Your Role")
-        when (scope) {
-            "research" -> {
-                appendLine("You are a RESEARCH agent. You can read files, search code, and analyze the codebase.")
-                appendLine("You CANNOT edit files, create files, or run commands.")
-            }
-            "implement" -> {
-                appendLine("You are an IMPLEMENTATION agent. You have full access to read, edit, create files, and run commands.")
-                appendLine("You should implement the task completely, verify it works (compile, test), and report results.")
-            }
-            "review" -> {
-                appendLine("You are a REVIEW agent. You can read files and run diagnostics/inspections.")
-                appendLine("You CANNOT edit files or run commands. Report issues you find.")
-            }
-        }
-        appendLine()
-        appendLine("## Rules")
-        appendLine("- You have NO access to any previous conversation. The task prompt is your ONLY input.")
-        appendLine("- Work autonomously — you cannot ask questions or interact with the user.")
-        appendLine("- When finished, call attempt_completion with a clear, structured summary of your findings/work.")
-        appendLine("- Be thorough but efficient — you have a limited iteration budget.")
-        appendLine("- NEVER respond without calling a tool. Always take action or call attempt_completion.")
-        if (scope == "implement") {
-            appendLine("- Read files before editing them.")
-            appendLine("- After editing, verify your changes work (run tests, check compilation).")
-            appendLine("- If tests fail, fix the issues before completing.")
-        }
-    }
-
     // ---- Helpers ----
 
     private fun errorResult(message: String) = ToolResult(
@@ -558,46 +459,11 @@ Tips:
 
         const val DEFAULT_CONTEXT_BUDGET = 150_000
         const val MAX_PARALLEL_PROMPTS = 5
+        const val DEFAULT_AGENT_TYPE = "general-purpose"
         val PROMPT_KEYS = listOf("prompt", "prompt_2", "prompt_3", "prompt_4", "prompt_5")
 
         const val MIN_ITERATIONS = 5
         const val MAX_ITERATIONS = 100
-
-        val VALID_SCOPES = setOf("research", "implement", "review")
-
-        // ---- Research scope: read-only tools ----
-        val RESEARCH_TOOLS = setOf(
-            // Builtin read tools
-            "read_file", "search_code", "glob_files", "think", "attempt_completion",
-            "project_context", "current_time", "ask_followup_question",
-            // PSI / code intelligence (all read-only)
-            "find_definition", "find_references", "find_implementations",
-            "file_structure", "type_hierarchy", "call_hierarchy",
-            "type_inference", "get_method_body", "get_annotations",
-            "read_write_access", "structural_search", "test_finder",
-            "dataflow_analysis",
-            // VCS read tools
-            "git_status", "git_diff", "git_log", "git_blame",
-            "git_show_file", "git_file_history", "git_show_commit",
-            "git_branches", "changelist_shelve", "git_stash_list",
-            "git_merge_base"
-        )
-
-        // ---- Review scope: research + diagnostics ----
-        val REVIEW_EXTRA_TOOLS = setOf(
-            "diagnostics", "run_inspections", "problem_view",
-            "list_quickfixes", "coverage"
-        )
-
-        // ---- Implement scope: everything EXCEPT these ----
-        val EXCLUDED_FROM_IMPLEMENT = setOf(
-            "agent",                                        // Prevent recursion (CRITICAL)
-            "jira", "bamboo_builds", "bamboo_plans",        // Integration tools
-            "bitbucket_pr", "bitbucket_repo",
-            "bitbucket_review", "sonar",
-            "db_query", "db_schema", "db_list_profiles",    // Database tools
-            "ask_user_input"                                // Sub-agents can't interact with user
-        )
 
         /** Generate a short random ID for a subagent (8 hex chars). */
         fun generateAgentId(): String = java.util.UUID.randomUUID().toString().take(8)

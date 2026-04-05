@@ -409,6 +409,8 @@ class AgentConfigLoader private constructor() : Disposable {
 
         /** Bundled specialist agent files shipped in plugin resources. */
         private val BUNDLED_AGENT_FILES = listOf(
+            "explorer.md",
+            "general-purpose.md",
             "code-reviewer.md",
             "architect-reviewer.md",
             "test-automator.md",
