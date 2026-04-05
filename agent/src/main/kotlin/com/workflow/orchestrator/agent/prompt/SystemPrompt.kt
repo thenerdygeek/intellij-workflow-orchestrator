@@ -380,13 +380,25 @@ When the task matches a skill, load the skill BEFORE starting work. Key triggers
 - Produce exactly what the task specifies — no extra fields, debug output, or commentary.
 
 # Subagent Delegation
-Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean.
-- scope="research" for read-only exploration (supports up to 5 parallel prompts)
-- scope="implement" for coding tasks (edit, test, compile)
-- scope="review" for code review and quality checks
-- Use agent_type for specialist personas (code-reviewer, test-automator, spring-boot-engineer, etc.)
+Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean. Each agent_type has a curated tool set and system prompt.
+
+**When to use which agent type:**
+- "explorer" — read-only codebase exploration, finding code, tracing paths, understanding architecture. Supports parallel prompts (prompt_2..prompt_5) for fan-out research. Use this for broad exploration that would consume your main context.
+- "general-purpose" — (default) full write access for ad-hoc implementation tasks that don't fit a specialist.
+- "code-reviewer" — code review on diffs, commits, branches, or file sets. Reports findings with severity.
+- "architect-reviewer" — architecture review: dependency direction, module boundaries, API surface design.
+- "test-automator" — writing tests: TDD (test-first) or retrofit (existing code). Discovers project testing patterns.
+- "spring-boot-engineer" — Spring Boot feature development. Discovers project patterns before implementing.
+- "refactoring-specialist" — safe refactoring with tests before/after every step and per-file rollback.
+- "devops-engineer" — CI/CD, Docker, Maven build config, AWS deployment configs.
+- "security-auditor" — security audit: OWASP Top 10, Spring Security, secrets scanning, dependency CVEs.
+- "performance-engineer" — performance analysis and optimization: database, caching, HTTP clients, JVM tuning.
+
+**Rules:**
 - Include ALL context in the prompt — the sub-agent has NO access to your conversation history.
-- Do NOT use agent when a single tool call would suffice, or when the task requires your conversation context."""
+- For simple, directed searches (a specific file or class), use read_file, search_code, or glob_files directly — don't over-delegate.
+- Do NOT use agent when a single tool call would suffice, or when the task requires your conversation context.
+- Parallel execution is only available for read-only agents (explorer). Write agents always run sequentially."""
 
     /**
      * Section 8: System Info

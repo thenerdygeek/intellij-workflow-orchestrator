@@ -87,8 +87,8 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   const isRunning = subAgent.status === 'RUNNING';
   const [isOpen, setIsOpen] = useState(true);
 
-  const agentType = extractType(subAgent.label);
-  const agentName = extractName(subAgent.label);
+  const agentType = extractType(subAgent.agentId);
+  const agentName = extractName(subAgent.agentId);
   const elapsedStr = useLiveTimer(subAgent.startedAt, isRunning);
 
   // ── Outer chat scroll context ──

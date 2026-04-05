@@ -261,10 +261,11 @@ Tips:
         )
 
         val agentId = generateAgentId()
+        val uiLabel = "$description (${config.name})"
         runningAgents[agentId] = runner
         try {
             val result = runner.run(prompt) { progress ->
-                onSubagentProgress?.invoke(description, progress)
+                onSubagentProgress?.invoke(uiLabel, progress)
             }
             return mapSingleResult(description, config.name, result)
         } finally {
@@ -305,6 +306,7 @@ Tips:
         iterationOverride: Int
     ): ToolResult {
         val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
+        val uiLabel = "$description (${config.name})"
 
         // Create status entries for each prompt
         val entries = prompts.mapIndexed { idx, p ->
@@ -333,7 +335,7 @@ Tips:
                     )
 
                     entries[idx].status = "running"
-                    emitGroupProgress(description, entries)
+                    emitGroupProgress(uiLabel, entries)
 
                     val agentId = generateAgentId()
                     runningAgents[agentId] = runner
@@ -350,7 +352,7 @@ Tips:
                                 entries[idx].contextUsagePercentage = stats.contextUsagePercentage
                             }
                             progress.latestToolCall?.let { entries[idx].latestToolCall = it }
-                            emitGroupProgress(description, entries)
+                            emitGroupProgress(uiLabel, entries)
                         }
 
                         // Update entry with final result
@@ -364,12 +366,12 @@ Tips:
                                 entries[idx].error = result.error
                             }
                         }
-                        emitGroupProgress(description, entries)
+                        emitGroupProgress(uiLabel, entries)
                         result
                     } catch (e: Exception) {
                         entries[idx].status = "failed"
                         entries[idx].error = e.message ?: "Unknown error"
-                        emitGroupProgress(description, entries)
+                        emitGroupProgress(uiLabel, entries)
                         SubagentRunResult(
                             status = SubagentRunStatus.FAILED,
                             error = e.message ?: "Unknown error"
