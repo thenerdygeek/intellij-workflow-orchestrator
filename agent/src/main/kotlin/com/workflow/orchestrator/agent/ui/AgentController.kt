@@ -269,7 +269,14 @@ class AgentController(
         // Kill sub-agent — user clicks the kill button on a running sub-agent card
         dashboard.setCefKillSubAgentCallback { agentId ->
             LOG.info("AgentController: kill sub-agent requested — $agentId")
-            // TODO: Wire to SpawnAgentTool.cancel() when per-agent cancellation API is available
+            val spawnTool = service.registry.get("agent")
+                as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
+            val killed = spawnTool?.cancelAgent(agentId) ?: false
+            if (killed) {
+                LOG.info("AgentController: subagent $agentId cancelled")
+            } else {
+                LOG.warn("AgentController: subagent $agentId not found in running agents")
+            }
         }
 
         // Set model name from settings

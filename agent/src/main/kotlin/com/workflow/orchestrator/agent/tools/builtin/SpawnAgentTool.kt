@@ -24,6 +24,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Claude Code-style sub-agent delegation tool.
@@ -182,6 +183,23 @@ Tips:
         }
     }
 
+    // ---- Running subagent registry (for cancellation) ----
+
+    /** Registry of running subagent runners, keyed by agent ID. */
+    private val runningAgents = ConcurrentHashMap<String, SubagentRunner>()
+
+    /**
+     * Cancel a running subagent by ID.
+     * Called from the UI kill button via AgentController.
+     * Returns true if the subagent was found and abort was requested; false if not found.
+     */
+    fun cancelAgent(agentId: String): Boolean {
+        val runner = runningAgents[agentId] ?: return false
+        runner.abort()
+        LOG.info("[SpawnAgent] Abort requested for subagent $agentId")
+        return true
+    }
+
     // ---- Debug dir for sub-agents ----
 
     private val subagentCounter = java.util.concurrent.atomic.AtomicInteger(0)
@@ -251,11 +269,16 @@ Tips:
             apiDebugDir = subagentDebugDir(description)
         )
 
-        val result = runner.run(prompt) { progress ->
-            onSubagentProgress?.invoke(description, progress)
+        val agentId = generateAgentId()
+        runningAgents[agentId] = runner
+        try {
+            val result = runner.run(prompt) { progress ->
+                onSubagentProgress?.invoke(description, progress)
+            }
+            return mapSingleResult(description, config.name, result)
+        } finally {
+            runningAgents.remove(agentId)
         }
-
-        return mapSingleResult(description, config.name, result)
     }
 
     // ---- Single subagent execution ----
@@ -282,11 +305,16 @@ Tips:
             apiDebugDir = subagentDebugDir(description)
         )
 
-        val result = runner.run(prompt) { progress ->
-            onSubagentProgress?.invoke(description, progress)
+        val agentId = generateAgentId()
+        runningAgents[agentId] = runner
+        try {
+            val result = runner.run(prompt) { progress ->
+                onSubagentProgress?.invoke(description, progress)
+            }
+            return mapSingleResult(description, scope, result)
+        } finally {
+            runningAgents.remove(agentId)
         }
-
-        return mapSingleResult(description, scope, result)
     }
 
     private fun mapSingleResult(
@@ -352,6 +380,8 @@ Tips:
                     entries[idx].status = "running"
                     emitGroupProgress(description, entries)
 
+                    val agentId = generateAgentId()
+                    runningAgents[agentId] = runner
                     try {
                         val result = runner.run(p) { progress ->
                             // Update the entry with progress info
@@ -389,6 +419,8 @@ Tips:
                             status = SubagentRunStatus.FAILED,
                             error = e.message ?: "Unknown error"
                         )
+                    } finally {
+                        runningAgents.remove(agentId)
                     }
                 }
             }.map { it.await() }
@@ -566,6 +598,9 @@ Tips:
             "db_query", "db_schema", "db_list_profiles",    // Database tools
             "ask_user_input"                                // Sub-agents can't interact with user
         )
+
+        /** Generate a short random ID for a subagent (8 hex chars). */
+        fun generateAgentId(): String = java.util.UUID.randomUUID().toString().take(8)
 
         /** Truncate text with ellipsis. */
         fun excerpt(text: String, maxChars: Int = 1200): String =
