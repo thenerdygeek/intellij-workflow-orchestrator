@@ -348,8 +348,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
       {question.type === 'text' ? (
         <TextQuestion question={question} onAnswer={handleTextAnswer} />
       ) : (
-        <>
-          {/* Select question via tool-ui QuestionFlow */}
+        <div className="question-flow-with-other max-w-md min-w-80">
           <QuestionFlow
             id={`question-${question.id}`}
             step={activeIndex + 1}
@@ -361,68 +360,67 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
             onBack={activeIndex > 0 ? handleBack : undefined}
           />
 
-          {/* "Other" option with inline text input — visually attached to the card above */}
+          {/* "Other" option — rendered inside the card via negative margin overlap */}
           <div
-            className="-mt-3 rounded-b-2xl border border-t-0 px-5 pb-4 pt-2"
+            className="-mt-[1px] rounded-b-2xl border border-t-0 px-5 pb-4"
             style={{
               borderColor: 'var(--border)',
               backgroundColor: 'var(--toolbar-bg, var(--card))',
             }}
           >
-            <div className="border-t pt-3" style={{ borderColor: 'var(--border)' }}>
-              <button
-                className="flex items-start gap-3 w-full text-left group"
-                onClick={() => {
-                  setCustomSelected(!customSelected);
-                }}
-              >
-                <span className="flex h-6 items-center">
-                  <span
-                    className="flex size-4 shrink-0 items-center justify-center border-2 rounded-full transition-colors"
-                    style={{
-                      borderColor: customSelected ? 'var(--accent, #0078d4)' : 'var(--fg-muted)',
-                      backgroundColor: customSelected ? 'var(--accent, #0078d4)' : 'transparent',
-                    }}
-                  >
-                    {customSelected && (
-                      <span className="size-2 rounded-full bg-white" />
-                    )}
-                  </span>
-                </span>
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium leading-6" style={{ color: 'var(--fg)' }}>Other</span>
-                  {!customSelected && (
-                    <span className="text-sm ml-1" style={{ color: 'var(--fg-muted)' }}>— type a custom answer</span>
-                  )}
-                </div>
-              </button>
+            {/* Separator line matching the option dividers */}
+            <div className="mx-1" style={{ borderTop: '1px solid hsl(var(--border, 0 0% 20%))' }} />
 
-              {customSelected && (
-                <div className="mt-2 ml-7 flex gap-1.5 animate-[fade-in_150ms_ease-out]">
-                  <input
-                    autoFocus
-                    value={customText}
-                    onChange={e => setCustomText(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && customText.trim()) handleCustomSubmit();
-                      if (e.key === 'Escape') { setCustomSelected(false); setCustomText(''); }
-                    }}
-                    placeholder="Type a custom answer..."
-                    className="flex-1 text-sm px-3 py-1.5 rounded-lg border bg-transparent outline-none focus:ring-1"
-                    style={{
-                      borderColor: 'var(--accent, #0078d4)',
-                      color: 'var(--fg)',
-                    }}
-                  />
-                  <Button size="sm" className="h-8 question-view-btn" onClick={handleCustomSubmit} disabled={!customText.trim()}>
-                    <Send className="h-3 w-3 mr-1" />
-                    Submit
-                  </Button>
-                </div>
-              )}
-            </div>
+            <button
+              className="flex items-start gap-3 w-full text-left py-2.5 px-1 group"
+              onClick={() => setCustomSelected(!customSelected)}
+            >
+              <span className="flex h-6 items-center">
+                <span
+                  className="flex size-4 shrink-0 items-center justify-center border-2 rounded-full transition-colors"
+                  style={{
+                    borderColor: customSelected ? 'var(--accent, #0078d4)' : 'color-mix(in srgb, var(--fg-muted) 50%, transparent)',
+                    backgroundColor: customSelected ? 'var(--accent, #0078d4)' : 'transparent',
+                  }}
+                >
+                  {customSelected && (
+                    <span className="size-2 rounded-full bg-white" />
+                  )}
+                </span>
+              </span>
+              <div className="flex flex-col text-left">
+                <span className="text-sm font-medium leading-6" style={{ color: 'var(--fg)' }}>Other</span>
+                {!customSelected && (
+                  <span className="text-sm" style={{ color: 'var(--fg-muted)' }}>Type a custom answer</span>
+                )}
+              </div>
+            </button>
+
+            {customSelected && (
+              <div className="ml-7 flex gap-1.5 pb-1 animate-[fade-in_150ms_ease-out]">
+                <input
+                  autoFocus
+                  value={customText}
+                  onChange={e => setCustomText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && customText.trim()) handleCustomSubmit();
+                    if (e.key === 'Escape') { setCustomSelected(false); setCustomText(''); }
+                  }}
+                  placeholder="Type a custom answer..."
+                  className="flex-1 text-sm px-3 py-1.5 rounded-lg border bg-transparent outline-none focus:ring-1"
+                  style={{
+                    borderColor: 'var(--accent, #0078d4)',
+                    color: 'var(--fg)',
+                  }}
+                />
+                <Button size="sm" className="h-8 question-view-btn" onClick={handleCustomSubmit} disabled={!customText.trim()}>
+                  <Send className="h-3 w-3 mr-1" />
+                  Submit
+                </Button>
+              </div>
+            )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Action row: Skip + Chat about + Cancel */}

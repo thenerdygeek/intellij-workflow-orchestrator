@@ -218,3 +218,10 @@ code, pre, .font-mono {
   background-color: var(--toolbar-bg, #252526);
   border-color: var(--border, #3c3c3c);
 }
+
+/* Strip bottom rounding from QuestionFlow card when "Other" option is attached below */
+.question-flow-with-other [data-slot="question-flow"] > div {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-bottom: none !important;
+}
