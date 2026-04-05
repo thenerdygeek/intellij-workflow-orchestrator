@@ -16,6 +16,7 @@ import com.workflow.orchestrator.agent.loop.PlanParser
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
@@ -252,6 +253,24 @@ class AgentController(
 
         // The fallback onSendMessage for non-JCEF (RichStreamingPanel) path
         dashboard.onSendMessage = ::executeTask
+
+        // Tool toggle — user enables/disables a tool via the Tools panel checkbox
+        dashboard.setCefToolToggleCallback { toolName, enabled ->
+            LOG.info("AgentController: tool toggle — $toolName enabled=$enabled")
+            ToolPreferences.getInstance(project).setToolEnabled(toolName, enabled)
+        }
+
+        // Skill dismiss — user clicks the X on the active skill banner
+        dashboard.setCefSkillCallbacks(onDismiss = {
+            LOG.info("AgentController: skill dismissed by user")
+            contextManager?.clearActiveSkill()
+        })
+
+        // Kill sub-agent — user clicks the kill button on a running sub-agent card
+        dashboard.setCefKillSubAgentCallback { agentId ->
+            LOG.info("AgentController: kill sub-agent requested — $agentId")
+            // TODO: Wire to SpawnAgentTool.cancel() when per-agent cancellation API is available
+        }
 
         // Set model name from settings
         val model = AgentSettings.getInstance(project).state.sourcegraphChatModel
