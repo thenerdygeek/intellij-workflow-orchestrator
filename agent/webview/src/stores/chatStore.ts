@@ -103,6 +103,7 @@ interface ChatState {
   checkpoints: CheckpointInfo[];
   rollbackEvents: RollbackInfo[];
   smartWorkingPhrase: string | null;
+  sessionTitle: string | null;
   planPending: 'approve' | 'revise' | null;
   planCompletedPendingClear: boolean;
   queuedSteeringMessages: { id: string; text: string; timestamp: number }[];
@@ -234,6 +235,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   checkpoints: [],
   rollbackEvents: [],
   smartWorkingPhrase: null,
+  sessionTitle: null,
   planPending: null,
   planCompletedPendingClear: false,
   queuedSteeringMessages: [],
@@ -259,6 +261,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       steeringMode: true,
       retryMessage: null,
       smartWorkingPhrase: null,
+      sessionTitle: null,
       editStats: null,
       checkpoints: [],
       queuedSteeringMessages: [],
@@ -813,6 +816,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSmartWorkingPhrase(phrase: string) {
     set({ smartWorkingPhrase: phrase });
+  },
+
+  setSessionTitle(title: string) {
+    set({ sessionTitle: title });
   },
 
   // ── Queued Steering Actions ──

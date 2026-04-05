@@ -554,6 +554,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.setSmartWorkingPhrase(phrase) }
     }
 
+    fun setSessionTitle(title: String) {
+        runOnEdt { cefPanel?.setSessionTitle(title) }
+        mirrors.forEach { it.setSessionTitle(title) }
+    }
+
     fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
         cefPanel?.onRevertCheckpoint = onRevert
     }

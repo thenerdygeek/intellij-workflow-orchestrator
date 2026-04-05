@@ -1262,6 +1262,8 @@ class AgentController(
                     if (sid != null) {
                         service.updateSessionTitle(sid, newTitle)
                     }
+                    // Push to chat UI top bar
+                    invokeLater { dashboard.setSessionTitle(newTitle) }
                     LOG.info("AgentController: conversation title set to: $newTitle")
                 }
             } catch (e: Exception) {

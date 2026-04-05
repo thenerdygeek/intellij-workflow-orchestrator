@@ -1013,6 +1013,10 @@ class AgentCefPanel(
         callJs("setSmartWorkingPhrase(${jsonStr(phrase)})")
     }
 
+    fun setSessionTitle(title: String) {
+        callJs("setSessionTitle(${jsonStr(title)})")
+    }
+
     // ── Queued steering message rendering ──
 
     fun addQueuedSteeringMessage(id: String, text: String) {

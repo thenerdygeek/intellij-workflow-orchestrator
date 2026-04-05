@@ -11,6 +11,7 @@ import type { Message } from '@/bridge/types';
 export const TopBar = memo(function TopBar() {
   const tokenBudget = useChatStore(s => s.tokenBudget);
   const busy = useChatStore(s => s.busy);
+  const sessionTitle = useChatStore(s => s.sessionTitle);
   const debugVisible = useChatStore(s => s.debugLogVisible);
   const debugEntries = useChatStore(s => s.debugLogEntries);
   const hasErrors = debugEntries.some(e => e.level === 'error');
@@ -166,6 +167,17 @@ export const TopBar = memo(function TopBar() {
           </div>
         )}
       </div>
+
+      {/* Center: Session title */}
+      {sessionTitle && (
+        <span
+          className="text-[11px] font-medium truncate max-w-[200px]"
+          style={{ color: 'var(--fg-secondary, #9ca3af)' }}
+          title={sessionTitle}
+        >
+          {sessionTitle}
+        </span>
+      )}
 
       {/* Right: Debug toggle + View in Editor + New chat button */}
       <div className="flex items-center gap-1">

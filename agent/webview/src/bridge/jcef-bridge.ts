@@ -262,6 +262,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setSmartWorkingPhrase(phrase: string) {
     stores?.getChatStore().setSmartWorkingPhrase(phrase);
   },
+  setSessionTitle(title: string) {
+    stores?.getChatStore().setSessionTitle(title);
+  },
 
   // Queued steering message methods from Kotlin
   addQueuedSteeringMessage(id: string, text: string) {
