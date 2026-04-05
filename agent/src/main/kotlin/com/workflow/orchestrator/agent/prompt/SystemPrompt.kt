@@ -383,7 +383,7 @@ When the task matches a skill, load the skill BEFORE starting work. Key triggers
 Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean. Each agent_type has a curated tool set and system prompt.
 
 **When to use which agent type:**
-- "explorer" — read-only codebase exploration, finding code, tracing paths, understanding architecture. Supports parallel prompts (prompt_2..prompt_5) for fan-out research. Use this for broad exploration that would consume your main context.
+- "explorer" — fast read-only codebase exploration. Use when you need to find files by patterns (e.g., "**/*Service.kt"), search code for keywords (e.g., "all @Transactional methods"), trace call paths, or answer questions about the codebase (e.g., "how does authentication work?"). When calling explorer, specify the desired thoroughness in your prompt: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions. Supports parallel prompts (prompt_2..prompt_5) for fan-out research.
 - "general-purpose" — (default) full write access for ad-hoc implementation tasks that don't fit a specialist.
 - "code-reviewer" — code review on diffs, commits, branches, or file sets. Reports findings with severity.
 - "architect-reviewer" — architecture review: dependency direction, module boundaries, API surface design.
@@ -394,10 +394,19 @@ Use the agent tool to delegate self-contained tasks to a sub-agent with its own 
 - "security-auditor" — security audit: OWASP Top 10, Spring Security, secrets scanning, dependency CVEs.
 - "performance-engineer" — performance analysis and optimization: database, caching, HTTP clients, JVM tuning.
 
+**When NOT to use agent (use direct tools instead):**
+- If you want to read a specific file path — use read_file directly.
+- If you are searching for a specific class or function by name — use search_code or glob_files directly.
+- If you are searching code within a specific file or 2-3 files — use read_file directly.
+- If a single tool call would suffice — don't over-delegate.
+- If the task requires your conversation context to understand — sub-agents can't see it.
+
+**When to use explorer vs direct tools:**
+- For simple, directed searches (a specific file, class, or function) — use read_file, search_code, or glob_files directly. These are faster.
+- For broader codebase exploration and deep research — use agent(agent_type="explorer"). This is slower but keeps your main context clean. Use it when a simple search proves insufficient or when the task will clearly require more than 3 queries.
+
 **Rules:**
 - Include ALL context in the prompt — the sub-agent has NO access to your conversation history.
-- For simple, directed searches (a specific file or class), use read_file, search_code, or glob_files directly — don't over-delegate.
-- Do NOT use agent when a single tool call would suffice, or when the task requires your conversation context.
 - Parallel execution is only available for read-only agents (explorer). Write agents always run sequentially."""
 
     /**
