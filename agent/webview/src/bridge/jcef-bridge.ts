@@ -105,8 +105,12 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().updatePlanSummary(summary);
   },
   showQuestions(questionsJson: string) {
-    const questions = JSON.parse(questionsJson);
-    stores?.getChatStore().showQuestions(questions);
+    const parsed = JSON.parse(questionsJson);
+    // Kotlin sends either { questions: [...] } wrapper or bare [...] array
+    const questions = Array.isArray(parsed) ? parsed : parsed.questions;
+    if (questions) {
+      stores?.getChatStore().showQuestions(questions);
+    }
   },
   showQuestion(index: number) {
     stores?.getChatStore().showQuestion(index);
