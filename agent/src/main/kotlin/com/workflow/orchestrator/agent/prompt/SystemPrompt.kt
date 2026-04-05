@@ -243,8 +243,8 @@ There are two modes:
 
 ## Mode switching rules
 
-- You CAN suggest entering PLAN MODE if the task is complex and would benefit from planning before implementation.
-- You CANNOT switch to ACT MODE yourself. Only the user can switch from PLAN MODE to ACT MODE (by clicking the approve/act button in the UI). Do not assume you are in ACT MODE unless the environment_details confirms it.
+- You CAN switch to PLAN MODE by calling the enable_plan_mode tool if the task is complex and would benefit from planning before implementation. Do this proactively for multi-step tasks, large refactors, or when the approach is unclear.
+- You CANNOT switch to ACT MODE yourself. Only the user can switch from PLAN MODE to ACT MODE (by clicking the approve/act button in the UI).
 - When the user approves the plan and switches to ACT MODE, implement the plan step by step using the available tools."""
     }
 
