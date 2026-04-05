@@ -13,13 +13,13 @@ class AttemptCompletionTool : AgentTool {
 
     override val name = "attempt_completion"
 
-    override val description = "After each tool use, the user will respond with the result of that tool use, i.e. if it succeeded or failed, along with any reasons for failure. Once you've received the results of tool uses and can confirm that the task is complete, use this tool to present the result of your work to the user. Optionally you may provide a CLI command to showcase the result of your work. The user may respond with feedback if they are not satisfied with the result, which you can use to make improvements and try again. IMPORTANT: This tool CANNOT be used until you've confirmed from the user that any previous tool uses were successful. Failure to do so will result in code corruption and system failure. Before using this tool, you must verify that all previous tool uses completed successfully."
+    override val description = "Once you've confirmed that all tool uses succeeded and the task is complete, use this tool to signal completion. Your detailed explanation should go in the text content BEFORE this tool call (the user reads it in real-time as it streams). The result parameter here is a SHORT summary card — not a repeat of what you already explained. The user may respond with feedback if they are not satisfied, which you can use to make improvements and try again. IMPORTANT: This tool CANNOT be used until you've confirmed from the user that any previous tool uses were successful. Before using this tool, you must verify that all previous tool uses completed successfully."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "result" to ParameterProperty(
                 type = "string",
-                description = "The result of the task. This should be a clear, specific description of what was accomplished. Formulate this result in a way that is final and does not require further input from the user. Don't end your result with questions or offers for further assistance."
+                description = "A concise summary card (2-4 sentences max). Do NOT repeat your detailed explanation — the user already read that in your streamed text. Instead, provide: (1) a one-line summary of what was accomplished, (2) any next steps, verification commands, or follow-up suggestions. Think of this as a TL;DR + actionable next steps, not a full report."
             ),
             "command" to ParameterProperty(
                 type = "string",
