@@ -419,7 +419,7 @@ Tips:
         val RESEARCH_TOOLS = setOf(
             // Builtin read tools
             "read_file", "search_code", "glob_files", "think", "attempt_completion",
-            "project_context", "current_time", "ask_questions",
+            "project_context", "current_time", "ask_followup_question",
             // PSI / code intelligence (all read-only)
             "find_definition", "find_references", "find_implementations",
             "file_structure", "type_hierarchy", "call_hierarchy",

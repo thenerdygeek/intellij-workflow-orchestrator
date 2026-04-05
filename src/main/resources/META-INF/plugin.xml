@@ -266,6 +266,8 @@
             implementation="com.workflow.orchestrator.agent.ui.AgentVisualizationEditorProvider"/>
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.ui.AgentChatEditorProvider"/>
+        <fileEditorProvider
+            implementation="com.workflow.orchestrator.agent.testing.ToolTestingEditorProvider"/>
 
         <!-- Jira Ticket Reference TODO Pattern -->
         <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
@@ -316,6 +318,13 @@
             description="Generate commit message using AI"
             class="com.workflow.orchestrator.core.vcs.GenerateCommitMessageAction">
             <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+        <action
+            id="Workflow.OpenToolTesting"
+            text="Agent Tool Testing"
+            description="Open interactive agent tool testing harness"
+            class="com.workflow.orchestrator.agent.testing.OpenToolTestingAction">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>
 </idea-plugin>

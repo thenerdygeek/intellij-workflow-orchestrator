@@ -573,7 +573,7 @@ class ContextManager(
 
     /**
      * Extract file path from a tool result based on tool name.
-     * Recognizes read_file, write_to_file, replace_in_file patterns.
+     * Recognizes read_file, create_file, edit_file patterns.
      * Matches Cline's parseToolCallWithFormat logic but adapted for our
      * OpenAI-compatible format where params are in the tool call, not the result.
      */
@@ -779,8 +779,7 @@ class ContextManager(
     companion object {
         /** Tools that read/write files and whose results contain file content. */
         private val FILE_READ_TOOLS = setOf(
-            "read_file", "write_to_file", "replace_in_file",
-            "create_file", "edit_file"
+            "read_file", "create_file", "edit_file"
         )
 
         /** Matches "[tool_name for '/path/to/file'] Result:" header format. */

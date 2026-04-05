@@ -50,7 +50,7 @@ class SpawnAgentToolTest {
         // Builtin read tools (attempt_completion uses real implementation for isCompletion=true)
         for (name in listOf(
             "read_file", "search_code", "glob_files", "think",
-            "project_context", "current_time", "ask_questions", "ask_user_input"
+            "project_context", "current_time", "ask_followup_question", "ask_user_input"
         )) reg.register(stubTool(name))
         reg.register(AttemptCompletionTool())
 
@@ -210,7 +210,7 @@ class SpawnAgentToolTest {
             assertTrue("attempt_completion" in scoped, "research should include attempt_completion")
             assertTrue("project_context" in scoped, "research should include project_context")
             assertTrue("current_time" in scoped, "research should include current_time")
-            assertTrue("ask_questions" in scoped, "research should include ask_questions")
+            assertTrue("ask_followup_question" in scoped, "research should include ask_questions")
         }
 
         @Test

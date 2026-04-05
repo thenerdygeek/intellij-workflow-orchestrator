@@ -60,8 +60,7 @@ class SystemPromptTest {
 
         assertTrue(prompt.contains("CAPABILITIES"), "should contain CAPABILITIES heading")
         assertTrue(prompt.contains("run_command"), "should reference run_command tool")
-        assertTrue(prompt.contains("search_files"), "should reference search_files tool")
-        assertTrue(prompt.contains("list_code_definitions"), "should reference list_code_definitions tool")
+        assertTrue(prompt.contains("search_code"), "should reference search_code tool")
         assertTrue(prompt.contains("read_file"), "should reference read_file tool")
     }
 

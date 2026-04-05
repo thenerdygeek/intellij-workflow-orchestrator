@@ -150,7 +150,30 @@ class AgentController(
             }
         }
 
-        // Gap 11: Wire AskQuestionsTool to dashboard question wizard
+        // Wire AskQuestionsTool callbacks
+        // Simple mode: show question in chat stream, user types answer via chat input.
+        // The tool blocks on pendingQuestions deferred. When the user sends a message,
+        // executeTask() intercepts it and resolves the deferred directly.
+        com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+            invokeLater {
+                val display = buildString {
+                    append(question)
+                    if (!optionsJson.isNullOrBlank()) {
+                        try {
+                            val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
+                            if (options.isNotEmpty()) {
+                                append("\n\nOptions:")
+                                options.forEachIndexed { i, opt -> append("\n${i + 1}. $opt") }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                // Show question as a status message and unlock input for user to type answer
+                dashboard.appendStatus(display, RichStreamingPanel.StatusType.INFO)
+                dashboard.setBusy(false) // Unlock input so user can type
+            }
+        }
+        // Wizard mode: structured multi-question UI
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
             invokeLater { dashboard.showQuestions(questionsJson) }
         }
@@ -335,6 +358,16 @@ class AgentController(
                 LOG.info("AgentController: USER_PROMPT_SUBMIT hook cancelled: ${hookResult.reason}")
                 return
             }
+        }
+
+        // If a simple question is pending (ask_followup_question), resolve it with user's answer
+        val pending = com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.pendingQuestions
+        if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
+            LOG.info("AgentController: resolving pending question with user answer")
+            dashboard.appendUserMessage(task)
+            dashboard.setBusy(true)
+            pending.complete(task)
+            return
         }
 
         // If the loop is waiting for user input (plan mode dialogue), feed into it
