@@ -43,14 +43,15 @@ class CoreMemoryReadTool(private val coreMemory: CoreMemory) : AgentTool {
                 }
             } else {
                 val blocks = coreMemory.readAll()
-                if (blocks.isEmpty()) {
+                val nonEmpty = blocks.filter { it.value.value.isNotBlank() }
+                if (nonEmpty.isEmpty()) {
                     ToolResult(
-                        content = "Core memory is empty. Use core_memory_append to store information.",
+                        content = "Core memory is empty. Use core_memory_append to store information.\nAvailable blocks: ${blocks.keys.joinToString(", ")}",
                         summary = "Core memory empty",
                         tokenEstimate = 10
                     )
                 } else {
-                    val formatted = blocks.entries.joinToString("\n\n") { (label, block) ->
+                    val formatted = nonEmpty.entries.joinToString("\n\n") { (label, block) ->
                         "[$label] (${block.value.length}/${block.limit} chars)\n${block.value}"
                     }
                     ToolResult(

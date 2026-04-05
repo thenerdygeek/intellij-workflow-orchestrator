@@ -29,6 +29,13 @@ class CoreMemory(private val storageFile: File) {
         private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
 
         /**
+         * Default block labels pre-seeded on first initialization.
+         * Created empty so they appear as labeled sections in compile() output,
+         * guiding the LLM on what to store. The MEMORY prompt section explains each block.
+         */
+        private val DEFAULT_BLOCK_LABELS = listOf("user", "project", "patterns")
+
+        /**
          * Load core memory for a project directory.
          * Port of Letta's CoreMemory.forProject() pattern.
          *
@@ -44,6 +51,24 @@ class CoreMemory(private val storageFile: File) {
 
     init {
         load()
+        seedDefaultBlocks()
+    }
+
+    /**
+     * Pre-seed empty labeled blocks on first initialization so the LLM
+     * sees the structure in <core_memory> and knows what to fill in.
+     * Only creates blocks that don't already exist (safe to call on every load).
+     * Blocks start empty — the MEMORY prompt section tells the LLM what each is for.
+     */
+    private fun seedDefaultBlocks() {
+        var changed = false
+        for (label in DEFAULT_BLOCK_LABELS) {
+            if (label !in blocks) {
+                blocks[label] = MemoryBlock(value = "", limit = DEFAULT_BLOCK_LIMIT)
+                changed = true
+            }
+        }
+        if (changed) persist()
     }
 
     // ---- Block operations (ported from Letta's core_memory_append/replace) ----

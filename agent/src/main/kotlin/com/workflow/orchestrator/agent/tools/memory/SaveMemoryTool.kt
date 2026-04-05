@@ -14,7 +14,7 @@ import java.time.format.DateTimeFormatter
 
 class SaveMemoryTool(private val agentDir: File) : AgentTool {
     override val name = "save_memory"
-    override val description = "Save a markdown memory file for long-term reference. Legacy tool — prefer archival_memory_insert for structured storage. Files saved to the agent memory directory."
+    override val description = "DEPRECATED — use archival_memory_insert instead, which provides structured storage with tags and search. This tool only saves raw markdown files without indexing."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "content" to ParameterProperty(type = "string", description = "The markdown content to save."),

@@ -87,7 +87,11 @@ object SystemPrompt {
         append(SECTION_SEP)
         append(objective())
 
-        // 9b. CORE MEMORY (Letta pattern: always in prompt if non-empty)
+        // 10. MEMORY
+        append(SECTION_SEP)
+        append(memory())
+
+        // 10b. CORE MEMORY DATA (Letta pattern: always in prompt if non-empty)
         coreMemoryXml?.let {
             append(SECTION_SEP)
             append(it)
@@ -393,7 +397,52 @@ You accomplish a given task iteratively, breaking it down into clear steps and w
 6. The user may provide feedback, which you can use to make improvements and try again. But DO NOT continue in pointless back and forth conversations, i.e. don't end your responses with questions or offers for further assistance."""
 
     /**
-     * Section 10: User Instructions
+     * Section 10: Memory
+     * Explains the 3-tier memory system so the LLM knows when and how to use it.
+     */
+    private fun memory(): String = """MEMORY
+
+You have a 3-tier persistent memory system that survives across sessions:
+
+## Tier 1: Core Memory (always visible)
+Your working memory — shown in <core_memory> above on every turn. Use it for facts you need constantly:
+- **user**: Who the user is, their role, preferences, expertise level
+- **project**: Current goals, active decisions, key architecture choices
+- **patterns**: Recurring code patterns, naming conventions, project-specific rules
+
+Tools: core_memory_read, core_memory_append, core_memory_replace
+- Keep blocks concise — this consumes context on every turn
+- Update stale entries with core_memory_replace rather than appending duplicates
+- Remove outdated facts proactively
+
+## Tier 2: Archival Memory (search on demand)
+Long-term knowledge base — not in the prompt unless you search for it. Use for:
+- Error resolutions (stack trace → fix mapping)
+- API behaviors and gotchas discovered during work
+- Code review feedback and decisions
+- Configuration patterns that worked
+
+Tools: archival_memory_insert (with tags), archival_memory_search (keyword + tag filter)
+- Always add descriptive tags for searchability (e.g., 'spring,cors,error_resolution')
+- Search archival memory when you encounter an error or pattern you might have seen before
+
+## Tier 3: Conversation Recall (search past sessions)
+Transcripts of all past sessions — searchable by keyword.
+
+Tool: conversation_search
+- Use when the user references something from a previous session
+- Use when you need to recall what approach was tried before
+
+## When to use memory
+- **Session start**: Search archival memory for context relevant to the user's request
+- **After resolving an error**: Store the resolution in archival memory with tags
+- **When learning user preferences**: Update the 'user' core memory block
+- **When a project decision is made**: Update the 'project' core memory block
+- **After discovering a code pattern**: Store in archival memory with tags
+- Do NOT store information that can be derived from git history or reading current code"""
+
+    /**
+     * Section 11: User Instructions
      * Ported from: user_instructions.ts (USER_CUSTOM_INSTRUCTIONS_TEMPLATE_TEXT)
      */
     private fun userInstructions(

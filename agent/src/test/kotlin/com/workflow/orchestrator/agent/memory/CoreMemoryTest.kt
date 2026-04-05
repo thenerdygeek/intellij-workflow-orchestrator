@@ -155,11 +155,12 @@ class CoreMemoryTest {
         }
 
         @Test
-        fun `readAll returns all blocks`() {
+        fun `readAll returns all blocks including seeds`() {
+            val seedCount = memory.readAll().size // pre-seeded blocks (user, project, patterns)
             memory.append("a", "1")
             memory.append("b", "2")
             val all = memory.readAll()
-            assertEquals(2, all.size)
+            assertEquals(seedCount + 2, all.size)
         }
     }
 }
