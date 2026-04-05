@@ -5,6 +5,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.hooks.HookEvent
+import com.workflow.orchestrator.agent.observability.AgentFileLogger
+import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
@@ -13,6 +15,7 @@ import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
@@ -146,7 +149,16 @@ class AgentLoop(
      *
      * When null, the loop does not wait for user input (legacy behavior / sub-agent mode).
      */
-    val userInputChannel: Channel<String>? = null
+    val userInputChannel: Channel<String>? = null,
+    /**
+     * Optional callback for real-time debug log entries.
+     * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
+     */
+    private val onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
+    /** Optional file logger for structured JSONL agent logs. Always active when provided. */
+    private val fileLogger: AgentFileLogger? = null,
+    /** Optional per-session metrics accumulator. Records tool durations, API latencies, counts. */
+    private val sessionMetrics: SessionMetrics? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -266,6 +278,14 @@ class AgentLoop(
         }
 
         LOG.info("[Loop] Starting task (maxIterations=$maxIterations, planMode=$planMode)")
+
+        // Set initial tool definition token count so heuristic estimate includes them.
+        // Tool schemas are significant: 30+ tools = 5-10K+ tokens in the API request.
+        val initialToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
+        contextManager.setToolDefinitionTokens(
+            TokenEstimator.estimateToolDefinitions(initialToolDefs)
+        )
+
         contextManager.addUserMessage(task)
 
         var iteration = 0
@@ -277,16 +297,28 @@ class AgentLoop(
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
+            val iterationStartTime = System.currentTimeMillis()
             LOG.info("[Loop] Iteration $iteration -- ${contextManager.messageCount()} messages, ${"%.1f".format(contextManager.utilizationPercent())}% context")
 
             // Stage 0: Compact if needed
             if (contextManager.shouldCompact()) {
-                LOG.info("[Loop] Context compaction triggered at ${"%.1f".format(contextManager.utilizationPercent())}%")
+                val utilBefore = contextManager.utilizationPercent()
+                val tokensBefore = contextManager.tokenEstimate()
+                LOG.info("[Loop] Context compaction triggered at ${"%.1f".format(utilBefore)}%")
                 contextManager.compact(brain)
+                val tokensAfter = contextManager.tokenEstimate()
+                fileLogger?.logCompaction(sessionId ?: "", "utilization_${"%d".format(utilBefore.toInt())}pct", tokensBefore, tokensAfter)
+                sessionMetrics?.recordCompaction(tokensBefore, tokensAfter)
+                onDebugLog?.invoke("warn", "compaction", "Compacted: ${"%.1f".format(utilBefore)}% — $tokensBefore → $tokensAfter tokens",
+                    mapOf("tokensBefore" to tokensBefore, "tokensAfter" to tokensAfter))
             }
 
             // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)
             val currentToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
+            // Update tool token count if deferred tools were loaded since last iteration
+            contextManager.setToolDefinitionTokens(
+                TokenEstimator.estimateToolDefinitions(currentToolDefs)
+            )
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,
@@ -303,6 +335,8 @@ class AgentLoop(
                 if (isContextOverflowError(apiResult) && contextOverflowRetries < MAX_CONTEXT_OVERFLOW_RETRIES) {
                     contextOverflowRetries++
                     LOG.warn("[Loop] Context overflow detected, compacting and retrying ($contextOverflowRetries/$MAX_CONTEXT_OVERFLOW_RETRIES)")
+                    fileLogger?.logRetry(sessionId ?: "", "context_overflow", iteration)
+                    onDebugLog?.invoke("warn", "retry", "Context overflow, compacting ($contextOverflowRetries/$MAX_CONTEXT_OVERFLOW_RETRIES)", null)
                     // Force aggressive compaction
                     contextManager.compact(brain)
                     iteration-- // Don't count overflow retries as iterations
@@ -318,6 +352,8 @@ class AgentLoop(
                         ?: (INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1)))
                     val delaySource = if (apiResult.retryAfterMs != null) "retry-after header" else "exponential backoff"
                     LOG.warn("[Loop] API retry $apiRetryCount/$MAX_API_RETRIES (${apiResult.type}, delay=${delayMs}ms, source=$delaySource)")
+                    fileLogger?.logRetry(sessionId ?: "", "api_${apiResult.type.name.lowercase()}", iteration)
+                    onDebugLog?.invoke("warn", "retry", "API retry $apiRetryCount/$MAX_API_RETRIES: ${apiResult.type}", mapOf("errorType" to apiResult.type.name))
                     delay(delayMs)
                     iteration-- // Don't count retries as iterations
                     continue
@@ -349,6 +385,11 @@ class AgentLoop(
                 totalOutputTokens += usage.completionTokens
                 contextManager.updateTokens(usage.promptTokens)
                 onTokenUpdate?.invoke(totalInputTokens, totalOutputTokens)
+                val apiLatencyMs = System.currentTimeMillis() - iterationStartTime
+                fileLogger?.logApiCall(sessionId ?: "", apiLatencyMs, usage.promptTokens, usage.completionTokens, null)
+                sessionMetrics?.recordApiCall(apiLatencyMs, usage.promptTokens, usage.completionTokens)
+                onDebugLog?.invoke("info", "api_call", "API: ${usage.promptTokens}p + ${usage.completionTokens}c tokens, ${apiLatencyMs}ms",
+                    mapOf("latencyMs" to apiLatencyMs, "promptTokens" to usage.promptTokens, "completionTokens" to usage.completionTokens))
             }
 
             val choice = response.choices.firstOrNull() ?: continue
@@ -525,6 +566,8 @@ class AgentLoop(
             when (loopStatus) {
                 LoopStatus.HARD_LIMIT -> {
                     LOG.warn("[Loop] Hard loop limit reached: '$toolName' called ${loopDetector.currentCount} times consecutively")
+                    fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = true)
+                    onDebugLog?.invoke("error", "loop", "Loop HARD limit: $toolName — aborting", null)
                     contextManager.addToolResult(
                         toolCallId = toolCallId,
                         content = LOOP_HARD_FAILURE,
@@ -554,6 +597,8 @@ class AgentLoop(
                 }
                 LoopStatus.SOFT_WARNING -> {
                     LOG.warn("[Loop] Soft loop warning: '$toolName' called ${loopDetector.currentCount} times consecutively")
+                    fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = false)
+                    onDebugLog?.invoke("warn", "loop", "Loop warning: $toolName called ${loopDetector.currentCount}x", null)
                     // Inject warning but continue execution (give the model a chance to self-correct)
                     contextManager.addUserMessage(LOOP_SOFT_WARNING)
                 }
@@ -718,6 +763,17 @@ class AgentLoop(
             } catch (e: Exception) {
                 val errorMsg = "Tool '$toolName' threw exception: ${e.message}"
                 LOG.warn("[Loop] Tool $toolName failed: ${errorMsg.take(200)}")
+                val exceptionDurationMs = System.currentTimeMillis() - startTime
+                fileLogger?.logToolCall(
+                    sessionId = sessionId ?: "",
+                    toolName = toolName,
+                    durationMs = exceptionDurationMs,
+                    isError = true,
+                    errorMessage = errorMsg.take(500)
+                )
+                sessionMetrics?.recordToolCall(toolName, exceptionDurationMs, true)
+                onDebugLog?.invoke("error", "tool_call", "$toolName EXCEPTION (${exceptionDurationMs}ms)",
+                    mapOf("tool" to toolName, "error" to errorMsg.take(200)))
                 contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
                 onToolCall(
                     ToolCallProgress(
@@ -740,6 +796,22 @@ class AgentLoop(
             } else {
                 LOG.info("[Loop] Tool $toolName completed in ${durationMs}ms (OK)")
             }
+            fileLogger?.logToolCall(
+                sessionId = sessionId ?: "",
+                toolName = toolName,
+                durationMs = durationMs,
+                isError = toolResult.isError,
+                args = call.function.arguments.take(500),
+                errorMessage = if (toolResult.isError) toolResult.content.take(500) else null,
+                tokenEstimate = toolResult.tokenEstimate
+            )
+            sessionMetrics?.recordToolCall(toolName, durationMs, toolResult.isError)
+            onDebugLog?.invoke(
+                if (toolResult.isError) "error" else "info",
+                "tool_call",
+                "$toolName ${if (toolResult.isError) "ERROR" else "OK"} (${durationMs}ms)",
+                mapOf("tool" to toolName, "duration" to durationMs, "tokens" to toolResult.tokenEstimate)
+            )
 
             // Add result to context
             contextManager.addToolResult(
