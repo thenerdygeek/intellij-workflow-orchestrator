@@ -227,11 +227,14 @@ object InstructionLoader {
                     continue
                 }
 
+                val userInvocable = frontmatter["user-invocable"]?.equals("true", ignoreCase = true) ?: false
+
                 skills.add(SkillMetadata(
                     name = name,
                     description = description,
                     path = resourcePath,
-                    source = SkillSource.BUNDLED
+                    source = SkillSource.BUNDLED,
+                    userInvocable = userInvocable
                 ))
             } catch (e: Exception) {
                 LOG.warn("InstructionLoader: failed to load bundled skill '$dirName': ${e.message}")
@@ -314,11 +317,14 @@ object InstructionLoader {
                 return null
             }
 
+            val userInvocable = frontmatter["user-invocable"]?.equals("true", ignoreCase = true) ?: false
+
             SkillMetadata(
                 name = name,
                 description = description,
                 path = skillMd.absolutePath,
-                source = source
+                source = source,
+                userInvocable = userInvocable
             )
         } catch (e: Exception) {
             LOG.warn("InstructionLoader: failed to load skill at ${skillDir.path}: ${e.message}")
@@ -406,7 +412,9 @@ data class SkillMetadata(
     val name: String,
     val description: String,
     val path: String,
-    val source: SkillSource
+    val source: SkillSource,
+    /** If true, the user can invoke this skill via /skill-name in the UI. */
+    val userInvocable: Boolean = false
 )
 
 /**

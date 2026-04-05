@@ -387,7 +387,11 @@ class AgentController(
             val discovered = com.workflow.orchestrator.agent.prompt.InstructionLoader.discoverSkills(basePath)
             val allSkills = com.workflow.orchestrator.agent.prompt.InstructionLoader.getAvailableSkills(discovered)
             if (allSkills.isNotEmpty()) {
-                val skillsJson = allSkills.joinToString(",", "[", "]") { skill ->
+                // Only send user-invocable skills to the UI for slash command / dropdown display.
+                // LLM-only skills (systematic-debugging, tdd, etc.) and the auto-injected meta-skill
+                // should not appear in the user's skill picker — they're triggered by the LLM.
+                val uiSkills = allSkills.filter { it.userInvocable }
+                val skillsJson = uiSkills.joinToString(",", "[", "]") { skill ->
                     val name = skill.name.replace("\"", "\\\"")
                     val desc = skill.description.replace("\"", "\\\"").take(200)
                     """{"name":"$name","description":"$desc"}"""
@@ -395,7 +399,7 @@ class AgentController(
                 invokeLater {
                     dashboard.updateSkillsList(skillsJson)
                 }
-                LOG.info("AgentController: pushed ${allSkills.size} skills to chat UI")
+                LOG.info("AgentController: pushed ${uiSkills.size} user-invocable skills to chat UI (${allSkills.size} total)")
             }
         } catch (e: Exception) {
             LOG.debug("AgentController: failed to load skills list: ${e.message}")
