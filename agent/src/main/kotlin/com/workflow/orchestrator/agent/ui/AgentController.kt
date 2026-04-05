@@ -193,15 +193,24 @@ class AgentController(
                         try {
                             val options = kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
                             if (options.isNotEmpty()) {
-                                append("\n\nOptions:")
+                                append("\n\n**Options:**")
                                 options.forEachIndexed { i, opt -> append("\n${i + 1}. $opt") }
                             }
                         } catch (_: Exception) {}
                     }
                 }
-                // Show question as a status message and unlock input for user to type answer
-                dashboard.appendStatus(display, RichStreamingPanel.StatusType.INFO)
-                dashboard.setBusy(false) // Unlock input so user can type
+                // Flush any in-progress stream, then finalize any open tool chain
+                // so the question appears AFTER prior tool calls, not mixed in
+                dashboard.flushStreamBuffer()
+                dashboard.finalizeToolChain()
+                // Show question as an agent message (not a status line) — renders as
+                // markdown in the chat, visually distinct from info/token status lines
+                dashboard.appendStreamToken(display)
+                dashboard.flushStreamBuffer()
+                // Unlock input so user can type their answer
+                dashboard.setBusy(false)
+                dashboard.setInputLocked(false)
+                dashboard.focusInput()
             }
         }
         // Wizard mode: structured multi-question UI
