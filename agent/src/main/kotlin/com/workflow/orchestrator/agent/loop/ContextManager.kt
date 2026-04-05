@@ -74,6 +74,13 @@ class ContextManager(
     private var activeSkillContent: String? = null
 
     /**
+     * Path to the saved plan file on disk.
+     * Set when plan_mode_respond generates a plan — saved immediately, not on approval.
+     * Survives compaction: re-injected as a pointer so the LLM can re-read the plan.
+     */
+    private var activePlanPath: String? = null
+
+    /**
      * Current task progress markdown string.
      *
      * Port of Cline's `currentFocusChainChecklist` from TaskState:
@@ -502,9 +509,10 @@ class ContextManager(
             invalidateTokens()
         }
 
-        // After compaction: re-inject active skill so LLM retains skill instructions
+        // After compaction: re-inject active skill and plan path so LLM retains them
         // (ported from Cline: skill content survives compaction via re-injection)
         reInjectActiveSkill()
+        reInjectActivePlan()
     }
 
     /**
@@ -772,6 +780,55 @@ class ContextManager(
             messages.add(ChatMessage(
                 role = "assistant",
                 content = "[Active Skill] The following skill instructions are still active:\n\n$skill"
+            ))
+        }
+    }
+
+    // ---- Active plan management (ported from activeSkill pattern) ----
+
+    /**
+     * Set the active plan path. Called after plan_mode_respond generates a plan.
+     *
+     * The active plan path survives compaction: after compaction runs,
+     * [reInjectActivePlan] is called to ensure the LLM still has access
+     * to the plan location.
+     *
+     * @param path the file path to the saved plan
+     */
+    fun setActivePlanPath(path: String) {
+        activePlanPath = path
+    }
+
+    /**
+     * Get the current active plan path.
+     * Returns null if no plan path is set.
+     */
+    fun getActivePlanPath(): String? = activePlanPath
+
+    /**
+     * Clear the active plan path. Called when a session ends or is reset.
+     */
+    fun clearActivePlanPath() {
+        activePlanPath = null
+    }
+
+    /**
+     * Re-inject the active plan path into the conversation after compaction.
+     * Lightweight pointer — the LLM uses read_file to access the full plan.
+     *
+     * Called by the compaction pipeline after any stage that removes messages.
+     */
+    internal fun reInjectActivePlan() {
+        val path = activePlanPath ?: return
+        val recentMessages = messages.takeLast(10)
+        val alreadyPresent = recentMessages.any { msg ->
+            msg.content?.contains("[Active Plan]") == true
+        }
+        if (!alreadyPresent) {
+            messages.add(ChatMessage(
+                role = "assistant",
+                content = "[Active Plan] You are working from an implementation plan saved at: $path\n" +
+                    "Use read_file to review the plan steps if needed."
             ))
         }
     }
