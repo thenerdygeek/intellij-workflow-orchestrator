@@ -821,18 +821,17 @@ class AgentController(
 
     fun newChat() {
         LOG.info("AgentController.newChat")
-        // Cancel any running task
-        if (currentJob?.isActive == true) {
-            service.cancelCurrentTask()
-        }
+
+        // Reset all service-level state (plan mode, tools, processes, active task)
+        service.resetForNewChat()
+
+        // Reset controller state
         currentJob = null
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         recentToolCalls.clear()
         currentHaikuTitle = null
         lastStreamSnippet = ""
-
-        // Reset conversation state
         contextManager = null
         taskStartTime = 0L
         lastTaskText = null
@@ -849,13 +848,14 @@ class AgentController(
         dashboard.hideSkillBanner()                                // Dismiss any active skill banner
         dashboard.setBusy(false)                                   // Stop spinner
         dashboard.setInputLocked(false)                            // Unlock input bar
-        dashboard.setPlanMode(false)                                // Exit plan mode
+        dashboard.setPlanMode(false)                                // Exit plan mode in UI
         dashboard.setRalphLoop(false)                              // Exit ralph loop mode
         dashboard.setSteeringMode(false)                           // Exit steering mode
         dashboard.updateCheckpoints("[]")                          // Clear checkpoint timeline
         dashboard.updateEditStats(0, 0, 0)                    // Reset edit counters
         dashboard.updateProgress("", 0, 0)                    // Reset token budget bar
         dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
+        dashboard.setSessionTitle("")                               // Clear conversation title
         dashboard.finalizeToolChain()                               // Collapse any open tool chain
         dashboard.focusInput()                                      // Focus the input bar
     }

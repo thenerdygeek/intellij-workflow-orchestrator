@@ -103,9 +103,6 @@ export const AgentMessage = memo(function AgentMessage({
           <MarkdownRenderer content={content} isStreaming={isStreaming} />
         )}
 
-        {isStreaming && (
-          <Loader variant="terminal" size="sm" className="inline-block ml-0.5 align-text-bottom" />
-        )}
 
         {/* Copy button for agent messages (visible on hover) */}
         {!isUser && !isStreaming && content && (

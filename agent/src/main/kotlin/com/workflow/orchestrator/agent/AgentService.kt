@@ -588,10 +588,12 @@ class AgentService(private val project: Project) : Disposable {
                         .map { it.toToolDefinition() }
                 }
 
-                // Wire sub-agent progress callback for this task execution
+                // Wire sub-agent progress callback and settings for this task execution
                 val spawnAgentTool = registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
                 if (spawnAgentTool != null) {
                     spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
+                    spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
+                    spawnAgentTool.sessionDebugDir = sessionDebugDir
                     spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
                         { agentId, update -> onSubagentProgress(agentId, update) }
                     } else null
@@ -1132,6 +1134,20 @@ class AgentService(private val project: Project) : Disposable {
                 }
             }
         }
+    }
+
+    // ── New Chat Reset ──────────────────────────────────────────────────────
+
+    /**
+     * Reset all service-level state for a new chat session.
+     * Called by AgentController.newChat() to ensure no state leaks between conversations.
+     */
+    fun resetForNewChat() {
+        cancelCurrentTask()
+        planModeActive.set(false)
+        registry.resetActiveDeferred()
+        ProcessRegistry.killAll()
+        activeTask.set(null)
     }
 
     // ── Dispose ────────────────────────────────────────────────────────────
