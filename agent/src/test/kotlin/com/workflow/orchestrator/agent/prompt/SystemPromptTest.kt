@@ -186,8 +186,8 @@ class SystemPromptTest {
     @Test
     fun `includes skills section when skills provided`() {
         val skills = listOf(
-            "kotlin-expert" to "Expert guidance for Kotlin development",
-            "react-guru" to "React component design and patterns"
+            SkillMetadata("kotlin-expert", "Expert guidance for Kotlin development", "/skills/kotlin-expert/SKILL.md", SkillSource.PROJECT),
+            SkillMetadata("react-guru", "React component design and patterns", "/skills/react-guru/SKILL.md", SkillSource.GLOBAL)
         )
         val prompt = SystemPrompt.build(
             projectName = "p",
@@ -224,7 +224,9 @@ class SystemPromptTest {
         val prompt = SystemPrompt.build(
             projectName = "p",
             projectPath = "/p",
-            availableSkills = listOf("test-skill" to "A test skill"),
+            availableSkills = listOf(
+                SkillMetadata("test-skill", "A test skill", "/skills/test-skill/SKILL.md", SkillSource.BUNDLED)
+            ),
             activeSkillContent = "Follow these specific testing guidelines..."
         )
 

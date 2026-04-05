@@ -310,7 +310,10 @@ class MentionSearchProvider(private val project: Project) {
     }
 
     private fun searchSkills(query: String): String {
-        val skills = com.workflow.orchestrator.agent.prompt.InstructionLoader.loadBundledSkills()
+        // Discover all skills (bundled + user) for search — matches Cline's lazy discovery
+        val projectPath = project.basePath ?: ""
+        val allDiscovered = com.workflow.orchestrator.agent.prompt.InstructionLoader.discoverSkills(projectPath)
+        val skills = com.workflow.orchestrator.agent.prompt.InstructionLoader.getAvailableSkills(allDiscovered)
         val lowerQuery = query.lowercase()
         val filtered = if (lowerQuery.isBlank()) {
             skills

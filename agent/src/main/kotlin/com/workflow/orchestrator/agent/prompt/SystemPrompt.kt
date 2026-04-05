@@ -33,7 +33,7 @@ object SystemPrompt {
         repoMap: String? = null,
         planModeEnabled: Boolean = false,
         additionalContext: String? = null,
-        availableSkills: List<Pair<String, String>>? = null,
+        availableSkills: List<SkillMetadata>? = null,
         activeSkillContent: String? = null,
         taskProgress: String? = null,
         /** Deferred tools available via tool_search (name, one-line description). */
@@ -265,22 +265,29 @@ There are two modes:
      * Section 6: Skills
      * Ported from: skills.ts
      */
+    /**
+     * Section 6: Skills
+     * Port of Cline's getSkillsSection from components/skills.ts.
+     *
+     * activeSkillContent is our addition for compaction survival — re-injected
+     * into the system prompt so the LLM retains skill instructions after compaction.
+     */
     private fun skills(
-        availableSkills: List<Pair<String, String>>?,
+        availableSkills: List<SkillMetadata>?,
         activeSkillContent: String?
     ): String? {
         if (availableSkills.isNullOrEmpty() && activeSkillContent.isNullOrBlank()) return null
 
         return buildString {
-            appendLine("SKILLS")
-            appendLine()
-
+            // Port of Cline's getSkillsSection (components/skills.ts)
             if (!availableSkills.isNullOrEmpty()) {
+                appendLine("SKILLS")
+                appendLine()
                 appendLine("The following skills provide specialized instructions for specific tasks. When a user's request matches a skill description, use the use_skill tool to load and activate the skill.")
                 appendLine()
                 appendLine("Available skills:")
-                for ((name, description) in availableSkills) {
-                    appendLine("  - \"$name\": $description")
+                for (skill in availableSkills) {
+                    appendLine("  - \"${skill.name}\": ${skill.description}")
                 }
                 appendLine()
                 appendLine("To use a skill:")
@@ -289,6 +296,7 @@ There are two modes:
                 appendLine("3. Follow the instructions returned by the tool")
             }
 
+            // Our addition: re-inject active skill content for compaction survival
             if (!activeSkillContent.isNullOrBlank()) {
                 appendLine()
                 appendLine("# Active Skill Instructions")

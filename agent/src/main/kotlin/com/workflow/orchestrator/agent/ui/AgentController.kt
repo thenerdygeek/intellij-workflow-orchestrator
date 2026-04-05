@@ -308,7 +308,8 @@ class AgentController(
     private fun loadSkillsList() {
         val basePath = project.basePath ?: return
         try {
-            val allSkills = com.workflow.orchestrator.agent.prompt.InstructionLoader.loadAllSkills(basePath)
+            val discovered = com.workflow.orchestrator.agent.prompt.InstructionLoader.discoverSkills(basePath)
+            val allSkills = com.workflow.orchestrator.agent.prompt.InstructionLoader.getAvailableSkills(discovered)
             if (allSkills.isNotEmpty()) {
                 val skillsJson = allSkills.joinToString(",", "[", "]") { skill ->
                     val name = skill.name.replace("\"", "\\\"")

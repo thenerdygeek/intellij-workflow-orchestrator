@@ -536,10 +536,11 @@ class AgentService(private val project: Project) : Disposable {
                 val projectName = project.name
                 val projectPath = project.basePath ?: ""
 
-                // Load project instructions (CLAUDE.md) and all skills (bundled + user)
+                // Load project instructions (CLAUDE.md) and discover skills
+                // Port of Cline's skill discovery: discoverSkills + getAvailableSkills
                 val projectInstructions = InstructionLoader.loadProjectInstructions(projectPath)
-                val allSkills = InstructionLoader.loadAllSkills(projectPath)
-                val availableSkills = allSkills.map { it.name to it.description }
+                val allSkills = InstructionLoader.discoverSkills(projectPath)
+                val availableSkills = InstructionLoader.getAvailableSkills(allSkills)
                     .ifEmpty { null }
 
                 // Reset active deferred tools for new sessions (not resumed ones)
@@ -575,10 +576,13 @@ class AgentService(private val project: Project) : Disposable {
                 // Re-reads planModeActive on each call so enable_plan_mode tool takes effect mid-session.
 
                 // Dynamic tool definition provider — called on each loop iteration
+                val hasSkills = availableSkills != null
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
                     val isPlanMode = planModeActive.get()
                     registry.getActiveTools().values
                         .filter { tool ->
+                            // Port of Cline's contextRequirements: omit use_skill when no skills available
+                            if (tool.name == "use_skill" && !hasSkills) return@filter false
                             if (isPlanMode) {
                                 tool.name !in writeToolNames && tool.name != "act_mode_respond" && tool.name != "enable_plan_mode"
                             } else {

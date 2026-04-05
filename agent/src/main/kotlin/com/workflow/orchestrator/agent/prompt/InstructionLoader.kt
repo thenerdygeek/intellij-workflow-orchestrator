@@ -4,26 +4,21 @@ import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 
 /**
- * Loads project instructions and bundled skills.
+ * Loads project instructions and discovers skills.
  *
  * Project instructions: reads CLAUDE.md or .agent-rules from project root.
- * Bundled skills: reads SKILL.md files from classpath resources under /skills/.
+ * Skills: discovered from bundled resources, project-local, and global directories.
  *
- * Skill files use YAML frontmatter for metadata:
- * ```
- * ---
- * name: skill-name
- * description: What the skill does
- * preferred-tools: [tool1, tool2]
- * ---
- * # Skill Content
- * ...
- * ```
+ * Faithful port of Cline's skill loading pipeline:
+ *   src/core/context/instructions/user-instructions/skills.ts
+ *   src/core/context/instructions/user-instructions/frontmatter.ts
+ *   src/core/storage/disk.ts (getSkillsDirectoriesForScan)
  *
- * Ported from Cline's skill loading pattern in skills.ts:
- * - Skills are discovered at startup and listed in the system prompt
- * - The use_skill tool loads the full skill content on demand
- * - Skill content survives compaction via re-injection
+ * Two-tier loading pattern (matching Cline):
+ *   - discoverSkills() → metadata only (name, description, path, source) — cheap, at session start
+ *   - getSkillContent() → full instructions — on demand when use_skill is called
+ *
+ * Adaptation: bundled skills from classpath resources (Cline has no bundled skills concept)
  */
 object InstructionLoader {
 
@@ -38,6 +33,7 @@ object InstructionLoader {
     /**
      * Known bundled skill directory names.
      * These correspond to directories under resources/skills/ containing SKILL.md files.
+     * Adaptation: Cline has no bundled skills — these ship with our plugin.
      */
     private val BUNDLED_SKILL_DIRS = listOf(
         "brainstorm",
@@ -49,6 +45,8 @@ object InstructionLoader {
         "tdd",
         "writing-plans"
     )
+
+    // ---- Project instructions ----
 
     /**
      * Load project instructions from CLAUDE.md or .agent-rules in project root.
@@ -72,22 +70,123 @@ object InstructionLoader {
         return null
     }
 
+    // ---- Skill discovery (port of Cline's discoverSkills + getAvailableSkills) ----
+
     /**
-     * Load all bundled skill definitions from classpath resources.
+     * Discover all skills from bundled resources, project-local, and global directories.
+     * Returns metadata only (no content loaded) — cheap for system prompt listing.
      *
-     * Each skill is a directory under /skills/ containing a SKILL.md file
-     * with YAML frontmatter (name, description) and markdown content.
+     * Port of Cline's discoverSkills(cwd) from skills.ts.
      *
-     * @return list of skill definitions with name, description, and full content
+     * Cline scans (via getSkillsDirectoriesForScan):
+     *   - {cwd}/.clinerules/skills/  (project)
+     *   - {cwd}/.cline/skills/       (project)
+     *   - {cwd}/.claude/skills/      (project)
+     *   - {cwd}/.agents/skills/      (project)
+     *   - ~/.cline/skills/           (global)
+     *   - ~/.agents/skills/          (global)
+     *
+     * Our adaptation scans:
+     *   - classpath:/skills/          (bundled — our addition)
+     *   - {projectPath}/.agent-skills/ (project)
+     *   - ~/.workflow-orchestrator/skills/ (global)
+     *
+     * @param projectPath absolute path to the project root
+     * @return list of discovered skill metadata (project skills first, then global)
      */
-    fun loadBundledSkills(): List<SkillDefinition> {
-        val skills = mutableListOf<SkillDefinition>()
+    fun discoverSkills(projectPath: String): List<SkillMetadata> {
+        val skills = mutableListOf<SkillMetadata>()
+
+        // Bundled skills (our addition — Cline has no bundled skills)
+        skills.addAll(loadBundledSkillMetadata())
+
+        // Project-local skills (lower precedence)
+        val projectSkillsDir = File(projectPath, ".agent-skills")
+        skills.addAll(scanSkillsDirectory(projectSkillsDir, SkillSource.PROJECT))
+
+        // Global user skills (higher precedence)
+        val globalSkillsDir = File(System.getProperty("user.home"), ".workflow-orchestrator/skills")
+        skills.addAll(scanSkillsDirectory(globalSkillsDir, SkillSource.GLOBAL))
+
+        return skills
+    }
+
+    /**
+     * Get available skills with override resolution (global > project > bundled).
+     *
+     * Port of Cline's getAvailableSkills(skills) from skills.ts:
+     * Deduplicates by name — skills added later (global) take precedence.
+     *
+     * @param skills list from [discoverSkills]
+     * @return deduplicated list preserving original order
+     */
+    fun getAvailableSkills(skills: List<SkillMetadata>): List<SkillMetadata> {
+        val seen = mutableSetOf<String>()
+        val result = mutableListOf<SkillMetadata>()
+
+        // Iterate backwards: global skills (added last) are seen first and take precedence
+        for (i in skills.indices.reversed()) {
+            val skill = skills[i]
+            if (skill.name !in seen) {
+                seen.add(skill.name)
+                result.add(0, skill)
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Get full skill content including instructions.
+     *
+     * Port of Cline's getSkillContent(skillName, availableSkills) from skills.ts.
+     * Loads content lazily — only when the skill is actually activated via use_skill.
+     *
+     * @param skillName the exact skill name to load
+     * @param availableSkills the list from [getAvailableSkills]
+     * @return full skill content, or null if not found
+     */
+    fun getSkillContent(skillName: String, availableSkills: List<SkillMetadata>): SkillContent? {
+        val skill = availableSkills.find { it.name == skillName } ?: return null
+
+        return try {
+            val fileContent = when (skill.source) {
+                SkillSource.BUNDLED -> loadClasspathResource(skill.path)
+                SkillSource.PROJECT, SkillSource.GLOBAL -> {
+                    val file = File(skill.path)
+                    if (file.isFile && file.canRead()) file.readText(Charsets.UTF_8) else null
+                }
+            } ?: return null
+
+            val (_, body) = parseYamlFrontmatter(fileContent)
+
+            SkillContent(
+                name = skill.name,
+                description = skill.description,
+                path = skill.path,
+                source = skill.source,
+                instructions = body.trim()
+            )
+        } catch (e: Exception) {
+            LOG.warn("InstructionLoader: failed to load skill content for '${skill.name}': ${e.message}")
+            null
+        }
+    }
+
+    // ---- Internal: bundled skill metadata ----
+
+    /**
+     * Load metadata for bundled skills from classpath resources.
+     * Only parses frontmatter (name, description) — does not load full content.
+     */
+    private fun loadBundledSkillMetadata(): List<SkillMetadata> {
+        val skills = mutableListOf<SkillMetadata>()
 
         for (dirName in BUNDLED_SKILL_DIRS) {
             val resourcePath = "/skills/$dirName/SKILL.md"
             try {
                 val content = loadClasspathResource(resourcePath) ?: continue
-                val (frontmatter, body) = parseYamlFrontmatter(content)
+                val (frontmatter, _) = parseYamlFrontmatter(content)
 
                 val name = frontmatter["name"]
                 val description = frontmatter["description"] ?: ""
@@ -108,236 +207,149 @@ object InstructionLoader {
                     description.take(MAX_DESCRIPTION_LENGTH)
                 } else description
 
-                skills.add(SkillDefinition(
+                skills.add(SkillMetadata(
                     name = name,
                     description = trimmedDescription,
-                    content = body.ifBlank { content }
+                    path = resourcePath,
+                    source = SkillSource.BUNDLED
                 ))
             } catch (e: Exception) {
-                LOG.warn("InstructionLoader: failed to load skill '$dirName': ${e.message}")
+                LOG.warn("InstructionLoader: failed to load bundled skill '$dirName': ${e.message}")
             }
         }
 
         return skills
     }
 
-    /**
-     * Load user-created skill definitions from project-local and global directories.
-     *
-     * Faithful port of Cline's skill discovery from:
-     * src/core/context/instructions/user-instructions/skills.ts
-     *
-     * Cline scans these directories (via getSkillsDirectoriesForScan):
-     * - {cwd}/.clinerules/skills/  (project, Cline-specific)
-     * - {cwd}/.cline/skills/       (project, Cline-specific)
-     * - {cwd}/.claude/skills/      (project, Claude-specific)
-     * - {cwd}/.agents/skills/      (project, generic)
-     * - ~/.cline/skills/           (global, Cline-specific)
-     * - ~/.agents/skills/          (global, generic)
-     *
-     * Our adaptation scans:
-     * - {projectPath}/.agent-skills/     — project-local skills
-     * - ~/.workflow-orchestrator/skills/  — global user skills
-     *
-     * Each skill directory must contain a SKILL.md file with YAML frontmatter
-     * (name, description). Directory name must match the name field.
-     *
-     * Global skills take precedence over project skills with the same name
-     * (matching Cline's getAvailableSkills resolution order).
-     *
-     * @param projectPath absolute path to the project root
-     * @return list of discovered user skill definitions
-     */
-    fun loadUserSkills(projectPath: String): List<SkillDefinition> {
-        val skills = mutableListOf<SkillDefinition>()
-
-        // Scan project-local skills first (lower precedence)
-        val projectSkillsDir = File(projectPath, ".agent-skills")
-        scanSkillsDirectory(projectSkillsDir, skills)
-
-        // Scan global user skills (higher precedence — overrides project skills)
-        val globalSkillsDir = File(System.getProperty("user.home"), ".workflow-orchestrator/skills")
-        scanSkillsDirectory(globalSkillsDir, skills)
-
-        // Deduplicate: global skills override project skills with the same name
-        // (ported from Cline's getAvailableSkills: iterate backwards, global last = highest precedence)
-        val seen = mutableSetOf<String>()
-        val deduped = mutableListOf<SkillDefinition>()
-        for (skill in skills.reversed()) {
-            if (skill.name !in seen) {
-                seen.add(skill.name)
-                deduped.add(0, skill)
-            }
-        }
-
-        return deduped
-    }
-
-    /**
-     * Load all skills: bundled + user-created (project-local + global).
-     *
-     * Merges bundled skills with user-discovered skills. User skills take
-     * precedence over bundled skills with the same name.
-     *
-     * @param projectPath absolute path to the project root
-     * @return merged list of all available skill definitions
-     */
-    fun loadAllSkills(projectPath: String): List<SkillDefinition> {
-        val bundled = loadBundledSkills()
-        val user = loadUserSkills(projectPath)
-
-        // Merge: user skills override bundled with the same name
-        val byName = LinkedHashMap<String, SkillDefinition>()
-        for (skill in bundled) {
-            byName[skill.name] = skill
-        }
-        for (skill in user) {
-            byName[skill.name] = skill
-        }
-        return byName.values.toList()
-    }
+    // ---- Internal: filesystem skill scanning (port of Cline's scanSkillsDirectory) ----
 
     /**
      * Scan a directory for skill subdirectories containing SKILL.md files.
      *
-     * Ported from Cline's scanSkillsDirectory:
+     * Port of Cline's scanSkillsDirectory(dirPath, source) from skills.ts:
      * - Lists subdirectories in the given directory
      * - For each subdirectory, looks for SKILL.md
      * - Parses YAML frontmatter for name and description
-     * - Validates that frontmatter name matches directory name (Cline requirement)
+     * - Validates that frontmatter name matches directory name
      *
      * @param dir the directory to scan
-     * @param skills mutable list to add discovered skills to
+     * @param source whether this is a project or global skill
+     * @return list of discovered skill metadata
      */
-    private fun scanSkillsDirectory(dir: File, skills: MutableList<SkillDefinition>) {
-        if (!dir.isDirectory) return
+    private fun scanSkillsDirectory(dir: File, source: SkillSource): List<SkillMetadata> {
+        if (!dir.isDirectory) return emptyList()
 
+        val skills = mutableListOf<SkillMetadata>()
         try {
-            val entries = dir.listFiles() ?: return
+            val entries = dir.listFiles() ?: return emptyList()
             for (entry in entries) {
                 if (!entry.isDirectory) continue
 
-                val skillMd = File(entry, "SKILL.md")
-                if (!skillMd.isFile || !skillMd.canRead()) continue
-
-                try {
-                    val content = skillMd.readText(Charsets.UTF_8)
-                    val (frontmatter, body) = parseYamlFrontmatter(content)
-
-                    val name = frontmatter["name"]
-                    val description = frontmatter["description"]
-
-                    // Cline validates: name must exist and match directory name
-                    if (name.isNullOrBlank()) {
-                        LOG.warn("InstructionLoader: skill at ${entry.path} missing 'name' field")
-                        continue
-                    }
-                    if (description.isNullOrBlank()) {
-                        LOG.warn("InstructionLoader: skill at ${entry.path} missing 'description' field")
-                        continue
-                    }
-                    if (name != entry.name) {
-                        LOG.warn("InstructionLoader: skill name '$name' doesn't match directory '${entry.name}'")
-                        continue
-                    }
-
-                    // Cline enforces max 1024 char descriptions
-                    val trimmedDescription = if (description.length > MAX_DESCRIPTION_LENGTH) {
-                        LOG.warn("InstructionLoader: skill '$name' description truncated to $MAX_DESCRIPTION_LENGTH chars")
-                        description.take(MAX_DESCRIPTION_LENGTH)
-                    } else description
-
-                    skills.add(SkillDefinition(
-                        name = name,
-                        description = trimmedDescription,
-                        content = body.ifBlank { content }
-                    ))
-                } catch (e: Exception) {
-                    LOG.warn("InstructionLoader: failed to load skill at ${entry.path}: ${e.message}")
+                val metadata = loadSkillMetadata(entry, source, entry.name)
+                if (metadata != null) {
+                    skills.add(metadata)
                 }
             }
         } catch (e: SecurityException) {
             LOG.warn("InstructionLoader: permission denied reading skills directory: ${dir.path}")
         }
+
+        return skills
     }
 
     /**
-     * Load the full content of a specific skill by name.
+     * Load skill metadata from a skill directory.
      *
-     * Searches bundled skills for a matching name and returns the full
-     * skill content (body after YAML frontmatter).
+     * Port of Cline's loadSkillMetadata(skillDir, source, skillName) from skills.ts.
      *
-     * @param skillName the exact skill name to load
-     * @return the skill content, or null if not found
+     * @param skillDir the skill directory containing SKILL.md
+     * @param source whether this is a project or global skill
+     * @param skillName expected skill name (must match directory name)
+     * @return skill metadata, or null if invalid
      */
-    fun loadSkillContent(skillName: String): String? {
-        // First try direct directory name match
-        val directPath = "/skills/$skillName/SKILL.md"
-        val directContent = loadClasspathResource(directPath)
-        if (directContent != null) {
-            val (_, body) = parseYamlFrontmatter(directContent)
-            return body.ifBlank { directContent }
-        }
+    private fun loadSkillMetadata(skillDir: File, source: SkillSource, skillName: String): SkillMetadata? {
+        val skillMd = File(skillDir, "SKILL.md")
+        if (!skillMd.isFile || !skillMd.canRead()) return null
 
-        // Fall back to searching all skills by frontmatter name
-        for (dirName in BUNDLED_SKILL_DIRS) {
-            val resourcePath = "/skills/$dirName/SKILL.md"
-            try {
-                val content = loadClasspathResource(resourcePath) ?: continue
-                val (frontmatter, body) = parseYamlFrontmatter(content)
-                if (frontmatter["name"] == skillName) {
-                    return body.ifBlank { content }
-                }
-            } catch (_: Exception) {
-                // Skip unreadable skills
+        return try {
+            val content = skillMd.readText(Charsets.UTF_8)
+            val (frontmatter, _) = parseYamlFrontmatter(content)
+
+            val name = frontmatter["name"]
+            val description = frontmatter["description"]
+
+            // Validate required fields (Cline requirement)
+            if (name.isNullOrBlank()) {
+                LOG.warn("InstructionLoader: skill at ${skillDir.path} missing 'name' field")
+                return null
             }
-        }
+            if (description.isNullOrBlank()) {
+                LOG.warn("InstructionLoader: skill at ${skillDir.path} missing 'description' field")
+                return null
+            }
 
-        return null
+            // Name must match directory name per spec
+            if (name != skillName) {
+                LOG.warn("InstructionLoader: skill name '$name' doesn't match directory '$skillName'")
+                return null
+            }
+
+            // Cline enforces max 1024 char descriptions
+            val trimmedDescription = if (description.length > MAX_DESCRIPTION_LENGTH) {
+                LOG.warn("InstructionLoader: skill '$name' description truncated to $MAX_DESCRIPTION_LENGTH chars")
+                description.take(MAX_DESCRIPTION_LENGTH)
+            } else description
+
+            SkillMetadata(
+                name = name,
+                description = trimmedDescription,
+                path = skillMd.absolutePath,
+                source = source
+            )
+        } catch (e: Exception) {
+            LOG.warn("InstructionLoader: failed to load skill at ${skillDir.path}: ${e.message}")
+            null
+        }
     }
 
+    // ---- Frontmatter parsing (port of Cline's parseYamlFrontmatter from frontmatter.ts) ----
+
     /**
-     * Parse YAML frontmatter from a skill file.
+     * Parse YAML frontmatter from a skill/rules file.
+     *
+     * Port of Cline's parseYamlFrontmatter(markdown) from frontmatter.ts:
+     *   const frontmatterRegex = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
      *
      * Frontmatter is delimited by `---` on its own line at the start of the file.
-     * Returns a pair of (frontmatter map, body content after frontmatter).
-     *
-     * Supported frontmatter fields:
-     * - name: skill identifier
-     * - description: human-readable description
-     * - user-invocable: whether users can trigger this directly
-     * - preferred-tools: list of preferred tool names
+     * Uses regex matching (like Cline) instead of indexOf for correctness with
+     * line-ending handling.
      *
      * @param content the full file content
-     * @return pair of (key-value map from frontmatter, body after frontmatter)
+     * @return parsed frontmatter result
      */
-    internal fun parseYamlFrontmatter(content: String): Pair<Map<String, String>, String> {
-        val trimmed = content.trimStart()
-        if (!trimmed.startsWith("---")) {
-            return Pair(emptyMap(), content)
-        }
+    internal fun parseYamlFrontmatter(content: String): FrontmatterResult {
+        val match = FRONTMATTER_REGEX.find(content)
+            ?: return FrontmatterResult(data = emptyMap(), body = content, hadFrontmatter = false)
 
-        // Find the closing ---
-        val endIndex = trimmed.indexOf("---", startIndex = 3)
-        if (endIndex < 0) {
-            return Pair(emptyMap(), content)
-        }
+        val yamlContent = match.groupValues[1]
+        val body = match.groupValues[2]
 
-        val frontmatterBlock = trimmed.substring(3, endIndex).trim()
-        val body = trimmed.substring(endIndex + 3).trimStart()
-
-        // Simple YAML key-value parsing (no nested structures)
-        val map = mutableMapOf<String, String>()
-        for (line in frontmatterBlock.lines()) {
+        // Simple key-value parsing (sufficient for skill frontmatter fields)
+        // Cline uses js-yaml library; we use simple parsing since our frontmatter
+        // only has flat key-value pairs (name, description, preferred-tools, user-invocable)
+        val data = mutableMapOf<String, String>()
+        for (line in yamlContent.lines()) {
             val colonIdx = line.indexOf(':')
             if (colonIdx > 0) {
                 val key = line.substring(0, colonIdx).trim()
                 val value = line.substring(colonIdx + 1).trim()
-                map[key] = value
+                if (value.isNotEmpty()) {
+                    data[key] = value
+                }
             }
         }
 
-        return Pair(map, body)
+        return FrontmatterResult(data = data, body = body, hadFrontmatter = true)
     }
 
     /**
@@ -353,17 +365,66 @@ object InstructionLoader {
             null
         }
     }
+
+    // Port of Cline's frontmatter regex from frontmatter.ts:
+    //   /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
+    private val FRONTMATTER_REGEX = Regex("^---\\r?\\n([\\s\\S]*?)\\r?\\n---\\r?\\n?([\\s\\S]*)\$")
 }
 
+// ---- Data classes (port of Cline's src/shared/skills.ts) ----
+
 /**
- * A bundled skill definition loaded from resources.
+ * Where a skill was discovered.
+ * Cline has "global" | "project". We add BUNDLED for classpath skills (our adaptation).
+ */
+enum class SkillSource { BUNDLED, PROJECT, GLOBAL }
+
+/**
+ * Skill metadata — loaded at discovery time (cheap).
+ * Port of Cline's SkillMetadata from src/shared/skills.ts.
  *
  * @param name unique skill identifier (used in use_skill tool)
  * @param description human-readable description (shown in system prompt skill list)
- * @param content full skill instructions (injected when skill is activated)
+ * @param path file path to SKILL.md (classpath path for bundled, absolute path for user)
+ * @param source where the skill was discovered
  */
-data class SkillDefinition(
+data class SkillMetadata(
     val name: String,
     val description: String,
-    val content: String
+    val path: String,
+    val source: SkillSource
+)
+
+/**
+ * Skill content — loaded on demand when activated via use_skill.
+ * Port of Cline's SkillContent from src/shared/skills.ts.
+ *
+ * @param name unique skill identifier
+ * @param description human-readable description
+ * @param path file path to SKILL.md
+ * @param source where the skill was discovered
+ * @param instructions full skill body (after frontmatter) — the actual instructions
+ */
+data class SkillContent(
+    val name: String,
+    val description: String,
+    val path: String,
+    val source: SkillSource,
+    val instructions: String
+)
+
+/**
+ * Result of parsing YAML frontmatter from a markdown file.
+ * Port of Cline's FrontmatterParseResult from frontmatter.ts.
+ *
+ * @param data key-value pairs from frontmatter
+ * @param body markdown content after stripping frontmatter
+ * @param hadFrontmatter true if --- delimiters were found (even if parsing failed)
+ * @param parseError error message if YAML parsing failed
+ */
+data class FrontmatterResult(
+    val data: Map<String, String>,
+    val body: String,
+    val hadFrontmatter: Boolean,
+    val parseError: String? = null
 )

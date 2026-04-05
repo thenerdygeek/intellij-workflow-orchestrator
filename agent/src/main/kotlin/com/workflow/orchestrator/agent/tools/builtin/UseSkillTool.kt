@@ -13,37 +13,34 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Skill activation tool — faithful port of Cline's use_skill.
  *
- * Cline source: src/core/prompts/system-prompt/tools/use_skill.ts
+ * Cline source:
+ *   Tool spec: src/core/prompts/system-prompt/tools/use_skill.ts
+ *   Handler:   src/core/task/tools/handlers/UseSkillToolHandler.ts
  *
- * When the user's request matches a skill description shown in the SKILLS
- * section of the system prompt, the LLM calls this tool ONCE with the exact
- * skill name. The tool loads the full skill content and returns it as the
- * tool result. The LLM then follows the skill instructions without
- * re-invoking the tool.
+ * On invocation:
+ *   1. Re-discovers all skills (lazy loading, matches Cline's handler)
+ *   2. Resolves available skills with override precedence
+ *   3. Loads full skill content on demand
+ *   4. Returns Cline's response format with instructions + skill directory path
  *
- * The skill content is also stored as the active skill in the ContextManager
- * so it survives compaction (re-injected after compaction).
- *
- * From Cline's description: "This tool should be invoked ONCE when a user's
- * request matches one of the available skill descriptions shown in the SKILLS
- * section of your system prompt."
+ * The isSkillActivation flag on ToolResult is our addition for compaction
+ * survival — Cline does not have this.
  */
 class UseSkillTool : AgentTool {
 
     override val name = "use_skill"
 
-    // Ported from Cline's use_skill tool description
-    override val description = "Load and activate a specialized skill by name. This tool should be invoked ONCE " +
-        "when a user's request matches one of the available skill descriptions shown in the SKILLS section of " +
-        "your system prompt. The skill_name MUST match one of the available skill names exactly. After invoking " +
-        "this tool, follow the instructions returned without re-invoking the tool."
+    // Port of Cline's use_skill tool description (src/core/prompts/system-prompt/tools/use_skill.ts)
+    override val description = "Load and activate a skill by name. Skills provide specialized instructions " +
+        "for specific tasks. Use this tool ONCE when a user's request matches one of the available skill " +
+        "descriptions shown in the SKILLS section of your system prompt. After activation, follow the " +
+        "skill's instructions directly - do not call use_skill again."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "skill_name" to ParameterProperty(
                 type = "string",
-                description = "The exact name of the skill to activate. Must match one of the available " +
-                    "skill names listed in the SKILLS section of the system prompt."
+                description = "The name of the skill to activate (must match exactly one of the available skill names)"
             )
         ),
         required = listOf("skill_name")
@@ -53,29 +50,61 @@ class UseSkillTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val skillName = params["skill_name"]?.jsonPrimitive?.content
-            ?: return ToolResult(
-                content = "Missing required parameter: skill_name",
+
+        // Port of Cline's handler: missing param increments consecutiveMistakeCount
+        if (skillName.isNullOrBlank()) {
+            return ToolResult(
+                content = "Error: Missing required parameter 'skill_name'. Please provide the name of the skill to activate.",
                 summary = "use_skill failed: missing skill_name",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
-        val skillContent = InstructionLoader.loadSkillContent(skillName)
-            ?: return ToolResult(
-                content = "Unknown skill: '$skillName'. Check the SKILLS section of the system prompt " +
-                    "for available skill names.",
-                summary = "use_skill failed: unknown skill '$skillName'",
+        // Discover skills on-demand (lazy loading, matches Cline's UseSkillToolHandler.execute)
+        val projectPath = project.basePath ?: ""
+        val allSkills = InstructionLoader.discoverSkills(projectPath)
+        val availableSkills = InstructionLoader.getAvailableSkills(allSkills)
+
+        if (availableSkills.isEmpty()) {
+            return ToolResult(
+                content = "Error: No skills are available. Skills may be disabled or not configured.",
+                summary = "use_skill failed: no skills available",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
+
+        val skillContent = InstructionLoader.getSkillContent(skillName, availableSkills)
+
+        if (skillContent == null) {
+            // Port of Cline: list available skill names in error message
+            val availableNames = availableSkills.joinToString(", ") { it.name }
+            return ToolResult(
+                content = "Error: Skill \"$skillName\" not found. Available skills: $availableNames",
+                summary = "use_skill failed: skill '$skillName' not found",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        // Port of Cline's response format (UseSkillToolHandler.ts lines 92-97)
+        val skillDirPath = skillContent.path.replace(Regex("SKILL\\.md$"), "")
+        val response = """# Skill "${skillContent.name}" is now active
+
+${skillContent.instructions}
+
+---
+IMPORTANT: The skill is now loaded. Do NOT call use_skill again for this task. Simply follow the instructions above to complete the user's request. You may access other files in the skill directory at: $skillDirPath"""
 
         return ToolResult(
-            content = "Skill '$skillName' activated. Follow these instructions:\n\n$skillContent",
+            content = response,
             summary = "Activated skill: $skillName",
-            tokenEstimate = skillContent.length / 4,
+            tokenEstimate = response.length / 4,
+            // Our addition: flags for compaction survival (not in Cline)
             isSkillActivation = true,
             activatedSkillName = skillName,
-            activatedSkillContent = skillContent
+            activatedSkillContent = skillContent.instructions
         )
     }
 }

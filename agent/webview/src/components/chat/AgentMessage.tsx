@@ -8,7 +8,6 @@ import {
   Message as PkMessage,
   MessageAvatar,
 } from '@/components/ui/prompt-kit/message';
-import { Loader } from '@/components/ui/prompt-kit/loader';
 import { cn } from '@/lib/utils';
 
 interface AgentMessageProps {
