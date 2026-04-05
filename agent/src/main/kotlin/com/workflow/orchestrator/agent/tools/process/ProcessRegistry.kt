@@ -21,7 +21,9 @@ data class ManagedProcess(
     val command: String,
     val startedAt: Long = System.currentTimeMillis(),
     val idleSignaledAt: AtomicLong = AtomicLong(0),
-    val stdinCount: AtomicInteger = AtomicInteger(0)
+    val stdinCount: AtomicInteger = AtomicInteger(0),
+    /** Signaled when the output reader thread finishes draining. */
+    val readerDone: java.util.concurrent.CountDownLatch = java.util.concurrent.CountDownLatch(1)
 )
 
 /**

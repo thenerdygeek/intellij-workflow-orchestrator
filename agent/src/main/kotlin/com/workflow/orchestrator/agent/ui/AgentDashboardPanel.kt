@@ -232,6 +232,11 @@ class AgentDashboardPanel(
         recordReplay { p -> p.renderPlan(planJson) }
     }
 
+    fun approvePlanInUi() {
+        cefPanel?.approvePlanInUi()
+        mirrors.forEach { it.approvePlanInUi() }
+    }
+
     fun updatePlanStep(stepId: String, status: String) {
         cefPanel?.updatePlanStep(stepId, status)
         mirrors.forEach { it.updatePlanStep(stepId, status) }

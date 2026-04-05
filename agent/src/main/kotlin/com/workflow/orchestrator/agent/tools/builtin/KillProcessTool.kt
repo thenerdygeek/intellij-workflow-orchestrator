@@ -8,7 +8,6 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -45,10 +44,13 @@ class KillProcessTool : AgentTool {
         // Collect partial output before killing
         val rawOutput = RunCommandTool.stripAnsi(managed.outputLines.joinToString(""))
 
+        val readerLatch = managed.readerDone
         ProcessRegistry.kill(processId)
 
-        // Brief wait for reader thread to finish
-        delay(300)
+        // Wait for reader thread to finish draining output (max 2s)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            readerLatch.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        }
 
         // Truncate to last 5000 chars if longer
         val output = if (rawOutput.length > 5000) rawOutput.takeLast(5000) else rawOutput

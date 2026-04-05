@@ -684,6 +684,23 @@ class AgentController(
         invokeLater {
             val summary = "${progress.completedCount}/${progress.totalCount} steps completed"
             dashboard.appendStatus(summary, RichStreamingPanel.StatusType.INFO)
+
+            // Sync task_progress checklist with plan steps in the UI.
+            // Match by index: progress item 0 → plan step "1", item 1 → step "2", etc.
+            // Only the first unchecked item is "running"; the rest stay "pending".
+            val planSteps = currentPlanData?.steps ?: return@invokeLater
+            var foundFirstIncomplete = false
+            for ((index, item) in progress.items.withIndex()) {
+                if (index < planSteps.size) {
+                    val stepId = planSteps[index].id
+                    val status = when {
+                        item.completed -> "completed"
+                        !foundFirstIncomplete -> { foundFirstIncomplete = true; "running" }
+                        else -> "pending"
+                    }
+                    dashboard.updatePlanStep(stepId, status)
+                }
+            }
         }
     }
 
@@ -1129,9 +1146,24 @@ class AgentController(
         AgentService.planModeActive.set(false)
         dashboard.setPlanMode(false)
 
-        // Feed the approval into the loop's input channel
-        val instruction = "The user has approved the plan. Switch to ACT MODE and implement it step by step. " +
-            "Follow the plan exactly. Call attempt_completion when all steps are done."
+        // Mark the plan as approved in the UI — switches PlanSummaryCard → PlanProgressWidget
+        dashboard.approvePlanInUi()
+
+        // Build the approval instruction with plan steps so the LLM's task_progress
+        // checklist matches the plan and we can auto-update step statuses in the UI.
+        val stepsChecklist = currentPlanData?.steps?.joinToString("\n") { step ->
+            "- [ ] ${step.title}"
+        } ?: ""
+
+        val instruction = buildString {
+            appendLine("The user has approved the plan. Switch to ACT MODE and implement it step by step.")
+            appendLine("Follow the plan exactly. Call attempt_completion when all steps are done.")
+            if (stepsChecklist.isNotBlank()) {
+                appendLine()
+                appendLine("Use these exact steps as your task_progress checklist (mark each with [x] as you complete it):")
+                appendLine(stepsChecklist)
+            }
+        }.trim()
 
         // Use executeTask which handles the channel-feeding logic
         executeTask(instruction)

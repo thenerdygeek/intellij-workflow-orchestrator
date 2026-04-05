@@ -764,6 +764,10 @@ class AgentCefPanel(
         callJs("renderPlan(${jsonStr(planJson)})")
     }
 
+    fun approvePlanInUi() {
+        callJs("approvePlan()")
+    }
+
     fun updatePlanStep(stepId: String, status: String) {
         callJs("updatePlanStep(${jsonStr(stepId)}, ${jsonStr(status)})")
     }

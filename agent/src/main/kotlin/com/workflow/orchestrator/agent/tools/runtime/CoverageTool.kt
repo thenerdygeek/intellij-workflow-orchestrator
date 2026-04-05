@@ -23,6 +23,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -101,7 +102,7 @@ Actions and their parameters:
 
         return when (action) {
             "run_with_coverage" -> executeRunWithCoverage(params, project)
-            "get_file_coverage" -> executeGetFileCoverage(params)
+            "get_file_coverage" -> executeGetFileCoverage(params, project)
             else -> ToolResult(
                 content = "Unknown action '$action'. Valid actions: run_with_coverage, get_file_coverage",
                 summary = "Unknown action '$action'",
@@ -149,6 +150,12 @@ Actions and their parameters:
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+
+        // Register a CoverageSuiteListener BEFORE launching the run.
+        // coverageDataCalculated() fires when the coverage engine finishes processing
+        // the .exec/.ic data — this is the reliable signal that data is ready.
+        val coverageDeferred = kotlinx.coroutines.CompletableDeferred<CoverageSnapshot?>()
+        val listenerDisposable = registerCoverageListener(project, coverageDeferred)
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
 
@@ -239,6 +246,7 @@ Actions and their parameters:
 
         if (result == null) {
             processHandlerRef.get()?.destroyProcess()
+            listenerDisposable?.let { com.intellij.openapi.util.Disposer.dispose(it) }
             return ToolResult(
                 "[TIMEOUT] Coverage run timed out after ${timeoutSeconds}s for $testTarget.",
                 "Coverage timeout",
@@ -247,14 +255,27 @@ Actions and their parameters:
             )
         }
 
-        // Extract coverage data
-        val snapshot = extractCoverageSnapshot(project)
+        // Wait for coverage data via the CoverageSuiteListener callback.
+        // The listener fires coverageDataCalculated() when the engine finishes —
+        // no polling needed. Falls back to a direct read if the listener wasn't registered.
+        val snapshot = if (listenerDisposable != null) {
+            withTimeoutOrNull(COVERAGE_LISTENER_TIMEOUT_MS) { coverageDeferred.await() }
+                ?: extractCoverageSnapshot(project)  // fallback: one direct read
+        } else {
+            // Listener registration failed (coverage module reflection issue) — direct read with short delay
+            delay(COVERAGE_FALLBACK_DELAY_MS)
+            extractCoverageSnapshot(project)
+        }
+
+        listenerDisposable?.let { com.intellij.openapi.util.Disposer.dispose(it) }
         lastSnapshot = snapshot
 
         val coverageSummary = if (snapshot != null && snapshot.files.isNotEmpty()) {
             formatCoverageSummary(snapshot)
         } else {
-            "\nCoverage: No coverage data available (coverage engine may not have reported yet)."
+            val diag = lastExtractionDiag?.let { "\n\nExtraction diagnostics:\n$it" } ?: ""
+            "\nCoverage: No coverage data available. " +
+                "The coverage tab in the IDE may still show results — use get_file_coverage to re-read.$diag"
         }
 
         val content = "${result.testResult}\n$coverageSummary"
@@ -265,11 +286,60 @@ Actions and their parameters:
         )
     }
 
+    /**
+     * Register a CoverageSuiteListener via reflection to be notified when coverage data
+     * is ready. Returns a Disposable to unregister the listener, or null if registration failed.
+     *
+     * Uses reflection because the coverage module (com.intellij.coverage) is optional —
+     * we can't have a compile-time dependency on it.
+     *
+     * Listener lifecycle:
+     *   coverageDataCalculated(bundle) fires when the engine finishes processing the
+     *   .exec/.ic file — at that point, getCurrentSuitesBundle().getCoverageData() is populated.
+     */
+    private fun registerCoverageListener(
+        project: Project,
+        deferred: kotlinx.coroutines.CompletableDeferred<CoverageSnapshot?>
+    ): com.intellij.openapi.Disposable? {
+        return try {
+            val dataManagerClass = Class.forName("com.intellij.coverage.CoverageDataManager")
+            val getInstanceMethod = dataManagerClass.getMethod("getInstance", Project::class.java)
+            val dataManager = getInstanceMethod.invoke(null, project) ?: return null
+
+            val listenerClass = Class.forName("com.intellij.coverage.CoverageSuiteListener")
+
+            // Create a dynamic proxy implementing CoverageSuiteListener
+            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                listenerClass.classLoader,
+                arrayOf(listenerClass)
+            ) { _, method, _ ->
+                if (method.name == "coverageDataCalculated" && !deferred.isCompleted) {
+                    // Coverage data is now ready — extract the snapshot
+                    val snapshot = extractCoverageSnapshot(project)
+                    deferred.complete(snapshot)
+                }
+                null  // all methods return void
+            }
+
+            // Register with a Disposable so the listener is automatically cleaned up
+            val disposable = com.intellij.openapi.util.Disposer.newDisposable("CoverageTool-listener")
+            val addListenerMethod = dataManagerClass.getMethod(
+                "addSuiteListener",
+                listenerClass,
+                com.intellij.openapi.Disposable::class.java
+            )
+            addListenerMethod.invoke(dataManager, listener, disposable)
+            disposable
+        } catch (e: Exception) {
+            null  // Coverage module not available or API changed — fall back to direct read
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Action: get_file_coverage
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun executeGetFileCoverage(params: JsonObject): ToolResult {
+    private fun executeGetFileCoverage(params: JsonObject, project: Project): ToolResult {
         val filePath = params["file_path"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult(
                 "Error: 'file_path' parameter is required for get_file_coverage",
@@ -278,13 +348,26 @@ Actions and their parameters:
                 isError = true
             )
 
-        val snapshot = lastSnapshot
-            ?: return ToolResult(
-                "No coverage data available. Run 'run_with_coverage' first to collect coverage data.",
+        // Try cached snapshot first, then live-read from the IDE's active coverage suite.
+        // This handles the case where run_with_coverage missed the data due to timing,
+        // but the IDE's coverage tab is now showing results.
+        var snapshot = lastSnapshot
+        if (snapshot == null || snapshot.files.isEmpty()) {
+            snapshot = extractCoverageSnapshot(project)
+            if (snapshot != null && snapshot.files.isNotEmpty()) {
+                lastSnapshot = snapshot
+            }
+        }
+        if (snapshot == null || snapshot.files.isEmpty()) {
+            val diag = lastExtractionDiag?.let { "\n\nExtraction diagnostics:\n$it" } ?: ""
+            return ToolResult(
+                "No coverage data available. Run 'run_with_coverage' first to collect coverage data, " +
+                    "or check that the Coverage plugin is enabled.$diag",
                 "No coverage data",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
         // Try to find the file by exact path or by filename
         val fileName = filePath.substringAfterLast('/')
@@ -311,58 +394,90 @@ Actions and their parameters:
     // dependency on coverage agent classes)
     // ══════════════════════════════════════════════════════════════════════
 
+    /** Diagnostic info from the last extraction attempt — included in error responses. */
+    @Volatile
+    internal var lastExtractionDiag: String? = null
+
     private fun extractCoverageSnapshot(project: Project): CoverageSnapshot? {
+        val diag = StringBuilder()
         return try {
-            // CoverageDataManager is in intellij.platform.coverage module
+            // Step 1: CoverageDataManager
             val dataManagerClass = Class.forName("com.intellij.coverage.CoverageDataManager")
             val getInstanceMethod = dataManagerClass.getMethod("getInstance", Project::class.java)
-            val dataManager = getInstanceMethod.invoke(null, project) ?: return null
+            val dataManager = getInstanceMethod.invoke(null, project)
+            if (dataManager == null) { diag.append("CoverageDataManager.getInstance() returned null"); lastExtractionDiag = diag.toString(); return null }
+            diag.appendLine("CoverageDataManager: ${dataManager.javaClass.name}")
 
+            // Step 2: Current suites bundle
             val getCurrentSuitesBundleMethod = dataManagerClass.getMethod("getCurrentSuitesBundle")
-            val suitesBundle = getCurrentSuitesBundleMethod.invoke(dataManager) ?: return null
+            val suitesBundle = getCurrentSuitesBundleMethod.invoke(dataManager)
+            if (suitesBundle == null) { diag.append(" | getCurrentSuitesBundle() returned null"); lastExtractionDiag = diag.toString(); return null }
+            diag.appendLine("SuitesBundle: ${suitesBundle.javaClass.name}")
 
+            // Step 3: Coverage data (ProjectData)
             val getCoverageDataMethod = suitesBundle.javaClass.getMethod("getCoverageData")
-            val projectData = getCoverageDataMethod.invoke(suitesBundle) ?: return null
+            val projectData = getCoverageDataMethod.invoke(suitesBundle)
+            if (projectData == null) { diag.append(" | getCoverageData() returned null"); lastExtractionDiag = diag.toString(); return null }
+            diag.appendLine("ProjectData: ${projectData.javaClass.name}")
 
+            // Step 4: Classes map
             val getClassesMethod = projectData.javaClass.getMethod("getClasses")
+            val rawClasses = getClassesMethod.invoke(projectData)
+            diag.appendLine("getClasses() returned: ${rawClasses?.javaClass?.name ?: "null"}")
             @Suppress("UNCHECKED_CAST")
-            val classes = getClassesMethod.invoke(projectData) as? Map<String, Any> ?: return null
+            val classes = rawClasses as? Map<String, Any>
+            if (classes == null) { diag.append(" | classes cast to Map<String, Any> failed"); lastExtractionDiag = diag.toString(); return null }
+            diag.appendLine("Classes count: ${classes.size}")
 
+            // Step 5: Extract per-class coverage
             val files = mutableMapOf<String, FileCoverageResult>()
+            var classesProcessed = 0
+            var classesSkipped = 0
 
             for ((className, classData) in classes) {
-                val getLinesMethod = classData.javaClass.getMethod("getLines")
-                val lines = getLinesMethod.invoke(classData) as? Array<*> ?: continue
+                try {
+                    val getLinesMethod = classData.javaClass.getMethod("getLines")
+                    val lines = getLinesMethod.invoke(classData) as? Array<*>
+                    if (lines == null) { classesSkipped++; continue }
 
-                var covered = 0
-                var total = 0
-                val uncoveredLines = mutableListOf<Int>()
+                    var covered = 0
+                    var total = 0
+                    val uncoveredLines = mutableListOf<Int>()
 
-                for (element in lines) {
-                    if (element == null) continue
-                    total++
-                    val getHitsMethod = element.javaClass.getMethod("getHits")
-                    val hits = getHitsMethod.invoke(element) as? Int ?: 0
-                    if (hits > 0) {
-                        covered++
-                    } else {
-                        val getLineNumberMethod = element.javaClass.getMethod("getLineNumber")
-                        val lineNumber = getLineNumberMethod.invoke(element) as? Int ?: continue
-                        uncoveredLines.add(lineNumber)
+                    for (element in lines) {
+                        if (element == null) continue
+                        total++
+                        val getHitsMethod = element.javaClass.getMethod("getHits")
+                        val hits = getHitsMethod.invoke(element) as? Int ?: 0
+                        if (hits > 0) {
+                            covered++
+                        } else {
+                            val getLineNumberMethod = element.javaClass.getMethod("getLineNumber")
+                            val lineNumber = getLineNumberMethod.invoke(element) as? Int ?: continue
+                            uncoveredLines.add(lineNumber)
+                        }
                     }
-                }
 
-                if (total > 0) {
-                    files[className] = FileCoverageResult(
-                        coveredLines = covered,
-                        totalLines = total,
-                        uncoveredRanges = collapseToRanges(uncoveredLines)
-                    )
+                    if (total > 0) {
+                        files[className] = FileCoverageResult(
+                            coveredLines = covered,
+                            totalLines = total,
+                            uncoveredRanges = collapseToRanges(uncoveredLines)
+                        )
+                        classesProcessed++
+                    }
+                } catch (e: Exception) {
+                    classesSkipped++
+                    if (classesSkipped == 1) diag.appendLine("First class error ($className): ${e.javaClass.simpleName}: ${e.message}")
                 }
             }
 
+            diag.appendLine("Processed: $classesProcessed, Skipped: $classesSkipped, Files: ${files.size}")
+            lastExtractionDiag = diag.toString()
             CoverageSnapshot(files)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            diag.appendLine("EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+            lastExtractionDiag = diag.toString()
             null
         }
     }
@@ -575,6 +690,10 @@ Actions and their parameters:
     companion object {
         private const val DEFAULT_TIMEOUT = 300L
         private const val MAX_TIMEOUT = 900L
+        /** Max time to wait for coverageDataCalculated() listener callback (ms). */
+        private const val COVERAGE_LISTENER_TIMEOUT_MS = 30_000L
+        /** Delay before direct read fallback when listener registration fails (ms). */
+        private const val COVERAGE_FALLBACK_DELAY_MS = 5_000L
 
         /**
          * Collapse a sorted list of line numbers into contiguous ranges.

@@ -88,6 +88,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const plan = JSON.parse(planJson);
     stores?.getChatStore().setPlan(plan);
   },
+  approvePlan() {
+    stores?.getChatStore().approvePlan();
+  },
   updatePlanStep(stepId: string, status: string) {
     stores?.getChatStore().updatePlanStep(stepId, status);
   },

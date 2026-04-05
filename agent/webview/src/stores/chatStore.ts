@@ -125,6 +125,7 @@ interface ChatState {
   addThinking(text: string): void;
   clearChat(): void;
   setPlan(plan: Plan): void;
+  approvePlan(): void;
   updatePlanStep(stepId: string, status: string): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
   setPlanCommentCount(count: number): void;
@@ -505,6 +506,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setPlan(plan: Plan) {
     set({ plan, planCommentCount: 0 });
+  },
+
+  approvePlan() {
+    set(state => {
+      if (!state.plan) return {};
+      return { plan: { ...state.plan, approved: true } };
+    });
   },
 
   updatePlanSummary(summary: string) {

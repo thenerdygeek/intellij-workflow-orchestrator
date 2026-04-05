@@ -482,6 +482,8 @@ class RunCommandTool : AgentTool {
                     }
                 } catch (_: Exception) {
                     // Process killed or stream closed — expected during timeout/cancel
+                } finally {
+                    managed.readerDone.countDown()
                 }
             }.apply {
                 isDaemon = true

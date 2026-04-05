@@ -451,7 +451,11 @@ description optional: for approval dialog on run_tests, compile_module.
             if (testConsole != null) {
                 awaitTestingFinished(testConsole.resultsViewer, TEST_TREE_FINALIZE_TIMEOUT_MS)
             } else {
-                delay(1000)
+                // No test console — retry until the test tree is populated
+                for (attempt in 1..TEST_TREE_RETRY_ATTEMPTS) {
+                    if (TestConsoleUtils.findTestRoot(descriptor)?.children?.isNotEmpty() == true) break
+                    delay(TEST_TREE_RETRY_INTERVAL_MS)
+                }
             }
 
             val testRoot = TestConsoleUtils.findTestRoot(descriptor)
@@ -676,49 +680,57 @@ description optional: for approval dialog on run_tests, compile_module.
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
                         }
 
-                        // Build watchdog: polls until compilation finishes.
-                        // If Make completes but processStarted() still hasn't fired,
-                        // the build failed. Uses polling (not a fixed timer) so large
-                        // projects that take >30s to compile won't false-positive.
-                        Thread {
-                            try {
-                                // Initial grace period — give Make time to start
-                                Thread.sleep(BUILD_WATCHDOG_INITIAL_MS)
+                        // Build watchdog: uses CompilationStatusListener to detect build failures.
+                        // If compilation finishes but processStarted() never fires, the build failed.
+                        // Uses reflection because CompilerTopics/CompilationStatusListener are in the
+                        // Java plugin (optional compile-time dependency, different API versions).
+                        try {
+                            val topicsClass = Class.forName("com.intellij.openapi.compiler.CompilerTopics")
+                            val topicField = topicsClass.getField("COMPILATION_STATUS")
+                            @Suppress("UNCHECKED_CAST")
+                            val topic = topicField.get(null) as com.intellij.util.messages.Topic<Any>
+                            val listenerClass = Class.forName("com.intellij.openapi.compiler.CompilationStatusListener")
 
-                                // Poll: wait while compilation is still active
-                                var waited = BUILD_WATCHDOG_INITIAL_MS
-                                while (processHandlerRef.get() == null && continuation.isActive && waited < BUILD_WATCHDOG_MAX_MS) {
-                                    val stillCompiling = try {
-                                        com.intellij.openapi.application.ReadAction.compute<Boolean, Exception> {
-                                            CompilerManager.getInstance(project).isCompilationActive
-                                        }
-                                    } catch (_: Exception) { false }
-
-                                    if (!stillCompiling) break  // Make finished — check result
-                                    Thread.sleep(BUILD_WATCHDOG_POLL_MS)
-                                    waited += BUILD_WATCHDOG_POLL_MS
+                            val connection = project.messageBus.connect()
+                            val listener = java.lang.reflect.Proxy.newProxyInstance(
+                                listenerClass.classLoader,
+                                arrayOf(listenerClass)
+                            ) { _, method, args ->
+                                if (method.name == "compilationFinished") {
+                                    connection.disconnect()
+                                    if (processHandlerRef.get() == null && continuation.isActive) {
+                                        val aborted = args?.getOrNull(0) as? Boolean ?: false
+                                        val errors = args?.getOrNull(1) as? Int ?: 0
+                                        val warnings = args?.getOrNull(2) as? Int ?: 0
+                                        continuation.resume(ToolResult(
+                                            content = "BUILD FAILED — test execution did not start.\n\n" +
+                                                "Compilation completed (errors: $errors, warnings: $warnings, aborted: $aborted) " +
+                                                "but no test process was created.\n\n" +
+                                                "Fix the compilation errors and try again. " +
+                                                "Use diagnostics tool to check for errors in the test class.",
+                                            summary = "Build failed before tests ($errors errors)",
+                                            tokenEstimate = 30,
+                                            isError = true
+                                        ))
+                                    }
                                 }
-
-                                // Make finished but process never started → build failed
-                                if (processHandlerRef.get() == null && continuation.isActive) {
-                                    continuation.resume(ToolResult(
-                                        content = "BUILD FAILED — test execution did not start.\n\n" +
-                                            "Compilation completed but no test process was created. " +
-                                            "This means the build had errors.\n\n" +
-                                            "Fix the compilation errors and try again. " +
-                                            "Use diagnostics tool to check for errors in the test class.",
-                                        summary = "Build failed before tests",
-                                        tokenEstimate = 30,
-                                        isError = true
-                                    ))
-                                }
-                            } catch (_: InterruptedException) {
-                                // Continuation was resumed normally, watchdog no longer needed
+                                null
                             }
-                        }.apply {
-                            isDaemon = true
-                            name = "run_tests-build-watchdog"
-                            start()
+
+                            @Suppress("UNCHECKED_CAST")
+                            (topic as com.intellij.util.messages.Topic<Any>).let { t ->
+                                connection.subscribe(t, listener)
+                            }
+
+                            // Safety: disconnect on timeout to prevent leaks
+                            Thread {
+                                try {
+                                    Thread.sleep(BUILD_WATCHDOG_MAX_MS)
+                                    connection.disconnect()
+                                } catch (_: InterruptedException) { /* normal */ }
+                            }.apply { isDaemon = true; name = "build-watchdog-timeout"; start() }
+                        } catch (_: Exception) {
+                            // Reflection failed — fall back to no build watchdog
                         }
                     } catch (e: Exception) {
                         if (continuation.isActive) continuation.resume(null)
@@ -791,21 +803,29 @@ description optional: for approval dialog on run_tests, compile_module.
                 }
             })
         } else {
+            // Fallback: no test console available — wait for process exit, then retry
+            // until the test tree is populated. No TestResultsViewer.EventsListener is
+            // available here, so we poll with short intervals instead of a blind 2s Timer.
             if (handler != null) {
+                val doExtract = {
+                    Thread {
+                        for (attempt in 1..TEST_TREE_RETRY_ATTEMPTS) {
+                            if (!continuation.isActive) return@Thread
+                            if (TestConsoleUtils.findTestRoot(descriptor)?.children?.isNotEmpty() == true) break
+                            Thread.sleep(TEST_TREE_RETRY_INTERVAL_MS)
+                        }
+                        if (continuation.isActive) {
+                            continuation.resume(extractNativeResults(descriptor, testTarget))
+                        }
+                    }.apply { isDaemon = true; name = "test-tree-finalize"; start() }
+                }
+
                 if (handler.isProcessTerminated) {
-                    if (continuation.isActive) {
-                        continuation.resume(extractNativeResults(descriptor, testTarget))
-                    }
+                    doExtract()
                 } else {
                     handler.addProcessListener(object : ProcessAdapter() {
                         override fun processTerminated(event: ProcessEvent) {
-                            java.util.Timer().schedule(object : java.util.TimerTask() {
-                                override fun run() {
-                                    if (continuation.isActive) {
-                                        continuation.resume(extractNativeResults(descriptor, testTarget))
-                                    }
-                                }
-                            }, 2000)
+                            doExtract()
                         }
                     })
                 }
@@ -1251,10 +1271,12 @@ description optional: for approval dialog on run_tests, compile_module.
         // run_tests constants
         private const val RUN_TESTS_DEFAULT_TIMEOUT = 300L
         private const val RUN_TESTS_MAX_TIMEOUT = 900L
-        /** Build watchdog timing — polls CompilerManager.isCompilationActive
-         *  instead of using a fixed timer, so large projects won't false-positive. */
-        private const val BUILD_WATCHDOG_INITIAL_MS = 10_000L  // Wait 10s before first check
-        private const val BUILD_WATCHDOG_POLL_MS = 2_000L      // Check every 2s while compiling
+        /** Test tree finalization retry — when no TestResultsViewer is available,
+         *  poll for the test root to be populated after process termination. */
+        private const val TEST_TREE_RETRY_ATTEMPTS = 10
+        private const val TEST_TREE_RETRY_INTERVAL_MS = 500L  // 10 * 500ms = 5s max wait
+
+        /** Build watchdog timeout — how long to wait for CompilationStatusListener callback. */
         private const val BUILD_WATCHDOG_MAX_MS = 300_000L     // Hard cap at 5 min (matches test timeout)
         private const val RUN_TESTS_MAX_OUTPUT_CHARS = 4000
         private const val RUN_TESTS_TOKEN_CAP_CHARS = 12000
