@@ -638,9 +638,14 @@ class SourcegraphChatClient(
 
                 messages.forEachIndexed { i, msg ->
                     appendLine("--- Message $i [role=${msg.role}] ---")
-                    appendLine(msg.content ?: "(null)")
+                    val content = msg.content
+                    if (msg.role == "tool" && content != null) {
+                        appendLine(sanitizeForDebug(content))
+                    } else {
+                        appendLine(content ?: "(null)")
+                    }
                     msg.toolCalls?.forEach { tc ->
-                        appendLine("  [tool_call] ${tc.function.name}(${tc.function.arguments})")
+                        appendLine("  [tool_call] ${tc.function.name}(${sanitizeForDebug(tc.function.arguments)})")
                     }
                     appendLine()
                 }
@@ -682,12 +687,24 @@ class SourcegraphChatClient(
                 choice?.message?.toolCalls?.forEach { tc ->
                     appendLine()
                     appendLine("--- Tool Call: ${tc.function.name} ---")
-                    appendLine(tc.function.arguments)
+                    appendLine(sanitizeForDebug(tc.function.arguments))
                 }
             })
             log.info("[Agent:API] Response dumped to ${file.name} (finish=${choice?.finishReason}, tools=${choice?.message?.toolCalls?.size ?: 0})")
         } catch (e: Exception) {
             log.debug("[Agent:API] Failed to dump response: ${e.message}")
+        }
+    }
+
+    /**
+     * Scrub likely credentials from text before writing to debug files.
+     * Matches common patterns: password, token, secret, api_key, auth, bearer, credential.
+     */
+    private fun sanitizeForDebug(text: String): String {
+        return text.replace(
+            Regex("""("(?:password|token|secret|api_key|apiKey|api-key|auth|bearer|credential|private_key|privateKey)["\s]*[:=]\s*")([^"]{4,})""", RegexOption.IGNORE_CASE)
+        ) { match ->
+            "${match.groupValues[1]}***REDACTED***"
         }
     }
 
