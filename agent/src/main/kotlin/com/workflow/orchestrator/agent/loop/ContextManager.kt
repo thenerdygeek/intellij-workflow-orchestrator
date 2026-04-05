@@ -54,6 +54,9 @@ class ContextManager(
     /** Last summary from LLM compaction, used for summary chaining. */
     private var lastSummary: String? = null
 
+    /** Token count for tool definitions (schemas sent in API request). Updated by AgentLoop. */
+    private var toolDefinitionTokens: Int = 0
+
     /**
      * Tracks file read tool results by path -> list of message indices.
      * Used for duplicate file read detection (Cline's optimization stage).
@@ -156,22 +159,45 @@ class ContextManager(
     }
 
     /**
-     * Estimate total tokens using bytes/4 heuristic (Codex CLI pattern).
-     * Counts message content AND tool call names/arguments.
+     * Set the token count for tool definitions (schemas sent in each API request).
+     *
+     * Tool schemas are significant: 30+ tools can consume 5-10K+ tokens.
+     * The old estimate ignored these entirely, causing utilization to be
+     * underreported by 5-10% — delaying compaction until context overflow.
+     *
+     * Called by AgentLoop once at setup and whenever deferred tools are loaded.
+     */
+    fun setToolDefinitionTokens(tokens: Int) {
+        toolDefinitionTokens = tokens
+        LOG.debug("[Context] Tool definition tokens set: $tokens")
+    }
+
+    /**
+     * Estimate total tokens using chars/3.5 heuristic.
+     *
+     * Uses chars/3.5 (not bytes/4) to match TokenEstimator and be consistent
+     * across the codebase. Anthropic/OpenAI models average ~3.5 chars/token
+     * for code-heavy content.
+     *
+     * Includes:
+     * - System prompt content
+     * - All message content + tool call names/arguments
+     * - Tool definition schemas (set via [setToolDefinitionTokens])
+     * - Per-message overhead (~4 tokens for role, delimiters)
      */
     fun tokenEstimate(): Int {
-        var bytes = 0
-        systemPrompt?.content?.let { bytes += it.toByteArray(Charsets.UTF_8).size }
+        var chars = 0
+        systemPrompt?.content?.let { chars += it.length }
         for (msg in messages) {
-            msg.content?.let { bytes += it.toByteArray(Charsets.UTF_8).size }
+            msg.content?.let { chars += it.length }
             msg.toolCalls?.forEach { tc ->
-                bytes += tc.function.name.toByteArray(Charsets.UTF_8).size
-                bytes += tc.function.arguments.toByteArray(Charsets.UTF_8).size
+                chars += tc.function.name.length
+                chars += tc.function.arguments.length
             }
-            // Per-message overhead (role, delimiters)
-            bytes += 4
         }
-        return bytes / 4
+        val messageTokens = (chars / 3.5).toInt()
+        val overheadTokens = (messages.size + 1) * 4 // +1 for system prompt
+        return messageTokens + overheadTokens + toolDefinitionTokens
     }
 
     fun messageCount(): Int = messages.size

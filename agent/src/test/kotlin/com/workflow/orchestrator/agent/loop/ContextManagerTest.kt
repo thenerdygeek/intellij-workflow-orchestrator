@@ -143,11 +143,19 @@ class ContextManagerTest {
         }
 
         @Test
-        fun `tokenEstimate returns bytes div 4 estimate`() {
-            cm.setSystemPrompt("abcd")
-            cm.addUserMessage("abcdefgh")
+        fun `tokenEstimate uses chars div 3_5 plus overhead plus tool tokens`() {
+            cm.setSystemPrompt("abcd")       // 4 chars
+            cm.addUserMessage("abcdefgh")    // 8 chars
 
-            assertEquals(4, cm.tokenEstimate())
+            // chars = 4 + 8 = 12, messageTokens = (12 / 3.5).toInt() = 3
+            // overhead = 2 * 4 = 8 (system prompt + 1 message)
+            // toolDefinitionTokens = 0 (default)
+            // total = 3 + 8 + 0 = 11
+            assertEquals(11, cm.tokenEstimate())
+
+            // With tool definitions set, they're included
+            cm.setToolDefinitionTokens(500)
+            assertEquals(511, cm.tokenEstimate())
         }
     }
 

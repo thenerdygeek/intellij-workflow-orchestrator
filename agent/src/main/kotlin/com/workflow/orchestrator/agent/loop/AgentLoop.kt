@@ -281,9 +281,9 @@ class AgentLoop(
 
         // Set initial tool definition token count so heuristic estimate includes them.
         // Tool schemas are significant: 30+ tools = 5-10K+ tokens in the API request.
-        val initialToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
+        // Uses static toolDefinitions (not provider) to avoid an extra provider call.
         contextManager.setToolDefinitionTokens(
-            TokenEstimator.estimateToolDefinitions(initialToolDefs)
+            TokenEstimator.estimateToolDefinitions(toolDefinitions)
         )
 
         contextManager.addUserMessage(task)
