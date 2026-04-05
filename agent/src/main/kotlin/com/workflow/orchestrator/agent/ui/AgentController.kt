@@ -85,6 +85,9 @@ class AgentController(
     /** Current Haiku-generated session title (null until first generation). */
     private var currentHaikuTitle: String? = null
 
+    /** Last LLM stream text snippet — gives Haiku context about what the agent is thinking. */
+    @Volatile private var lastStreamSnippet: String = ""
+
     init {
         wireCallbacks()
     }
@@ -457,6 +460,8 @@ class AgentController(
     // ═══════════════════════════════════════════════════
 
     private fun onStreamChunk(chunk: String) {
+        // Capture a rolling snippet of the LLM's output for Haiku phrase context
+        lastStreamSnippet = (lastStreamSnippet + chunk).takeLast(150)
         invokeLater {
             dashboard.appendStreamToken(chunk)
         }
@@ -627,15 +632,23 @@ class AgentController(
     }
 
     private fun onToolCall(progress: ToolCallProgress) {
-        // Track recent tool calls for Haiku phrase generator
+        // Track recent tool calls for Haiku phrase generator — extract the most useful arg
         if (progress.result.isEmpty() && progress.durationMs == 0L) {
-            val filePath = try {
-                kotlinx.serialization.json.Json.parseToJsonElement(progress.args)
-                    .jsonObject["path"]?.jsonPrimitive?.content
-                    ?.substringAfterLast("/") ?: ""
+            val contextHint = try {
+                val obj = kotlinx.serialization.json.Json.parseToJsonElement(progress.args).jsonObject
+                // Try common arg names in priority order for a meaningful context hint
+                (obj["path"]?.jsonPrimitive?.content?.substringAfterLast("/")
+                    ?: obj["action"]?.jsonPrimitive?.content
+                    ?: obj["query"]?.jsonPrimitive?.content?.take(40)
+                    ?: obj["command"]?.jsonPrimitive?.content?.take(40)
+                    ?: obj["project_key"]?.jsonPrimitive?.content
+                    ?: obj["pattern"]?.jsonPrimitive?.content?.take(40)
+                    ?: obj["issue_key"]?.jsonPrimitive?.content
+                    ?: obj["branch"]?.jsonPrimitive?.content
+                    ?: "")
             } catch (_: Exception) { "" }
             synchronized(recentToolCalls) {
-                recentToolCalls.add(progress.toolName to filePath)
+                recentToolCalls.add(progress.toolName to contextHint)
                 if (recentToolCalls.size > 3) recentToolCalls.removeAt(0)
             }
         }
@@ -817,6 +830,7 @@ class AgentController(
         phraseTimerJob = null
         recentToolCalls.clear()
         currentHaikuTitle = null
+        lastStreamSnippet = ""
 
         // Reset conversation state
         contextManager = null
@@ -1207,8 +1221,9 @@ class AgentController(
             while (isActive) {
                 try {
                     val tools = synchronized(recentToolCalls) { recentToolCalls.toList() }
+                    val agentThinking = lastStreamSnippet.takeLast(100)
                     LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
-                    val phrase = HaikuPhraseGenerator.generate(task, tools)
+                    val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking)
                     if (phrase != null) {
                         LOG.info("AgentController: got Haiku phrase: $phrase")
                         invokeLater { dashboard.setSmartWorkingPhrase(phrase) }

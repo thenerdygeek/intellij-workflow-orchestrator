@@ -133,18 +133,25 @@ Be conservative: minor follow-ups, refinements, or related questions are NOT a s
      * Generate a humorous working phrase based on the current task context.
      *
      * @param task the user's original request (truncated to 150 chars internally)
-     * @param recentTools last 2-3 tool calls as (toolName, filePath/arg) pairs
+     * @param recentTools last 2-3 tool calls as (toolName, contextHint) pairs
+     * @param agentThinking last ~100 chars of the LLM's stream output (what it's reasoning about)
      * @return a funny one-liner (under 80 chars), or null if generation fails
      */
-    suspend fun generate(task: String, recentTools: List<Pair<String, String>>): String? {
+    suspend fun generate(task: String, recentTools: List<Pair<String, String>>, agentThinking: String = ""): String? {
         return try {
             val brain = createBrain("HaikuPhrase") ?: return null
 
             val toolContext = if (recentTools.isNotEmpty()) {
-                recentTools.joinToString(", ") { (name, arg) -> "$name(${arg.take(40)})" }
+                recentTools.joinToString(", ") { (name, arg) ->
+                    if (arg.isNotBlank()) "$name($arg)" else name
+                }
             } else "just started"
 
-            val userPrompt = "Task: \"${task.take(150)}\"\nI just did: $toolContext\n\nOne funny message about what I'm actually doing (under 12 words):"
+            val thinkingContext = if (agentThinking.isNotBlank()) {
+                "\nThe AI is currently thinking about: ${agentThinking.take(100)}"
+            } else ""
+
+            val userPrompt = "Task: \"${task.take(150)}\"\nRecent tools: $toolContext$thinkingContext\n\nOne funny message about what I'm actually doing (under 12 words):"
 
             val result = brain.chat(
                 messages = listOf(
