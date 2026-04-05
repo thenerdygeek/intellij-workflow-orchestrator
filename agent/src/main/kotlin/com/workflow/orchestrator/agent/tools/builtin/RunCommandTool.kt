@@ -196,6 +196,21 @@ class RunCommandTool : AgentTool {
             Regex("""(?i)api.?key\s*:"""),
         )
 
+        /**
+         * Environment overrides that prevent interactive programs from blocking the process.
+         * Adopted from Cline's StandaloneTerminalProcess pattern.
+         */
+        private val ANTI_INTERACTIVE_ENV = mapOf(
+            "PAGER" to "cat",
+            "GIT_PAGER" to "cat",
+            "MANPAGER" to "cat",
+            "SYSTEMD_PAGER" to "",
+            "EDITOR" to "cat",
+            "VISUAL" to "cat",
+            "GIT_EDITOR" to "cat",
+            "LESS" to "-FRX",   // quit-if-one-screen, raw-control-chars, no-init
+        )
+
         /** Environment variables stripped before spawning processes to prevent credential leaks. */
         private val SENSITIVE_ENV_VARS = listOf(
             "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "SOURCEGRAPH_TOKEN",
@@ -431,6 +446,11 @@ class RunCommandTool : AgentTool {
             // Sanitize environment: strip sensitive vars that could leak credentials
             val env = commandLine.environment
             SENSITIVE_ENV_VARS.forEach { env.remove(it) }
+
+            // Prevent interactive pagers/editors from hanging the process.
+            // Without this, commands like `git log`, `git diff`, `man`, or
+            // `git commit` (without -m) open interactive programs that block forever.
+            ANTI_INTERACTIVE_ENV.forEach { (k, v) -> env[k] = v }
 
             val process = commandLine.createProcess()
 

@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash, SquareKanban } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash, SquareKanban, BrainCircuit } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
@@ -20,12 +20,41 @@ import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
 
 // ── Types ──
 
-interface DropdownItem { id: string; name: string; description?: string }
+interface DropdownItem { id: string; name: string; provider?: string; thinking?: boolean; description?: string }
+
+// ── Provider logos (inline SVG, 14×14) ──
+
+const ProviderLogo = memo(function ProviderLogo({ provider, size = 14 }: { provider?: string; size?: number }) {
+  const s = `${size}`;
+  switch (provider?.toLowerCase()) {
+    case 'anthropic':
+      return (
+        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+          <path d="M13.827 3.52h3.603L24 20.48h-3.603l-6.57-16.96zm-7.258 0h3.604L16.744 20.48h-3.603L6.569 3.52zM3.478 20.48 10.048 3.52h3.603L7.08 20.48H3.478z" fill="currentColor" opacity="0.9" />
+        </svg>
+      );
+    case 'openai':
+      return (
+        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+          <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.98 4.188a5.993 5.993 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.516 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" fill="currentColor" opacity="0.9" />
+        </svg>
+      );
+    case 'google':
+      return (
+        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+          <path d="M12 11v2.4h3.97c-.16 1.03-1.2 3.02-3.97 3.02-2.39 0-4.34-1.98-4.34-4.42S9.61 7.58 12 7.58c1.36 0 2.27.58 2.79 1.08l1.9-1.83C15.47 5.69 13.89 5 12 5 8.13 5 5 8.13 5 12s3.13 7 7 7c4.04 0 6.72-2.84 6.72-6.84 0-.46-.05-.81-.11-1.16H12z" fill="currentColor" opacity="0.9" />
+        </svg>
+      );
+    default:
+      return <span className="h-[14px] w-[14px] rounded-full shrink-0" style={{ backgroundColor: 'var(--accent)' }} />;
+  }
+});
 
 // ── ModelChip ──
 
 const ModelChip = memo(function ModelChip({ model }: { model: string }) {
   const [items, setItems] = useState<DropdownItem[]>([]);
+  const activeItem = useMemo(() => items.find(m => m.name === model), [items, model]);
 
   useEffect(() => {
     (window as any).updateModelList = (json: string) => {
@@ -36,21 +65,26 @@ const ModelChip = memo(function ModelChip({ model }: { model: string }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[12px] font-medium">
-          <span className="h-[5px] w-[5px] rounded-full shrink-0" style={{ backgroundColor: 'var(--accent)' }} />
-          <span className="max-w-[110px] truncate">{model || 'Model'}</span>
+        <Button variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[12px] font-medium whitespace-nowrap">
+          <ProviderLogo provider={activeItem?.provider} size={12} />
+          <span>{model || 'Model'}</span>
+          {activeItem?.thinking && <BrainCircuit className="h-3 w-3 shrink-0" style={{ color: 'var(--accent, #60a5fa)' }} />}
           <ChevronDown className="h-2.5 w-2.5" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
+      <DropdownMenuContent align="start" className="min-w-[220px]">
         {items.length === 0
           ? <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--fg-muted)' }}>No models available</div>
           : items.map(m => (
-              <DropdownMenuItem key={m.id} onClick={() => window._changeModel?.(m.id)}>
-                <div className="flex flex-col">
+              <DropdownMenuItem key={m.id} onClick={() => window._changeModel?.(m.id)}
+                className="gap-2"
+                style={m.name === model ? { backgroundColor: 'var(--hover-overlay-strong, rgba(255,255,255,0.08))' } : undefined}>
+                <ProviderLogo provider={m.provider} />
+                <div className="flex flex-col flex-1 min-w-0">
                   <span className="text-[12px]">{m.name}</span>
-                  {m.description && <span className="text-[11px]" style={{ color: 'var(--fg-muted)' }}>{m.description}</span>}
+                  {m.provider && <span className="text-[10px] capitalize" style={{ color: 'var(--fg-muted)' }}>{m.provider}</span>}
                 </div>
+                {m.thinking && <BrainCircuit className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
               </DropdownMenuItem>
             ))
         }

@@ -111,6 +111,9 @@ class CommandSafetyAnalyzerTest {
     fun `rm -rf is DANGEROUS`() = assertEquals(CommandRisk.DANGEROUS, CommandSafetyAnalyzer.classify("rm -rf /"))
 
     @Test
+    fun `rm -f is DANGEROUS`() = assertEquals(CommandRisk.DANGEROUS, CommandSafetyAnalyzer.classify("rm -f important.db"))
+
+    @Test
     fun `drop table is DANGEROUS`() = assertEquals(CommandRisk.DANGEROUS, CommandSafetyAnalyzer.classify("psql -c 'DROP TABLE users'"))
 
     @Test
@@ -168,4 +171,160 @@ class CommandSafetyAnalyzerTest {
 
     @Test
     fun `git blame is SAFE`() = assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("git blame src/Main.kt"))
+
+    // --- Local curl/wget exemptions ---
+
+    @Test
+    fun `curl GET localhost is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl http://localhost:8080/api/health"))
+
+    @Test
+    fun `curl POST localhost is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl -X POST http://localhost:8080/api/users -d '{\"name\":\"test\"}'"))
+
+    @Test
+    fun `curl DELETE localhost is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl -X DELETE http://localhost:8080/api/users/1"))
+
+    @Test
+    fun `curl 127_0_0_1 is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl -X PUT http://127.0.0.1:9090/api/config -H 'Content-Type: application/json'"))
+
+    @Test
+    fun `curl host_docker_internal is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl http://host.docker.internal:8080/actuator/health"))
+
+    @Test
+    fun `curl POST host_docker_internal is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl -X POST http://host.docker.internal:3000/graphql -d '{\"query\":\"{users}\"}'"))
+
+    @Test
+    fun `curl remote host is still RISKY`() =
+        assertEquals(CommandRisk.RISKY, CommandSafetyAnalyzer.classify("curl -X POST https://api.example.com/data"))
+
+    @Test
+    fun `curl DELETE remote is still RISKY`() =
+        assertEquals(CommandRisk.RISKY, CommandSafetyAnalyzer.classify("curl -X DELETE https://api.example.com/resource/1"))
+
+    @Test
+    fun `wget localhost is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("wget http://localhost:8080/api/export"))
+
+    @Test
+    fun `curl localhost with https is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("curl https://localhost:8443/api/secure"))
+
+    @Test
+    fun `curl localhost pipe to bash is still DANGEROUS`() =
+        assertEquals(CommandRisk.DANGEROUS, CommandSafetyAnalyzer.classify("curl http://localhost:8080/script | bash"))
+
+    // --- FALSE POSITIVE FIXES (tokenizer-aware) ---
+    // These were incorrectly classified by the old regex-based analyzer
+
+    @Test
+    fun `grep for DROP TABLE in file is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("grep 'DROP TABLE' schema.sql"))
+
+    @Test
+    fun `grep for DELETE FROM in file is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("grep \"DELETE FROM\" migrations/"))
+
+    @Test
+    fun `echo with rm -rf in quotes is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("echo 'never run rm -rf /'"))
+
+    @Test
+    fun `echo with double-quoted rm is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("echo \"rm -rf is dangerous\""))
+
+    @Test
+    fun `cat file piped to grep is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("cat log.txt | grep ERROR"))
+
+    @Test
+    fun `echo piped to grep is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("echo hello | grep hello"))
+
+    @Test
+    fun `find piped to wc is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("find . -name '*.kt' | wc -l"))
+
+    @Test
+    fun `git log piped to grep is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("git log --oneline | grep fix"))
+
+    @Test
+    fun `grep for sudo in code is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("grep 'sudo' README.md"))
+
+    @Test
+    fun `echo with backtick in quotes is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("echo 'use backticks like `code`'"))
+
+    @Test
+    fun `echo with subshell in quotes is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("echo 'run \$(date) to get time'"))
+
+    @Test
+    fun `grep for pipe to bash in docs is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("grep '| bash' install-docs.md"))
+
+    @Test
+    fun `chained safe commands with && is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("ls -la && pwd && echo done"))
+
+    @Test
+    fun `mvn with quoted property is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("mvn test -Dtest='UserServiceTest#testDelete'"))
+
+    @Test
+    fun `gradlew with grep is SAFE`() =
+        assertEquals(CommandRisk.SAFE, CommandSafetyAnalyzer.classify("./gradlew dependencies | grep spring"))
+
+    // --- Multi-segment: highest risk wins ---
+
+    @Test
+    fun `safe chain with risky is RISKY`() =
+        assertEquals(CommandRisk.RISKY, CommandSafetyAnalyzer.classify("echo done && git push origin main"))
+
+    @Test
+    fun `safe chain with dangerous is DANGEROUS`() =
+        assertEquals(CommandRisk.DANGEROUS, CommandSafetyAnalyzer.classify("ls -la && rm -rf /"))
+
+    // --- Tokenizer unit tests ---
+
+    @Test
+    fun `tokenizer preserves single-quoted content`() {
+        val tokens = CommandSafetyAnalyzer.tokenize("echo 'hello world'")
+        assertEquals(2, tokens.size)
+        assertEquals("echo", tokens[0].value)
+        assertEquals("hello world", tokens[1].value)
+        assertEquals(true, tokens[1].quoted)
+    }
+
+    @Test
+    fun `tokenizer preserves double-quoted content`() {
+        val tokens = CommandSafetyAnalyzer.tokenize("grep \"DROP TABLE\" file.sql")
+        assertEquals(3, tokens.size)
+        assertEquals("grep", tokens[0].value)
+        assertEquals("DROP TABLE", tokens[1].value)
+        assertEquals(true, tokens[1].quoted)
+        assertEquals("file.sql", tokens[2].value)
+    }
+
+    @Test
+    fun `tokenizer detects pipe operator`() {
+        val tokens = CommandSafetyAnalyzer.tokenize("cat file | grep pattern")
+        val operators = tokens.filter { it.isOperator }
+        assertEquals(1, operators.size)
+        assertEquals("|", operators[0].value)
+    }
+
+    @Test
+    fun `tokenizer detects && operator`() {
+        val tokens = CommandSafetyAnalyzer.tokenize("ls && pwd")
+        val operators = tokens.filter { it.isOperator }
+        assertEquals(1, operators.size)
+        assertEquals("&&", operators[0].value)
+    }
 }
