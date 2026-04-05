@@ -11,14 +11,18 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 
 /**
- * Generates humorous, context-aware working indicator phrases using a cheap LLM (Haiku).
+ * Lightweight Haiku-powered text generation for UI embellishments:
+ * - Humorous working indicator phrases (every ~30s while agent works)
+ * - Conversation title generation and scope-change detection
  *
- * Called every ~30s while the agent is working. Fire-and-forget — returns null on any failure.
+ * Fire-and-forget — returns null on any failure.
  * Uses the cheapest available model (Haiku preferred) with a 10s timeout.
  */
 object HaikuPhraseGenerator {
 
     private val LOG = Logger.getInstance(HaikuPhraseGenerator::class.java)
+
+    // ── Working phrase prompt ────────────────────────────────────────────
 
     private const val SYSTEM_PROMPT = """You generate one short, funny loading message for a developer IDE. No preamble, no quotes, no explanation — just the message text ending with "..."
 
@@ -52,6 +56,79 @@ EXAMPLES OF THE EXACT TONE:
 - "Code review at 4:58pm on a Friday. Bold..."
 - "The intern's code works. The architect's doesn't. Classic..." """
 
+    // ── Title generation prompts ──────────────────────────────────────
+
+    private const val TITLE_SYSTEM_PROMPT = """You generate short, descriptive titles for coding conversations. No preamble, no quotes, no explanation — just the title text.
+
+RULES:
+- Under 50 characters
+- Descriptive and scannable — a developer should know what this conversation is about at a glance
+- Use the format: "Verb + specific thing" (e.g. "Fix auth token expiry in LoginService")
+- Be specific: "Add retry logic to API client" not "Work on code"
+- No punctuation at the end
+- No quotes around the title"""
+
+    private const val TITLE_CHECK_SYSTEM_PROMPT = """You decide whether a conversation's title still fits after a new message. Respond with ONLY one of:
+- KEEP — if the new message is still about the same topic
+- A new title (under 50 chars) — if the scope has clearly shifted
+
+Be conservative: minor follow-ups, refinements, or related questions are NOT a scope change. Only generate a new title when the user has moved to a genuinely different task."""
+
+    // ── Shared brain creation ───────────────────────────────────────
+
+    private suspend fun createBrain(tag: String): OpenAiCompatBrain? {
+        val connections = ConnectionSettings.getInstance()
+        val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+        if (sgUrl.isBlank()) return null
+
+        val tokenProvider = { CredentialStore().getToken(ServiceType.SOURCEGRAPH) }
+        if (tokenProvider() == null) {
+            LOG.info("[$tag] No Sourcegraph token available")
+            return null
+        }
+
+        var models = ModelCache.getCached()
+        if (models.isEmpty()) {
+            LOG.info("[$tag] Model cache empty, fetching models...")
+            val client = SourcegraphChatClient(
+                baseUrl = sgUrl,
+                tokenProvider = tokenProvider,
+                model = ""
+            )
+            models = ModelCache.getModels(client)
+        }
+        val cheapModel = ModelCache.pickCheapest(models)?.id
+        if (cheapModel == null) {
+            LOG.info("[$tag] No cheap model found (${models.size} models cached)")
+            return null
+        }
+        LOG.info("[$tag] Using model: $cheapModel")
+
+        return OpenAiCompatBrain(
+            sourcegraphUrl = sgUrl,
+            tokenProvider = tokenProvider,
+            model = cheapModel,
+            readTimeoutSeconds = 10
+        )
+    }
+
+    private fun extractText(result: ApiResult<*>, tag: String): String? {
+        if (result !is ApiResult.Success) {
+            LOG.info("[$tag] API call failed: $result")
+            return null
+        }
+        @Suppress("UNCHECKED_CAST")
+        val response = result as ApiResult.Success<com.workflow.orchestrator.core.ai.dto.ChatCompletionResponse>
+        val text = response.data.choices.firstOrNull()?.message?.content?.trim()
+        if (text.isNullOrBlank()) {
+            LOG.info("[$tag] Empty response from API")
+            return null
+        }
+        return text
+    }
+
+    // ── Working phrase generation ───────────────────────────────────
+
     /**
      * Generate a humorous working phrase based on the current task context.
      *
@@ -61,31 +138,7 @@ EXAMPLES OF THE EXACT TONE:
      */
     suspend fun generate(task: String, recentTools: List<Pair<String, String>>): String? {
         return try {
-            val connections = ConnectionSettings.getInstance()
-            val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
-            if (sgUrl.isBlank()) return null
-
-            val tokenProvider = { CredentialStore().getToken(ServiceType.SOURCEGRAPH) }
-            if (tokenProvider() == null) return null
-
-            // Use cached models, but populate cache if empty and credentials are available
-            var models = ModelCache.getCached()
-            if (models.isEmpty()) {
-                val client = SourcegraphChatClient(
-                    baseUrl = sgUrl,
-                    tokenProvider = tokenProvider,
-                    model = ""
-                )
-                models = ModelCache.getModels(client)
-            }
-            val cheapModel = ModelCache.pickCheapest(models)?.id ?: return null
-
-            val brain = OpenAiCompatBrain(
-                sourcegraphUrl = sgUrl,
-                tokenProvider = tokenProvider,
-                model = cheapModel,
-                readTimeoutSeconds = 10
-            )
+            val brain = createBrain("HaikuPhrase") ?: return null
 
             val toolContext = if (recentTools.isNotEmpty()) {
                 recentTools.joinToString(", ") { (name, arg) -> "$name(${arg.take(40)})" }
@@ -101,21 +154,78 @@ EXAMPLES OF THE EXACT TONE:
                 maxTokens = 60
             )
 
-            if (result is ApiResult.Success) {
-                val text = result.data.choices.firstOrNull()?.message?.content?.trim()
-                    ?: return null
-                // Clean up: remove surrounding quotes, cap length
-                val cleaned = text
-                    .removeSurrounding("\"")
-                    .removeSurrounding("'")
-                    .take(80)
-                if (cleaned.isBlank()) null else cleaned
-            } else {
-                LOG.debug("HaikuPhraseGenerator: API call failed: $result")
+            val text = extractText(result, "HaikuPhrase") ?: return null
+            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").take(80)
+            LOG.info("[HaikuPhrase] Generated: $cleaned")
+            if (cleaned.isBlank()) null else cleaned
+        } catch (e: Exception) {
+            LOG.info("[HaikuPhrase] Exception: ${e.message}")
+            null
+        }
+    }
+
+    // ── Conversation title generation ───────────────────────────────
+
+    /**
+     * Generate a concise, descriptive title for a conversation from the user's first message.
+     *
+     * @param task the user's message
+     * @return a title under 50 chars, or null if generation fails
+     */
+    suspend fun generateTitle(task: String): String? {
+        return try {
+            val brain = createBrain("HaikuTitle") ?: return null
+
+            val result = brain.chat(
+                messages = listOf(
+                    ChatMessage(role = "system", content = TITLE_SYSTEM_PROMPT),
+                    ChatMessage(role = "user", content = "Generate a title for this task: ${task.take(200)}")
+                ),
+                maxTokens = 40
+            )
+
+            val text = extractText(result, "HaikuTitle") ?: return null
+            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").take(50)
+            LOG.info("[HaikuTitle] Generated: $cleaned")
+            if (cleaned.isBlank()) null else cleaned
+        } catch (e: Exception) {
+            LOG.info("[HaikuTitle] Exception: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Check if a new message has shifted the conversation scope enough to warrant a new title.
+     *
+     * @param currentTitle the current conversation title
+     * @param newMessage the new user message
+     * @return a new title if scope changed, null if the current title still fits
+     */
+    suspend fun checkTitleUpdate(currentTitle: String, newMessage: String): String? {
+        return try {
+            val brain = createBrain("HaikuTitleCheck") ?: return null
+
+            val result = brain.chat(
+                messages = listOf(
+                    ChatMessage(role = "system", content = TITLE_CHECK_SYSTEM_PROMPT),
+                    ChatMessage(role = "user", content = "Current title: \"$currentTitle\"\nNew message: \"${newMessage.take(200)}\"")
+                ),
+                maxTokens = 40
+            )
+
+            val text = extractText(result, "HaikuTitleCheck") ?: return null
+            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").trim()
+
+            if (cleaned.equals("KEEP", ignoreCase = true) || cleaned.startsWith("KEEP")) {
+                LOG.info("[HaikuTitleCheck] Scope unchanged, keeping: $currentTitle")
                 null
+            } else {
+                val newTitle = cleaned.take(50)
+                LOG.info("[HaikuTitleCheck] Scope changed: '$currentTitle' → '$newTitle'")
+                newTitle
             }
         } catch (e: Exception) {
-            LOG.debug("HaikuPhraseGenerator: ${e.message}")
+            LOG.info("[HaikuTitleCheck] Exception: ${e.message}")
             null
         }
     }

@@ -1017,6 +1017,14 @@ class AgentService(private val project: Project) : Disposable {
     }
 
     /**
+     * Update the title of an existing session (e.g. after Haiku generates a descriptive title).
+     */
+    fun updateSessionTitle(sessionId: String, title: String) {
+        val session = sessionStore.load(sessionId) ?: return
+        sessionStore.save(session.copy(title = title))
+    }
+
+    /**
      * Get files modified between a checkpoint and the current session state.
      * Used by the UI to highlight affected files after a rollback.
      *

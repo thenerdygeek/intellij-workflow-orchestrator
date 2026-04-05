@@ -82,6 +82,9 @@ class AgentController(
     /** Coroutine job for the 30s Haiku phrase timer. */
     private var phraseTimerJob: Job? = null
 
+    /** Current Haiku-generated session title (null until first generation). */
+    private var currentHaikuTitle: String? = null
+
     init {
         wireCallbacks()
     }
@@ -397,11 +400,15 @@ class AgentController(
         taskStartTime = System.currentTimeMillis()
 
         // Create context manager on first message, reuse on subsequent turns
-        if (contextManager == null) {
+        val isFirstMessage = contextManager == null
+        if (isFirstMessage) {
             val settings = AgentSettings.getInstance(project)
             contextManager = ContextManager(maxInputTokens = settings.state.maxInputTokens)
             dashboard.startSession(task)
         }
+
+        // Generate or update conversation title via Haiku (async, non-blocking)
+        generateConversationTitle(task, isFirstMessage)
 
         // Create a fresh input channel for this loop run
         userInputChannel = Channel(Channel.RENDEZVOUS)
@@ -635,8 +642,7 @@ class AgentController(
 
         invokeLater {
             if (progress.result.isEmpty() && progress.durationMs == 0L) {
-                // Tool call starting — update smart working phrase
-                dashboard.setSmartWorkingPhrase(buildWorkingPhrase(progress.toolName, progress.args))
+                // Tool call starting
                 dashboard.appendToolCall(
                     toolCallId = progress.toolCallId,
                     toolName = progress.toolName,
@@ -810,6 +816,7 @@ class AgentController(
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         recentToolCalls.clear()
+        currentHaikuTitle = null
 
         // Reset conversation state
         contextManager = null
@@ -1188,21 +1195,62 @@ class AgentController(
     private fun startPhraseTimer(task: String) {
         phraseTimerJob?.cancel()
 
-        if (!AgentSettings.getInstance(project).state.smartWorkingIndicator) return
+        if (!AgentSettings.getInstance(project).state.smartWorkingIndicator) {
+            LOG.info("AgentController: smart working indicator disabled, skipping phrase timer")
+            return
+        }
 
+        LOG.info("AgentController: starting Haiku phrase timer (30s interval)")
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         phraseTimerJob = scope.launch {
-            // Wait 30s before the first joke (let the static phrase show first)
             delay(30_000)
             while (isActive) {
                 try {
                     val tools = synchronized(recentToolCalls) { recentToolCalls.toList() }
+                    LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
                     val phrase = HaikuPhraseGenerator.generate(task, tools)
                     if (phrase != null) {
+                        LOG.info("AgentController: got Haiku phrase: $phrase")
                         invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                    } else {
+                        LOG.info("AgentController: Haiku phrase returned null")
                     }
-                } catch (_: Exception) { /* non-fatal */ }
+                } catch (e: Exception) {
+                    LOG.warn("AgentController: Haiku phrase timer error: ${e.message}")
+                }
                 delay(30_000)
+            }
+        }
+    }
+
+    /**
+     * Generate or update the conversation title via Haiku.
+     * On first message: generate a fresh title.
+     * On subsequent messages: check if scope has shifted enough to warrant a new title.
+     * Async — never blocks the agent loop.
+     */
+    private fun generateConversationTitle(task: String, isFirstMessage: Boolean) {
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        scope.launch {
+            try {
+                val newTitle = if (isFirstMessage) {
+                    HaikuPhraseGenerator.generateTitle(task)
+                } else {
+                    val existing = currentHaikuTitle ?: return@launch
+                    HaikuPhraseGenerator.checkTitleUpdate(existing, task)
+                }
+
+                if (newTitle != null) {
+                    currentHaikuTitle = newTitle
+                    // Update session metadata in store
+                    val sid = currentSessionId
+                    if (sid != null) {
+                        service.updateSessionTitle(sid, newTitle)
+                    }
+                    LOG.info("AgentController: conversation title set to: $newTitle")
+                }
+            } catch (e: Exception) {
+                LOG.debug("AgentController: title generation failed: ${e.message}")
             }
         }
     }
