@@ -1002,12 +1002,18 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             Pair(src.await(), dup?.await())
         }
 
-        // Extract uncovered line numbers and uncovered branch line numbers
+        // Extract uncovered line numbers and uncovered branch line numbers.
+        // Filter to new code lines only (isNew=true) when available (SonarQube 9.x+).
+        // Falls back to all uncovered lines if isNew is not present in the API response.
         val uncoveredLines = mutableListOf<Int>()
         val uncoveredBranchLines = mutableListOf<Int>()
         when (sourceResult) {
             is ApiResult.Success -> {
+                val hasNewCodeInfo = sourceResult.data.any { it.isNew != null }
                 for (line in sourceResult.data) {
+                    // Skip lines that aren't part of new code (when the field is available)
+                    if (hasNewCodeInfo && line.isNew != true) continue
+
                     if (line.lineHits != null && line.lineHits <= 0) {
                         uncoveredLines.add(line.line)
                     }

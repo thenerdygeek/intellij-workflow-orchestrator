@@ -95,14 +95,15 @@ class BranchQualityReportTest {
         )
 
         // Source lines for Service.kt (file with coverage gaps)
+        // Lines 2-5 are new code (isNew=true), lines 1 and 6 are existing code
         coEvery { apiClient.getSourceLines("proj:src/Service.kt", branch = branch) } returns ApiResult.Success(
             listOf(
-                SonarSourceLineDto(line = 1, code = "package com.example", lineHits = 1),
-                SonarSourceLineDto(line = 2, code = "fun process() {", lineHits = 1, conditions = 2, coveredConditions = 1),
-                SonarSourceLineDto(line = 3, code = "  val x = compute()", lineHits = 0),
-                SonarSourceLineDto(line = 4, code = "  if (x > 0) return", lineHits = 0, conditions = 2, coveredConditions = 0),
-                SonarSourceLineDto(line = 5, code = "  fallback()", lineHits = 0),
-                SonarSourceLineDto(line = 6, code = "}", lineHits = 1)
+                SonarSourceLineDto(line = 1, code = "package com.example", lineHits = 1, isNew = false),
+                SonarSourceLineDto(line = 2, code = "fun process() {", lineHits = 1, conditions = 2, coveredConditions = 1, isNew = true),
+                SonarSourceLineDto(line = 3, code = "  val x = compute()", lineHits = 0, isNew = true),
+                SonarSourceLineDto(line = 4, code = "  if (x > 0) return", lineHits = 0, conditions = 2, coveredConditions = 0, isNew = true),
+                SonarSourceLineDto(line = 5, code = "  fallback()", lineHits = 0, isNew = true),
+                SonarSourceLineDto(line = 6, code = "}", lineHits = 1, isNew = false)
             )
         )
 

@@ -296,5 +296,7 @@ data class SonarSourceLineDto(
     val code: String = "",
     val lineHits: Int? = null,
     val conditions: Int? = null,
-    val coveredConditions: Int? = null
+    val coveredConditions: Int? = null,
+    /** True when this line is part of the new code period (SonarQube 9.x+). */
+    val isNew: Boolean? = null
 )
