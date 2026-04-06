@@ -72,7 +72,7 @@ data class SteeringMessage(val id: String, val text: String, val timestamp: Long
  *   Matches Cline's "persist after every state change" pattern from message-state.ts.
  */
 class AgentLoop(
-    private val brain: LlmBrain,
+    private var brain: LlmBrain,
     private val tools: Map<String, AgentTool>,
     private val toolDefinitions: List<ToolDefinition>,
     private val contextManager: ContextManager,
@@ -209,7 +209,27 @@ class AgentLoop(
      * Used by the UI to show retry status (e.g. "API timeout, retrying 2/3...").
      * Always fires regardless of debug mode — retries are user-visible events.
      */
-    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null
+    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
+    /**
+     * Callback fired before each LLM API call.
+     * Used by the UI to show "Thinking (model)..." status.
+     */
+    private val onApiCallStart: ((modelId: String) -> Unit)? = null,
+    /**
+     * Optional model fallback manager. When provided with [brainFactory],
+     * the loop falls back to cheaper models on network errors and escalates back.
+     */
+    private val fallbackManager: ModelFallbackManager? = null,
+    /**
+     * Factory to create a new LlmBrain for a given model ID.
+     * Used by the fallback manager to switch models mid-loop.
+     */
+    private val brainFactory: (suspend (modelId: String) -> LlmBrain)? = null,
+    /**
+     * Callback fired when the loop switches to a different model.
+     * Used by the UI to update the model chip and show a status message.
+     */
+    private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -359,6 +379,7 @@ class AgentLoop(
         val maxConsecutiveMistakes = 3  // Cline: configurable via settings. At max, asks user for feedback.
         var apiRetryCount = 0
         var contextOverflowRetries = 0
+        var pendingEscalation = false
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -409,6 +430,7 @@ class AgentLoop(
             contextManager.setToolDefinitionTokens(
                 TokenEstimator.estimateToolDefinitions(currentToolDefs)
             )
+            onApiCallStart?.invoke(brain.modelId)
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,
@@ -437,6 +459,26 @@ class AgentLoop(
                 val maxRetries = if (isTimeoutError) MAX_TIMEOUT_RETRIES else MAX_API_RETRIES
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
+                    // Smart model fallback on timeout/network errors
+                    if (fallbackManager != null && brainFactory != null && apiResult.type in TIMEOUT_ERRORS) {
+                        val oldModel = brain.modelId
+                        if (pendingEscalation) {
+                            // Escalation back to primary failed
+                            val revertModel = fallbackManager.onEscalationFailed()
+                            brain = brainFactory.invoke(revertModel)
+                            onModelSwitch?.invoke(oldModel, revertModel, "Escalation failed — reverting")
+                            LOG.info("[Loop] Escalation failed, reverting: $oldModel → $revertModel")
+                            pendingEscalation = false
+                        } else {
+                            // Normal fallback — advance down the chain
+                            val nextModel = fallbackManager.onNetworkError()
+                            if (nextModel != null) {
+                                brain = brainFactory.invoke(nextModel)
+                                onModelSwitch?.invoke(oldModel, nextModel, "Network error — falling back")
+                                LOG.info("[Loop] Model fallback: $oldModel → $nextModel")
+                            }
+                        }
+                    }
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),
                     // otherwise fall back to exponential backoff
                     val delayMs = apiResult.retryAfterMs
@@ -475,6 +517,19 @@ class AgentLoop(
             // Reset retry counts on successful API call
             apiRetryCount = 0
             contextOverflowRetries = 0
+            pendingEscalation = false // if we were escalating, it succeeded
+
+            // Smart model escalation: try primary model after cooldown
+            if (fallbackManager != null && brainFactory != null && !fallbackManager.isPrimary()) {
+                val escalationModel = fallbackManager.onIterationSuccess()
+                if (escalationModel != null) {
+                    val oldModel = brain.modelId
+                    brain = brainFactory.invoke(escalationModel)
+                    onModelSwitch?.invoke(oldModel, escalationModel, "Escalating back")
+                    LOG.info("[Loop] Model escalation: $oldModel → $escalationModel")
+                    pendingEscalation = true
+                }
+            }
 
             // Stage 3: Update token tracking (ported from Cline's cost tracking)
             // Cline accumulates tokensIn/tokensOut in HistoryItem after each API call.
