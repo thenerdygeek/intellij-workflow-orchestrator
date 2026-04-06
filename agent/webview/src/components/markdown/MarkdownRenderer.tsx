@@ -16,6 +16,7 @@ import { CollapsibleOutput } from '@/components/rich/CollapsibleOutput';
 import { ProgressView } from '@/components/rich/ProgressView';
 import { TimelineView } from '@/components/rich/TimelineView';
 import { ImageView } from '@/components/rich/ImageView';
+import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
 
 interface MarkdownRendererProps {
   content: string;
@@ -91,6 +92,9 @@ function createMarkdownComponents(isStreaming: boolean): any {
           return <TimelineView timelineSource={codeString} />;
         case 'image':
           return <ImageView imageSource={codeString} />;
+        case 'react':
+        case 'artifact':
+          return <ArtifactRenderer source={codeString} />;
         case 'html-interactive':
         case 'visualization':
         case 'viz':
