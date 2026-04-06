@@ -166,6 +166,53 @@ class PrListPanel : JPanel(BorderLayout()) {
         applyFilter(searchField.text.orEmpty())
     }
 
+    /**
+     * Update the list with a flat "All PRs" view (no My/Reviewing sections).
+     */
+    fun updateAllRepoPrs(prs: List<PrListItem>) {
+        if (prs.isEmpty()) {
+            showEmpty()
+            return
+        }
+
+        val newItems = mutableListOf<PrListItem>()
+        newItems.add(PrListItem(
+            id = -3, title = "All Pull Requests (${prs.size})", authorName = "",
+            status = "", reviewerCount = 0, updatedDate = 0,
+            fromBranch = "", toBranch = "", isHeader = true
+        ))
+        newItems.addAll(prs)
+
+        allItems = newItems
+
+        val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
+        if (centerComponent !is JBScrollPane) {
+            if (centerComponent != null) remove(centerComponent)
+            add(JBScrollPane(prList).apply {
+                border = JBUI.Borders.empty()
+                isOpaque = false
+                viewport.isOpaque = false
+            }, BorderLayout.CENTER)
+        }
+
+        applyFilter(searchField.text.orEmpty())
+    }
+
+    /**
+     * Select a PR by its numeric id and scroll it into view.
+     */
+    fun selectPrById(prId: Int) {
+        val model = prList.model
+        for (i in 0 until model.size) {
+            val item = model.getElementAt(i)
+            if (!item.isHeader && item.id == prId) {
+                prList.selectedIndex = i
+                prList.ensureIndexIsVisible(i)
+                return
+            }
+        }
+    }
+
     private fun applyFilter(text: String) {
         val filtered = if (text.isBlank()) {
             allItems

@@ -38,6 +38,9 @@ class PrListService(private val project: Project) : Disposable {
     private val _reviewingPrs = MutableStateFlow<List<BitbucketPrDetail>>(emptyList())
     val reviewingPrs: StateFlow<List<BitbucketPrDetail>> = _reviewingPrs.asStateFlow()
 
+    private val _allRepoPrs = MutableStateFlow<List<BitbucketPrDetail>>(emptyList())
+    val allRepoPrs: StateFlow<List<BitbucketPrDetail>> = _allRepoPrs.asStateFlow()
+
     private var poller: SmartPoller? = null
 
     private fun getOrCreatePoller(): SmartPoller {
@@ -178,6 +181,10 @@ class PrListService(private val project: Project) : Disposable {
 
         _reviewingPrs.value = allReviewingPrs
         log.info("[PR:List] Found ${allReviewingPrs.size} reviewing PRs across ${repoEntries.size} repos (state=$currentState)")
+
+        // Union of both, deduplicated by PR id
+        val seen = mutableSetOf<Int>()
+        _allRepoPrs.value = (allMyPrs + allReviewingPrs).filter { seen.add(it.id) }
     }
 
     /**
