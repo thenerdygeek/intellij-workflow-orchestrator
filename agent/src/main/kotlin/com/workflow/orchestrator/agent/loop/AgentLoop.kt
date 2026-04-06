@@ -229,7 +229,12 @@ class AgentLoop(
      * Callback fired when the loop switches to a different model.
      * Used by the UI to update the model chip and show a status message.
      */
-    private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null
+    private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
+    /**
+     * When true, compact context and retry when timeout/network retries are exhausted
+     * (instead of failing). Limited to [MAX_COMPACTION_RETRIES] attempts.
+     */
+    private val compactOnTimeoutExhaustion: Boolean = false
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -267,6 +272,8 @@ class AgentLoop(
         /** Timeout/network errors get fewer retries — the server is likely down. */
         private const val MAX_TIMEOUT_RETRIES = 3
         private const val MAX_CONTEXT_OVERFLOW_RETRIES = 2
+        /** Max times to compact context and retry after timeout retries are exhausted. */
+        private const val MAX_COMPACTION_RETRIES = 2
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
         private const val MAX_RETRY_DELAY_MS = 30_000L
@@ -380,6 +387,7 @@ class AgentLoop(
         var apiRetryCount = 0
         var contextOverflowRetries = 0
         var pendingEscalation = false
+        var compactionRetries = 0
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -499,6 +507,16 @@ class AgentLoop(
                     iteration-- // Don't count retries as iterations
                     continue
                 }
+                // Context compaction strategy: compact and retry instead of failing
+                if (compactOnTimeoutExhaustion && apiResult.type in TIMEOUT_ERRORS && compactionRetries < MAX_COMPACTION_RETRIES) {
+                    compactionRetries++
+                    LOG.warn("[Loop] Timeout retries exhausted, compacting context and retrying ($compactionRetries/$MAX_COMPACTION_RETRIES)")
+                    onRetry?.invoke(compactionRetries, MAX_COMPACTION_RETRIES, "Compacting context and retrying", 0)
+                    contextManager.compact(brain)
+                    apiRetryCount = 0 // Reset retry count for the fresh attempt
+                    iteration-- // Don't count as iteration
+                    continue
+                }
                 LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
                 return LoopResult.Failed(
                     error = apiResult.message,
@@ -517,6 +535,7 @@ class AgentLoop(
             // Reset retry counts on successful API call
             apiRetryCount = 0
             contextOverflowRetries = 0
+            compactionRetries = 0
             pendingEscalation = false // if we were escalating, it succeeded
 
             // Smart model escalation: try primary model after cooldown
