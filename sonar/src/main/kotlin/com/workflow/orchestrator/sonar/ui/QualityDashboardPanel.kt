@@ -11,6 +11,8 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.ui.StatusColors
@@ -40,14 +42,24 @@ class QualityDashboardPanel(
     private val dataService = SonarDataService.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
 
-    // Repo selector for multi-repo support
-    private val sonarRepos: List<RepoConfig> = settings.getRepos().filter { !it.sonarProjectKey.isNullOrBlank() }
-    private val repoSelector: ComboBox<String>? = if (sonarRepos.size > 1) {
-        ComboBox(DefaultComboBoxModel(sonarRepos.map { it.displayLabel }.toTypedArray())).apply {
-            val primaryIndex = sonarRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+    // Repo selector for multi-repo support — show all configured repos
+    private val allRepos: List<RepoConfig> = settings.getRepos().filter { it.isConfigured }
+    private val repoSelector: ComboBox<String>? = if (allRepos.size > 1) {
+        ComboBox(DefaultComboBoxModel(allRepos.map { it.displayLabel }.toTypedArray())).apply {
+            val primaryIndex = allRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
             selectedIndex = primaryIndex
         }
     } else null
+
+    private var suppressRepoSelectorListener = false
+
+    // Hint label shown when no PR or no Sonar key is available
+    private val qualityHintLabel = JBLabel("").apply {
+        foreground = StatusColors.SECONDARY_TEXT
+        font = font.deriveFont(java.awt.Font.ITALIC, 11f)
+        border = JBUI.Borders.empty(12, 12)
+        isVisible = false
+    }
 
     // UI components
     private val headerLabel = JBLabel("").apply {
@@ -148,7 +160,7 @@ class QualityDashboardPanel(
             add(newCodePeriodLabel)
         }
 
-        // Top section: toolbar + branch info + gate banner
+        // Top section: toolbar + branch info + gate banner + hint
         val topSection = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             val toolbarRow = JPanel(BorderLayout()).apply {
@@ -158,6 +170,7 @@ class QualityDashboardPanel(
             add(toolbarRow)
             add(branchInfoPanel)
             add(gateBanner)
+            add(qualityHintLabel)
         }
         add(topSection, BorderLayout.NORTH)
 
@@ -224,16 +237,32 @@ class QualityDashboardPanel(
 
         // Repo selector listener — switch sonar project key when a different repo is selected
         repoSelector?.addActionListener {
+            if (suppressRepoSelectorListener) return@addActionListener
             val selectedIndex = repoSelector.selectedIndex
-            if (selectedIndex >= 0 && selectedIndex < sonarRepos.size) {
-                val selectedRepo = sonarRepos[selectedIndex]
-                val newProjectKey = selectedRepo.sonarProjectKey.orEmpty()
-                if (newProjectKey.isNotBlank()) {
-                    // Use refreshForProject to avoid mutating persisted settings
-                    statusLabel.text = "Switching to $newProjectKey..."
-                    loadingIcon.isVisible = true
-                    dataService.refreshForProject(newProjectKey)
-                }
+            if (selectedIndex < 0 || selectedIndex >= allRepos.size) return@addActionListener
+
+            val selectedRepo = allRepos[selectedIndex]
+            val repoName = selectedRepo.displayLabel
+            val sonarKey = selectedRepo.sonarProjectKey?.takeIf { it.isNotBlank() }
+
+            // Priority 1: No sonar key configured
+            if (sonarKey == null) {
+                showQualityHint("SonarQube project key not configured for $repoName \u2014 configure in Settings > CI/CD")
+                return@addActionListener
+            }
+
+            // Priority 2: Check if a PR is selected for this repo
+            val eventBus = project.getService(EventBus::class.java)
+            val context = eventBus.prContextMap[repoName]
+
+            if (context != null) {
+                qualityHintLabel.isVisible = false
+                tabbedPane.isVisible = true
+                statusLabel.text = "Switching to $sonarKey..."
+                loadingIcon.isVisible = true
+                dataService.refreshForBranch(context.fromBranch, sonarKey)
+            } else {
+                showQualityHint("No PR selected for $repoName \u2014 select one in the PR tab")
             }
         }
 
@@ -246,6 +275,16 @@ class QualityDashboardPanel(
                 .collect { state ->
                     invokeLater { updateUI(state) }
                 }
+        }
+
+        // Subscribe to PrSelected events to auto-switch repo selector
+        scope.launch {
+            val eventBus = project.getService(EventBus::class.java)
+            eventBus.events.collect { event ->
+                if (event is WorkflowEvent.PrSelected) {
+                    onPrSelectedEvent(event)
+                }
+            }
         }
 
         // Initial refresh
@@ -293,10 +332,17 @@ class QualityDashboardPanel(
     private fun updateUI(state: SonarState) {
         if (state.projectKey.isEmpty()) {
             loadingIcon.isVisible = false
-            statusLabel.text = "Configure SonarQube project key in Settings > CI/CD."
-            statusLabel.foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            // Check if hint is already showing (e.g., "no PR selected")
+            if (!qualityHintLabel.isVisible) {
+                statusLabel.text = "Configure SonarQube project key in Settings > CI/CD."
+                statusLabel.foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            }
             return
         }
+
+        // Hide hint when valid data arrives
+        qualityHintLabel.isVisible = false
+        tabbedPane.isVisible = true
 
         val prev = lastRenderedState
 
@@ -349,6 +395,21 @@ class QualityDashboardPanel(
 
         // Update gate banner
         gateBanner.update(state.qualityGate)
+
+        // Show analysis failure hint if the last analysis for this branch failed
+        val lastAnalysis = state.lastAnalysisForBranch
+        if (lastAnalysis != null && lastAnalysis.status == "FAILED") {
+            val errorMsg = lastAnalysis.errorMessage ?: "Unknown error"
+            qualityHintLabel.text = "SonarQube analysis failed: $errorMsg"
+            qualityHintLabel.foreground = StatusColors.ERROR
+            qualityHintLabel.isVisible = true
+        } else if (!state.currentBranchAnalyzed && state.issues.isEmpty()) {
+            qualityHintLabel.text = "No SonarQube analysis found for branch '${state.branch}'. Analysis may be pending."
+            qualityHintLabel.foreground = StatusColors.WARNING
+            qualityHintLabel.isVisible = true
+        } else {
+            qualityHintLabel.foreground = StatusColors.SECONDARY_TEXT
+        }
 
         // Mark stale flags for tabs whose data changed
         if (overviewChanged) overviewStale = true
@@ -466,6 +527,33 @@ class QualityDashboardPanel(
         } catch (_: Exception) {
             isoDate
         }
+    }
+
+    private fun onPrSelectedEvent(event: WorkflowEvent.PrSelected) {
+        if (repoSelector == null || allRepos.isEmpty()) return
+
+        val repoIndex = allRepos.indexOfFirst { it.displayLabel == event.repoName }
+        if (repoIndex < 0) return
+
+        suppressRepoSelectorListener = true
+        repoSelector.selectedIndex = repoIndex
+        suppressRepoSelectorListener = false
+
+        // Clear hint — SonarDataService handles the actual data refresh via its own event subscription
+        if (!event.sonarProjectKey.isNullOrBlank()) {
+            qualityHintLabel.isVisible = false
+            tabbedPane.isVisible = true
+        } else {
+            showQualityHint("SonarQube project key not configured for ${event.repoName} \u2014 configure in Settings > CI/CD")
+        }
+    }
+
+    private fun showQualityHint(message: String) {
+        qualityHintLabel.text = message
+        qualityHintLabel.isVisible = true
+        tabbedPane.isVisible = false
+        loadingIcon.isVisible = false
+        statusLabel.text = ""
     }
 
     override fun dispose() {
