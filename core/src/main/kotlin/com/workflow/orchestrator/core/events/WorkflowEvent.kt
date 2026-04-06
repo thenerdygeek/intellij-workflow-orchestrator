@@ -122,7 +122,10 @@ sealed class WorkflowEvent {
     data class PrSelected(
         val prId: Int,
         val fromBranch: String,
-        val toBranch: String
+        val toBranch: String,
+        val repoName: String,
+        val bambooPlanKey: String?,
+        val sonarProjectKey: String?,
     ) : WorkflowEvent()
 
     enum class BuildEventStatus { SUCCESS, FAILED }

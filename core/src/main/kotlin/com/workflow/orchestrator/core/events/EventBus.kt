@@ -6,6 +6,20 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Lightweight snapshot of the last-selected PR for a given repo.
+ * Queryable by Build/Quality tabs when the user manually switches their repo selector.
+ */
+data class PrContext(
+    val prId: Int,
+    val fromBranch: String,
+    val toBranch: String,
+    val repoName: String,
+    val bambooPlanKey: String?,
+    val sonarProjectKey: String?,
+)
 
 @Service(Service.Level.PROJECT)
 class EventBus {
@@ -18,10 +32,22 @@ class EventBus {
     )
     val events: SharedFlow<WorkflowEvent> = _events.asSharedFlow()
 
+    /** Last-selected PR per repo. Key = repoName (RepoConfig.displayLabel). */
+    val prContextMap: ConcurrentHashMap<String, PrContext> = ConcurrentHashMap()
+
     suspend fun emit(event: WorkflowEvent) {
         log.info("[Core:Events] Emitting event: ${event::class.simpleName}")
-        // With DROP_OLDEST, tryEmit() always succeeds and never suspends,
-        // preventing slow subscribers from blocking emitters
+        // Auto-update PrContext map on PrSelected events
+        if (event is WorkflowEvent.PrSelected) {
+            prContextMap[event.repoName] = PrContext(
+                prId = event.prId,
+                fromBranch = event.fromBranch,
+                toBranch = event.toBranch,
+                repoName = event.repoName,
+                bambooPlanKey = event.bambooPlanKey,
+                sonarProjectKey = event.sonarProjectKey,
+            )
+        }
         if (!_events.tryEmit(event)) {
             log.warn("[Core:Events] Failed to emit event (buffer full): ${event::class.simpleName}")
         }

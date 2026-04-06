@@ -18,6 +18,8 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.pullrequest.service.PrListService
+import com.intellij.openapi.vcs.BranchChangeListener
+import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import java.awt.BorderLayout
@@ -79,10 +81,18 @@ class PrDashboardPanel(
     // -- State --
     private var currentMyPrs: List<BitbucketPrDetail> = emptyList()
     private var currentReviewingPrs: List<BitbucketPrDetail> = emptyList()
+    private var currentAllRepoPrs: List<BitbucketPrDetail> = emptyList()
     private enum class PrFilter { MY, REVIEWING, ALL }
     private var activeFilter = PrFilter.MY
     private var activeRepoFilter: String? = null  // null = all repos
     private var lastUpdatedMillis: Long = 0
+
+    // -- Auto-select state --
+    /** True after auto-select has fired for the current branch session. Reset on branch change. */
+    private var autoSelectDone = false
+    /** Suppresses toggle action listeners during programmatic toggle switches. */
+    private var suppressToggleListener = false
+    private var autoSelectTimer: javax.swing.Timer? = null
 
     init {
         background = JBColor.PanelBackground
@@ -203,6 +213,7 @@ class PrDashboardPanel(
             // Look up full PR detail from cached data to avoid re-fetching
             val prDetail = currentMyPrs.find { it.id == prId }
                 ?: currentReviewingPrs.find { it.id == prId }
+                ?: currentAllRepoPrs.find { it.id == prId }
             if (prDetail != null) {
                 detailPanel.showPrDetail(prDetail)
                 // Emit PrSelected event so other tabs (Quality) can update branch context
@@ -211,7 +222,14 @@ class PrDashboardPanel(
                 if (fromBranch.isNotBlank()) {
                     scope.launch {
                         project.getService(EventBus::class.java)
-                            .emit(WorkflowEvent.PrSelected(prId, fromBranch, toBranch))
+                            .emit(WorkflowEvent.PrSelected(
+                                prId = prId,
+                                fromBranch = fromBranch,
+                                toBranch = toBranch,
+                                repoName = "",
+                                bambooPlanKey = null,
+                                sonarProjectKey = null,
+                            ))
                     }
                 }
             } else {
@@ -226,17 +244,34 @@ class PrDashboardPanel(
         }
 
         myPrsToggle.addActionListener {
+            if (suppressToggleListener) return@addActionListener
             activeFilter = PrFilter.MY
             refreshListView()
         }
         reviewingToggle.addActionListener {
+            if (suppressToggleListener) return@addActionListener
             activeFilter = PrFilter.REVIEWING
             refreshListView()
         }
         allToggle.addActionListener {
+            if (suppressToggleListener) return@addActionListener
             activeFilter = PrFilter.ALL
             refreshListView()
         }
+
+        // Branch change listener — reset auto-select so it fires again for the new branch
+        project.messageBus.connect(this).subscribe(
+            BranchChangeListener.VCS_BRANCH_CHANGED,
+            object : BranchChangeListener {
+                override fun branchWillChange(branchName: String) {}
+                override fun branchHasChanged(branchName: String) {
+                    autoSelectDone = false
+                    scope.launch {
+                        PrListService.getInstance(project).refresh()
+                    }
+                }
+            }
+        )
 
         // State filter listeners — change PR state and trigger service refresh
         openToggle.addActionListener {
@@ -297,7 +332,21 @@ class PrDashboardPanel(
         scope.launch {
             prListService.reviewingPrs.collect { prs ->
                 currentReviewingPrs = prs
-                invokeLater { refreshListView() }
+                invokeLater {
+                    refreshListView()
+                    scheduleAutoSelect()
+                }
+            }
+        }
+
+        // Collect allRepoPrs flow
+        scope.launch {
+            prListService.allRepoPrs.collect { prs ->
+                currentAllRepoPrs = prs
+                invokeLater {
+                    refreshListView()
+                    scheduleAutoSelect()
+                }
             }
         }
 
@@ -312,6 +361,7 @@ class PrDashboardPanel(
         val repoName = activeRepoFilter
         val filteredMyPrs = if (repoName != null) currentMyPrs.filter { it.repoName == repoName } else currentMyPrs
         val filteredReviewingPrs = if (repoName != null) currentReviewingPrs.filter { it.repoName == repoName } else currentReviewingPrs
+        val filteredAllRepoPrs = if (repoName != null) currentAllRepoPrs.filter { it.repoName == repoName } else currentAllRepoPrs
 
         val myItems = filteredMyPrs.map { it.toPrListItem() }
         val reviewingItems = filteredReviewingPrs.map { it.toPrListItem() }
@@ -319,7 +369,7 @@ class PrDashboardPanel(
         when (activeFilter) {
             PrFilter.MY -> listPanel.updatePrs(myItems, emptyList())
             PrFilter.REVIEWING -> listPanel.updatePrs(emptyList(), reviewingItems)
-            PrFilter.ALL -> listPanel.updatePrs(myItems, reviewingItems)
+            PrFilter.ALL -> listPanel.updateAllRepoPrs(filteredAllRepoPrs.map { it.toPrListItem() })
         }
     }
 
@@ -332,7 +382,7 @@ class PrDashboardPanel(
         val totalPrs = when (activeFilter) {
             PrFilter.MY -> currentMyPrs.size
             PrFilter.REVIEWING -> currentReviewingPrs.size
-            PrFilter.ALL -> currentMyPrs.size + currentReviewingPrs.size
+            PrFilter.ALL -> currentAllRepoPrs.size
         }
         val timeStr = if (lastUpdatedMillis > 0) " \u2022 Updated ${TimeFormatter.relative(lastUpdatedMillis)}" else ""
         setLoading(false, "$totalPrs PRs loaded$timeStr")
@@ -397,10 +447,103 @@ class PrDashboardPanel(
     }
 
     // ---------------------------------------------------------------
+    // Auto-select: pick the latest PR matching each repo's current branch
+    // ---------------------------------------------------------------
+
+    /**
+     * Debounced trigger — waits for all three flows to settle before attempting auto-select.
+     */
+    private fun scheduleAutoSelect() {
+        if (autoSelectDone) return
+        autoSelectTimer?.stop()
+        autoSelectTimer = javax.swing.Timer(150) { tryAutoSelect() }.apply {
+            isRepeats = false
+            start()
+        }
+    }
+
+    /**
+     * Find the latest PR whose source branch matches a repo's current git branch.
+     * Priority: primary repo first, then most recently updated.
+     * If the match is in myPrs → switch to "My PRs" toggle.
+     * If only in allRepoPrs → switch to "All" toggle.
+     * Fires once per branch session.
+     */
+    private fun tryAutoSelect() {
+        if (autoSelectDone) return
+
+        val bestPr = findBestPrForAutoSelect() ?: return
+        autoSelectDone = true
+
+        // Determine which toggle should be active for this PR
+        val isMyPr = currentMyPrs.any { it.id == bestPr.id }
+        val isReviewingPr = currentReviewingPrs.any { it.id == bestPr.id }
+        val targetFilter = when {
+            isMyPr -> PrFilter.MY
+            isReviewingPr -> PrFilter.REVIEWING
+            else -> PrFilter.ALL
+        }
+
+        // Switch toggle if needed (suppress listeners to avoid recursion)
+        if (activeFilter != targetFilter) {
+            suppressToggleListener = true
+            activeFilter = targetFilter
+            when (targetFilter) {
+                PrFilter.MY -> myPrsToggle.isSelected = true
+                PrFilter.REVIEWING -> reviewingToggle.isSelected = true
+                PrFilter.ALL -> allToggle.isSelected = true
+            }
+            suppressToggleListener = false
+            refreshListView()
+        }
+
+        // Select the PR in the list and trigger detail view
+        listPanel.selectPrById(bestPr.id)
+        log.info("[PR:AutoSelect] Auto-selected PR #${bestPr.id} '${bestPr.title}' (repo=${bestPr.repoName}, filter=$targetFilter)")
+    }
+
+    /**
+     * Finds the best PR to auto-select: latest PR where a repo's current git branch
+     * is the source branch. Primary repo gets priority.
+     */
+    private fun findBestPrForAutoSelect(): BitbucketPrDetail? {
+        val settings = PluginSettings.getInstance(project)
+        val repoConfigs = settings.getRepos().ifEmpty { return null }
+        val gitRepos = GitRepositoryManager.getInstance(project).repositories
+
+        // Map each repo's display label to its current git branch
+        val branchByRepo = repoConfigs.associate { config ->
+            val gitRepo = gitRepos.find { it.root.path == config.localVcsRootPath }
+            config.displayLabel to (gitRepo?.currentBranchName ?: "")
+        }
+
+        // All unique PRs across all sources
+        val allPrs = (currentMyPrs + currentReviewingPrs + currentAllRepoPrs)
+            .distinctBy { it.id }
+
+        // Find PRs whose source branch matches the repo's current branch
+        val matchingPrs = allPrs.filter { pr ->
+            val fromBranch = pr.fromRef?.displayId ?: ""
+            val repoBranch = branchByRepo[pr.repoName] ?: ""
+            repoBranch.isNotBlank() && fromBranch == repoBranch
+        }
+
+        if (matchingPrs.isEmpty()) return null
+
+        // Sort: primary repo first, then most recently updated
+        val primaryLabel = settings.getPrimaryRepo()?.displayLabel
+        return matchingPrs.sortedWith(
+            compareByDescending<BitbucketPrDetail> { it.repoName == primaryLabel }
+                .thenByDescending { it.updatedDate }
+        ).first()
+    }
+
+    // ---------------------------------------------------------------
     // Dispose
     // ---------------------------------------------------------------
 
     override fun dispose() {
+        autoSelectTimer?.stop()
         detailPanel.dispose()
         scope.cancel()
     }
