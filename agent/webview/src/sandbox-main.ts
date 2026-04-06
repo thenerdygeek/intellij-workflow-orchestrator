@@ -10,6 +10,140 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, Fragment } fr
 import { createRoot, type Root } from 'react-dom/client'
 import { Runner } from 'react-runner'
 
+// ── UI Primitive Components ──
+
+const h = React.createElement
+
+const Card = ({ className, children, onClick }: { className?: string; children?: React.ReactNode; onClick?: () => void }) =>
+  h('div', {
+    className: `rounded-lg border border-[var(--border)] bg-[var(--code-bg)] shadow-sm ${onClick ? 'cursor-pointer' : ''} ${className || ''}`.trim(),
+    onClick,
+  }, children)
+
+const CardHeader = ({ className, children }: { className?: string; children?: React.ReactNode }) =>
+  h('div', { className: `flex flex-col space-y-1.5 p-4 pb-2 ${className || ''}`.trim() }, children)
+
+const CardTitle = ({ className, children }: { className?: string; children?: React.ReactNode }) =>
+  h('h3', { className: `text-sm font-semibold leading-none tracking-tight ${className || ''}`.trim() }, children)
+
+const CardDescription = ({ className, children }: { className?: string; children?: React.ReactNode }) =>
+  h('p', { className: `text-xs text-[var(--fg-muted)] ${className || ''}`.trim() }, children)
+
+const CardContent = ({ className, children }: { className?: string; children?: React.ReactNode }) =>
+  h('div', { className: `p-4 pt-0 ${className || ''}`.trim() }, children)
+
+const badgeVariants: Record<string, string> = {
+  default: 'bg-[var(--accent)]/10 text-[var(--accent)] border-[var(--accent)]/20',
+  success: 'bg-[var(--success)]/10 text-[var(--success)] border-[var(--success)]/20',
+  warning: 'bg-[var(--warning)]/10 text-[var(--warning)] border-[var(--warning)]/20',
+  error: 'bg-[var(--error)]/10 text-[var(--error)] border-[var(--error)]/20',
+  outline: 'bg-transparent text-[var(--fg)] border-[var(--border)]',
+}
+
+const Badge = ({ variant = 'default', className, children }: { variant?: string; className?: string; children?: React.ReactNode }) =>
+  h('span', {
+    className: `inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${badgeVariants[variant] || badgeVariants.default} ${className || ''}`.trim(),
+  }, children)
+
+const Tabs = ({ value, onValueChange, children }: { value: string; onValueChange: (v: string) => void; children?: React.ReactNode }) =>
+  h('div', { className: 'w-full' },
+    React.Children.map(children, child =>
+      React.isValidElement(child)
+        ? React.cloneElement(child as React.ReactElement<any>, { _activeTab: value, _onTabChange: onValueChange })
+        : child
+    )
+  )
+
+const TabsList = ({ className, children, _activeTab, _onTabChange }: { className?: string; children?: React.ReactNode; _activeTab?: string; _onTabChange?: (v: string) => void }) =>
+  h('div', {
+    className: `inline-flex h-9 items-center justify-center rounded-lg bg-[var(--code-bg)] p-1 ${className || ''}`.trim(),
+  },
+    React.Children.map(children, child =>
+      React.isValidElement(child)
+        ? React.cloneElement(child as React.ReactElement<any>, { _activeTab, _onTabChange })
+        : child
+    )
+  )
+
+const TabsTrigger = ({ value, children, _activeTab, _onTabChange }: { value: string; children?: React.ReactNode; _activeTab?: string; _onTabChange?: (v: string) => void }) => {
+  const isActive = _activeTab === value
+  return h('button', {
+    className: `inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all ${
+      isActive
+        ? 'bg-[var(--bg)] text-[var(--fg)] shadow-sm'
+        : 'text-[var(--fg-muted)] hover:text-[var(--fg)]'
+    }`.trim(),
+    onClick: () => _onTabChange?.(value),
+  }, children)
+}
+
+const TabsContent = ({ value, children, _activeTab }: { value: string; children?: React.ReactNode; _activeTab?: string }) => {
+  if (_activeTab !== value) return null
+  return h('div', { className: 'mt-3' }, children)
+}
+
+const progressVariants: Record<string, string> = {
+  default: 'bg-[var(--accent)]',
+  success: 'bg-[var(--success)]',
+  warning: 'bg-[var(--warning)]',
+  error: 'bg-[var(--error)]',
+}
+
+const Progress = ({ value, variant = 'default', className }: { value: number; variant?: string; className?: string }) =>
+  h('div', {
+    className: `rounded-full bg-[var(--code-bg)] h-2 ${className || ''}`.trim(),
+  },
+    h('div', {
+      className: `h-full rounded-full transition-all ${progressVariants[variant] || progressVariants.default}`.trim(),
+      style: { width: `${Math.max(0, Math.min(100, value))}%` },
+    })
+  )
+
+const Separator = ({ className }: { className?: string }) =>
+  h('div', { className: `h-px w-full bg-[var(--border)] ${className || ''}`.trim() })
+
+const Accordion = ({ children }: { children?: React.ReactNode }) =>
+  h('div', { className: 'divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]' }, children)
+
+const AccordionItem = ({ title, children, defaultOpen = false }: { title: React.ReactNode; children?: React.ReactNode; defaultOpen?: boolean }) => {
+  const [open, setOpen] = React.useState(defaultOpen)
+  return h('div', null,
+    h('button', {
+      className: 'flex w-full items-center justify-between p-3 text-sm font-medium hover:bg-[var(--code-bg)] transition-colors',
+      onClick: () => setOpen(!open),
+    },
+      h('span', null, title),
+      h('svg', {
+        className: `h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`.trim(),
+        xmlns: 'http://www.w3.org/2000/svg',
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 2,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+      }, h('polyline', { points: '6 9 12 15 18 9' }))
+    ),
+    open ? h('div', { className: 'px-3 pb-3 text-sm' }, children) : null
+  )
+}
+
+const Tooltip = ({ content, children }: { content: React.ReactNode; children?: React.ReactNode }) => {
+  const [show, setShow] = React.useState(false)
+  return h('div', {
+    className: 'relative inline-block',
+    onMouseEnter: () => setShow(true),
+    onMouseLeave: () => setShow(false),
+  },
+    children,
+    show
+      ? h('div', {
+          className: 'absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs rounded bg-[var(--fg)] text-[var(--bg)] whitespace-nowrap z-50 pointer-events-none',
+        }, content)
+      : null
+  )
+}
+
 // ── State ──
 
 let reactRoot: Root | null = null
@@ -119,6 +253,14 @@ function renderComponent(source: string, scope: Record<string, unknown>) {
         get colors() { return { ...bridgeState.colors } },
         get projectName() { return bridgeState.projectName },
       },
+      // UI Primitives
+      Card, CardHeader, CardTitle, CardDescription, CardContent,
+      Badge,
+      Tabs, TabsList, TabsTrigger, TabsContent,
+      Progress,
+      Separator,
+      Accordion, AccordionItem,
+      Tooltip,
       // User-provided scope (libraries)
       ...scope,
     }
