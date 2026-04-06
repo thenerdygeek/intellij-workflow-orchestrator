@@ -428,7 +428,7 @@ class AgentService(private val project: Project) : Disposable {
          * Callback fired when the LLM presents a plan via plan_mode_respond.
          * Used by the UI to render the plan card. Does NOT exit the loop.
          */
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
         /**
          * Callback fired when the LLM toggles plan mode via enable_plan_mode tool.
          * Used by the UI to update the plan mode button and rebuild tool definitions.

@@ -186,9 +186,9 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
   return (
     <div className="plan-document plan-document-interactive">
       <div className="plan-document-body">
-        {blocks.map((block) => {
-          // For multi-line blocks (code/table), show the start line number
-          // and a single comment target for the whole block
+        {blocks.map((block, blockIndex) => {
+          // Sequential block number for display; source startLine for comment keying
+          const displayNum = blockIndex + 1;
           const lineNum = block.startLine;
           const comment = commentsByLine.get(lineNum);
           const isActive = activeCommentLine === lineNum;
@@ -203,7 +203,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
             <div key={lineNum} className="plan-block-row" data-line={lineNum}>
               {/* Gutter */}
               <div className="plan-block-gutter">
-                <span className="plan-line-number">{lineNum}</span>
+                <span className="plan-line-number">{displayNum}</span>
                 {onComment && !comment && blockComments.length === 0 && (
                   <button
                     className="plan-line-comment-btn"

@@ -1,10 +1,14 @@
-/* plan-document.css — Document typography for PlanDocumentViewer */
+/* plan-document.css — GitHub-flavored markdown typography for PlanDocumentViewer
+ * Adapted from github-markdown-css v5.9.0 (sindresorhus/github-markdown-css)
+ * with our CSS variables for theme integration.
+ */
 
 .plan-document {
   position: relative;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
   color: var(--fg);
-  line-height: 1.7;
+  line-height: 1.5;
+  word-wrap: break-word;
 }
 
 /* Non-interactive mode (approved plan) */
@@ -12,7 +16,7 @@
   max-width: 800px;
   margin: 0 auto;
   padding: 2rem 3rem;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 /* Interactive mode: no extra padding, handled by block rows */
@@ -20,7 +24,7 @@
   max-width: 860px;
   margin: 0 auto;
   padding: 1rem 1rem;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 /* ── Block row: gutter + content side by side ── */
@@ -55,123 +59,121 @@
 .plan-block-content > :first-child { margin-top: 0; }
 .plan-block-content > :last-child { margin-bottom: 0; }
 
-/* ── Heading hierarchy ── */
+/* ── Block-level element shared margin ── */
+.plan-document-body p,
+.plan-document-body blockquote,
+.plan-document-body ul,
+.plan-document-body ol,
+.plan-document-body dl,
+.plan-document-body table,
+.plan-document-body pre,
+.plan-document-body details {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+/* ── Heading hierarchy (GitHub spec) ── */
+.plan-document-body h1,
+.plan-document-body h2,
+.plan-document-body h3,
+.plan-document-body h4,
+.plan-document-body h5,
+.plan-document-body h6 {
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
 .plan-document-body h1 {
-  font-size: 1.75em;
-  font-weight: 700;
-  margin: 2rem 0 1rem;
-  padding-bottom: 0.5em;
-  border-bottom: 2px solid var(--accent, #6366f1);
-  letter-spacing: -0.01em;
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
 }
 
 .plan-document-body h2 {
-  font-size: 1.3em;
-  font-weight: 600;
-  margin: 2rem 0 0.75rem;
-  padding: 0.4em 0;
-  padding-bottom: 0.35em;
-  border-bottom: 1px solid var(--divider-subtle, var(--border));
-  color: var(--accent, #6366f1);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 0.85em;
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
 }
 
 .plan-document-body h3 {
-  font-size: 1.1em;
-  font-weight: 600;
-  margin: 1.75rem 0 0.5rem;
-  padding: 0.5em 0.75em;
-  background: var(--code-bg, rgba(128, 128, 128, 0.06));
-  border-left: 3px solid var(--accent, #6366f1);
-  border-radius: 0 6px 6px 0;
-}
-
-/* First h3 needs less top margin */
-.plan-document-body h2 + * h3:first-child,
-.plan-block-row:first-child h3 {
-  margin-top: 0.75rem;
+  font-size: 1.25em;
 }
 
 .plan-document-body h4 {
   font-size: 1em;
-  font-weight: 600;
-  margin: 1.25rem 0 0.5rem;
+}
+
+.plan-document-body h5 {
+  font-size: 0.875em;
+}
+
+.plan-document-body h6 {
+  font-size: 0.85em;
   color: var(--fg-secondary);
 }
 
-/* ── Paragraphs ── */
-.plan-document-body p {
-  margin: 0.6em 0;
-  line-height: 1.75;
+/* Code inside headings */
+.plan-document-body h1 code,
+.plan-document-body h2 code,
+.plan-document-body h3 code,
+.plan-document-body h4 code,
+.plan-document-body h5 code,
+.plan-document-body h6 code {
+  padding: 0 0.2em;
+  font-size: inherit;
 }
 
-/* ── Lists — enhanced visual distinction ── */
+/* ── Lists (GitHub spec) ── */
+/* Tailwind preflight resets list-style: none — explicitly restore */
 .plan-document-body ul {
-  padding-left: 1.5em;
-  margin: 0.6em 0;
-  list-style: none;
-}
-
-.plan-document-body ul > li {
-  position: relative;
-  margin: 0.4em 0;
-  padding-left: 0.75em;
-}
-
-/* Custom bullet: small colored dot */
-.plan-document-body ul > li::before {
-  content: '';
-  position: absolute;
-  left: -0.75em;
-  top: 0.65em;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent, #6366f1);
-  opacity: 0.7;
-}
-
-/* Nested lists: dimmer bullets */
-.plan-document-body ul ul > li::before {
-  background: var(--fg-muted);
-  opacity: 0.4;
-  width: 4px;
-  height: 4px;
+  padding-left: 2em;
+  list-style-type: disc;
 }
 
 .plan-document-body ol {
-  padding-left: 1.5em;
-  margin: 0.6em 0;
-  counter-reset: plan-counter;
-  list-style: none;
+  padding-left: 2em;
+  list-style-type: decimal;
 }
 
-.plan-document-body ol > li {
-  position: relative;
-  margin: 0.5em 0;
-  padding-left: 0.75em;
-  counter-increment: plan-counter;
+.plan-document-body ul ul,
+.plan-document-body ul ol,
+.plan-document-body ol ol,
+.plan-document-body ol ul {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
-/* Custom number badge */
-.plan-document-body ol > li::before {
-  content: counter(plan-counter);
-  position: absolute;
-  left: -1.5em;
-  top: 0.15em;
-  width: 1.3em;
-  height: 1.3em;
-  border-radius: 50%;
-  background: var(--accent, #6366f1);
-  color: var(--bg, #fff);
-  font-size: 0.7em;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.85;
+/* Nested unordered list: circle, then square */
+.plan-document-body ul ul {
+  list-style-type: circle;
+}
+
+.plan-document-body ul ul ul {
+  list-style-type: square;
+}
+
+/* Nested ordered list: lower-roman */
+.plan-document-body ol ol,
+.plan-document-body ul ol {
+  list-style-type: lower-roman;
+}
+
+/* Triple-nested ordered list: lower-alpha */
+.plan-document-body ul ul ol,
+.plan-document-body ul ol ol,
+.plan-document-body ol ul ol,
+.plan-document-body ol ol ol {
+  list-style-type: lower-alpha;
+}
+
+.plan-document-body li + li {
+  margin-top: 0.25em;
+}
+
+.plan-document-body li > p {
+  margin-top: 1rem;
 }
 
 /* ── Task list checkboxes ── */
@@ -187,73 +189,120 @@
   padding-left: 0;
 }
 
-/* Remove custom bullet for task items */
-.plan-task-item::before {
-  display: none !important;
-}
-
-/* ── Inline code ── */
+/* ── Inline code (GitHub spec) ── */
 .plan-inline-code {
-  background: var(--code-bg);
-  padding: 0.15em 0.4em;
-  border-radius: 4px;
-  font-size: 0.88em;
-  font-family: var(--font-mono, 'JetBrains Mono', monospace);
-  border: 1px solid rgba(128, 128, 128, 0.12);
+  padding: 0.2em 0.4em;
+  margin: 0;
+  font-size: 85%;
+  white-space: break-spaces;
+  background-color: var(--code-bg, rgba(128, 128, 128, 0.12));
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace);
 }
 
-/* ── Blockquotes ── */
+/* ── Code blocks ── */
+.plan-document-body pre {
+  padding: 1rem;
+  overflow: auto;
+  font-size: 85%;
+  line-height: 1.45;
+  background-color: var(--code-bg, rgba(128, 128, 128, 0.06));
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace);
+  word-wrap: normal;
+}
+
+.plan-document-body pre > code {
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  white-space: pre;
+  word-break: normal;
+  font-size: 100%;
+}
+
+/* ── Blockquotes (GitHub spec) ── */
+/* Tailwind preflight sets border-style: solid with border-width: 0 — override explicitly */
 .plan-document-body blockquote {
-  border-left: 3px solid var(--accent);
-  padding: 0.5em 1em;
-  margin: 1em 0;
-  color: var(--fg-secondary);
-  font-style: italic;
-  background: rgba(128, 128, 128, 0.03);
-  border-radius: 0 6px 6px 0;
+  padding: 0 1em;
+  color: var(--fg-secondary, #656d76);
+  border-left-width: 0.25em;
+  border-left-style: solid;
+  border-left-color: var(--border, #d1d9e0);
 }
 
-/* ── Tables — GitHub style ── */
+.plan-document-body blockquote > :first-child { margin-top: 0; }
+.plan-document-body blockquote > :last-child { margin-bottom: 0; }
+
+/* ── Tables (GitHub spec) ── */
 .plan-document-body table {
+  border-spacing: 0;
   border-collapse: collapse;
-  width: 100%;
-  margin: 1em 0;
-  font-size: 0.92em;
-}
-
-.plan-document-body th, .plan-document-body td {
-  border: 1px solid var(--border);
-  padding: 0.5em 1em;
-  text-align: left;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  font-variant: tabular-nums;
 }
 
 .plan-document-body th {
-  background: var(--toolbar-bg);
   font-weight: 600;
-  font-size: 0.9em;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
-/* ── HR — section divider ── */
-.plan-document-body hr {
-  border: none;
+.plan-document-body th,
+.plan-document-body td {
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+}
+
+.plan-document-body tr {
+  background-color: var(--bg);
   border-top: 1px solid var(--border);
-  margin: 2em 0;
 }
 
-/* ── Bold text — subtle emphasis ── */
+/* Striped rows */
+.plan-document-body tr:nth-child(2n) {
+  background-color: var(--code-bg, rgba(128, 128, 128, 0.04));
+}
+
+.plan-document-body td > :last-child {
+  margin-bottom: 0;
+}
+
+/* ── HR (GitHub spec) ── */
+.plan-document-body hr {
+  box-sizing: content-box;
+  overflow: hidden;
+  background: transparent;
+  height: 0.25em;
+  padding: 0;
+  margin: 1.5rem 0;
+  background-color: var(--border);
+  border: 0;
+}
+
+/* ── Bold / strong ── */
 .plan-document-body strong {
   font-weight: 600;
-  color: var(--fg);
 }
 
-/* Status-like bold labels: "**Status:**", "**Files:**" */
-.plan-document-body p > strong:first-child {
-  color: var(--fg-secondary);
-  font-size: 0.9em;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+/* ── Links ── */
+.plan-document-body a {
+  color: var(--link, #4493f8);
+  text-decoration: none;
+}
+
+.plan-document-body a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+/* ── Images ── */
+.plan-document-body img {
+  max-width: 100%;
+  border-style: none;
+  box-sizing: content-box;
 }
 
 /* ── Line number ── */

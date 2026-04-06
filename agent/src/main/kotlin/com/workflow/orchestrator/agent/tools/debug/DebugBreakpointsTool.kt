@@ -703,7 +703,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
             val sessionId = withTimeoutOrNull(30_000L) {
                 suspendCancellableCoroutine<String> { cont ->
                     val connection = project.messageBus.connect()
-                    cont.invokeOnCancellation { connection.disconnect() }
+                    val buildConnRef = java.util.concurrent.atomic.AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
+                    cont.invokeOnCancellation { connection.disconnect(); buildConnRef.get()?.disconnect() }
                     connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
                         override fun processStarted(debugProcess: XDebugProcess) {
                             val session = debugProcess.session
@@ -718,6 +719,24 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                             val executor = DefaultDebugExecutor.getDebugExecutorInstance()
                             val env = ExecutionEnvironmentBuilder.create(project, executor, settings.configuration).build()
                             ProgramRunnerUtil.executeConfiguration(env, true, true)
+
+                            // Detect build failure before debug process starts
+                            val buildConn = project.messageBus.connect()
+                            buildConnRef.set(buildConn)
+                            buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                                object : com.intellij.execution.ExecutionListener {
+                                    override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
+                                        if (e == env) {
+                                            buildConn.disconnect()
+                                            connection.disconnect()
+                                            if (cont.isActive) cont.resume("")
+                                        }
+                                    }
+                                    override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: com.intellij.execution.process.ProcessHandler) {
+                                        if (e == env) buildConn.disconnect()
+                                    }
+                                }
+                            )
                         } catch (e: Exception) {
                             connection.disconnect()
                             if (cont.isActive) cont.resume("")
@@ -728,8 +747,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
 
             if (sessionId == null || sessionId.isEmpty()) {
                 return ToolResult(
-                    "Debug session failed to start within 30 seconds. Check run configuration, build errors, or port conflicts.",
-                    "Debug session timeout",
+                    "Debug session failed to start. Check run configuration, build errors, or port conflicts.",
+                    "Debug session failed",
                     ToolResult.ERROR_TOKEN_ESTIMATE,
                     isError = true
                 )
@@ -788,7 +807,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                 withTimeoutOrNull(30_000L) {
                     suspendCancellableCoroutine<String> { cont ->
                         val connection = project.messageBus.connect()
-                        cont.invokeOnCancellation { connection.disconnect() }
+                        val buildConn = project.messageBus.connect()
+                        cont.invokeOnCancellation { connection.disconnect(); buildConn.disconnect() }
                         connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
                             override fun processStarted(debugProcess: XDebugProcess) {
                                 val session = debugProcess.session
@@ -799,6 +819,22 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                         })
 
                         ProgramRunnerUtil.executeConfiguration(env, true, true)
+
+                        // Detect execution abort before debug attaches
+                        buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                            object : com.intellij.execution.ExecutionListener {
+                                override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
+                                    if (e == env) {
+                                        buildConn.disconnect()
+                                        connection.disconnect()
+                                        if (cont.isActive) cont.resume("")
+                                    }
+                                }
+                                override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: com.intellij.execution.process.ProcessHandler) {
+                                    if (e == env) buildConn.disconnect()
+                                }
+                            }
+                        )
                     }
                 }
             }

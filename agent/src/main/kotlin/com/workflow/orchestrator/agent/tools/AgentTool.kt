@@ -88,6 +88,8 @@ data class ToolResult(
     val isPlanResponse: Boolean = false,
     /** True when the LLM needs more exploration before finalizing the plan. */
     val needsMoreExploration: Boolean = false,
+    /** Structured plan step titles provided by the LLM via plan_mode_respond. */
+    val planSteps: List<String> = emptyList(),
     /** True when this result activates a skill via use_skill tool. */
     val isSkillActivation: Boolean = false,
     /** The skill name that was activated (set by UseSkillTool). */

@@ -12,7 +12,8 @@ import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
-import com.workflow.orchestrator.agent.loop.PlanParser
+import com.workflow.orchestrator.agent.loop.PlanJson
+import com.workflow.orchestrator.agent.loop.PlanStep
 import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
@@ -96,10 +97,10 @@ class AgentController(
 
     /**
      * Structured plan data from the last plan_mode_respond call.
-     * Populated in [onPlanResponse] via [PlanParser.parseToPlanJson] and used by
+     * Populated in [onPlanResponse] from the LLM's structured steps and used by
      * [openPlanInEditor] to open the plan in a full JCEF editor tab.
      */
-    private var currentPlanData: PlanParser.PlanJson? = null
+    private var currentPlanData: PlanJson? = null
 
     /** Recent tool calls for Haiku phrase context (FIFO, max 3). */
     private val recentToolCalls = mutableListOf<Pair<String, String>>()
@@ -621,7 +622,7 @@ class AgentController(
                 }
                 onComplete(result)
             },
-            onPlanResponse = ::onPlanResponse,
+            onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
@@ -814,31 +815,34 @@ class AgentController(
     /**
      * Task progress callback — agent loop reports checklist updates.
      *
-     * Port of Cline's FocusChainManager say("task_progress", ...):
-     * Cline sends the markdown checklist to the webview for display.
-     * We send it to the dashboard as a status message showing progress.
+     * The LLM's task_progress checklist (focus-chain) is the sole source of truth
+     * for execution progress. LLM-provided steps drive both the plan card and progress.
+     *
+     * On each update, we replace the plan card's steps entirely with the LLM's
+     * checklist items. This handles the LLM adding, removing, or reordering items.
      */
     private fun onTaskProgress(progress: TaskProgress) {
         invokeLater {
             val summary = "${progress.completedCount}/${progress.totalCount} steps completed"
             dashboard.appendStatus(summary, RichStreamingPanel.StatusType.INFO)
 
-            // Sync task_progress checklist with plan steps in the UI.
-            // Match by index: progress item 0 → plan step "1", item 1 → step "2", etc.
-            // Only the first unchecked item is "running"; the rest stay "pending".
-            val planSteps = currentPlanData?.steps ?: return@invokeLater
+            // Build execution steps directly from the LLM's task_progress checklist.
+            // The first incomplete item is "running"; completed items are "completed"; rest "pending".
             var foundFirstIncomplete = false
-            for ((index, item) in progress.items.withIndex()) {
-                if (index < planSteps.size) {
-                    val stepId = planSteps[index].id
-                    val status = when {
-                        item.completed -> "completed"
-                        !foundFirstIncomplete -> { foundFirstIncomplete = true; "running" }
-                        else -> "pending"
-                    }
-                    dashboard.updatePlanStep(stepId, status)
+            val steps = progress.items.mapIndexed { index, item ->
+                val status = when {
+                    item.completed -> "completed"
+                    !foundFirstIncomplete -> { foundFirstIncomplete = true; "running" }
+                    else -> "pending"
                 }
+                PlanStep(
+                    id = (index + 1).toString(),
+                    title = item.description,
+                    status = status
+                )
             }
+            val stepsJson = Json.encodeToString(steps)
+            dashboard.replaceExecutionSteps(stepsJson)
         }
     }
 
@@ -1232,7 +1236,7 @@ class AgentController(
      * If needsMoreExploration=false, the loop will wait on userInputChannel
      * for the user to respond (type chat, add comments, or approve).
      */
-    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean) {
+    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean, planSteps: List<String>) {
         // Save plan to disk and store path in ContextManager for compaction survival.
         // Done outside invokeLater so it's synchronous and guaranteed before UI render.
         val sid = currentSessionId
@@ -1257,8 +1261,16 @@ class AgentController(
         }
 
         invokeLater {
-            // Parse plan into structured object (used by openPlanInEditor) and render card
-            val planData = PlanParser.parseToPlanJson(planText)
+            // Build plan from LLM-provided steps (not parsed from markdown).
+            // The LLM provides structured step titles via the mandatory "steps" parameter.
+            val steps = planSteps.mapIndexed { index, title ->
+                PlanStep(id = (index + 1).toString(), title = title)
+            }
+            val summary = planText.lines()
+                .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
+                ?.trim()?.take(300)
+                ?: "Plan with ${steps.size} steps"
+            val planData = PlanJson(summary = summary, steps = steps)
             currentPlanData = planData
             val planJson = Json.encodeToString(planData)
             dashboard.renderPlan(planJson)

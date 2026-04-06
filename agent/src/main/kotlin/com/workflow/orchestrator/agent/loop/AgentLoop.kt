@@ -146,10 +146,11 @@ class AgentLoop(
      * The UI uses this to render the plan card with per-step comment buttons.
      * The loop does NOT exit — it continues or waits for user input.
      *
-     * @param planText the plan text from the LLM
+     * @param planText the plan markdown from the LLM
      * @param needsMoreExploration if true, loop continues immediately (LLM explores more)
+     * @param planSteps structured step titles provided by the LLM
      */
-    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
     /**
      * Channel for receiving user input during the loop.
      * Used in plan mode: after the LLM presents a plan (needsMoreExploration=false),
@@ -1009,8 +1010,8 @@ class AgentLoop(
             // - If needs_more_exploration=true, loop continues immediately (LLM explores more)
             // - If needs_more_exploration=false, wait for user input before next LLM call
             if (toolResult.isPlanResponse) {
-                LOG.info("[Loop] Plan presented (needsMoreExploration=${toolResult.needsMoreExploration})")
-                onPlanResponse?.invoke(toolResult.content, toolResult.needsMoreExploration)
+                LOG.info("[Loop] Plan presented (needsMoreExploration=${toolResult.needsMoreExploration}, steps=${toolResult.planSteps.size})")
+                onPlanResponse?.invoke(toolResult.content, toolResult.needsMoreExploration, toolResult.planSteps)
 
                 if (!toolResult.needsMoreExploration && userInputChannel != null) {
                     // Wait for user input (matches Cline's ask() pattern).

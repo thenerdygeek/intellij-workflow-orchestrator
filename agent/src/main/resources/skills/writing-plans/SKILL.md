@@ -21,18 +21,15 @@ Note: `file_structure` and `type_hierarchy` are deferred tools — activate with
 
 Your plan flows through a specific UI pipeline. Understanding this ensures your plan renders correctly:
 
-1. **You call `plan_mode_respond(response=plan_markdown, task_progress=checklist)`**
-2. **PlanParser** extracts steps from your markdown — it recognizes three formats:
-   - `### Task N: Title` (headers — **recommended**, best for detailed plans)
-   - `1. Title` (numbered lists — good for simple plans)
-   - `- Title` (bullets — fallback)
-   Lines between step headers become the step's description.
-3. **Plan card** renders in chat — shows summary, step count, "Approve" and "View Plan" buttons
-4. **Plan editor** opens as a full tab when user clicks "View Plan" — the user sees the full markdown with line numbers and can **add inline comments on specific lines**
-5. **Approval** switches to act mode and feeds a checklist into the loop. You then include `task_progress` in tool calls to update step status in the UI.
-6. **Revision** sends the user's line-level comments back to you. You revise and call `plan_mode_respond` again.
+1. **You call `plan_mode_respond(response=plan_markdown, steps=["Step 1 title", "Step 2 title", ...])`**
+   - `response`: Full markdown plan for the document viewer (with code blocks, tables, etc.)
+   - `steps`: A JSON array of high-level step/phase titles for the plan progress card (typically 5-10)
+2. **Plan card** renders in chat — shows the step titles, step count, "Approve" and "View Plan" buttons
+3. **Plan editor** opens as a full tab when user clicks "View Plan" — the user sees the full markdown with line numbers and can **add inline comments on specific lines**
+4. **Approval** switches to act mode. You then include `task_progress` in tool calls to update step status in the progress card.
+5. **Revision** sends the user's line-level comments back to you. You revise and call `plan_mode_respond` again.
 
-**Critical: `task_progress` items sync with plan steps by INDEX.** If your plan has 5 `### Task` headers, your `task_progress` must have exactly 5 items, in the same order, with matching titles. The UI maps item 0 → step 1, item 1 → step 2, etc.
+**Critical: `task_progress` items should match the `steps` you provided.** Keep titles consistent between `steps` and `task_progress` so the user sees coherent progress.
 
 ## Scope Check
 
@@ -60,7 +57,7 @@ This structure informs the task decomposition. Each task should produce self-con
 
 ## Plan Markdown Format
 
-Use `### Task N: Title` headers for steps. This is the format PlanParser handles best — each header becomes a plan step with its own title, description, and comment target in the plan editor.
+Use `### Task N: Title` headers for steps. Each header becomes a section in the plan document viewer with its own comment target. The `steps` parameter should list these task titles for the progress card.
 
 **Every plan MUST use this structure:**
 
@@ -102,16 +99,16 @@ Implementation plan for [feature name].
 
 ## Presenting the Plan
 
-Call `plan_mode_respond` with both `response` and `task_progress`:
+Call `plan_mode_respond` with `response` (markdown) and `steps` (JSON array):
 
 ```
 plan_mode_respond(
-  response="Implementation plan for user management API.\n\n### Task 1: Create UserRequest and UserResponse DTOs\n...\n\n### Task 2: Write controller slice test\n...\n\n### Task 3: Implement UserController\n...",
-  task_progress="- [ ] Task 1: Create UserRequest and UserResponse DTOs\n- [ ] Task 2: Write controller slice test\n- [ ] Task 3: Implement UserController"
+  response="Implementation plan for user management API.\n\n### Task 1: Create DTOs\n**Files:**\n- Create: `src/dto/UserRequest.kt`\n...\n\n### Task 2: Write controller test\n...\n\n### Task 3: Implement UserController\n...",
+  steps=["Create UserRequest and UserResponse DTOs", "Write controller slice test", "Implement UserController"]
 )
 ```
 
-The `task_progress` titles MUST match the `### Task N:` titles exactly (by index). The UI syncs them to show completion status.
+The `steps` array drives the progress card. Keep titles concise — they appear as checklist items. During execution, your `task_progress` checklist should use matching titles so the user sees coherent progress.
 
 ## Handling User Comments
 
@@ -156,7 +153,7 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
 
-**4. task_progress sync:** Count your `### Task` headers. Does your `task_progress` have exactly that many items? Do the titles match?
+**4. steps sync:** Count your `### Task` headers. Does your `steps` array have a matching title for each? These are what the user sees in the progress card.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
@@ -172,4 +169,4 @@ After the user approves the plan, the session switches back to act mode. You rec
 
 **Which approach?"**
 
-During execution (either approach), include `task_progress` in your tool calls to update the plan UI. As you complete each task, mark it `[x]` in the checklist. The plan card and plan editor tab update in real-time to show step completion with spinner/check icons.
+During execution (either approach), include `task_progress` in your tool calls to update the progress card. Use the same titles from your `steps` array. As you complete each task, mark it `[x]` in the checklist. The progress card updates in real-time with spinner/check icons.

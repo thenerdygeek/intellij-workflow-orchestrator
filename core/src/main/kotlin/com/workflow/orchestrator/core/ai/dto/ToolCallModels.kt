@@ -27,7 +27,8 @@ data class FunctionParameters(
 data class ParameterProperty(
     val type: String,
     val description: String,
-    @SerialName("enum") val enumValues: List<String>? = null
+    @SerialName("enum") val enumValues: List<String>? = null,
+    val items: ParameterProperty? = null
 )
 
 @Serializable

@@ -680,10 +680,18 @@ description optional: for approval dialog on run_tests, compile_module.
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
                         }
 
-                        // Build watchdog: uses CompilationStatusListener to detect build failures.
-                        // If compilation finishes but processStarted() never fires, the build failed.
-                        // Uses reflection because CompilerTopics/CompilationStatusListener are in the
-                        // Java plugin (optional compile-time dependency, different API versions).
+                        // Build watchdog: uses ExecutionListener.processNotStarted() to detect
+                        // when before-run tasks (Make) fail. This is the official IntelliJ API —
+                        // processNotStarted fires exactly when the execution framework aborts,
+                        // with zero race condition (unlike CompilationStatusListener which fires
+                        // BEFORE the process has a chance to start).
+                        //
+                        // Additionally subscribes to CompilationStatusListener to capture error
+                        // counts for richer error messages.
+                        val buildConnection = project.messageBus.connect()
+                        val compilationErrors = java.util.concurrent.atomic.AtomicReference<String?>(null)
+
+                        // Secondary: capture compilation error details
                         try {
                             val topicsClass = Class.forName("com.intellij.openapi.compiler.CompilerTopics")
                             val topicField = topicsClass.getField("COMPILATION_STATUS")
@@ -691,27 +699,16 @@ description optional: for approval dialog on run_tests, compile_module.
                             val topic = topicField.get(null) as com.intellij.util.messages.Topic<Any>
                             val listenerClass = Class.forName("com.intellij.openapi.compiler.CompilationStatusListener")
 
-                            val connection = project.messageBus.connect()
                             val listener = java.lang.reflect.Proxy.newProxyInstance(
                                 listenerClass.classLoader,
                                 arrayOf(listenerClass)
                             ) { _, method, args ->
                                 if (method.name == "compilationFinished") {
-                                    connection.disconnect()
-                                    if (processHandlerRef.get() == null && continuation.isActive) {
-                                        val aborted = args?.getOrNull(0) as? Boolean ?: false
-                                        val errors = args?.getOrNull(1) as? Int ?: 0
-                                        val warnings = args?.getOrNull(2) as? Int ?: 0
-                                        continuation.resume(ToolResult(
-                                            content = "BUILD FAILED — test execution did not start.\n\n" +
-                                                "Compilation completed (errors: $errors, warnings: $warnings, aborted: $aborted) " +
-                                                "but no test process was created.\n\n" +
-                                                "Fix the compilation errors and try again. " +
-                                                "Use diagnostics tool to check for errors in the test class.",
-                                            summary = "Build failed before tests ($errors errors)",
-                                            tokenEstimate = 30,
-                                            isError = true
-                                        ))
+                                    val aborted = args?.getOrNull(0) as? Boolean ?: false
+                                    val errors = args?.getOrNull(1) as? Int ?: 0
+                                    val warnings = args?.getOrNull(2) as? Int ?: 0
+                                    if (aborted || errors > 0) {
+                                        compilationErrors.set("$errors errors, $warnings warnings, aborted=$aborted")
                                     }
                                 }
                                 null
@@ -719,19 +716,46 @@ description optional: for approval dialog on run_tests, compile_module.
 
                             @Suppress("UNCHECKED_CAST")
                             (topic as com.intellij.util.messages.Topic<Any>).let { t ->
-                                connection.subscribe(t, listener)
+                                buildConnection.subscribe(t, listener)
                             }
-
-                            // Safety: disconnect on timeout to prevent leaks
-                            Thread {
-                                try {
-                                    Thread.sleep(BUILD_WATCHDOG_MAX_MS)
-                                    connection.disconnect()
-                                } catch (_: InterruptedException) { /* normal */ }
-                            }.apply { isDaemon = true; name = "build-watchdog-timeout"; start() }
                         } catch (_: Exception) {
-                            // Reflection failed — fall back to no build watchdog
+                            // Reflection failed — CompilerTopics not available, error details will be generic
                         }
+
+                        // Primary: ExecutionListener detects run abort with no race condition
+                        buildConnection.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                            object : com.intellij.execution.ExecutionListener {
+                                override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
+                                    if (e == env) {
+                                        buildConnection.disconnect()
+                                        if (continuation.isActive) {
+                                            val errorDetail = compilationErrors.get() ?: "before-run task failed"
+                                            continuation.resume(ToolResult(
+                                                content = "BUILD FAILED — test execution did not start.\n\n" +
+                                                    "Compilation result: $errorDetail\n\n" +
+                                                    "Fix the compilation errors and try again. " +
+                                                    "Use diagnostics tool to check for errors in the test class.",
+                                                summary = "Build failed before tests ($errorDetail)",
+                                                tokenEstimate = 30,
+                                                isError = true
+                                            ))
+                                        }
+                                    }
+                                }
+
+                                override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: com.intellij.execution.process.ProcessHandler) {
+                                    if (e == env) buildConnection.disconnect()
+                                }
+                            }
+                        )
+
+                        // Safety: disconnect on timeout to prevent leaks
+                        Thread {
+                            try {
+                                Thread.sleep(BUILD_WATCHDOG_MAX_MS)
+                                buildConnection.disconnect()
+                            } catch (_: InterruptedException) { /* normal */ }
+                        }.apply { isDaemon = true; name = "build-watchdog-timeout"; start() }
                     } catch (e: Exception) {
                         if (continuation.isActive) continuation.resume(null)
                     }

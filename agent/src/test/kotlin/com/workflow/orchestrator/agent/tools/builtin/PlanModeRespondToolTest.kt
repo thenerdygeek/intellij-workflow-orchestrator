@@ -89,7 +89,7 @@ class PlanModeRespondToolTest {
     @Test
     fun `description mentions plan mode and exploration`() {
         assertTrue(tool.description.contains("PLAN MODE"), "description should mention PLAN MODE")
-        assertTrue(tool.description.contains("concrete plan"), "description should mention concrete plan")
+        assertTrue(tool.description.contains("implementation plan"), "description should mention implementation plan")
         assertTrue(tool.description.contains("needs_more_exploration"), "description should mention needs_more_exploration")
     }
 }

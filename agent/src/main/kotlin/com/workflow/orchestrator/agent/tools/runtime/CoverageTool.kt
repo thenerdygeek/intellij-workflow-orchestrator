@@ -158,9 +158,11 @@ Actions and their parameters:
         val listenerDisposable = registerCoverageListener(project, coverageDeferred)
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
+        val buildConnRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
 
         val result = withTimeoutOrNull<CoverageRunResult>(timeoutSeconds * 1000) {
             suspendCancellableCoroutine { continuation ->
+                continuation.invokeOnCancellation { buildConnRef.get()?.disconnect() }
                 invokeLater {
                     try {
                         val env = ExecutionEnvironmentBuilder
@@ -232,6 +234,31 @@ Actions and their parameters:
                             env.callback = callback
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
                         }
+
+                        // Build watchdog: detect before-run task failure (e.g. Make fails)
+                        // via ExecutionListener.processNotStarted — no race condition.
+                        val buildConn = project.messageBus.connect()
+                        buildConnRef.set(buildConn)
+                        buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                            object : com.intellij.execution.ExecutionListener {
+                                override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
+                                    if (e == env) {
+                                        buildConn.disconnect()
+                                        if (continuation.isActive) {
+                                            continuation.resume(CoverageRunResult(
+                                                "BUILD FAILED — coverage run did not start.\n\n" +
+                                                    "Compilation failed before test execution. " +
+                                                    "Fix the errors and try again.",
+                                                "Build failed before coverage"
+                                            ))
+                                        }
+                                    }
+                                }
+                                override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: com.intellij.execution.process.ProcessHandler) {
+                                    if (e == env) buildConn.disconnect()
+                                }
+                            }
+                        )
                     } catch (e: Exception) {
                         if (continuation.isActive) continuation.resume(
                             CoverageRunResult(

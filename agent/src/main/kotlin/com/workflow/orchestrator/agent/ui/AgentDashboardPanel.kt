@@ -242,6 +242,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.updatePlanStep(stepId, status) }
     }
 
+    fun replaceExecutionSteps(stepsJson: String) {
+        cefPanel?.replaceExecutionSteps(stepsJson)
+        mirrors.forEach { it.replaceExecutionSteps(stepsJson) }
+    }
+
     fun setPlanCommentCount(count: Int) {
         cefPanel?.setPlanCommentCount(count)
         mirrors.forEach { it.setPlanCommentCount(count) }

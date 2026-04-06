@@ -5,6 +5,7 @@ import type {
   ToolCall,
   ToolCallStatus,
   Plan,
+  PlanStep,
   PlanStepStatus,
   Question,
   SessionInfo,
@@ -128,6 +129,7 @@ interface ChatState {
   setPlan(plan: Plan): void;
   approvePlan(): void;
   updatePlanStep(stepId: string, status: string): void;
+  replaceExecutionSteps(steps: PlanStep[]): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
   setPlanCommentCount(count: number): void;
   showQuestions(questions: Question[]): void;
@@ -538,6 +540,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const steps = state.plan.steps.map(step =>
         step.id === stepId ? { ...step, status: status as PlanStepStatus } : step
       );
+      const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
+      const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
+      return {
+        plan: { ...state.plan, steps },
+        planCompletedPendingClear: allTerminal,
+      };
+    });
+  },
+
+  replaceExecutionSteps(steps: PlanStep[]) {
+    set(state => {
+      if (!state.plan) return {};
       const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
       const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
       return {
