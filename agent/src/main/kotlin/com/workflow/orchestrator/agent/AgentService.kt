@@ -580,17 +580,19 @@ class AgentService(private val project: Project) : Disposable {
                     }
                 } else null
 
-                val brainFactory: (suspend (String) -> LlmBrain)? = if (fallbackManager != null) { modelId ->
-                    val connections = ConnectionSettings.getInstance()
-                    val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
-                    val credentialStore = CredentialStore()
-                    val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
-                    OpenAiCompatBrain(
-                        sourcegraphUrl = sgUrl,
-                        tokenProvider = tokenProvider,
-                        model = modelId
-                    ).also { newBrain ->
-                        newBrain.setApiDebugDir(sessionDebugDir)
+                val brainFactory: (suspend (String) -> LlmBrain)? = if (fallbackManager != null) {
+                    val fbConnections = ConnectionSettings.getInstance()
+                    val fbUrl = fbConnections.state.sourcegraphUrl.trimEnd('/')
+                    val fbCredentialStore = CredentialStore()
+                    val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
+                    ;{ modelId: String ->
+                        OpenAiCompatBrain(
+                            sourcegraphUrl = fbUrl,
+                            tokenProvider = fbTokenProvider,
+                            model = modelId
+                        ).also { newBrain ->
+                            newBrain.setApiDebugDir(sessionDebugDir)
+                        }
                     }
                 } else null
 

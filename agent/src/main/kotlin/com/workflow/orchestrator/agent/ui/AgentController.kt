@@ -639,9 +639,11 @@ class AgentController(
             },
             onModelSwitch = { from, to, reason ->
                 invokeLater {
-                    val shortTo = to.substringAfterLast("::")
-                    dashboard.appendStatus("$reason to $shortTo", RichStreamingPanel.StatusType.WARNING)
-                    dashboard.setModelName(to)
+                    val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+                    val displayName = cached.find { it.id == to }?.displayName
+                        ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(to.substringAfterLast("::"))
+                    dashboard.appendStatus("$reason to $displayName", RichStreamingPanel.StatusType.WARNING)
+                    dashboard.setModelName(displayName)
                 }
             },
             onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },

@@ -13,6 +13,8 @@ package com.workflow.orchestrator.agent.loop
  * 3. Sonnet thinking
  * 4. Sonnet non-thinking
  *
+ * Not thread-safe. All methods must be called from the same coroutine context as [AgentLoop.run].
+ *
  * @param fallbackChain ordered list of model IDs (index 0 = primary)
  * @param initialEscalationThreshold successful iterations before first escalation attempt
  * @param extendedEscalationThreshold successful iterations after a failed escalation
