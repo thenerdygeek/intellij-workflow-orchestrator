@@ -68,18 +68,15 @@ export const MentionDropdown = memo(function MentionDropdown({
   const mentionResults = useChatStore(s => s.mentionResults);
 
   // Request search results from Kotlin
+  // Always request `all:` — for empty query, Kotlin returns open editor tabs (active file first)
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (query) {
-        window._searchMentions?.(`all:${query}`);
-      } else {
-        window._searchMentions?.('categories:');
-      }
+      window._searchMentions?.(`all:${query}`);
     }, 200);
     return () => clearTimeout(timer);
   }, [query]);
 
-  const maxPerGroup = query ? 5 : 2;
+  const maxPerGroup = query ? 5 : 8;
 
   // Build a flat ordered list of results for keyboard navigation
   const flatItems = useMemo(() => {
@@ -140,15 +137,26 @@ export const MentionDropdown = memo(function MentionDropdown({
             className="max-h-64 overflow-y-auto p-1"
             style={{ scrollbarWidth: 'thin' }}
           >
+            {/* Empty query: label the section as open tabs */}
+            {!query && groups.some(g => g.type === 'file') && (
+              <div
+                className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider"
+                style={{ color: 'var(--fg-muted)' }}
+              >
+                Open Tabs
+              </div>
+            )}
             {groups.map(({ type, items, startIndex }) => (
               <div key={type}>
-                {/* Group heading */}
-                <div
-                  className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider"
-                  style={{ color: 'var(--fg-muted)' }}
-                >
-                  {typeLabels[type] ?? type}
-                </div>
+                {/* Group heading (only when searching — open tabs header shown above) */}
+                {query && (
+                  <div
+                    className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider"
+                    style={{ color: 'var(--fg-muted)' }}
+                  >
+                    {typeLabels[type] ?? type}
+                  </div>
+                )}
                 {items.map((r, localIdx) => {
                   const globalIdx = startIndex + localIdx;
                   const highlighted = globalIdx === selectedIndex;
@@ -191,6 +199,19 @@ export const MentionDropdown = memo(function MentionDropdown({
                 })}
               </div>
             ))}
+
+            {/* Empty query hint: show searchable types */}
+            {!query && (
+              <div
+                className="flex items-center gap-3 px-2 py-1.5 mt-0.5 border-t text-[10px]"
+                style={{ color: 'var(--fg-muted)', borderColor: 'color-mix(in srgb, var(--border) 50%, transparent)' }}
+              >
+                <span>Type to search</span>
+                <span className="flex items-center gap-1"><File className="size-2.5" style={{ color: typeIconColors.file }} /> files</span>
+                <span className="flex items-center gap-1"><Folder className="size-2.5" style={{ color: typeIconColors.folder }} /> folders</span>
+                <span className="flex items-center gap-1"><Hash className="size-2.5" style={{ color: typeIconColors.symbol }} /> symbols</span>
+              </div>
+            )}
           </div>
         )}
       </div>
