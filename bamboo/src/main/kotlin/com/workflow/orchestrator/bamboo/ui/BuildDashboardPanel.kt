@@ -36,6 +36,9 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.PrContext
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -307,15 +310,24 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val statusLabel = JBLabel("")
     private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
-    // Repo selector for multi-repo support
-    private val bambooRepos: List<RepoConfig> = settings.getRepos().filter { !it.bambooPlanKey.isNullOrBlank() }
-    private val repoSelector: ComboBox<String>? = if (bambooRepos.size > 1) {
-        ComboBox(DefaultComboBoxModel(bambooRepos.map { it.displayLabel }.toTypedArray())).apply {
-            // Pre-select the primary repo or the first one
-            val primaryIndex = bambooRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+    // Repo selector for multi-repo support — show all configured repos, not just those with Bamboo keys
+    private val allRepos: List<RepoConfig> = settings.getRepos().filter { it.isConfigured }
+    private val repoSelector: ComboBox<String>? = if (allRepos.size > 1) {
+        ComboBox(DefaultComboBoxModel(allRepos.map { it.displayLabel }.toTypedArray())).apply {
+            val primaryIndex = allRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
             selectedIndex = primaryIndex
         }
     } else null
+
+    private var suppressRepoSelectorListener = false
+
+    // Hint label shown when no PR or no Bamboo plan key is available
+    private val hintLabel = JBLabel("").apply {
+        foreground = StatusColors.SECONDARY_TEXT
+        font = font.deriveFont(java.awt.Font.ITALIC, 11f)
+        border = JBUI.Borders.empty(8, 12)
+        isVisible = false
+    }
 
     init {
         border = JBUI.Borders.empty()
@@ -340,6 +352,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val topPanel2 = JPanel().apply {
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
             add(prBar)
+            add(hintLabel)
             add(warningLabel)
             add(newerBuildBanner)
             add(historicalBuildBanner)
@@ -460,26 +473,24 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         // Repo selector listener — switch monitored plan when a different repo is selected
         repoSelector?.addActionListener {
+            if (suppressRepoSelectorListener) return@addActionListener
             val selectedIndex = repoSelector.selectedIndex
-            if (selectedIndex >= 0 && selectedIndex < bambooRepos.size) {
-                val selectedRepo = bambooRepos[selectedIndex]
-                val newPlanKey = selectedRepo.bambooPlanKey.orEmpty()
-                if (newPlanKey.isNotBlank()) {
-                    activePlanKey = newPlanKey
-                    val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-                    loadingIcon.isVisible = true
-                    // Clear history and reset state for the new plan
-                    viewingHistoricalBuild = false
-                    historicalBuildBanner.isVisible = false
-                    historyListModel.clear()
-                    historyPanel.isVisible = false
-                    prBar.refreshPrs()
-                    scope.launch {
-                        val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-                        invokeLater { headerLabel.text = "Plan: $newPlanKey / $branch" }
-                        monitorService.switchBranch(newPlanKey, branch, interval)
-                    }
-                }
+            if (selectedIndex < 0 || selectedIndex >= allRepos.size) return@addActionListener
+
+            val selectedRepo = allRepos[selectedIndex]
+            val repoName = selectedRepo.displayLabel
+
+            // Look up PrContext for this repo
+            val eventBus = project.getService(EventBus::class.java)
+            val context = eventBus.prContextMap[repoName]
+
+            if (context != null) {
+                loadBuildsForContext(repoName, context.fromBranch, context.bambooPlanKey)
+                // Update PrBar info strip
+                prBar.showPrInfo(context.prId, context.fromBranch, context.toBranch)
+            } else {
+                showHint("No PR selected for $repoName \u2014 select one in the PR tab")
+                prBar.showNoPr()
             }
         }
 
@@ -496,6 +507,16 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             invokeLater { prBar.refreshPrs() }
         }
 
+        // Subscribe to PrSelected events from the PR tab
+        scope.launch {
+            val eventBus = project.getService(EventBus::class.java)
+            eventBus.events.collect { event ->
+                if (event is WorkflowEvent.PrSelected) {
+                    invokeLater { onPrSelectedEvent(event) }
+                }
+            }
+        }
+
         // Wire visibility to SmartPoller so polling pauses when tab is not visible
         addAncestorListener(object : javax.swing.event.AncestorListener {
             override fun ancestorAdded(event: javax.swing.event.AncestorEvent) {
@@ -508,6 +529,53 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         })
     }
 
+    private fun onPrSelectedEvent(event: WorkflowEvent.PrSelected) {
+        if (repoSelector == null || allRepos.isEmpty()) return
+
+        // Find the repo in the selector matching the event's repoName
+        val repoIndex = allRepos.indexOfFirst { it.displayLabel == event.repoName }
+        if (repoIndex < 0) return
+
+        // Switch repo selector (suppress listener to avoid double-fire)
+        suppressRepoSelectorListener = true
+        repoSelector.selectedIndex = repoIndex
+        suppressRepoSelectorListener = false
+
+        // Load builds for this PR
+        loadBuildsForContext(event.repoName, event.fromBranch, event.bambooPlanKey)
+    }
+
+    private fun loadBuildsForContext(repoName: String, branch: String, bambooPlanKey: String?) {
+        hintLabel.isVisible = false
+        splitter.isVisible = true
+
+        if (bambooPlanKey.isNullOrBlank()) {
+            // No Bamboo plan key — try auto-detect, otherwise show hint
+            scope.launch {
+                autoDetectAndMonitor(branch)
+            }
+            return
+        }
+
+        activePlanKey = bambooPlanKey
+        val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
+        loadingIcon.isVisible = true
+        viewingHistoricalBuild = false
+        historicalBuildBanner.isVisible = false
+        historyListModel.clear()
+        historyPanel.isVisible = false
+        headerLabel.text = "Plan: $bambooPlanKey / $branch"
+        monitorService.switchBranch(bambooPlanKey, branch, interval)
+    }
+
+    private fun showHint(message: String) {
+        hintLabel.text = message
+        hintLabel.isVisible = true
+        splitter.isVisible = false
+        headerLabel.text = "Build"
+        loadingIcon.isVisible = false
+    }
+
     override fun dispose() {
         monitorService.dispose()
         scope.cancel()
@@ -515,9 +583,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun startMonitoring() {
         // Use selected repo's plan key if multi-repo selector is active
-        val selectedRepoPlanKey = if (repoSelector != null && bambooRepos.isNotEmpty()) {
+        val selectedRepoPlanKey = if (repoSelector != null && allRepos.isNotEmpty()) {
             val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
-            bambooRepos.getOrNull(idx)?.bambooPlanKey.orEmpty()
+            allRepos.getOrNull(idx)?.bambooPlanKey.orEmpty()
         } else ""
         val planKey = activePlanKey.ifBlank { selectedRepoPlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() } }
         if (planKey.isBlank()) {

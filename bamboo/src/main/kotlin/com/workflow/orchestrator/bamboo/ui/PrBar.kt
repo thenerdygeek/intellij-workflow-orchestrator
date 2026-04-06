@@ -327,6 +327,26 @@ class PrBar(
         }
     }
 
+    // --- External state setters (called by BuildDashboardPanel on EventBus events) ---
+
+    /**
+     * Show a read-only PR info strip for the given PR context.
+     * Called by BuildDashboardPanel when PrSelected event or PrContext provides the PR.
+     */
+    fun showPrInfo(prId: Int, fromBranch: String, toBranch: String) {
+        prInfoLabel.text = "<html><b>PR #$prId</b> &nbsp; ${escapeHtml(fromBranch)} \u2192 $toBranch</html>"
+        selectedPr = currentPrs.find { it.id.toInt() == prId }
+        showPanel(singlePrPanel)
+    }
+
+    /**
+     * Show the "no PR" state.
+     */
+    fun showNoPr() {
+        selectedPr = null
+        showPanel(noPrPanel)
+    }
+
     // --- Actions ---
 
     fun refreshPrs() {
