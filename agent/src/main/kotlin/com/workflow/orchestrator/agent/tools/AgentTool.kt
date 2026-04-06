@@ -12,6 +12,12 @@ enum class WorkerType {
     ORCHESTRATOR, ANALYZER, CODER, REVIEWER, TOOLER
 }
 
+/** Payload for interactive React artifact rendered in the chat UI. */
+data class ArtifactPayload(
+    val title: String,
+    val source: String,
+)
+
 /** Simple token estimation: bytes / 4 (Codex CLI pattern, ~80% accurate). */
 fun estimateTokens(text: String): Int = (text.toByteArray().size + 3) / 4
 
@@ -106,7 +112,9 @@ data class ToolResult(
      */
     val diff: String? = null,
     /** True when the LLM requests switching to plan mode via enable_plan_mode tool. */
-    val enablePlanMode: Boolean = false
+    val enablePlanMode: Boolean = false,
+    /** Interactive React artifact to render in the chat UI (set by RenderArtifactTool). */
+    val artifact: ArtifactPayload? = null
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5
