@@ -53,6 +53,7 @@ class AgentSettingsConfigurable(
     private var showDebugLog = settings.state.showDebugLog
     private var powershellEnabled = settings.state.powershellEnabled
     private var smartWorkingIndicator = settings.state.smartWorkingIndicator
+    private var enableModelFallback = settings.state.enableModelFallback
 
     // Model dropdown state
     private var modelComboBox: JComboBox<ModelItem>? = null
@@ -151,6 +152,11 @@ class AgentSettingsConfigurable(
                     checkBox("Smart working indicator (experimental)")
                         .bindSelected(::smartWorkingIndicator)
                         .comment("Uses a lightweight AI model to generate contextual loading messages")
+                }
+                row {
+                    checkBox("Smart model fallback")
+                        .bindSelected(::enableModelFallback)
+                        .comment("On network errors, fall back to a cheaper model and escalate back when stable (Opus \u2192 Sonnet)")
                 }
             }
 
@@ -389,6 +395,7 @@ class AgentSettingsConfigurable(
         settings.state.showDebugLog = showDebugLog
         settings.state.powershellEnabled = powershellEnabled
         settings.state.smartWorkingIndicator = smartWorkingIndicator
+        settings.state.enableModelFallback = enableModelFallback
 
         // Save database profiles
         val profiles = (0 until dbProfileModel.size).map { dbProfileModel.getElementAt(it) }
@@ -404,6 +411,7 @@ class AgentSettingsConfigurable(
         showDebugLog = settings.state.showDebugLog
         powershellEnabled = settings.state.powershellEnabled
         smartWorkingIndicator = settings.state.smartWorkingIndicator
+        enableModelFallback = settings.state.enableModelFallback
         dialogPanel?.reset()
 
         // Reload database profiles from saved state

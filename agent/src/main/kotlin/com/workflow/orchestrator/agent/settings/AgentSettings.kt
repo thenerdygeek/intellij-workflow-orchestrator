@@ -32,6 +32,8 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var powershellEnabled by property(true)
         /** Use Haiku to generate contextual humorous working indicator messages. */
         var smartWorkingIndicator by property(true)
+        /** Automatically fall back to cheaper models on network errors and escalate back when stable. */
+        var enableModelFallback by property(false)
 
         // Ralph Loop defaults
         var ralphMaxIterations by property(10)
