@@ -68,6 +68,16 @@ The source must export a default function component receiving { bridge } prop. A
             )
         }
 
+        val maxSourceSize = 100_000 // 100KB
+        if (source.length > maxSourceSize) {
+            return ToolResult(
+                content = "Error: source is too large (${source.length} chars, max $maxSourceSize). Simplify the component — use fewer inline data items or split into smaller visualizations.",
+                summary = "Error: source exceeds ${maxSourceSize / 1000}KB limit",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         return ToolResult(
             content = "[Artifact: $title] Interactive component rendered in chat.",
             summary = "Rendered artifact: $title",

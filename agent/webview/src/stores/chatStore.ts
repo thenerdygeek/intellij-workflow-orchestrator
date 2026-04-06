@@ -948,17 +948,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Artifact Actions ──
   addArtifact(payload: string) {
-    const { title, source } = JSON.parse(payload);
-    const msgId = nextId('artifact');
-    set((state) => ({
-      messages: [...state.messages, {
-        id: msgId,
-        role: 'system' as MessageRole,
-        content: `artifact:${title}`,
-        timestamp: Date.now(),
-        artifact: { title, source },
-      }],
-    }));
+    try {
+      const { title, source } = JSON.parse(payload);
+      const msgId = nextId('artifact');
+      set((state) => ({
+        messages: [...state.messages, {
+          id: msgId,
+          role: 'system' as MessageRole,
+          content: `artifact:${title}`,
+          timestamp: Date.now(),
+          artifact: { title, source },
+        }],
+      }));
+    } catch { /* malformed payload, skip */ }
   },
 
   // ── Sub-Agent Actions ──

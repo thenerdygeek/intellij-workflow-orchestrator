@@ -117,7 +117,7 @@ export function ArtifactRenderer({ source, title }: ArtifactRendererProps) {
 
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [source, postToSandbox, themeMessage]);
+  }, [postToSandbox, themeMessage]);
 
   // ── Re-render on source change ──
 

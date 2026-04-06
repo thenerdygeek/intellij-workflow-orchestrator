@@ -204,7 +204,7 @@
       function SandboxApp({ code, scope }) {
         const handleRendered = React.useCallback((error) => {
           if (error) {
-            showError('transpile', error.message || 'Transpilation error')
+            showError('runtime', error.message || 'Runtime error')
           } else {
             clearError()
             postToParent({
