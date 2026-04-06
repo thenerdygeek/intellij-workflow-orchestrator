@@ -152,6 +152,7 @@ class PrListService(private val project: Project) : Disposable {
         // to prevent monopolizing the connection pool (10-40 API calls otherwise)
         val allMyPrs: List<BitbucketPrDetail>
         val allReviewingPrs: List<BitbucketPrDetail>
+        val allRepoPrsList: List<BitbucketPrDetail>
 
         coroutineScope {
             val results = repoEntries.map { (projectKey, repoSlug, repoName) ->
@@ -167,13 +168,18 @@ class PrListService(private val project: Project) : Disposable {
                         val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
                         reviewResults.forEach { it.repoName = repoName }
 
-                        Pair(myResults, reviewResults)
+                        // Fetch all PRs in the repo (no role filter — all users)
+                        val allResults = fetchAllPages(client, projectKey, repoSlug, null, "ALL")
+                        allResults.forEach { it.repoName = repoName }
+
+                        Triple(myResults, reviewResults, allResults)
                     }
                 }
             }.awaitAll()
 
             allMyPrs = results.flatMap { it.first }
             allReviewingPrs = results.flatMap { it.second }
+            allRepoPrsList = results.flatMap { it.third }
         }
 
         _myPrs.value = allMyPrs
@@ -182,13 +188,12 @@ class PrListService(private val project: Project) : Disposable {
         _reviewingPrs.value = allReviewingPrs
         log.info("[PR:List] Found ${allReviewingPrs.size} reviewing PRs across ${repoEntries.size} repos (state=$currentState)")
 
-        // Union of both, deduplicated by PR id
-        val seen = mutableSetOf<Int>()
-        _allRepoPrs.value = (allMyPrs + allReviewingPrs).filter { seen.add(it.id) }
+        _allRepoPrs.value = allRepoPrsList
+        log.info("[PR:List] Found ${allRepoPrsList.size} total repo PRs across ${repoEntries.size} repos (state=$currentState)")
     }
 
     /**
-     * Fetches all pages of PRs for the given role (AUTHOR or REVIEWER),
+     * Fetches all pages of PRs for the given role (AUTHOR, REVIEWER, or ALL),
      * capped at 100 results to avoid excessive API calls.
      */
     private suspend fun fetchAllPages(
@@ -202,10 +207,10 @@ class PrListService(private val project: Project) : Disposable {
         var start = 0
         var isLast = false
         while (!isLast && results.size < 100) {
-            val result = if (role == "AUTHOR") {
-                client.getMyPullRequests(projectKey, repoSlug, currentState, username, start, 25)
-            } else {
-                client.getReviewingPullRequests(projectKey, repoSlug, currentState, username, start, 25)
+            val result = when (role) {
+                "AUTHOR" -> client.getMyPullRequests(projectKey, repoSlug, currentState, username, start, 25)
+                "REVIEWER" -> client.getReviewingPullRequests(projectKey, repoSlug, currentState, username, start, 25)
+                else -> client.getRepoPullRequests(projectKey, repoSlug, currentState, start, 25)
             }
             if (result is ApiResult.Success) {
                 results.addAll(result.data.values)

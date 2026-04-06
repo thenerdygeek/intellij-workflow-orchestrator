@@ -885,6 +885,45 @@ class BitbucketBranchClient(
         }
 
     /**
+     * Gets all pull requests in a repository (no role/user filter).
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests?state={state}
+     */
+    suspend fun getRepoPullRequests(
+        projectKey: String,
+        repoSlug: String,
+        state: String = "OPEN",
+        start: Int = 0,
+        limit: Int = 25
+    ): ApiResult<BitbucketPrDetailListResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching all repo PRs (state=$state, start=$start, limit=$limit) in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&start=$start&limit=$limit")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrDetailListResponse>(body)
+                            log.info("[Core:Bitbucket] Found ${parsed.values.size} repo PRs (isLastPage=${parsed.isLastPage})")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching repo PRs", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
      * Gets full details of a specific pull request.
      * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}
      */
