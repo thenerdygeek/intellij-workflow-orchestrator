@@ -29,6 +29,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -112,6 +113,18 @@ class AgentController(
     /** Last LLM stream text snippet — gives Haiku context about what the agent is thinking. */
     @Volatile private var lastStreamSnippet: String = ""
 
+    /** Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM. */
+    private val mentionContextBuilder = MentionContextBuilder(project)
+
+    /** Shared provider — set once from AgentTabProvider, reused for mirrors. */
+    private var sharedMentionSearchProvider: MentionSearchProvider? = null
+
+    /** Wire the shared mention search provider so context builder can reuse cached ticket data. */
+    fun setMentionSearchProvider(provider: MentionSearchProvider) {
+        sharedMentionSearchProvider = provider
+        mentionContextBuilder.mentionSearchProvider = provider
+    }
+
     init {
         wireCallbacks()
     }
@@ -134,6 +147,9 @@ class AgentController(
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
         )
+
+        // Mention-aware message callback — resolves @file, @folder, #ticket etc. into context
+        dashboard.setCefMentionCallbacks(::executeTaskWithMentions)
 
         // Secondary callbacks
         dashboard.setCefCallbacks(
@@ -427,6 +443,61 @@ class AgentController(
     // ═══════════════════════════════════════════════════
     //  Core: executeTask — send user message to agent loop
     // ═══════════════════════════════════════════════════
+
+    /**
+     * Execute a user task with resolved mention context.
+     * Called from the JCEF bridge when the user sends a message containing @file, @folder,
+     * @symbol, @tool, /skill, or #ticket mentions.
+     *
+     * Resolves mentions into rich context (file contents, ticket details, etc.) on a background
+     * thread, then prepends the context to the task and delegates to [executeTask].
+     */
+    private fun executeTaskWithMentions(text: String, mentionsJson: String) {
+        if (text.isBlank() && mentionsJson == "[]") return
+
+        val mentions = try {
+            val arr = Json.parseToJsonElement(mentionsJson).jsonArray
+            arr.map { elem ->
+                val obj = elem.jsonObject
+                MentionContextBuilder.Mention(
+                    type = obj["type"]?.jsonPrimitive?.content ?: "",
+                    name = obj["label"]?.jsonPrimitive?.content ?: "",
+                    value = obj["path"]?.jsonPrimitive?.content ?: ""
+                )
+            }
+        } catch (e: Exception) {
+            LOG.warn("AgentController: failed to parse mentions JSON, falling back to plain text", e)
+            executeTask(text)
+            return
+        }
+
+        if (mentions.isEmpty()) {
+            executeTask(text)
+            return
+        }
+
+        // Resolve mention context on IO thread (may hit Jira API, read files),
+        // then execute on EDT.
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        scope.launch {
+            val context = try {
+                mentionContextBuilder.buildContext(mentions)
+            } catch (e: Exception) {
+                LOG.warn("AgentController: mention context build failed, sending without context", e)
+                null
+            }
+
+            val taskWithContext = if (context != null) {
+                "$text\n\n<mention_context>\n$context</mention_context>"
+            } else {
+                text
+            }
+
+            invokeLater {
+                executeTask(taskWithContext)
+            }
+        }
+    }
 
     /**
      * Execute a user task. Called from the chat input, redirect, or example prompts.
@@ -1343,6 +1414,9 @@ class AgentController(
             onPromptSubmitted = ::executeTask
         )
         mirror.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
+        mirror.setCefMentionCallbacks(::executeTaskWithMentions)
+        // Reuse the shared provider so mirrors benefit from the ticket context cache
+        sharedMentionSearchProvider?.let { mirror.setMentionSearchProvider(it) }
         mirror.onSendMessage = ::executeTask
     }
 

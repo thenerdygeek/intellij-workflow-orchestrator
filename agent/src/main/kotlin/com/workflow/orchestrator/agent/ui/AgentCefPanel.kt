@@ -386,7 +386,13 @@ class AgentCefPanel(
                     val json = Json.parseToJsonElement(payload).jsonObject
                     val text = json["text"]?.jsonPrimitive?.content ?: ""
                     val mentionsJson = json["mentions"]?.toString() ?: "[]"
-                    onSendMessageWithMentions?.invoke(text, mentionsJson)
+                    val handler = onSendMessageWithMentions
+                    if (handler != null) {
+                        handler.invoke(text, mentionsJson)
+                    } else {
+                        // Fallback: no mention handler wired — send plain text
+                        onSendMessage?.invoke(text)
+                    }
                 } catch (e: Exception) {
                     // Fallback: treat entire payload as text
                     onSendMessage?.invoke(payload)

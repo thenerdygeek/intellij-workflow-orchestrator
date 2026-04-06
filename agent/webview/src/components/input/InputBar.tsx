@@ -239,6 +239,7 @@ interface InputBarContentProps {
   onStop: () => void;
   onTriggerInsert: (char: '@' | '/' | '#') => void;
   onRichInputChange: (text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => void;
+  onPastedTickets: (ticketKeys: string[]) => void;
   canSend: boolean;
   // Keyboard navigation props (passed down from InputBar which owns the hook)
   dropdownKeyDown: (e: React.KeyboardEvent) => boolean;
@@ -276,6 +277,7 @@ function InputBarContent({
   onStop,
   onTriggerInsert,
   onRichInputChange,
+  onPastedTickets,
   canSend,
   dropdownKeyDown,
   mentionSelectedIndex,
@@ -355,6 +357,7 @@ function InputBarContent({
           onChange={onRichInputChange}
           onEscape={onDismissMentions}
           onDropdownKeyDown={dropdownKeyDown}
+          onPastedTickets={onPastedTickets}
         />
       </div>
 
@@ -464,7 +467,7 @@ export const InputBar = memo(function InputBar() {
 
   // Flat mention items in display order (file → folder → symbol, up to 5 per group)
   const flatMentionItems = useMemo(() => {
-    const maxPerGroup = mentionQuery ? 5 : 2;
+    const maxPerGroup = mentionQuery ? 5 : 8;
     const scored = mentionResults
       .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
       .map(r => ({ ...r }));
@@ -605,6 +608,13 @@ export const InputBar = memo(function InputBar() {
     }
   }, []);
 
+  // Handle ticket keys found in pasted text — validate each one
+  const handlePastedTickets = useCallback((ticketKeys: string[]) => {
+    for (const key of ticketKeys) {
+      validateTicket(key);
+    }
+  }, [validateTicket]);
+
   const handleMentionSelect = useCallback((result: MentionSearchResult) => {
     const mention: Mention = { type: result.type, label: result.label, path: result.path, icon: result.icon };
     (richInputRef.current as any)?.insertChip?.(mention, '@');
@@ -697,6 +707,7 @@ export const InputBar = memo(function InputBar() {
           onStop={handleStop}
           onTriggerInsert={triggerInsert}
           onRichInputChange={handleRichInputChange}
+          onPastedTickets={handlePastedTickets}
           canSend={canSend}
           dropdownKeyDown={dropdownKeyDown}
           mentionSelectedIndex={mentionKbd.selectedIndex}

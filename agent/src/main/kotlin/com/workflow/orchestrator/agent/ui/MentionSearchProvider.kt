@@ -2,12 +2,20 @@ package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.search.PsiShortNamesCache
+import com.workflow.orchestrator.core.model.jira.JiraCommentData
+import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.ToolResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Provides search results for @ mention autocomplete.
@@ -16,12 +24,36 @@ import kotlinx.serialization.json.*
  */
 class MentionSearchProvider(private val project: Project) {
 
+    /** Pre-fetched ticket data from validation — consumed by MentionContextBuilder on send. */
+    data class CachedTicketContext(
+        val ticket: JiraTicketData,
+        val comments: List<JiraCommentData>,
+        val timestamp: Long = System.currentTimeMillis()
+    )
+
     companion object {
         private val LOG = Logger.getInstance(MentionSearchProvider::class.java)
         private const val MAX_RESULTS = 15
         private const val MAX_RESULTS_PER_TYPE = 10
         private const val MAX_COLLECT = 100 // collect more, then rank and trim
         private val FILE_EXTENSIONS = setOf("kt", "java", "xml", "yaml", "yml", "json", "properties", "gradle", "md", "html", "css", "js", "ts", "py", "go", "rs")
+        /** Cache entries older than 5 minutes are considered stale. */
+        private const val CACHE_TTL_MS = 5 * 60 * 1000L
+    }
+
+    /**
+     * Cache of pre-fetched ticket data. Populated during validation (chip turns green),
+     * consumed during context building (on send). Entries auto-expire after [CACHE_TTL_MS].
+     */
+    private val ticketContextCache = ConcurrentHashMap<String, CachedTicketContext>()
+
+    /**
+     * Consume (get and remove) cached ticket context for a key.
+     * Returns null if not cached or stale.
+     */
+    fun consumeCachedTicket(ticketKey: String): CachedTicketContext? {
+        val cached = ticketContextCache.remove(ticketKey) ?: return null
+        return if (System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS) cached else null
     }
 
     /**
@@ -56,6 +88,41 @@ class MentionSearchProvider(private val project: Project) {
         val results = mutableListOf<JsonObject>()
         val basePath = project.basePath ?: return "[]"
         val lowerQuery = query.lowercase()
+
+        // Empty query: show open editor tabs with the active file first
+        if (lowerQuery.isBlank()) {
+            try {
+                val fem = FileEditorManager.getInstance(project)
+                val selectedFile = fem.selectedFiles.firstOrNull()
+                val openFiles = fem.openFiles.toList()
+
+                val seen = mutableSetOf<String>()
+                val orderedFiles = buildList {
+                    if (selectedFile != null) {
+                        add(selectedFile)
+                        seen.add(selectedFile.path)
+                    }
+                    for (f in openFiles) {
+                        if (f.path !in seen && size < 8) {
+                            add(f)
+                            seen.add(f.path)
+                        }
+                    }
+                }
+
+                for (file in orderedFiles) {
+                    if (file.isDirectory) continue
+                    val relativePath = file.path.removePrefix("$basePath/")
+                    results.add(buildJsonObject {
+                        put("type", JsonPrimitive("file"))
+                        put("label", JsonPrimitive(file.name))
+                        put("path", JsonPrimitive(relativePath))
+                        put("description", JsonPrimitive(relativePath.substringBeforeLast('/')))
+                    })
+                }
+            } catch (_: Exception) {}
+            return JsonArray(results).toString()
+        }
 
         // Collect files — gather broadly, then rank
         val fileResults = mutableListOf<ScoredResult>()
@@ -343,7 +410,8 @@ class MentionSearchProvider(private val project: Project) {
      * @param query Ticket key (e.g. "PROJ-123"), key prefix (e.g. "PROJ"), or summary text
      */
     /** Cached sprint tickets — loaded once, reused for fast # autocomplete. */
-    private var cachedSprintTickets: List<com.workflow.orchestrator.core.model.jira.JiraTicketData>? = null
+    @Volatile private var cachedSprintTickets: List<JiraTicketData>? = null
+    private val sprintTicketsMutex = Mutex()
 
     suspend fun searchTickets(query: String): String {
         return try {
@@ -359,7 +427,10 @@ class MentionSearchProvider(private val project: Project) {
             // 2. If not configured, auto-discover (prefer scrum boards)
             // 3. For scrum boards: load active sprint issues
             // 4. For kanban/other boards: load board issues directly
-            val sprintTickets = cachedSprintTickets ?: run {
+            // Mutex prevents concurrent callers from double-fetching.
+            val sprintTickets = cachedSprintTickets ?: sprintTicketsMutex.withLock {
+                // Double-check inside lock — another coroutine may have loaded while we waited
+                cachedSprintTickets ?: run {
                 val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
                 var boardId = settings.state.jiraBoardId
                 var boardType = settings.state.jiraBoardType ?: ""
@@ -425,7 +496,8 @@ class MentionSearchProvider(private val project: Project) {
                         issues.data
                     }
                 }
-            }.also { cachedSprintTickets = it }
+                }.also { cachedSprintTickets = it }
+            }
 
             // Filter by query
             val filtered = if (query.isBlank()) {
@@ -462,6 +534,8 @@ class MentionSearchProvider(private val project: Project) {
 
     /**
      * Validate a ticket key by fetching it from Jira.
+     * Also pre-fetches comments in parallel and caches both so that
+     * [MentionContextBuilder] can use them on send without redundant API calls.
      * Returns JSON: {"valid":true,"summary":"..."} or {"valid":false}
      */
     suspend fun validateTicket(ticketKey: String): String {
@@ -470,9 +544,24 @@ class MentionSearchProvider(private val project: Project) {
                 project.getService(JiraService::class.java)
             } catch (_: Exception) { return """{"valid":false}""" }
 
-            val result = jiraService.getTicket(ticketKey)
-            if (!result.isError) {
-                """{"valid":true,"summary":"${result.data.summary.replace("\"", "\\\"")}"}"""
+            // Fetch ticket + comments in parallel
+            val (ticketResult, commentsResult) = coroutineScope {
+                val ticketDeferred = async { jiraService.getTicket(ticketKey) }
+                val commentsDeferred = async { jiraService.getComments(ticketKey) }
+                ticketDeferred.await() to commentsDeferred.await()
+            }
+
+            if (!ticketResult.isError) {
+                val comments = if (!commentsResult.isError) commentsResult.data else emptyList()
+                // Cache for MentionContextBuilder to consume on send
+                ticketContextCache[ticketKey.uppercase()] = CachedTicketContext(
+                    ticket = ticketResult.data,
+                    comments = comments
+                )
+                buildJsonObject {
+                    put("valid", JsonPrimitive(true))
+                    put("summary", JsonPrimitive(ticketResult.data.summary))
+                }.toString()
             } else {
                 """{"valid":false}"""
             }

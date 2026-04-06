@@ -23,6 +23,27 @@ const statusColors: Record<ChipStatus, { color: string; bg: string; border: stri
 
 const defaultChipColor = { color: 'var(--fg-secondary)', bg: 'var(--chip-bg)', border: 'var(--chip-border)' };
 
+/** Single glow pulse for successful ticket validation */
+const GLOW_KEYFRAMES = `
+@keyframes chip-success-glow {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+  50%  { box-shadow: 0 0 8px 2px rgba(34,197,94,0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}`;
+
+// Inject keyframes once into the document
+let glowStyleInjected = false;
+function ensureGlowStyle() {
+  if (glowStyleInjected) return;
+  const style = document.createElement('style');
+  style.textContent = GLOW_KEYFRAMES;
+  document.head.appendChild(style);
+  glowStyleInjected = true;
+}
+
+/** Matches #PROJ-123 style ticket references in pasted text */
+const PASTED_TICKET_PATTERN = /#([A-Za-z]+-\d+)/g;
+
 export interface RichInputHandle {
   focus: () => void;
   insertTrigger: (char: string) => void;
@@ -51,6 +72,8 @@ interface RichInputProps {
    * should NOT process it further (e.g. Enter should not submit the message).
    */
   onDropdownKeyDown?: (e: React.KeyboardEvent) => boolean;
+  /** Called when pasted text contains ticket keys (e.g. #PROJ-123) that need async validation */
+  onPastedTickets?: (ticketKeys: string[]) => void;
 }
 
 /**
@@ -59,7 +82,7 @@ interface RichInputProps {
  * Text and chips flow naturally together on the same line.
  */
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
-  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown },
+  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown, onPastedTickets },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -85,6 +108,13 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       if (status === 'invalid') {
         chip.style.textDecoration = 'line-through';
         chip.style.opacity = '0.7';
+      }
+      if (status === 'valid') {
+        ensureGlowStyle();
+        chip.style.animation = 'chip-success-glow 0.8s ease-out';
+        chip.addEventListener('animationend', () => {
+          chip.style.animation = '';
+        }, { once: true });
       }
     });
   }, []);
@@ -367,12 +397,84 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     return () => el.removeEventListener('click', handleClick);
   }, [fireChange]);
 
-  // Prevent pasting rich HTML — paste as plain text only
+  // Prevent pasting rich HTML — paste as plain text, auto-chip any #TICKET-123 patterns
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
-    document.execCommand('insertText', false, text);
-  }, []);
+
+    // Fast path: no ticket patterns, just insert plain text
+    const matches = [...text.matchAll(PASTED_TICKET_PATTERN)];
+    if (matches.length === 0) {
+      document.execCommand('insertText', false, text);
+      return;
+    }
+
+    // Split text around ticket patterns and insert chips inline
+    const el = editorRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel || sel.rangeCount === 0) {
+      document.execCommand('insertText', false, text);
+      return;
+    }
+
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+
+    const fragment = document.createDocumentFragment();
+    const ticketKeys: string[] = [];
+    let lastIndex = 0;
+
+    for (const match of matches) {
+      const fullMatch = match[0];       // "#PROJ-123"
+      const ticketKey = match[1]!.toUpperCase(); // "PROJ-123"
+      const matchStart = match.index!;
+
+      // Text before this match
+      if (matchStart > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, matchStart)));
+      }
+
+      // Create pending chip
+      const colors = statusColors['pending'];
+      const chip = document.createElement('span');
+      chip.contentEditable = 'false';
+      chip.dataset.mentionType = 'ticket';
+      chip.dataset.mentionLabel = ticketKey;
+      chip.dataset.mentionPath = ticketKey;
+      chip.dataset.chipStatus = 'pending';
+      chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline transition-colors duration-300';
+      chip.style.cssText = `color:${colors.color};background:${colors.bg};border:1px solid ${colors.border};user-select:none;cursor:default;line-height:1.6;`;
+      chip.innerHTML = `<span>${ticketKey}</span><button data-remove aria-label="Remove ${ticketKey}" style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;">&times;</button>`;
+      fragment.appendChild(chip);
+
+      // Track the mention
+      mentionsRef.current.push({ type: 'ticket', label: ticketKey, path: ticketKey });
+      ticketKeys.push(ticketKey);
+
+      lastIndex = matchStart + fullMatch.length;
+    }
+
+    // Remaining text after last match
+    const trailing = lastIndex < text.length ? text.slice(lastIndex) : '\u200B';
+    const trailingNode = document.createTextNode(trailing);
+    fragment.appendChild(trailingNode);
+
+    range.insertNode(fragment);
+
+    // Move cursor to end of pasted content
+    const newRange = document.createRange();
+    newRange.setStartAfter(trailingNode);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+
+    fireChange();
+
+    // Notify parent to validate each ticket
+    if (ticketKeys.length > 0) {
+      onPastedTickets?.(ticketKeys);
+    }
+  }, [fireChange, onPastedTickets]);
 
   return (
     <div

@@ -18,7 +18,11 @@ import java.io.File
  * Token budget: Each file is capped at 500 lines / 20K chars.
  * Total mention context is capped at 50K chars (~12.5K tokens).
  */
-class MentionContextBuilder(private val project: Project) {
+class MentionContextBuilder(
+    private val project: Project,
+    /** Optional reference to the search provider for consuming pre-fetched ticket data. */
+    var mentionSearchProvider: MentionSearchProvider? = null
+) {
 
     companion object {
         private val LOG = Logger.getInstance(MentionContextBuilder::class.java)
@@ -45,8 +49,10 @@ class MentionContextBuilder(private val project: Project) {
 
         val sb = StringBuilder()
         var totalChars = 0
+        val seen = mutableSetOf<String>()  // Deduplicate by type+value
 
         for (mention in mentions) {
+            if (!seen.add("${mention.type}:${mention.value}")) continue
             if (totalChars >= MAX_TOTAL_CHARS) {
                 sb.appendLine("\n[Mention context truncated — ${MAX_TOTAL_CHARS / 1000}K char budget reached]")
                 break
@@ -171,89 +177,51 @@ class MentionContextBuilder(private val project: Project) {
 
     private suspend fun buildTicketContext(mention: Mention): String? {
         val ticketKey = mention.value.uppercase()
-        val jiraService = try {
-            project.service<JiraService>()
-        } catch (_: Exception) {
-            LOG.warn("JiraService not available for ticket mention: $ticketKey")
-            return "<mentioned_ticket key=\"$ticketKey\">\nJira service not available. Cannot fetch ticket details.\n</mentioned_ticket>\n\n"
+
+        // Try to use pre-fetched data from validation (zero API calls)
+        val cached = mentionSearchProvider?.consumeCachedTicket(ticketKey)
+        val ticket: com.workflow.orchestrator.core.model.jira.JiraTicketData
+        val comments: List<com.workflow.orchestrator.core.model.jira.JiraCommentData>
+
+        if (cached != null) {
+            LOG.debug("MentionContextBuilder: using cached ticket context for $ticketKey")
+            ticket = cached.ticket
+            comments = cached.comments
+        } else {
+            // Cache miss (e.g. dropdown selection, stale cache) — fetch fresh
+            LOG.debug("MentionContextBuilder: cache miss for $ticketKey, fetching from Jira")
+            val jiraService = try {
+                project.service<JiraService>()
+            } catch (_: Exception) {
+                LOG.warn("JiraService not available for ticket mention: $ticketKey")
+                return "<mentioned_ticket key=\"$ticketKey\">\nJira service not available. Cannot fetch ticket details.\n</mentioned_ticket>\n\n"
+            }
+
+            val ticketResult = jiraService.getTicket(ticketKey)
+            if (ticketResult.isError) {
+                return "<mentioned_ticket key=\"$ticketKey\">\nError fetching ticket: ${ticketResult.summary}\n</mentioned_ticket>\n\n"
+            }
+
+            ticket = ticketResult.data
+            val commentsResult = jiraService.getComments(ticketKey)
+            comments = if (!commentsResult.isError) commentsResult.data else emptyList()
         }
 
-        val ticketResult = jiraService.getTicket(ticketKey)
-        if (ticketResult.isError) {
-            return "<mentioned_ticket key=\"$ticketKey\">\nError fetching ticket: ${ticketResult.summary}\n</mentioned_ticket>\n\n"
-        }
-
-        val ticket = ticketResult.data
         val sb = StringBuilder()
         sb.appendLine("<mentioned_ticket key=\"$ticketKey\">")
-        sb.appendLine("Title: ${ticket.summary}")
-        sb.append("Status: ${ticket.status}")
-        if (ticket.priority != null) sb.append(" | Priority: ${ticket.priority}")
-        sb.append(" | Assignee: ${ticket.assignee ?: "Unassigned"}")
-        sb.append(" | Type: ${ticket.type}")
-        sb.appendLine()
-        if (ticket.labels.isNotEmpty()) {
-            sb.appendLine("Labels: ${ticket.labels.joinToString(", ")}")
-        }
 
-        // Description (capped at 2000 chars)
-        val desc = ticket.description
-        if (!desc.isNullOrBlank()) {
-            sb.appendLine()
-            sb.appendLine("Description:")
-            if (desc.length > 2000) {
-                sb.appendLine(desc.take(2000))
-                sb.appendLine("[truncated at 2000 chars]")
-            } else {
-                sb.appendLine(desc)
-            }
-        }
+        // Ticket details — same format as jira.get_ticket tool result
+        sb.appendLine(ticket.toString())
 
-        // Subtasks
-        if (ticket.subtasks.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("Subtasks (${ticket.subtasks.size}):")
-            for (st in ticket.subtasks) {
-                sb.appendLine("- ${st.key}: ${st.summary} [${st.status}]")
-            }
-        }
-
-        // Linked issues
-        if (ticket.linkedIssues.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("Related Issues (${ticket.linkedIssues.size}):")
-            for (li in ticket.linkedIssues) {
-                sb.appendLine("- ${li.key}: ${li.summary} (${li.relationship}) [${li.status}]")
-            }
-        }
-
-        // Attachments count
-        if (ticket.attachments.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("Attachments: ${ticket.attachments.size} file(s)")
-        }
-
-        // Comments (last 5, each capped at 500 chars)
-        val commentsResult = jiraService.getComments(ticketKey)
-        val comments = if (!commentsResult.isError) commentsResult.data else emptyList()
+        // Comments — same format as jira.get_comments tool result
         if (comments.isNotEmpty()) {
             sb.appendLine()
-            val lastComments = comments.takeLast(5)
-            sb.appendLine("Comments (last ${lastComments.size}):")
-            for (c in lastComments) {
-                sb.appendLine("[${c.created} by ${c.author}]:")
-                val body = c.body
-                if (body.length > 500) {
-                    sb.appendLine(body.take(500))
-                    sb.appendLine("[truncated at 500 chars]")
-                } else {
-                    sb.appendLine(body)
-                }
+            sb.appendLine("Comments (${comments.size}):")
+            for (c in comments) {
+                sb.appendLine(c.toString())
             }
         }
 
-        sb.appendLine()
-        sb.appendLine("For more details on related tickets, use jira_get_ticket tool.")
         sb.appendLine("</mentioned_ticket>")
         sb.appendLine()
 
