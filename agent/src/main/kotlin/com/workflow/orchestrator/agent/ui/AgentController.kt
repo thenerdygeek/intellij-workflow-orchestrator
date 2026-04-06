@@ -102,6 +102,13 @@ class AgentController(
      */
     private var currentPlanData: PlanJson? = null
 
+    /**
+     * True while the programmatic "Approve & Clear Context" / "Just Approve" question
+     * is showing. Routes the question-submitted callback to [handleApprovalChoice]
+     * instead of the normal [AskQuestionsTool] resolution path.
+     */
+    private var pendingApprovalChoice = false
+
     /** Recent tool calls for Haiku phrase context (FIFO, max 3). */
     private val recentToolCalls = mutableListOf<Pair<String, String>>()
 
@@ -276,20 +283,36 @@ class AgentController(
             },
             onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
             onSubmitted = {
-                // Build JSON from accumulated answers and resolve the pending deferred
-                val answersJson = buildString {
-                    append("{")
-                    collectedAnswers.entries.joinTo(this) { (qid, opts) ->
-                        "\"$qid\":$opts"
+                if (pendingApprovalChoice) {
+                    // System-level approval choice — route to our handler, not AskQuestionsTool
+                    handleApprovalChoice(collectedAnswers)
+                    collectedAnswers.clear()
+                } else {
+                    // Normal LLM-initiated question — resolve the pending deferred
+                    val answersJson = buildString {
+                        append("{")
+                        collectedAnswers.entries.joinTo(this) { (qid, opts) ->
+                            "\"$qid\":$opts"
+                        }
+                        append("}")
                     }
-                    append("}")
+                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(answersJson)
+                    collectedAnswers.clear()
                 }
-                com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(answersJson)
-                collectedAnswers.clear()
             },
             onCancelled = {
-                com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.cancelQuestions()
-                collectedAnswers.clear()
+                if (pendingApprovalChoice) {
+                    // User cancelled the approval choice — revert to plan mode and
+                    // resume the suspended loop so the user can continue discussing
+                    pendingApprovalChoice = false
+                    AgentService.planModeActive.set(true)
+                    dashboard.setPlanMode(true)
+                    collectedAnswers.clear()
+                    executeTask("The user is still reviewing the plan. Continue in plan mode.")
+                } else {
+                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.cancelQuestions()
+                    collectedAnswers.clear()
+                }
             },
             onEdit = { _ -> /* Re-editing handled by wizard */ }
         )
@@ -1074,6 +1097,7 @@ class AgentController(
         // types a message right after stopping (the message would hit the steering queue
         // or channel path with stale state instead of starting a new loop).
         currentJob = null
+        pendingApprovalChoice = false
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
@@ -1106,6 +1130,7 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
+        pendingApprovalChoice = false
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
@@ -1322,40 +1347,78 @@ class AgentController(
     }
 
     /**
-     * User approved the plan — switch to act mode and send approval message into the loop.
-     *
-     * The loop is waiting on userInputChannel. We send the approval message which:
-     * 1. Switches planModeActive to false
-     * 2. Feeds the approval instruction into the waiting loop
-     * 3. The LLM continues in act mode and implements the plan
+     * User clicked approve — show a programmatic question asking whether to clear
+     * the research context before execution. The actual mode switch and approval
+     * instruction happen in [handleApprovalChoice] after the user picks an option.
      */
     private fun approvePlan() {
-        LOG.info("AgentController.approvePlan")
+        LOG.info("AgentController.approvePlan — showing context clearing choice")
+        pendingApprovalChoice = true
 
-        // Switch to act mode — only the USER can do this (Cline behavior)
+        val questionsJson = """
+        {
+            "questions": [{
+                "id": "approval_mode",
+                "question": "How would you like to proceed?",
+                "type": "single",
+                "options": [
+                    {
+                        "id": "clear_context",
+                        "label": "Approve & Clear Context (recommended)",
+                        "description": "Clears research history to free context budget. Keeps plan, active skill, facts, and guardrails."
+                    },
+                    {
+                        "id": "keep_context",
+                        "label": "Just Approve",
+                        "description": "Keeps the full conversation context from the planning phase."
+                    }
+                ]
+            }]
+        }
+        """.trimIndent()
+
+        invokeLater { dashboard.showQuestions(questionsJson) }
+    }
+
+    /**
+     * Handle the user's choice from the programmatic approval question.
+     * Clears context if requested, then switches to act mode and feeds the
+     * approval instruction into the waiting loop.
+     */
+    private fun handleApprovalChoice(answers: Map<String, String>) {
+        pendingApprovalChoice = false
+
+        // Parse the selected option — answers map: questionId → JSON array of selected option IDs
+        val selectedJson = answers["approval_mode"] ?: "[\"keep_context\"]"
+        val clearContext = selectedJson.contains("clear_context")
+
+        LOG.info("AgentController.handleApprovalChoice — clearContext=$clearContext")
+
+        if (clearContext) {
+            contextManager?.clearMessages()
+        }
+
+        // Switch to act mode
         AgentService.planModeActive.set(false)
         dashboard.setPlanMode(false)
 
         // Mark the plan as approved in the UI — switches PlanSummaryCard → PlanProgressWidget
         dashboard.approvePlanInUi()
 
-        // Build the approval instruction with plan steps so the LLM's task_progress
-        // checklist matches the plan and we can auto-update step statuses in the UI.
+        // Build the approval instruction
         val stepsChecklist = currentPlanData?.steps?.joinToString("\n") { step ->
             "- [ ] ${step.title}"
         } ?: ""
 
         val instruction = buildString {
-            appendLine("The user has approved the plan. Switch to ACT MODE and implement it step by step.")
-            appendLine("Follow the plan exactly. Call attempt_completion when all steps are done.")
+            appendLine("The user has approved the plan.")
             if (stepsChecklist.isNotBlank()) {
                 appendLine()
-                appendLine("Use these exact steps as your task_progress checklist (mark each with [x] as you complete it):")
+                appendLine("Task checklist:")
                 appendLine(stepsChecklist)
             }
         }.trim()
 
-        // Use executeTask which handles the channel-feeding logic
         executeTask(instruction)
     }
 

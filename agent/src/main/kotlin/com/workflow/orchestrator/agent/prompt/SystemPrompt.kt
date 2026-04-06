@@ -187,7 +187,7 @@ In each user message, the environment_details will specify the current mode. The
 - You CAN switch to PLAN MODE by calling the enable_plan_mode tool if the task is complex and would benefit from planning before implementation. Do this proactively for multi-step tasks, large refactors, or when the approach is unclear.
 - When you enter PLAN MODE, if the "writing-plans" skill is available, call use_skill(skill_name="writing-plans") to load structured planning instructions. This skill guides you through research, plan structure, and presentation format for the plan card UI.
 - You CANNOT switch to ACT MODE yourself. Only the user can switch from PLAN MODE to ACT MODE (by clicking the approve/act button in the UI).
-- When the user approves the plan and switches to ACT MODE, implement the plan step by step using the available tools."""
+- When the user approves the plan and switches to ACT MODE, write tools become available again. Follow your active skill's instructions if one is loaded, otherwise implement the plan step by step."""
     }
 
     /**

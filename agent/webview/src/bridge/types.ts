@@ -77,6 +77,7 @@ export interface Plan {
 export type QuestionType = 'single-select' | 'multi-select' | 'text';
 
 export interface QuestionOption {
+  id?: string;
   label: string;
   description?: string;
   selected?: boolean;

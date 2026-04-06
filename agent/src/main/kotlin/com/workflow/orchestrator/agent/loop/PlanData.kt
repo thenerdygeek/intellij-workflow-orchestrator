@@ -21,5 +21,6 @@ data class PlanStep(
 @Serializable
 data class PlanJson(
     val summary: String,
-    val steps: List<PlanStep>
+    val steps: List<PlanStep>,
+    val markdown: String? = null
 )

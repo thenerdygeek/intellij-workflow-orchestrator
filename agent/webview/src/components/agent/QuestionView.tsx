@@ -173,7 +173,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const flowOptions: QuestionFlowOption[] = useMemo(() => {
     if (!question) return [];
     return question.options.map(opt => ({
-      id: opt.label,
+      id: opt.id ?? opt.label,
       label: opt.label,
       description: opt.description,
     }));

@@ -686,6 +686,22 @@ class ContextManager(
     }
 
     /**
+     * Clear all conversation messages while preserving anchors (active skill, plan path,
+     * task progress, guardrails, facts). Used when the user approves a plan with
+     * "clear context" to free context budget for implementation.
+     *
+     * The system prompt is rebuilt each turn by [PromptAssembler], so it is not affected.
+     * The [lastSummary] is also cleared since the summarized content is no longer relevant.
+     */
+    fun clearMessages() {
+        messages.clear()
+        lastSummary = null
+        fileReadIndices.clear()
+        invalidateTokens()
+        LOG.info("[Context] Messages cleared for plan execution (anchors preserved)")
+    }
+
+    /**
      * Export the system prompt content (for persisting in Session metadata).
      */
     fun getSystemPromptContent(): String? = systemPrompt?.content

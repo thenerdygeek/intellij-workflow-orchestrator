@@ -159,14 +159,16 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Execution Handoff
 
-After the user approves the plan, the session switches back to act mode. You receive an approval message containing the task checklist. Offer the execution choice:
+After the user approves the plan, the session switches back to act mode. You receive an approval message containing the task checklist. Use `ask_followup_question` to offer the execution choice:
 
-**"Plan approved. Two execution options:**
+```
+ask_followup_question(
+  question="Plan approved. Two execution options:\n\n1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task with two-stage review (spec compliance + code quality)\n\n2. **Direct Execution** — I execute tasks in this session step by step\n\nWhich approach?",
+  options=["1. Subagent-Driven (recommended)", "2. Direct Execution"]
+)
+```
 
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task with two-stage review (spec compliance + code quality). Use: `use_skill(skill_name="subagent-driven")`
-
-**2. Direct Execution** — I execute tasks in this session step by step, tracking progress with `act_mode_respond(task_progress="- [x] Task 1: ...\n- [ ] Task 2: ...\n...")`.
-
-**Which approach?"**
+- If **Subagent-Driven**: load `use_skill(skill_name="subagent-driven")`
+- If **Direct Execution**: implement tasks sequentially, tracking progress with `act_mode_respond(task_progress="- [x] Task 1: ...\n- [ ] Task 2: ...")`
 
 During execution (either approach), include `task_progress` in your tool calls to update the progress card. Use the same titles from your `steps` array. As you complete each task, mark it `[x]` in the checklist. The progress card updates in real-time with spinner/check icons.
