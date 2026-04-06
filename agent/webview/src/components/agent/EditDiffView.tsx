@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react';
+import { CopyButton } from '@/components/ui/copy-button';
 
 interface EditDiffViewProps {
   filePath: string;
@@ -121,6 +122,11 @@ export const EditDiffView = memo(function EditDiffView({
           <span className="text-[10px] font-mono" style={{ color: 'var(--diff-add-fg, #b5cea8)' }}>
             +{addCount}
           </span>
+          <CopyButton
+            text={newLines.join('\n')}
+            size="sm"
+            label="Copy new content"
+          />
           <span
             className="text-[10px] font-medium px-1.5 py-0.5 rounded"
             style={{

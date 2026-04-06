@@ -5,6 +5,7 @@ import {
   ReasoningContent,
 } from '../ui/prompt-kit/reasoning';
 import { TextShimmer } from '../ui/prompt-kit/text-shimmer';
+import { CopyButton } from '../ui/copy-button';
 import { Brain } from 'lucide-react';
 
 // ── Thinking Timer ──
@@ -62,7 +63,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
       open={open}
       onOpenChange={handleOpenChange}
       isStreaming={isStreaming}
-      className="mb-2"
+      className="group/thinking mb-2"
     >
       <div role="region" aria-label="Agent reasoning">
         <ReasoningTrigger
@@ -77,6 +78,15 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
               label
             )}
           </span>
+          <span className="flex-1" />
+          {!isStreaming && content && (
+            <CopyButton
+              text={content}
+              size="sm"
+              label="Copy thinking"
+              className="opacity-0 group-hover/thinking:opacity-100"
+            />
+          )}
         </ReasoningTrigger>
 
         <ReasoningContent

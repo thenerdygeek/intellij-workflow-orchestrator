@@ -4,11 +4,12 @@
  * Collapsible monospace output body.
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Terminal as TerminalIcon, Copy, Check, ChevronDown, ChevronUp, Square } from 'lucide-react';
+import { CopyButton } from '@/components/ui/copy-button';
+import { Terminal as TerminalIcon, ChevronDown, ChevronUp, Square } from 'lucide-react';
 
 // Singleton AnsiUp — shared across all Terminal instances
 const ansiUp = new AnsiUp();
@@ -32,16 +33,6 @@ interface TerminalProps {
   onKill?: () => void;
 }
 
-function useCopyToClipboard(timeout = 2000) {
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback((text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), timeout);
-    });
-  }, [timeout]);
-  return { copied, copy };
-}
 
 export function Terminal({
   command,
@@ -55,7 +46,6 @@ export function Terminal({
   onKill,
 }: TerminalProps) {
   const [expanded, setExpanded] = useState(false);
-  const { copied, copy } = useCopyToClipboard();
   const outputRef = useRef<HTMLPreElement>(null);
 
   const output = [stdout, stderr].filter(Boolean).join('\n');
@@ -109,15 +99,11 @@ export function Terminal({
             exit {exitCode}
           </span>
         )}
-        <Button
-          variant="ghost"
+        <CopyButton
+          text={hasAnsi ? stripAnsi(output) : output}
           size="sm"
-          className="h-5 w-5 p-0 shrink-0"
-          onClick={() => copy(hasAnsi ? stripAnsi(output) : output)}
-          title="Copy output"
-        >
-          {copied ? <Check className="h-3 w-3" style={{ color: 'var(--success)' }} /> : <Copy className="h-3 w-3" style={{ color: 'var(--fg-muted)' }} />}
-        </Button>
+          label="Copy output"
+        />
         {isRunning && onKill && (
           <Button
             variant="ghost"

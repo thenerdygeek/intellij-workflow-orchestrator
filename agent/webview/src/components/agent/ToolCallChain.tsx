@@ -8,6 +8,7 @@ import {
   ChainOfThoughtContent,
 } from '@/components/ui/prompt-kit/chain-of-thought';
 import { Badge } from '@/components/ui/badge';
+import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
 import { Loader2, Check, X, Clock } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
@@ -144,8 +145,16 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
   return (
     <div className="space-y-2 py-1">
       {input && Object.keys(input).length > 0 && (
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--fg-muted)' }}>Input</div>
+        <div className="group/input relative">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--fg-muted)' }}>Input</div>
+            <CopyButton
+              text={JSON.stringify(input, null, 2)}
+              size="sm"
+              label="Copy input"
+              className="opacity-0 group-hover/input:opacity-100"
+            />
+          </div>
           <pre
             className="rounded p-2 text-[11px] font-mono leading-relaxed overflow-x-auto"
             style={{ backgroundColor: 'var(--code-bg)', color: 'var(--fg)', maxHeight: '150px', overflowY: 'auto' }}
@@ -155,12 +164,20 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
         </div>
       )}
       {displayOutput && (
-        <div>
-          <div
-            className="text-[10px] font-semibold uppercase tracking-wider mb-1"
-            style={{ color: isError ? 'var(--error)' : 'var(--fg-muted)' }}
-          >
-            {isError ? 'Error' : 'Output'}
+        <div className="group/output relative">
+          <div className="flex items-center justify-between mb-1">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: isError ? 'var(--error)' : 'var(--fg-muted)' }}
+            >
+              {isError ? 'Error' : 'Output'}
+            </div>
+            <CopyButton
+              text={displayOutput}
+              size="sm"
+              label={isError ? 'Copy error' : 'Copy output'}
+              className="opacity-0 group-hover/output:opacity-100"
+            />
           </div>
           <div
             ref={scrollRef}

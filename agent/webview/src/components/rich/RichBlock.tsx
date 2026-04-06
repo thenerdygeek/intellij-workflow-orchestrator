@@ -3,6 +3,7 @@ import type { VisualizationType } from '@/bridge/types';
 import { openInEditorTab } from '@/bridge/jcef-bridge';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { CopyButton } from '@/components/ui/copy-button';
 import {
   Dialog,
   DialogContent,
@@ -147,10 +148,6 @@ export function RichBlock({
     [isDark, cssVariables],
   );
 
-  const handleCopySource = useCallback(() => {
-    void navigator.clipboard.writeText(source);
-  }, [source]);
-
   const handleToggleExpand = useCallback(() => {
     setIsExpanded((prev) => !prev);
   }, []);
@@ -206,12 +203,7 @@ export function RichBlock({
           </div>
           <div className="flex items-center gap-0.5">
             {/* Copy source */}
-            <ActionButton label="Copy source" onClick={handleCopySource}>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <rect x="3.5" y="3.5" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.2" />
-                <path d="M8.5 3.5V2a1 1 0 00-1-1H2a1 1 0 00-1 1v5.5a1 1 0 001 1h1.5" stroke="currentColor" strokeWidth="1.2" />
-              </svg>
-            </ActionButton>
+            <CopyButton text={source} size="sm" label="Copy source" />
 
             {/* Expand / collapse */}
             {maxHeight > 0 && (

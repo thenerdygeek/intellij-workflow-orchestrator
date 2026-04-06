@@ -1,5 +1,6 @@
 import { memo, useState, useCallback, useMemo } from 'react';
 import { useShiki } from '@/hooks/useShiki';
+import { CopyButton } from '@/components/ui/copy-button';
 
 export interface CodeMeta {
   highlights: Set<number>;
@@ -107,7 +108,6 @@ export const CodeBlock = memo(function CodeBlock({
   meta,
 }: CodeBlockProps) {
   const { html: rawHtml, isLoading } = useShiki(code, language);
-  const [copied, setCopied] = useState(false);
   const [showLineNumbers, setShowLineNumbers] = useState(false);
 
   const codeMeta = useMemo(() => parseCodeMeta(meta), [meta]);
@@ -118,13 +118,6 @@ export const CodeBlock = memo(function CodeBlock({
     const decorated = applyLineDecorations(rawHtml, codeMeta);
     return injectAnnotationIcons(decorated);
   }, [rawHtml, codeMeta]);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [code]);
 
   const handleApply = useCallback(() => {
     // Send apply action to IDE via bridge
@@ -167,23 +160,7 @@ export const CodeBlock = memo(function CodeBlock({
           </button>
 
           {/* Copy button */}
-          <button
-            onClick={handleCopy}
-            className="rounded p-1 text-[var(--fg-muted)] hover:bg-[var(--hover-bg)] hover:text-[var(--fg)]"
-            title={copied ? 'Copied!' : 'Copy code'}
-            aria-label={copied ? 'Copied' : 'Copy code'}
-          >
-            {copied ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            )}
-          </button>
+          <CopyButton text={code} label="Copy code" />
 
           {/* Apply button */}
           <button

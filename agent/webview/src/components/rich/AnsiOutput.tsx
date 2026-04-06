@@ -1,5 +1,6 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
+import { CopyButton } from '@/components/ui/copy-button';
 
 // ── Singleton AnsiUp instance ──
 
@@ -12,18 +13,12 @@ interface AnsiOutputProps {
   text: string;
 }
 
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1B\[[0-9;]*[a-zA-Z]/g;
+
 export function AnsiOutput({ text }: AnsiOutputProps) {
   const html = useMemo(() => ansiUp.ansi_to_html(text), [text]);
-
-  const handleCopy = useCallback(() => {
-    // Copy raw text without ANSI codes
-    const stripped = text.replace(
-      // eslint-disable-next-line no-control-regex
-      /\x1B\[[0-9;]*[a-zA-Z]/g,
-      '',
-    );
-    void navigator.clipboard.writeText(stripped);
-  }, [text]);
+  const strippedText = useMemo(() => text.replace(ANSI_RE, ''), [text]);
 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-[var(--border)]">
@@ -53,16 +48,7 @@ export function AnsiOutput({ text }: AnsiOutputProps) {
             Terminal Output
           </span>
         </div>
-        <button
-          onClick={handleCopy}
-          title="Copy output"
-          className="flex h-6 w-6 items-center justify-center rounded text-[var(--fg-muted)] transition-colors hover:bg-[var(--hover-overlay)] hover:text-[var(--fg)]"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <rect x="3.5" y="3.5" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M8.5 3.5V2a1 1 0 00-1-1H2a1 1 0 00-1 1v5.5a1 1 0 001 1h1.5" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </button>
+        <CopyButton text={strippedText} size="sm" label="Copy output" />
       </div>
 
       {/* Output area */}
