@@ -3,8 +3,8 @@ package com.workflow.orchestrator.core.model.jira
 import kotlinx.serialization.Serializable
 
 /**
- * Simplified Jira ticket domain model shared between UI panels and AI agent.
- * Contains only the fields both consumers need, not the 50+ fields from the raw API response.
+ * Enriched Jira ticket domain model shared between UI panels and AI agent.
+ * Includes sprint context, epic/parent, time tracking, transitions, and counts.
  */
 @Serializable
 data class JiraTicketData(
@@ -12,28 +12,114 @@ data class JiraTicketData(
     val summary: String,
     val status: String,
     val assignee: String?,
+    val reporter: String?,
     val type: String,
     val priority: String?,
     val description: String?,
     val labels: List<String> = emptyList(),
+    val created: String? = null,
+    val updated: String? = null,
+    // Sprint context
+    val sprintName: String? = null,
+    val sprintState: String? = null,
+    val closedSprints: List<String> = emptyList(),
+    // Epic/parent
+    val epicKey: String? = null,
+    val epicSummary: String? = null,
+    // Time tracking
+    val originalEstimate: String? = null,
+    val remainingEstimate: String? = null,
+    val timeSpent: String? = null,
+    // Counts
+    val commentCount: Int = 0,
+    val attachmentCount: Int = 0,
+    // Detail lists
     val transitions: List<JiraTransitionData> = emptyList(),
     val attachments: List<JiraAttachmentData> = emptyList(),
     val subtasks: List<JiraSubtaskRef> = emptyList(),
     val linkedIssues: List<JiraLinkedIssueRef> = emptyList()
 ) {
     override fun toString(): String = buildString {
-        append("$key [$status] $summary")
-        if (type != "Task") append(" ($type)")
-        if (priority != null) append(" | Priority: $priority")
-        if (assignee != null) append(" | Assignee: $assignee")
-        if (labels.isNotEmpty()) append(" | Labels: ${labels.joinToString(", ")}")
-        if (!description.isNullOrBlank()) {
-            append("\n  ${description.take(300).replace("\n", "\n  ")}")
-            if (description.length > 300) append("...")
+        appendLine("$key: $summary")
+        appendLine("Status: $status | Type: $type${if (priority != null) " | Priority: $priority" else ""}")
+        if (assignee != null) append("Assignee: $assignee")
+        if (reporter != null) {
+            if (assignee != null) append(" | ")
+            append("Reporter: $reporter")
         }
-        if (transitions.isNotEmpty()) append("\n  Transitions: ${transitions.joinToString(", ") { it.name }}")
-        if (subtasks.isNotEmpty()) append("\n  Subtasks: ${subtasks.size}")
-        if (linkedIssues.isNotEmpty()) append("\n  Linked: ${linkedIssues.size}")
+        if (assignee != null || reporter != null) appendLine()
+
+        if (labels.isNotEmpty()) appendLine("Labels: ${labels.joinToString(", ")}")
+        if (created != null || updated != null) {
+            val parts = mutableListOf<String>()
+            if (created != null) parts.add("Created: $created")
+            if (updated != null) parts.add("Updated: $updated")
+            appendLine(parts.joinToString(" | "))
+        }
+
+        // Sprint & Epic
+        if (sprintName != null) appendLine("Sprint: $sprintName ($sprintState)")
+        if (closedSprints.isNotEmpty()) appendLine("Previous Sprints: ${closedSprints.joinToString(", ")}")
+        if (epicKey != null) appendLine("Epic: $epicKey${if (epicSummary != null) " — $epicSummary" else ""}")
+
+        // Time tracking
+        if (originalEstimate != null || timeSpent != null || remainingEstimate != null) {
+            val parts = mutableListOf<String>()
+            if (originalEstimate != null) parts.add("Estimate: $originalEstimate")
+            if (timeSpent != null) parts.add("Logged: $timeSpent")
+            if (remainingEstimate != null) parts.add("Remaining: $remainingEstimate")
+            appendLine(parts.joinToString(" | "))
+        }
+
+        // Description (full, no truncation)
+        if (!description.isNullOrBlank()) {
+            appendLine()
+            appendLine("Description:")
+            appendLine(description)
+        }
+
+        // Transitions
+        if (transitions.isNotEmpty()) {
+            appendLine()
+            appendLine("Available Transitions:")
+            transitions.forEach { t -> appendLine("  [${t.id}] ${t.name} → ${t.toStatus}") }
+        }
+
+        // Subtasks with details
+        if (subtasks.isNotEmpty()) {
+            appendLine()
+            appendLine("Subtasks (${subtasks.size}):")
+            subtasks.forEach { st -> appendLine("  ${st.key} [${st.status}] ${st.summary}") }
+        }
+
+        // Linked issues with details
+        if (linkedIssues.isNotEmpty()) {
+            appendLine()
+            appendLine("Linked Issues (${linkedIssues.size}):")
+            linkedIssues.forEach { li -> appendLine("  ${li.key} [${li.status}] ${li.summary} (${li.relationship})") }
+        }
+
+        // Attachments
+        if (attachments.isNotEmpty()) {
+            appendLine()
+            appendLine("Attachments ($attachmentCount):")
+            attachments.forEach { att -> appendLine("  ${att.filename} (id: ${att.id}, ${formatSize(att.sizeBytes)})") }
+        } else if (attachmentCount > 0) {
+            appendLine()
+            appendLine("Attachments: $attachmentCount")
+        }
+
+        // Comments count
+        if (commentCount > 0) {
+            appendLine()
+            appendLine("Comments: $commentCount (use get_comments to view)")
+        }
+    }
+
+    private fun formatSize(bytes: Long): String = when {
+        bytes < 1024 -> "${bytes}B"
+        bytes < 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0)}KB"
+        else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))}MB"
     }
 }
 

@@ -79,7 +79,7 @@ class JiraApiClient(
 
     suspend fun getIssue(key: String): ApiResult<JiraIssue> {
         log.debug("[Jira:API] GET /rest/api/2/issue/$key")
-        return get("/rest/api/2/issue/$key?expand=issuelinks")
+        return get("/rest/api/2/issue/$key?expand=issuelinks&fields=*all")
     }
 
     suspend fun searchIssues(text: String, maxResults: Int = 20): ApiResult<List<JiraIssue>> {

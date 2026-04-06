@@ -23,6 +23,8 @@ import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 /**
  * Unified Jira service implementation used by both UI panels and AI agent.
@@ -58,7 +60,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         val api = client ?: return ToolResult(
             data = JiraTicketData(
                 key = key, summary = "", status = "ERROR",
-                assignee = null, type = "", priority = null,
+                assignee = null, reporter = null, type = "", priority = null,
                 description = null
             ),
             summary = "Jira not configured. Cannot fetch $key.",
@@ -66,83 +68,100 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getIssue(key)) {
-            is ApiResult.Success -> {
-                val issue = result.data
-                val fields = issue.fields
-                val attachments = fields.attachment.map { att ->
-                    JiraAttachmentData(
-                        id = att.id,
-                        filename = att.filename,
-                        mimeType = att.mimeType,
-                        sizeBytes = att.size
-                    )
-                }
-                val subtasks = fields.subtasks.map { st ->
-                    JiraSubtaskRef(
-                        key = st.key,
-                        summary = st.fields.summary,
-                        status = st.fields.status.name
-                    )
-                }
-                val linkedIssues = fields.issuelinks.mapNotNull { link ->
-                    val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null
-                    val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward
-                    JiraLinkedIssueRef(
-                        key = linked.key,
-                        summary = linked.fields.summary,
-                        status = linked.fields.status.name,
-                        relationship = relationship
-                    )
-                }
-                val data = JiraTicketData(
-                    key = issue.key,
-                    summary = fields.summary,
-                    status = fields.status.name,
-                    assignee = fields.assignee?.displayName,
-                    type = fields.issuetype?.name ?: "Unknown",
-                    priority = fields.priority?.name,
-                    description = fields.description?.take(500),
-                    labels = fields.labels,
-                    attachments = attachments,
-                    subtasks = subtasks,
-                    linkedIssues = linkedIssues
-                )
-                ToolResult.success(
-                    data = data,
-                    summary = buildString {
-                        append("${data.key}: ${data.summary}")
-                        append("\nStatus: ${data.status} | Type: ${data.type} | Assignee: ${data.assignee ?: "Unassigned"}")
-                        if (data.priority != null) append(" | Priority: ${data.priority}")
-                        if (data.labels.isNotEmpty()) append("\nLabels: ${data.labels.joinToString(", ")}")
-                        if (attachments.isNotEmpty()) {
-                            append("\nAttachments (${attachments.size}):")
-                            attachments.take(5).forEach { att ->
-                                append("\n  - ${att.filename} (id: ${att.id}, ${formatSize(att.sizeBytes)})")
-                            }
-                            if (attachments.size > 5) append("\n  ... and ${attachments.size - 5} more")
+        return coroutineScope {
+            val issueDeferred = async { api.getIssue(key) }
+            val transitionsDeferred = async { api.getTransitions(key) }
+
+            val issueResult = issueDeferred.await()
+            val transitionsResult = transitionsDeferred.await()
+
+            when (issueResult) {
+                is ApiResult.Success -> {
+                    val issue = issueResult.data
+                    val fields = issue.fields
+                    val attachments = fields.attachment.map { att ->
+                        JiraAttachmentData(
+                            id = att.id,
+                            filename = att.filename,
+                            mimeType = att.mimeType,
+                            sizeBytes = att.size
+                        )
+                    }
+                    val subtasks = fields.subtasks.map { st ->
+                        JiraSubtaskRef(
+                            key = st.key,
+                            summary = st.fields.summary,
+                            status = st.fields.status.name
+                        )
+                    }
+                    val linkedIssues = fields.issuelinks.mapNotNull { link ->
+                        val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null
+                        val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward
+                        JiraLinkedIssueRef(
+                            key = linked.key,
+                            summary = linked.fields.summary,
+                            status = linked.fields.status.name,
+                            relationship = relationship
+                        )
+                    }
+                    val transitions = when (transitionsResult) {
+                        is ApiResult.Success -> transitionsResult.data.map { t ->
+                            JiraTransitionData(id = t.id, name = t.name, toStatus = t.to.name)
                         }
+                        else -> emptyList()
                     }
-                )
-            }
-            is ApiResult.Error -> {
-                log.warn("[JiraService] Failed to fetch $key: ${result.message}")
-                ToolResult(
-                    data = JiraTicketData(
-                        key = key, summary = "", status = "ERROR",
-                        assignee = null, type = "", priority = null,
-                        description = null
-                    ),
-                    summary = "Error fetching $key: ${result.message}",
-                    isError = true,
-                    hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
-                            "Check your Jira token in Settings."
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
-                            "Verify the ticket key is correct."
-                        else -> "Check Jira connection in Settings."
-                    }
-                )
+
+                    val data = JiraTicketData(
+                        key = issue.key,
+                        summary = fields.summary,
+                        status = fields.status.name,
+                        assignee = fields.assignee?.displayName,
+                        reporter = fields.reporter?.displayName,
+                        type = fields.issuetype?.name ?: "Unknown",
+                        priority = fields.priority?.name,
+                        description = fields.description,
+                        labels = fields.labels,
+                        created = fields.created,
+                        updated = fields.updated,
+                        sprintName = fields.sprint?.name,
+                        sprintState = fields.sprint?.state,
+                        closedSprints = fields.closedSprints.map { "${it.name} (${it.state})" },
+                        epicKey = fields.parent?.key,
+                        epicSummary = fields.parent?.fields?.summary,
+                        originalEstimate = fields.timetracking?.originalEstimate,
+                        remainingEstimate = fields.timetracking?.remainingEstimate,
+                        timeSpent = fields.timetracking?.timeSpent,
+                        commentCount = fields.comment?.total ?: 0,
+                        attachmentCount = fields.attachment.size,
+                        transitions = transitions,
+                        attachments = attachments,
+                        subtasks = subtasks,
+                        linkedIssues = linkedIssues
+                    )
+                    ToolResult.success(
+                        data = data,
+                        summary = "${data.key} [${data.status}] ${data.summary}"
+                    )
+                }
+                is ApiResult.Error -> {
+                    log.warn("[JiraService] Failed to fetch $key: ${issueResult.message}")
+                    ToolResult(
+                        data = JiraTicketData(
+                            key = key, summary = "", status = "ERROR",
+                            assignee = null, reporter = null, type = "", priority = null,
+                            description = null
+                        ),
+                        summary = "Failed to fetch $key: ${issueResult.message}",
+                        isError = true,
+                        hint = when (issueResult.type) {
+                            com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                                "Check your Jira token in Settings."
+                            com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                                "Verify the ticket key is correct."
+                            else -> "Check Jira connection in Settings."
+                        }
+                    )
+                }
             }
         }
     }
@@ -734,10 +753,23 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             summary = fields.summary,
             status = fields.status.name,
             assignee = fields.assignee?.displayName,
+            reporter = fields.reporter?.displayName,
             type = fields.issuetype?.name ?: "Unknown",
             priority = fields.priority?.name,
-            description = fields.description?.take(500),
+            description = fields.description,
             labels = fields.labels,
+            created = fields.created,
+            updated = fields.updated,
+            sprintName = fields.sprint?.name,
+            sprintState = fields.sprint?.state,
+            closedSprints = fields.closedSprints.map { "${it.name} (${it.state})" },
+            epicKey = fields.parent?.key,
+            epicSummary = fields.parent?.fields?.summary,
+            originalEstimate = fields.timetracking?.originalEstimate,
+            remainingEstimate = fields.timetracking?.remainingEstimate,
+            timeSpent = fields.timetracking?.timeSpent,
+            commentCount = fields.comment?.total ?: 0,
+            attachmentCount = fields.attachment.size,
             attachments = fields.attachment.map { att ->
                 JiraAttachmentData(id = att.id, filename = att.filename, mimeType = att.mimeType, sizeBytes = att.size)
             },

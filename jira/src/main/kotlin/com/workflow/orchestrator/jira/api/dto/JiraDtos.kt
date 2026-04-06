@@ -25,10 +25,14 @@ data class JiraIssueFields(
     val updated: String? = null,
     val issuelinks: List<JiraIssueLink> = emptyList(),
     val sprint: JiraSprintRef? = null,
+    val closedSprints: List<JiraSprintRef> = emptyList(),
     val labels: List<String> = emptyList(),
     val components: List<JiraComponent> = emptyList(),
     val subtasks: List<JiraSubtask> = emptyList(),
-    val attachment: List<JiraAttachment> = emptyList()
+    val attachment: List<JiraAttachment> = emptyList(),
+    val timetracking: JiraTimeTracking? = null,
+    val comment: JiraCommentPage? = null,
+    val parent: JiraParentRef? = null,
 )
 
 @Serializable
@@ -100,6 +104,38 @@ data class JiraSprintRef(
     val id: Int,
     val name: String,
     val state: String
+)
+
+@Serializable
+data class JiraTimeTracking(
+    val originalEstimate: String? = null,
+    val remainingEstimate: String? = null,
+    val timeSpent: String? = null,
+    val originalEstimateSeconds: Long? = null,
+    val remainingEstimateSeconds: Long? = null,
+    val timeSpentSeconds: Long? = null,
+)
+
+@Serializable
+data class JiraCommentPage(
+    val startAt: Int = 0,
+    val maxResults: Int = 0,
+    val total: Int = 0,
+    val comments: List<JiraComment> = emptyList(),
+)
+
+@Serializable
+data class JiraParentRef(
+    val id: String = "",
+    val key: String = "",
+    val fields: JiraParentFields? = null,
+)
+
+@Serializable
+data class JiraParentFields(
+    val summary: String = "",
+    val status: JiraStatus? = null,
+    val issuetype: JiraIssueType? = null,
 )
 
 // --- Board & Sprint DTOs ---
