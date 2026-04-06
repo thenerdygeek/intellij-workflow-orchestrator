@@ -84,7 +84,12 @@ class JiraApiClient(
 
     suspend fun searchIssues(text: String, maxResults: Int = 20): ApiResult<List<JiraIssue>> {
         val escaped = escapeJql(text)
-        val jql = "(text ~ \"$escaped\" OR key = \"$escaped\") AND assignee = currentUser() ORDER BY updated DESC"
+        val looksLikeKey = text.matches(Regex("[A-Z][A-Z0-9]+-\\d+"))
+        val jql = if (looksLikeKey) {
+            "(text ~ \"$escaped\" OR key = \"$escaped\") ORDER BY updated DESC"
+        } else {
+            "text ~ \"$escaped\" ORDER BY updated DESC"
+        }
         val encodedJql = URLEncoder.encode(jql, "UTF-8")
         log.debug("[Jira:API] GET /rest/api/2/search (text=$text, maxResults=$maxResults)")
         return get<JiraIssueSearchResult>(
