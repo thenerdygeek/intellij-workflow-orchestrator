@@ -631,6 +631,19 @@ class AgentController(
                     )
                 }
             },
+            onApiCallStart = { modelId ->
+                invokeLater {
+                    val shortName = modelId.substringAfterLast("::")
+                    dashboard.appendStatus("Thinking ($shortName)...", RichStreamingPanel.StatusType.INFO)
+                }
+            },
+            onModelSwitch = { from, to, reason ->
+                invokeLater {
+                    val shortTo = to.substringAfterLast("::")
+                    dashboard.appendStatus("$reason to $shortTo", RichStreamingPanel.StatusType.WARNING)
+                    dashboard.setModelName(to)
+                }
+            },
             onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             userInputChannel = userInputChannel,
@@ -1291,7 +1304,7 @@ class AgentController(
                 .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
                 ?.trim()?.take(300)
                 ?: "Plan with ${steps.size} steps"
-            val planData = PlanJson(summary = summary, steps = steps)
+            val planData = PlanJson(summary = summary, steps = steps, markdown = planText)
             currentPlanData = planData
             val planJson = Json.encodeToString(planData)
             dashboard.renderPlan(planJson)

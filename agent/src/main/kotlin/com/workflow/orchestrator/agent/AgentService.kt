@@ -57,6 +57,7 @@ import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.agent.loop.ModelFallbackManager
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
@@ -137,6 +138,7 @@ class AgentService(private val project: Project) : Disposable {
 
         // Task 7: Load dynamic agent configurations and register lifecycle
         val configLoader = AgentConfigLoader.getInstance()
+        configLoader.loadFromDisk()
         val configs = configLoader.getAllCachedConfigsWithToolNames()
         if (configs.isNotEmpty()) {
             log.info("[AgentService] Loaded ${configs.size} dynamic agent config(s): ${configs.keys.toList()}")
@@ -479,6 +481,16 @@ class AgentService(private val project: Project) : Disposable {
          */
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
         /**
+         * Callback fired when the loop switches to a different model via fallback.
+         * Used by the UI to update the model chip and show a status message.
+         */
+        onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
+        /**
+         * Callback fired before each LLM API call.
+         * Used by the UI to show "Thinking (model)..." status.
+         */
+        onApiCallStart: ((modelId: String) -> Unit)? = null,
+        /**
          * Optional callback fired synchronously before the agent loop coroutine starts.
          * Provides the session ID so callers can track the session early (e.g. before
          * the first checkpoint fires). Called on the thread that invokes executeTask.
@@ -554,6 +566,33 @@ class AgentService(private val project: Project) : Disposable {
                 }
 
                 val agentSettings = AgentSettings.getInstance(project)
+
+                // Build model fallback chain if enabled
+                val fallbackManager = if (agentSettings.state.enableModelFallback) {
+                    val cachedModels = ModelCache.getCached()
+                    val chain = ModelCache.buildFallbackChain(cachedModels)
+                    if (chain.size > 1) {
+                        log.info("[Agent] Model fallback enabled, chain: ${chain.map { it.substringAfterLast("::") }}")
+                        ModelFallbackManager(chain)
+                    } else {
+                        log.info("[Agent] Model fallback enabled but chain has ≤1 model, skipping")
+                        null
+                    }
+                } else null
+
+                val brainFactory: (suspend (String) -> LlmBrain)? = if (fallbackManager != null) { modelId ->
+                    val connections = ConnectionSettings.getInstance()
+                    val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+                    val credentialStore = CredentialStore()
+                    val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
+                    OpenAiCompatBrain(
+                        sourcegraphUrl = sgUrl,
+                        tokenProvider = tokenProvider,
+                        model = modelId
+                    ).also { newBrain ->
+                        newBrain.setApiDebugDir(sessionDebugDir)
+                    }
+                } else null
 
                 // Build context manager
                 val ctx = contextManager ?: ContextManager(
@@ -705,6 +744,10 @@ class AgentService(private val project: Project) : Disposable {
                     onArtifactRendered = onArtifactRendered,
                     steeringQueue = steeringQueue,
                     onSteeringDrained = onSteeringDrained,
+                    fallbackManager = fallbackManager,
+                    brainFactory = brainFactory,
+                    onModelSwitch = onModelSwitch,
+                    onApiCallStart = onApiCallStart,
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where
