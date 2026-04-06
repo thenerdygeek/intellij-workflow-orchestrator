@@ -203,7 +203,13 @@ class AgentLoop(
      *
      * @param drainedIds the IDs of the steering messages that were injected
      */
-    private val onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null
+    private val onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
+    /**
+     * Callback fired when the loop retries a failed API call.
+     * Used by the UI to show retry status (e.g. "API timeout, retrying 2/3...").
+     * Always fires regardless of debug mode — retries are user-visible events.
+     */
+    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -238,10 +244,14 @@ class AgentLoop(
         private val LOG = Logger.getInstance(AgentLoop::class.java)
         private const val MAX_CONSECUTIVE_EMPTIES = 3
         private const val MAX_API_RETRIES = 5
+        /** Timeout/network errors get fewer retries — the server is likely down. */
+        private const val MAX_TIMEOUT_RETRIES = 3
         private const val MAX_CONTEXT_OVERFLOW_RETRIES = 2
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
         private const val MAX_RETRY_DELAY_MS = 30_000L
+        /** Timeout errors — worth fewer retries than rate limits / server errors. */
+        private val TIMEOUT_ERRORS = setOf(ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT)
         /**
          * Nudge for text-only responses (no tool calls).
          * Ported from Cline's formatResponse.noToolsUsed() in responses.ts.
@@ -423,17 +433,26 @@ class AgentLoop(
                     continue
                 }
 
-                if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < MAX_API_RETRIES) {
+                val isTimeoutError = apiResult.type in TIMEOUT_ERRORS
+                val maxRetries = if (isTimeoutError) MAX_TIMEOUT_RETRIES else MAX_API_RETRIES
+                if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),
                     // otherwise fall back to exponential backoff
                     val delayMs = apiResult.retryAfterMs
                         ?.coerceAtMost(MAX_RETRY_DELAY_MS)
                         ?: (INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1)))
-                    val delaySource = if (apiResult.retryAfterMs != null) "retry-after header" else "exponential backoff"
-                    LOG.warn("[Loop] API retry $apiRetryCount/$MAX_API_RETRIES (${apiResult.type}, delay=${delayMs}ms, source=$delaySource)")
+                    val reason = when (apiResult.type) {
+                        ErrorType.NETWORK_ERROR -> "Network error"
+                        ErrorType.TIMEOUT -> "Request timeout"
+                        ErrorType.RATE_LIMITED -> "Rate limited"
+                        ErrorType.SERVER_ERROR -> "Server error"
+                        else -> apiResult.type.name
+                    }
+                    LOG.warn("[Loop] API retry $apiRetryCount/$maxRetries ($reason, delay=${delayMs}ms)")
                     fileLogger?.logRetry(sessionId ?: "", "api_${apiResult.type.name.lowercase()}", iteration)
-                    onDebugLog?.invoke("warn", "retry", "API retry $apiRetryCount/$MAX_API_RETRIES: ${apiResult.type}", mapOf("errorType" to apiResult.type.name))
+                    onDebugLog?.invoke("warn", "retry", "API retry $apiRetryCount/$maxRetries: $reason", mapOf("errorType" to apiResult.type.name))
+                    onRetry?.invoke(apiRetryCount, maxRetries, reason, delayMs)
                     delay(delayMs)
                     iteration-- // Don't count retries as iterations
                     continue

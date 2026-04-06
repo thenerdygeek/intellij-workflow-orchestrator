@@ -622,6 +622,15 @@ class AgentController(
                 }
                 onComplete(result)
             },
+            onRetry = { attempt, maxAttempts, reason, delayMs ->
+                invokeLater {
+                    val delaySec = delayMs / 1000
+                    dashboard.appendStatus(
+                        "$reason — retrying ($attempt/$maxAttempts) in ${delaySec}s...",
+                        RichStreamingPanel.StatusType.WARNING
+                    )
+                }
+            },
             onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             userInputChannel = userInputChannel,

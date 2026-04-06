@@ -474,6 +474,11 @@ class AgentService(private val project: Project) : Disposable {
          */
         onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
         /**
+         * Callback fired when the loop retries a failed API call.
+         * Always fires — retries are user-visible events.
+         */
+        onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
+        /**
          * Optional callback fired synchronously before the agent loop coroutine starts.
          * Provides the session ID so callers can track the session early (e.g. before
          * the first checkpoint fires). Called on the thread that invokes executeTask.
@@ -684,6 +689,7 @@ class AgentService(private val project: Project) : Disposable {
                         }
                     },
                     onDebugLog = onDebugLog,
+                    onRetry = onRetry,
                     fileLogger = fileLogger,
                     sessionMetrics = sessionMetrics,
                     environmentDetailsProvider = {
