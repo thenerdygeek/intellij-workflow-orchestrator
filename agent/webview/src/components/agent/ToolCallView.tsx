@@ -253,7 +253,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
           )}
           style={{ maxWidth: '200px' }}
         >
-          {target}
+          {category === 'CMD' ? `(${target})` : target}
         </span>
       )}
       <span className="flex-1" />

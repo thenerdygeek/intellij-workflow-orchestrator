@@ -294,8 +294,13 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
             >
               {catStyle.label}
             </Badge>
-            <span className={cn('font-mono font-medium text-[var(--fg)] shrink-0', isRolledBack && 'line-through')}>{tc.name}</span>
-            {target && (
+            <span className={cn('font-mono font-medium text-[var(--fg)] shrink-0', isRolledBack && 'line-through')}>
+              {tc.name}
+              {isCmdTool && target && (
+                <span className={cn('font-normal text-[var(--fg-muted)]', isRolledBack && 'line-through')}>{' '}({target})</span>
+              )}
+            </span>
+            {!isCmdTool && target && (
               <span className={cn('truncate font-mono text-[var(--fg-muted)]', isRolledBack && 'line-through')} style={{ maxWidth: '150px' }}>
                 {target}
               </span>
