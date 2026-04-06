@@ -32,6 +32,7 @@ import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
 import com.workflow.orchestrator.jira.api.dto.JiraStatus
 import com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector
+import com.workflow.orchestrator.jira.service.toJiraTicketData
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
@@ -515,6 +516,8 @@ class SprintDashboardPanel(
                         populateSprintSelector(sprints)
                         setLoading(false, "${allIssues.size} tickets loaded")
                         log.info("[Jira:UI] Sprint dashboard loaded ${allIssues.size} tickets")
+                        // Share with # ticket autocomplete so it doesn't re-fetch
+                        emitSprintData(allIssues)
                     }
                     is ApiResult.Error -> {
                         allIssues = emptyList()
@@ -569,6 +572,8 @@ class SprintDashboardPanel(
                         updateSprintHeaderForSprint(sprint)
                         setLoading(false, "${allIssues.size} tickets loaded")
                         log.info("[Jira:UI] Loaded ${allIssues.size} tickets for sprint ${sprint.name}")
+                        // Share with # ticket autocomplete so it stays in sync
+                        emitSprintData(allIssues)
                     }
                     is ApiResult.Error -> {
                         allIssues = emptyList()
@@ -578,6 +583,15 @@ class SprintDashboardPanel(
                     }
                 }
             }
+        }
+    }
+
+    /** Emit sprint tickets via EventBus so # ticket autocomplete uses cached data instead of re-fetching. */
+    private fun emitSprintData(issues: List<JiraIssue>) {
+        scope.launch {
+            val eventBus = project.getService(EventBus::class.java)
+            val tickets = issues.map { it.toJiraTicketData() }
+            eventBus.emit(WorkflowEvent.SprintDataLoaded(tickets))
         }
     }
 

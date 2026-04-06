@@ -128,5 +128,11 @@ sealed class WorkflowEvent {
         val sonarProjectKey: String?,
     ) : WorkflowEvent()
 
+    /** Emitted by :jira Sprint tab when sprint tickets are loaded or refreshed.
+     *  Consumed by :agent MentionSearchProvider to pre-populate # ticket autocomplete cache. */
+    data class SprintDataLoaded(
+        val tickets: List<com.workflow.orchestrator.core.model.jira.JiraTicketData>
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }

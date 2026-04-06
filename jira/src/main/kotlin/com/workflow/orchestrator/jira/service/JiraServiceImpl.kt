@@ -878,3 +878,21 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             project.getService(JiraService::class.java) as JiraServiceImpl
     }
 }
+
+/** Convert a Jira API issue DTO to the shared [JiraTicketData] domain model.
+ *  Used by Sprint tab to emit [WorkflowEvent.SprintDataLoaded] for the # ticket autocomplete cache. */
+internal fun com.workflow.orchestrator.jira.api.dto.JiraIssue.toJiraTicketData(): JiraTicketData {
+    return JiraTicketData(
+        key = key,
+        summary = fields.summary,
+        status = fields.status.name,
+        assignee = fields.assignee?.displayName,
+        reporter = fields.reporter?.displayName,
+        type = fields.issuetype?.name ?: "Unknown",
+        priority = fields.priority?.name,
+        description = fields.description,
+        labels = fields.labels,
+        created = fields.created,
+        updated = fields.updated,
+    )
+}

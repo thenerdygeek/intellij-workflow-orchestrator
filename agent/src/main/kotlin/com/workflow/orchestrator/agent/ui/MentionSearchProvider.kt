@@ -409,9 +409,15 @@ class MentionSearchProvider(private val project: Project) {
      *
      * @param query Ticket key (e.g. "PROJ-123"), key prefix (e.g. "PROJ"), or summary text
      */
-    /** Cached sprint tickets — loaded once, reused for fast # autocomplete. */
+    /** Cached sprint tickets — pre-populated by Sprint tab via EventBus, or loaded on first use. */
     @Volatile private var cachedSprintTickets: List<JiraTicketData>? = null
     private val sprintTicketsMutex = Mutex()
+
+    /** Called when Sprint tab loads/refreshes data — pre-populates cache so # autocomplete is instant. */
+    fun onSprintDataLoaded(tickets: List<JiraTicketData>) {
+        cachedSprintTickets = tickets
+        LOG.info("MentionSearchProvider: cache pre-populated with ${tickets.size} sprint tickets from Sprint tab")
+    }
 
     suspend fun searchTickets(query: String): String {
         return try {

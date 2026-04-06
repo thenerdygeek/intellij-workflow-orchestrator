@@ -116,7 +116,10 @@ export const MentionDropdown = memo(function MentionDropdown({
 
   return (
     <div className="absolute bottom-full left-0 mb-1 min-w-[420px] max-w-[560px] w-max z-50">
+      {/* onMouseDown preventDefault keeps focus in the contenteditable input
+          so insertChip can find the trigger text when onClick fires */}
       <div
+        onMouseDown={(e) => e.preventDefault()}
         className="rounded-lg overflow-hidden"
         style={{
           backgroundColor: 'var(--surface-elevated, var(--toolbar-bg, var(--popover)))',

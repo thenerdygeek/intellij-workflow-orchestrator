@@ -4,7 +4,15 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.ConnectionSettings
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import com.workflow.orchestrator.core.toolwindow.EmptyStatePanel
 import com.workflow.orchestrator.core.toolwindow.WorkflowTabProvider
 import javax.swing.JComponent
@@ -43,6 +51,20 @@ class AgentTabProvider : WorkflowTabProvider {
         val mentionSearchProvider = MentionSearchProvider(project)
         dashboard.setMentionSearchProvider(mentionSearchProvider)
         controller.setMentionSearchProvider(mentionSearchProvider)
+
+        // Subscribe to Sprint tab data so # ticket autocomplete is instant (no re-fetch)
+        val eventBus = project.getService(EventBus::class.java)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        scope.launch {
+            eventBus.events.collect { event ->
+                if (event is WorkflowEvent.SprintDataLoaded) {
+                    mentionSearchProvider.onSprintDataLoaded(event.tickets)
+                }
+            }
+        }
+        (project as? Disposable)?.let {
+            Disposer.register(it, Disposable { scope.cancel() })
+        }
 
         // Register controller in registry for cross-module access (e.g., AgentChatRedirect)
         AgentControllerRegistry.getInstance(project).controller = controller

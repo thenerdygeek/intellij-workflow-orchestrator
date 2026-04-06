@@ -548,8 +548,13 @@ export const InputBar = memo(function InputBar() {
       }
     } else {
       // If # trigger just ended (user pressed space) and the query looks like a ticket key,
-      // auto-create a pending chip and validate it asynchronously
+      // auto-create a pending chip and validate it asynchronously.
+      // IMPORTANT: Clear prevTicketQueryRef BEFORE insertChip because insertChip calls
+      // fireChange() internally, which re-invokes this callback recursively. If we don't
+      // clear first, the recursive call sees the stale query and calls validateTicket a
+      // second time, creating an orphaned timeout that removes the chip after 5s.
       const prevQuery = prevTicketQueryRef.current;
+      prevTicketQueryRef.current = '';
       if (prevQuery && /^[A-Za-z]+-\d+$/.test(prevQuery)) {
         const ticketKey = prevQuery.toUpperCase();
         const mention: Mention = { type: 'ticket', label: ticketKey, path: ticketKey };
@@ -558,7 +563,6 @@ export const InputBar = memo(function InputBar() {
         // Async validation via Kotlin bridge
         validateTicket(ticketKey);
       }
-      prevTicketQueryRef.current = '';
       setShowMentions(false); setShowSkills(false); setShowTickets(false);
       setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
     }
@@ -597,14 +601,15 @@ export const InputBar = memo(function InputBar() {
       }
     };
 
-    // Call Kotlin bridge to validate — if bridge not available, strip chip immediately
+    // Call Kotlin bridge to validate — if bridge not available, keep chip as pending
+    // (the ticket key will still be sent as a mention; LLM can self-fetch via tools)
     if (window._validateTicket) {
       window._validateTicket(ticketKey, callbackKey);
     } else {
       resolved = true;
       clearTimeout(timeoutId);
       delete (window as any)[callbackKey];
-      richInputRef.current?.removeChipByLabel?.(ticketKey);
+      // Don't remove the chip — leave it pending so the user sees their ticket reference
     }
   }, []);
 
