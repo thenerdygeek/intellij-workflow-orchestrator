@@ -137,8 +137,7 @@ export const MentionDropdown = memo(function MentionDropdown({
         ) : (
           <div
             ref={listRef}
-            className="max-h-64 overflow-y-auto p-1"
-            style={{ scrollbarWidth: 'thin' }}
+            className="max-h-64 overflow-y-auto p-1 dropdown-scroll"
           >
             {/* Empty query: label the section as open tabs */}
             {!query && groups.some(g => g.type === 'file') && (

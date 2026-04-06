@@ -125,8 +125,7 @@ export const TicketDropdown = memo(function TicketDropdown({
         ) : (
           <div
             ref={listRef}
-            className="max-h-64 overflow-y-auto p-1"
-            style={{ scrollbarWidth: 'thin' }}
+            className="max-h-72 overflow-y-auto p-1 dropdown-scroll"
           >
             {results.map((r, i) => {
               const highlighted = i === selectedIndex;

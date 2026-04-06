@@ -85,6 +85,19 @@ code, pre, .font-mono {
   scrollbar-color: color-mix(in srgb, var(--fg, #ccc) 15%, transparent) transparent;
 }
 
+/* Dropdown scrollbar — more visible than the global 15% thumb */
+.dropdown-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg, #ccc) 30%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.dropdown-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg, #ccc) 50%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 /* ============================================================
    CODE BLOCK LINE HIGHLIGHTS & ANNOTATIONS
    ============================================================ */

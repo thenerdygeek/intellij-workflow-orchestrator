@@ -273,6 +273,13 @@ export function installMockBridge(): void {
       { type: 'ticket', label: 'PROJ-125', path: 'PROJ-125', description: 'Update API documentation', icon: 'In Review' },
       { type: 'ticket', label: 'PROJ-120', path: 'PROJ-120', description: 'Refactor auth middleware', icon: 'Done' },
       { type: 'ticket', label: 'PROJ-118', path: 'PROJ-118', description: 'Performance audit findings', icon: 'In Progress' },
+      { type: 'ticket', label: 'PROJ-117', path: 'PROJ-117', description: 'Migrate user service to gRPC', icon: 'In Progress' },
+      { type: 'ticket', label: 'PROJ-116', path: 'PROJ-116', description: 'Add retry logic to payment flow', icon: 'To Do' },
+      { type: 'ticket', label: 'PROJ-115', path: 'PROJ-115', description: 'Fix flaky integration tests', icon: 'In Progress' },
+      { type: 'ticket', label: 'PROJ-114', path: 'PROJ-114', description: 'Upgrade Spring Boot to 3.4', icon: 'To Do' },
+      { type: 'ticket', label: 'PROJ-113', path: 'PROJ-113', description: 'Add rate limiting to public API', icon: 'In Review' },
+      { type: 'ticket', label: 'PROJ-112', path: 'PROJ-112', description: 'Dashboard widget for deploy status', icon: 'To Do' },
+      { type: 'ticket', label: 'PROJ-111', path: 'PROJ-111', description: 'Implement SSO with SAML', icon: 'In Progress' },
     ];
     const q = query.toLowerCase();
     const filtered = q
