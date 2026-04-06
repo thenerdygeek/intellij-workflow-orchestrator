@@ -17,6 +17,8 @@ export interface Message {
   artifact?: ArtifactState;
   /** True if this message's changes have been rolled back */
   rolledBack?: boolean;
+  /** Context mentions (file, ticket, skill, etc.) — rendered as chips in user bubbles */
+  mentions?: Mention[];
 }
 
 // ── Sub-Agent types ──

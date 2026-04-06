@@ -88,6 +88,7 @@ class AgentCefPanel(
     private var killSubAgentQuery: JBCefJSQuery? = null
     private var revertCheckpointQuery: JBCefJSQuery? = null
     private var cancelSteeringQuery: JBCefJSQuery? = null
+    private var retryLastTaskQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
@@ -133,6 +134,7 @@ class AgentCefPanel(
     var onNavigateToFile: ((String, Int) -> Unit)? = null
 
     var onCancelTask: (() -> Unit)? = null
+    var onRetryLastTask: (() -> Unit)? = null
     var onNewChat: (() -> Unit)? = null
     var onSendMessage: ((String) -> Unit)? = null
     var onChangeModel: ((String) -> Unit)? = null
@@ -465,6 +467,9 @@ class AgentCefPanel(
         cancelSteeringQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
         }
+        retryLastTaskQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
+            addHandler { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
+        }
         processInputQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
             addHandler { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
         }
@@ -653,6 +658,10 @@ class AgentCefPanel(
                         val cancelJs = q.inject("id")
                         js("window._cancelSteering = function(id) { $cancelJs }")
                     }
+                    retryLastTaskQuery?.let { q ->
+                        val retryJs = q.inject("''")
+                        js("window._retryLastTask = function() { $retryJs }")
+                    }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
                     // Then flush pending calls (they can now execute)
@@ -676,8 +685,16 @@ class AgentCefPanel(
         callJs("startSession(${jsonStr(task)})")
     }
 
+    fun startSessionWithMentions(task: String, mentionsJson: String) {
+        callJs("startSessionWithMentions(${jsonStr(task)}, ${jsonStr(mentionsJson)})")
+    }
+
     fun appendUserMessage(text: String) {
         callJs("appendUserMessage(${jsonStr(text)})")
+    }
+
+    fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
+        callJs("appendUserMessageWithMentions(${jsonStr(text)}, ${jsonStr(mentionsJson)})")
     }
 
     fun completeSession(
@@ -1221,6 +1238,7 @@ class AgentCefPanel(
         killSubAgentQuery?.dispose()
         revertCheckpointQuery?.dispose()
         cancelSteeringQuery?.dispose()
+        retryLastTaskQuery?.dispose()
         processInputQuery?.dispose()
         browser?.dispose()
         undoQuery = null
@@ -1264,6 +1282,7 @@ class AgentCefPanel(
         killSubAgentQuery = null
         revertCheckpointQuery = null
         cancelSteeringQuery = null
+        retryLastTaskQuery = null
         processInputQuery = null
         browser = null
     }

@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { Message } from '@/bridge/types';
+import type { Message, Mention } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
@@ -11,6 +11,82 @@ import {
 } from '@/components/ui/prompt-kit/message';
 import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
+
+// ── Mention chip rendering for user message bubbles ──
+
+const mentionChipColors: Record<string, { color: string; bg: string; border: string }> = {
+  file:   { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
+  folder: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.2)' },
+  symbol: { color: 'var(--accent-search, #a78bfa)', bg: 'color-mix(in srgb, var(--accent-search, #a78bfa) 10%, transparent)', border: 'color-mix(in srgb, var(--accent-search, #a78bfa) 25%, transparent)' },
+  ticket: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
+};
+const defaultMentionColor = { color: 'var(--fg-secondary)', bg: 'var(--chip-bg, rgba(255,255,255,0.06))', border: 'var(--chip-border, rgba(255,255,255,0.1))' };
+
+/** Prefix character for a mention type — shared between chip rendering and content splitting. */
+function mentionPrefix(type: string): string {
+  return type === 'skill' ? '/' : type === 'ticket' ? '#' : '@';
+}
+
+function MentionChip({ mention }: { mention: Mention }) {
+  const colors = mentionChipColors[mention.type] ?? defaultMentionColor;
+  return (
+    <span
+      className="inline-flex items-center rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline"
+      style={{ color: colors.color, background: colors.bg, border: `1px solid ${colors.border}`, lineHeight: '1.6' }}
+      title={mention.path || mention.label}
+    >
+      {mentionPrefix(mention.type)}{mention.label}
+    </span>
+  );
+}
+
+type Segment = { type: 'text'; text: string } | { type: 'chip'; mention: Mention };
+
+/**
+ * Split content text into text segments and chip segments at mention markers.
+ *
+ * Limitation: splits on exact string match of the marker (e.g., "@AuthService.kt").
+ * Could false-positive if the same substring appears naturally in text. In practice
+ * this is rare because: (a) labels are filenames/ticket-keys, not common words,
+ * (b) the display text is constructed by the input bar which places markers at exact
+ * positions, and (c) each mention is consumed on first match only.
+ * A future improvement could add positional offsets to mentions for precise splitting.
+ */
+function splitContentWithMentions(content: string, mentions: Mention[]): Segment[] {
+  let segments: Segment[] = [{ type: 'text', text: content }];
+
+  for (const mention of mentions) {
+    const marker = `${mentionPrefix(mention.type)}${mention.label}`;
+    const next: Segment[] = [];
+    for (const seg of segments) {
+      if (seg.type === 'chip') { next.push(seg); continue; }
+      const parts = seg.text.split(marker);
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        if (part) next.push({ type: 'text', text: part });
+        if (i < parts.length - 1) next.push({ type: 'chip', mention });
+      }
+    }
+    segments = next;
+  }
+  return segments;
+}
+
+function UserContent({ content, mentions }: { content: string; mentions?: Mention[] }) {
+  if (!mentions || mentions.length === 0) {
+    return <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{content}</p>;
+  }
+  const segments = splitContentWithMentions(content, mentions);
+  return (
+    <p className="text-[13px] leading-relaxed whitespace-pre-wrap">
+      {segments.map((seg, i) =>
+        seg.type === 'text'
+          ? <span key={i}>{seg.text}</span>
+          : <MentionChip key={i} mention={seg.mention} />
+      )}
+    </p>
+  );
+}
 
 interface AgentMessageProps {
   message: Message;
@@ -109,7 +185,7 @@ export const AgentMessage = memo(function AgentMessage({
         )}
 
         {isUser ? (
-          <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{content}</p>
+          <UserContent content={content} mentions={message.mentions} />
         ) : (
           <MarkdownRenderer content={content} isStreaming={isStreaming} />
         )}

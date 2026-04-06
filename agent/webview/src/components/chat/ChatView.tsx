@@ -533,8 +533,9 @@ export const ChatView = memo(function ChatView() {
                 border: '1px solid var(--border)',
               }}
               onClick={() => {
-                const msg = retryMessage;
-                useChatStore.getState().sendMessage(msg, []);
+                import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
+                  kotlinBridge.retryLastTask();
+                });
               }}
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

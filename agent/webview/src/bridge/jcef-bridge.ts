@@ -33,8 +33,24 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   startSession(task: string) {
     stores?.getChatStore().startSession(task);
   },
+  startSessionWithMentions(task: string, mentionsJson: string) {
+    try {
+      const mentions = JSON.parse(mentionsJson);
+      stores?.getChatStore().startSession(task, mentions);
+    } catch {
+      stores?.getChatStore().startSession(task);
+    }
+  },
   appendUserMessage(text: string) {
     stores?.getChatStore().addMessage('user', text);
+  },
+  appendUserMessageWithMentions(text: string, mentionsJson: string) {
+    try {
+      const mentions = JSON.parse(mentionsJson);
+      stores?.getChatStore().addMessage('user', text, mentions);
+    } catch {
+      stores?.getChatStore().addMessage('user', text);
+    }
   },
   endStream() {
     stores?.getChatStore().endStream();
@@ -356,7 +372,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
               messages[messages.length - 1].artifact = msg.artifact;
             }
           } else {
-            store.addMessage(msg.role, msg.content || '');
+            store.addMessage(msg.role, msg.content || '', msg.mentions);
           }
         }
       }
@@ -430,6 +446,7 @@ export const kotlinBridge = {
     const payload = JSON.stringify({ text, mentions: JSON.parse(mentionsJson) });
     callKotlin('_sendMessageWithMentions', payload);
   },
+  retryLastTask(): void { callKotlin('_retryLastTask'); },
 };
 
 // ═══ Editor Tab Popout ═══

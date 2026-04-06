@@ -211,6 +211,10 @@ class AgentDashboardPanel(
         cefPanel?.onPromptSubmitted = onPromptSubmitted
     }
 
+    fun setCefRetryCallback(onRetry: () -> Unit) {
+        cefPanel?.onRetryLastTask = onRetry
+    }
+
     fun setCefPlanCallbacks(onApprove: () -> Unit, onRevise: (String) -> Unit) {
         cefPanel?.onPlanApproved = onApprove
         cefPanel?.onPlanRevised = onRevise
@@ -388,8 +392,22 @@ class AgentDashboardPanel(
         recordReplay { p -> p.startSession(task) }
     }
 
+    fun startSessionWithMentions(task: String, mentionsJson: String) {
+        cefPanel?.startSessionWithMentions(task, mentionsJson)
+            ?: fallbackPanel?.startSession(task)
+        mirrors.forEach { it.startSession(task) }
+        recordReplay { p -> p.startSession(task) }
+    }
+
     fun appendUserMessage(text: String) {
         cefPanel?.appendUserMessage(text) ?: fallbackPanel?.appendUserMessage(text)
+        mirrors.forEach { it.appendUserMessage(text) }
+        recordReplay { p -> p.appendUserMessage(text) }
+    }
+
+    fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
+        cefPanel?.appendUserMessageWithMentions(text, mentionsJson)
+            ?: fallbackPanel?.appendUserMessage(text)
         mirrors.forEach { it.appendUserMessage(text) }
         recordReplay { p -> p.appendUserMessage(text) }
     }

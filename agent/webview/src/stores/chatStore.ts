@@ -112,9 +112,9 @@ interface ChatState {
   restoredInputText: string | null;
 
   // Actions
-  startSession(task: string): void;
+  startSession(task: string, mentions?: Mention[]): void;
   completeSession(info: SessionInfo): void;
-  addMessage(role: 'user' | 'agent', content: string): void;
+  addMessage(role: 'user' | 'agent', content: string, mentions?: Mention[]): void;
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
@@ -252,12 +252,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   restoredInputText: null,
 
   // Actions
-  startSession(task: string) {
+  startSession(task: string, mentions?: Mention[]) {
     const firstMessage: Message = {
       id: nextId('msg'),
       role: 'user',
       content: task,
       timestamp: Date.now(),
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
     };
     set({
       messages: [firstMessage],
@@ -306,12 +307,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  addMessage(role: 'user' | 'agent', content: string) {
+  addMessage(role: 'user' | 'agent', content: string, mentions?: Mention[]) {
     const message: Message = {
       id: nextId('msg'),
       role,
       content,
       timestamp: Date.now(),
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
     };
     set(state => ({
       messages: [...state.messages, message],
