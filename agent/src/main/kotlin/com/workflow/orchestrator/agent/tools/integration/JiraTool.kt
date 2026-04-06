@@ -42,7 +42,7 @@ Actions and their parameters:
 - get_boards(type?, name_filter?) → List boards (type: scrum|kanban)
 - get_sprint_issues(sprint_id) → Issues in sprint
 - get_board_issues(board_id) → Issues on board
-- search_issues(text, max_results?) → JQL/text search (default 20 results)
+- search_issues(text, max_results?, current_user_only?) → JQL/text search (default 20 results, default current user only)
 - search_tickets(jql, max_results?) → Run raw JQL query
 - get_linked_prs(key) → PRs linked to issue
 - get_dev_branches(key) → Dev branches for issue
@@ -112,6 +112,10 @@ description optional: for approval dialog on write actions.
             "max_results" to ParameterProperty(
                 type = "string",
                 description = "Max results (default 20 for search_issues, default 8 for search_tickets)"
+            ),
+            "current_user_only" to ParameterProperty(
+                type = "string",
+                description = "Filter to current user's tickets only: 'true' (default) or 'false' — for search_issues"
             ),
             "attachment_id" to ParameterProperty(
                 type = "string",
@@ -316,8 +320,9 @@ description optional: for approval dialog on write actions.
                 val text = params["text"]?.jsonPrimitive?.content
                     ?: return missingParam("text")
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
+                val currentUserOnly = params["current_user_only"]?.jsonPrimitive?.content?.lowercase() != "false"
                 ToolValidation.validateNotBlank(text, "text")?.let { return it }
-                service.searchIssues(text, maxResults).toAgentToolResult()
+                service.searchIssues(text, maxResults, currentUserOnly).toAgentToolResult()
             }
 
             "get_dev_branches" -> {

@@ -556,7 +556,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
-    override suspend fun searchIssues(text: String, maxResults: Int): ToolResult<List<JiraTicketData>> {
+    override suspend fun searchIssues(text: String, maxResults: Int, currentUserOnly: Boolean): ToolResult<List<JiraTicketData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Jira not configured. Cannot search issues.",
@@ -564,7 +564,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.searchIssues(text, maxResults)) {
+        return when (val result = api.searchIssues(text, maxResults, currentUserOnly)) {
             is ApiResult.Success -> {
                 val tickets = result.data.map { it.toTicketData() }
                 ToolResult.success(

@@ -60,8 +60,8 @@ interface JiraService {
     /** Get unresolved issues on a board. */
     suspend fun getBoardIssues(boardId: Int): ToolResult<List<JiraTicketData>>
 
-    /** Full-text search for issues assigned to current user. */
-    suspend fun searchIssues(text: String, maxResults: Int = 20): ToolResult<List<JiraTicketData>>
+    /** Full-text search for issues. currentUserOnly=true (default) filters to your tickets. */
+    suspend fun searchIssues(text: String, maxResults: Int = 20, currentUserOnly: Boolean = true): ToolResult<List<JiraTicketData>>
 
     /** Get branches linked to an issue via Jira dev-status API. */
     suspend fun getDevStatusBranches(issueId: String): ToolResult<List<DevStatusBranchData>>
