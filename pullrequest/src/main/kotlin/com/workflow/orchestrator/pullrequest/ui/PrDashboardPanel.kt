@@ -216,19 +216,23 @@ class PrDashboardPanel(
                 ?: currentAllRepoPrs.find { it.id == prId }
             if (prDetail != null) {
                 detailPanel.showPrDetail(prDetail)
-                // Emit PrSelected event so other tabs (Quality) can update branch context
+                // Emit PrSelected event so other tabs (Build, Quality) can update context
                 val fromBranch = prDetail.fromRef?.displayId ?: ""
                 val toBranch = prDetail.toRef?.displayId ?: ""
+                val repoName = prDetail.repoName ?: ""
                 if (fromBranch.isNotBlank()) {
+                    // Resolve RepoConfig to get bambooPlanKey and sonarProjectKey
+                    val repoConfig = PluginSettings.getInstance(project).getRepos()
+                        .find { it.displayLabel == repoName }
                     scope.launch {
                         project.getService(EventBus::class.java)
                             .emit(WorkflowEvent.PrSelected(
                                 prId = prId,
                                 fromBranch = fromBranch,
                                 toBranch = toBranch,
-                                repoName = "",
-                                bambooPlanKey = null,
-                                sonarProjectKey = null,
+                                repoName = repoName,
+                                bambooPlanKey = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() },
+                                sonarProjectKey = repoConfig?.sonarProjectKey?.takeIf { it.isNotBlank() },
                             ))
                     }
                 }
