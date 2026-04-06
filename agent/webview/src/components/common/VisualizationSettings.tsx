@@ -16,9 +16,10 @@ const TYPE_LABELS: Record<VisualizationType, string> = {
   progress: 'Progress Indicators',
   timeline: 'Timeline',
   image: 'Image Viewer',
+  artifact: 'Interactive Artifact',
 };
 
-const VIZ_TYPES: VisualizationType[] = ['mermaid', 'chart', 'flow', 'math', 'diff', 'interactiveHtml', 'table', 'output', 'progress', 'timeline', 'image'];
+const VIZ_TYPES: VisualizationType[] = ['mermaid', 'chart', 'flow', 'math', 'diff', 'interactiveHtml', 'table', 'output', 'progress', 'timeline', 'image', 'artifact'];
 
 interface TypeSectionProps {
   type: VisualizationType;
