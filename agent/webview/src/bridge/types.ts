@@ -13,6 +13,8 @@ export interface Message {
   subAgent?: SubAgentState;
   /** File path associated with this message (e.g., from edit_file tool calls) */
   filePath?: string;
+  /** Artifact state — present on messages with rendered artifacts */
+  artifact?: ArtifactState;
   /** True if this message's changes have been rolled back */
   rolledBack?: boolean;
 }
@@ -250,7 +252,12 @@ export interface RollbackInfo {
 
 // ── Visualization settings ──
 
-export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline' | 'image';
+export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline' | 'image' | 'artifact';
+
+export interface ArtifactState {
+    title: string;
+    source: string;
+}
 
 export interface VisualizationConfig {
   enabled: boolean;
