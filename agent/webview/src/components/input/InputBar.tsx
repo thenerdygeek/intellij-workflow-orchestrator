@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, ListChecks, File, Folder, Hash, SquareKanban } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
@@ -71,7 +71,7 @@ const ModelChip = memo(function ModelChip({ model }: { model: string }) {
         <Button variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[12px] font-medium whitespace-nowrap">
           <ProviderLogo provider={activeItem?.provider} size={12} />
           <span>{model || 'Model'}</span>
-          {activeItem?.thinking && <Sparkles className="h-3 w-3 shrink-0" style={{ color: 'var(--accent, #60a5fa)' }} />}
+          {activeItem?.thinking && <Brain className="h-3 w-3 shrink-0" style={{ color: 'var(--accent, #60a5fa)' }} />}
           <ChevronDown className="h-2.5 w-2.5" />
         </Button>
       </DropdownMenuTrigger>
@@ -87,7 +87,7 @@ const ModelChip = memo(function ModelChip({ model }: { model: string }) {
                   <span className="text-[12px]">{m.name}</span>
                   {m.provider && <span className="text-[10px] capitalize" style={{ color: 'var(--fg-muted)' }}>{m.provider}</span>}
                 </div>
-                {m.thinking && <Sparkles className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
+                {m.thinking && <Brain className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
               </DropdownMenuItem>
             ))
         }
