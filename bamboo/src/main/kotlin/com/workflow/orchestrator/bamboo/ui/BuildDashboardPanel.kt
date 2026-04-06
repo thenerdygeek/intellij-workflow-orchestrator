@@ -190,7 +190,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 activePlanKey = detectedKey
                 val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
                 monitorService.switchBranch(detectedKey, branchName, interval)
-                invokeLater { headerLabel.text = "Plan: $detectedKey / $branchName" }
+                invokeLater {
+                    hintLabel.isVisible = false
+                    splitter.isVisible = true
+                    headerLabel.text = "Plan: $detectedKey / $branchName"
+                }
                 return
             }
         }
@@ -436,6 +440,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 invokeLater {
                     if (state != null) {
                         loadingIcon.isVisible = false
+                        hintLabel.isVisible = false
+                        splitter.isVisible = true
                         latestBuildNumber = state.buildNumber
 
                         // Only update header/stages if not viewing a historical build
@@ -547,7 +553,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         repoSelector.selectedIndex = repoIndex
         suppressRepoSelectorListener = false
 
-        // Load builds for this PR
+        // Update PrBar and load builds for this PR
+        prBar.showPrInfo(event.prId, event.fromBranch, event.toBranch)
         loadBuildsForContext(event.repoName, event.fromBranch, event.bambooPlanKey)
     }
 
