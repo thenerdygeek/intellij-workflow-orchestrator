@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         main: resolve(__dirname, 'index.html'),
         'plan-editor': resolve(__dirname, 'plan-editor.html'),
+        'artifact-sandbox': resolve(__dirname, 'public/artifact-sandbox.html'),
         // Showcase is dev-only — excluded from production build
         ...(mode === 'development' ? { showcase: resolve(__dirname, 'showcase.html') } : {}),
       },
@@ -28,6 +29,7 @@ export default defineConfig(({ mode }) => ({
           if (id.includes('katex')) return 'katex'
           if (id.includes('chart.js')) return 'chartjs'
           if (id.includes('diff2html')) return 'diff2html'
+          if (id.includes('recharts')) return 'recharts'
         },
       },
     },
