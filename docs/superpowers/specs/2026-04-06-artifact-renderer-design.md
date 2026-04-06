@@ -1,12 +1,18 @@
 # Artifact Renderer — Interactive JSX Visualizations in Agent Chat
 
 **Date:** 2026-04-06
-**Status:** Approved
-**Scope:** Agent module webview only (no Kotlin backend changes)
+**Status:** Approved (Rev 2 — added render_artifact tool)
+**Scope:** Agent module — webview rendering + one new Kotlin tool + bridge method
 
 ## Summary
 
-Add the ability for AI agents to output live, interactive React components in the chat. When the LLM writes a `react` code fence, the webview transpiles and renders it as an interactive artifact — clickable class diagrams, animated sequence diagrams, sortable tables, charts, architecture overviews — all linked to IDE source navigation.
+Add the ability for AI agents to produce live, interactive React components in the chat. The agent calls `render_artifact` (a tool alongside `attempt_completion`) when a response benefits from visualization. The webview transpiles the JSX and renders it as an interactive artifact — clickable class diagrams, animated sequence diagrams, sortable tables, charts, architecture overviews — all linked to IDE source navigation.
+
+Two trigger paths:
+1. **Tool path (primary):** Agent calls `render_artifact(title, source)` → Kotlin pushes to webview → ArtifactRenderer renders in chat
+2. **Code fence path (fallback):** Agent outputs ` ```react ` code fence in markdown → MarkdownRenderer routes to ArtifactRenderer
+
+The tool path is primary because it's structured, reliable, and gives the LLM an explicit decision point. The code fence path is the fallback for sub-agents (who communicate via `attempt_completion` text) and for cases where the LLM includes a visualization inline in its explanation.
 
 Uses the same architecture as Claude.ai Artifacts: **react-runner + Sucrase in a sandboxed iframe**, ~300KB total, zero network dependency, everything inlined from plugin JAR resources.
 
@@ -14,13 +20,20 @@ Uses the same architecture as Claude.ai Artifacts: **react-runner + Sucrase in a
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: LLM Output                                        │
-│  Agent outputs ```react code fence with JSX source           │
-│  MarkdownRenderer detects it, routes to ArtifactRenderer     │
+│  Trigger Path 1: render_artifact Tool                        │
+│  LLM calls render_artifact(title, source)                    │
+│  → AgentLoop executes tool                                   │
+│  → Tool returns ToolResult with artifact metadata             │
+│  → AgentController pushes to webview via bridge               │
 └────────────────────────────┬────────────────────────────────┘
+                             │
+│  Trigger Path 2: Code Fence (fallback)                       │
+│  LLM outputs ```react code fence in markdown                 │
+│  → MarkdownRenderer detects it, routes to ArtifactRenderer   │
+└────────────────────────────┤
                              │ source string
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 2: ArtifactRenderer (React component in chat DOM)     │
+│  ArtifactRenderer (React component in chat DOM)              │
 │  - Wraps in RichBlock (header, expand, fullscreen, copy)     │
 │  - Inline preview (constrained maxHeight: 400px)             │
 │  - Click to expand → fullscreen dialog or editor tab         │
@@ -28,7 +41,7 @@ Uses the same architecture as Claude.ai Artifacts: **react-runner + Sucrase in a
 └────────────────────────────┬────────────────────────────────┘
                              │ postMessage({type:'render', source, scope})
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 3: Sandbox iframe (artifact-sandbox.html)             │
+│  Sandbox iframe (artifact-sandbox.html)                      │
 │  - Loaded from plugin JAR resources (zero network)           │
 │  - Contains: React 18 UMD + Sucrase + react-runner           │
 │  - Pre-loaded libs: Lucide React icons, Recharts             │
@@ -37,11 +50,159 @@ Uses the same architecture as Claude.ai Artifacts: **react-runner + Sucrase in a
 └────────────────────────────┬────────────────────────────────┘
                              │ postMessage({type:'bridge', action, args})
 ┌────────────────────────────▼────────────────────────────────┐
-│  Layer 4: Bridge Relay (in ArtifactRenderer)                 │
+│  Bridge Relay (in ArtifactRenderer)                          │
 │  - Listens for bridge calls from iframe                      │
 │  - Routes to safe bridge functions (navigateToFile, theme)   │
 │  - Blocks all unsafe calls                                   │
 └─────────────────────────────────────────────────────────────┘
+```
+
+## The render_artifact Tool
+
+### Why a Tool (Not Just Code Fences)
+
+- **Explicit decision point:** The LLM calls a tool — structured, validated, reliable. Code fence conventions (use `react` not `jsx` not `tsx`) are fragile.
+- **Structured metadata:** Title and source as separate parameters. A code fence is just raw source with no title.
+- **Parallels attempt_completion:** The LLM already knows the pattern "when done, call attempt_completion." Adding "when a visual would help, call render_artifact" is natural.
+- **Works alongside text:** The agent gives a text explanation AND optionally calls `render_artifact`. If artifact rendering is disabled, the user still gets the answer.
+
+### Tool Definition (Kotlin)
+
+```kotlin
+class RenderArtifactTool : AgentTool {
+    override val name = "render_artifact"
+    override val description = """Render an interactive React component in the chat as a visual artifact. Use this when your response involves architecture, flows, hierarchies, relationships, or data comparisons that would be clearer as an interactive visual than plain text.
+
+The component renders in a sandboxed iframe with access to:
+- bridge.navigateToFile(path, line) — clicking opens file in IDE editor
+- bridge.isDark, bridge.colors — theme-aware rendering
+- Lucide React icons (FileCode, GitBranch, Database, Shield, Zap, Server, etc.)
+- Recharts (BarChart, PieChart, LineChart, AreaChart, Tooltip, Legend, etc.)
+- React hooks (useState, useEffect, useCallback, useMemo, useRef)
+
+Use render_artifact when:
+- Response describes 3+ entities with relationships (architecture, dependencies)
+- A multi-step flow (request handling, data pipeline, auth chain)
+- Data comparisons that benefit from charts (coverage, metrics, before/after)
+- User explicitly asked for a visual ("show me", "diagram", "visualize")
+
+Do NOT use when:
+- Answer is a short text explanation (just respond normally)
+- Data has fewer than 3 items (just list them in text)
+- User asked a yes/no or simple factual question
+- Text is sufficient to convey the answer
+
+This tool works alongside your text response — give the text explanation first, then call render_artifact for the visual. If the artifact fails to render, the user still has your text."""
+
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "title" to ParameterProperty(
+                type = "string",
+                description = "Short title for the artifact (e.g., 'Authentication Flow', 'Module Dependencies')"
+            ),
+            "source" to ParameterProperty(
+                type = "string",
+                description = "JSX source code. Must export a default function component that receives { bridge } prop. All data must be inline."
+            )
+        ),
+        required = listOf("title", "source")
+    )
+
+    override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.CODER, WorkerType.ANALYZER)
+}
+```
+
+### Tool Execution Flow
+
+1. LLM calls `render_artifact(title="Auth Flow", source="export default function...")`
+2. `RenderArtifactTool.execute()` validates parameters, returns `ToolResult` with:
+   - `content`: `"[Artifact: Auth Flow] Rendered interactive component."` (for LLM context)
+   - `artifact`: `ArtifactPayload(title, source)` (new field on ToolResult for UI rendering)
+3. `AgentLoop` detects `artifact` on the tool result → calls `onArtifactRendered` callback
+4. `AgentController.onArtifactRendered()` → calls `dashboard.renderArtifact(title, source)`
+5. Webview receives → creates an artifact message in the chat → ArtifactRenderer mounts
+
+### ToolResult Extension
+
+```kotlin
+data class ToolResult(
+    val content: String,
+    val summary: String,
+    // ... existing fields ...
+    val artifact: ArtifactPayload? = null,  // NEW — triggers UI artifact rendering
+)
+
+data class ArtifactPayload(
+    val title: String,
+    val source: String,
+)
+```
+
+### Kotlin → JS Bridge Method
+
+```kotlin
+// AgentCefPanel.kt
+fun renderArtifact(title: String, source: String) {
+    val payload = buildJsonObject {
+        put("title", title)
+        put("source", source)
+    }.toString()
+    callJs("renderArtifact(${jsonStr(payload)})")
+}
+```
+
+### JS Bridge Handler
+
+```typescript
+// jcef-bridge.ts
+renderArtifact(payload: string) {
+    stores?.getChatStore().addArtifact(payload);
+},
+```
+
+### Chat Store Action
+
+```typescript
+// chatStore.ts
+addArtifact(payload: string) {
+    const { title, source } = JSON.parse(payload);
+    const msgId = nextId('artifact');
+    set((state) => ({
+        messages: [...state.messages, {
+            id: msgId,
+            role: 'system',
+            content: `artifact:${title}`,
+            timestamp: Date.now(),
+            artifact: { title, source },
+        }],
+    }));
+},
+```
+
+### ChatView Rendering
+
+```typescript
+// ChatView.tsx — in the message rendering logic
+if (msg.artifact) {
+    return (
+        <ErrorBoundary key={msg.id}>
+            <ArtifactRenderer source={msg.artifact.source} title={msg.artifact.title} />
+        </ErrorBoundary>
+    );
+}
+```
+
+## Code Fence Path (Fallback)
+
+The code fence path remains for:
+- **Sub-agents:** They include ` ```react ` fences in `attempt_completion` text, which the parent forwards in its markdown response
+- **Inline explanations:** The LLM might include a small visualization inline in its text explanation
+
+```typescript
+// MarkdownRenderer.tsx
+case 'react':
+case 'artifact':
+    return <ArtifactRenderer source={codeString} />;
 ```
 
 ## Sandbox HTML
@@ -119,17 +280,25 @@ const scope = {
 
 **File:** `agent/webview/src/components/rich/ArtifactRenderer.tsx`
 
+### Props
+
+```typescript
+interface ArtifactRendererProps {
+    source: string;
+    title?: string;  // From tool path; absent for code fence path
+}
+```
+
 ### Lifecycle
 
-1. MarkdownRenderer sees ` ```react ` code fence
-2. ArtifactRenderer mounts with `source` prop
-3. Creates iframe pointing to `artifact-sandbox.html`
-4. Waits for iframe `ready` message
-5. Sends `{ type: 'render', source, scope }` via postMessage
-6. iframe transpiles with Sucrase, renders with react-runner
-7. iframe sends `{ type: 'rendered', height }` → auto-resize iframe
-8. On error → RichBlock shows error state with "Show source" button
-9. On bridge call → validates against allowlist → routes to kotlinBridge
+1. ArtifactRenderer mounts with `source` (and optional `title`) prop
+2. Creates iframe pointing to `artifact-sandbox.html`
+3. Waits for iframe `ready` message
+4. Sends `{ type: 'render', source, scope }` via postMessage
+5. iframe transpiles with Sucrase, renders with react-runner
+6. iframe sends `{ type: 'rendered', height }` → auto-resize iframe
+7. On error → RichBlock shows error state with "Show source" button
+8. On bridge call → validates against allowlist → routes to kotlinBridge
 
 ### States
 
@@ -153,113 +322,84 @@ const scope = {
 
 iframe sends `document.body.scrollHeight` after every render. ArtifactRenderer sets iframe height to match — no inner scrollbar. RichBlock's maxHeight constraint handles overflow with "Show more" button.
 
-## MarkdownRenderer Integration
+## Agent Prompt Guidance
 
-**File:** `agent/webview/src/components/markdown/MarkdownRenderer.tsx`
+### Tool Heuristics (in tool description)
 
-One new case in the existing code fence switch:
+The `render_artifact` tool description includes explicit heuristics:
 
-```typescript
-case 'react':
-case 'artifact':
-  return <ArtifactRenderer source={codeString} />;
-```
+**Use when:**
+- Response describes 3+ entities with relationships (architecture, dependencies)
+- A multi-step flow (request handling, data pipeline, auth chain)
+- Data comparisons that benefit from charts (coverage, metrics, before/after)
+- User explicitly asked for a visual ("show me", "diagram", "visualize")
 
-### Streaming Behavior
+**Do NOT use when:**
+- Answer is a short text explanation
+- Data has fewer than 3 items
+- User asked a yes/no or simple factual question
+- Text is sufficient
 
-While the LLM is still generating the JSX (fence unclosed), the existing `closeOpenFences()` function shows it as a syntax-highlighted code block. Once the fence closes, it renders as a live component.
+**Decision is single-LLM, prompt-driven.** No router model. The agent that researched the answer has full context to decide whether visualization helps. Failure is cheap — bad artifact shows error card, text response is still visible.
 
-### Settings
+### System prompt
 
-Add to `VisualizationType` union and settings store:
-
-```typescript
-artifact: { enabled: true, autoRender: true, defaultExpanded: false, maxHeight: 400 }
-```
-
-Users can disable artifact rendering (falls back to raw JSX code block).
-
-## LLM Component Contract
-
-Components must follow this contract:
-
-```jsx
-// Must export a default function component
-// Receives { bridge } prop
-export default function MyVisualization({ bridge }) {
-  // bridge.navigateToFile(path, line) — open file in IDE
-  // bridge.isDark — boolean, current theme
-  // bridge.colors — { bg, fg, accent, success, error, warning, border, codeBg }
-  // bridge.projectName — string
-
-  // Lucide icons available: FileCode, GitBranch, Database, Shield, etc.
-  // Recharts available: BarChart, PieChart, LineChart, Tooltip, Legend, etc.
-  // React hooks available: useState, useEffect, useCallback, useMemo, useRef
-
-  // ALL DATA MUST BE INLINE — no fetch(), no file reads
-  return (
-    <div>...</div>
-  );
-}
-```
-
-## Agent Prompt Updates
-
-### System prompt (SystemPrompt.kt Capabilities section)
-
-Add a line noting that `react` code fences render as live interactive components with IDE navigation.
+Add capability note in Capabilities section and reference in Subagent Delegation section.
 
 ### Explorer agent
 
-Add a "Visualization" section with:
-- When to produce artifacts (architecture, flows, hierarchies, comparisons)
-- When NOT to (simple answers, short lists)
-- The component contract (default export, bridge prop, inline data)
-- Available libraries (Lucide icons, Recharts)
-- Pattern guidance (sequence vs class vs flowchart vs chart)
+Add "Producing Visualizations" section with when to use, component contract, available libraries, and a code example.
 
 ### Other agents (short note)
 
-code-reviewer, architect-reviewer, performance-engineer, security-auditor:
-"You can output `react` code fences for interactive visualizations. Component receives `{ bridge }` with `navigateToFile(path, line)`, theme colors, Lucide icons, and Recharts."
+code-reviewer, architect-reviewer, performance-engineer, security-auditor: one-line note that `render_artifact` is available.
 
 ## Files Changed/Created
 
 | File | Action | Purpose |
 |------|--------|---------|
+| **Kotlin (agent module)** | | |
+| `agent/.../tools/builtin/RenderArtifactTool.kt` | Create | New tool — validates params, returns artifact payload |
+| `agent/.../tools/ToolResult.kt` | Modify | Add `artifact: ArtifactPayload?` field |
+| `agent/.../AgentService.kt` | Modify | Register render_artifact tool |
+| `agent/.../ui/AgentController.kt` | Modify | Handle artifact callback, push to webview |
+| `agent/.../ui/AgentCefPanel.kt` | Modify | Add `renderArtifact(title, source)` bridge method |
+| `agent/.../loop/AgentLoop.kt` | Modify | Detect artifact on ToolResult, fire callback |
+| `agent/.../prompt/SystemPrompt.kt` | Modify | Add artifact capability note |
+| **Webview** | | |
 | `agent/webview/src/components/rich/ArtifactRenderer.tsx` | Create | Main React component |
-| `agent/src/main/resources/webview/dist/artifact-sandbox.html` | Create | Self-contained sandbox |
+| `agent/webview/public/artifact-sandbox.html` | Create | Self-contained sandbox |
 | `agent/webview/src/components/markdown/MarkdownRenderer.tsx` | Modify | Add `case 'react':` routing |
-| `agent/webview/src/bridge/types.ts` | Modify | Add `'artifact'` to VisualizationType |
+| `agent/webview/src/bridge/types.ts` | Modify | Add `'artifact'` to VisualizationType, add ArtifactState |
+| `agent/webview/src/bridge/jcef-bridge.ts` | Modify | Add `renderArtifact` bridge handler |
+| `agent/webview/src/stores/chatStore.ts` | Modify | Add `addArtifact` action |
 | `agent/webview/src/stores/settingsStore.ts` | Modify | Add artifact visualization config |
-| `agent/src/main/kotlin/com/workflow/orchestrator/agent/prompt/SystemPrompt.kt` | Modify | Add artifact capability note |
+| `agent/webview/src/components/rich/RichBlock.tsx` | Modify | Add artifact to TYPE_META |
+| `agent/webview/src/components/chat/ChatView.tsx` | Modify | Render artifact messages |
+| **Agent configs** | | |
 | `agent/src/main/resources/agents/explorer.md` | Modify | Add visualization guidance |
 | `agent/src/main/resources/agents/code-reviewer.md` | Modify | Short artifact note |
 | `agent/src/main/resources/agents/architect-reviewer.md` | Modify | Short artifact note |
 | `agent/src/main/resources/agents/performance-engineer.md` | Modify | Short artifact note |
 | `agent/src/main/resources/agents/security-auditor.md` | Modify | Short artifact note |
 
-**No Kotlin backend changes.** Zero changes to AgentService, AgentController, AgentCefPanel, SpawnAgentTool, or any tool.
-
 ## Out of Scope
 
-- Multi-file artifacts (each code fence is self-contained)
+- Multi-file artifacts (each artifact is self-contained)
 - Artifact versioning/history
 - User editing of artifacts in-chat
 - Network access from artifacts (no fetch)
 - Persistent state between artifacts
-- New Kotlin bridge methods
-- New agent tools
 - Side panel rendering (future enhancement)
+- Second LLM router for visualization decisions (single-LLM, prompt-driven)
 
 ## Dependencies to Add
 
 ```json
 // agent/webview/package.json
 "dependencies": {
-  "sucrase": "^3.35.0",      // JSX + TypeScript transpilation
-  "react-runner": "^1.0.5"   // Transpile → render thin wrapper
+  "sucrase": "^3.35.0",
+  "react-runner": "^1.0.5",
+  "recharts": "^2.15.0"
 }
-// Lucide React and Recharts are bundled INTO artifact-sandbox.html only,
-// not into the main webview bundle
 ```

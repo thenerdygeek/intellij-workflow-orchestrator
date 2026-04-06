@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Enable AI agents to output live, interactive React components in chat via `react` code fences — transpiled with Sucrase, rendered in a sandboxed iframe with IDE navigation.
+**Goal:** Enable AI agents to produce live, interactive React components in chat — via a `render_artifact` tool (primary) or ` ```react ` code fences (fallback) — transpiled with Sucrase in a sandboxed iframe with IDE source navigation.
 
-**Architecture:** react-runner + Sucrase in a `sandbox="allow-scripts"` iframe. Parent sends JSX source via postMessage, iframe transpiles and renders, sends back height/errors/bridge calls. ArtifactRenderer wraps in RichBlock for expand/fullscreen/copy.
+**Architecture:** Agent calls `render_artifact(title, source)` → Kotlin pushes to webview → ArtifactRenderer creates sandboxed iframe with react-runner + Sucrase → live interactive component with `navigateToFile` bridge. Fallback: ` ```react ` code fence in markdown routed by MarkdownRenderer.
 
-**Tech Stack:** React 18, Sucrase 3.x, react-runner 1.x, Recharts (bundled in sandbox), Lucide React (already in project). Vite build for main webview. Sandbox HTML is a standalone file with all libs inlined.
+**Tech Stack:** Kotlin (new tool + bridge), React 18, Sucrase 3.x, react-runner 1.x, Recharts, Lucide React. Vite build. Sandbox HTML is standalone with all libs inlined.
 
-**Spec:** `docs/superpowers/specs/2026-04-06-artifact-renderer-design.md`
+**Spec:** `docs/superpowers/specs/2026-04-06-artifact-renderer-design.md` (Rev 2)
 
 ---
 
@@ -17,18 +17,18 @@
 **Files:**
 - Modify: `agent/webview/package.json`
 
-- [ ] **Step 1: Add sucrase and react-runner**
+- [ ] **Step 1: Add sucrase, react-runner, and recharts**
 
 ```bash
 cd agent/webview && npm install sucrase@^3.35.0 react-runner@^1.0.5 recharts@^2.15.0
 ```
 
-Note: `lucide-react` is already installed. `recharts` is added here — it will be used inside the sandbox HTML but we install it to get the UMD build and types.
+Note: `lucide-react` is already installed.
 
 - [ ] **Step 2: Verify install**
 
 ```bash
-cd agent/webview && node -e "require('sucrase'); require('react-runner'); console.log('OK')"
+cd agent/webview && node -e "require('sucrase'); require('react-runner'); require('recharts'); console.log('OK')"
 ```
 
 Expected: `OK`
@@ -36,7 +36,7 @@ Expected: `OK`
 - [ ] **Step 3: Commit**
 
 ```bash
-cd agent/webview && git add package.json package-lock.json
+git add agent/webview/package.json agent/webview/package-lock.json
 git commit -m "deps(webview): add sucrase, react-runner, recharts for artifact renderer"
 ```
 
@@ -47,252 +47,30 @@ git commit -m "deps(webview): add sucrase, react-runner, recharts for artifact r
 **Files:**
 - Create: `agent/webview/public/artifact-sandbox.html`
 
-This is the self-contained HTML file that runs inside the iframe. It contains React 18, Sucrase, react-runner, and pre-loaded libraries — all inlined. Zero network dependency.
+Self-contained HTML file with React 18, Sucrase, react-runner inlined. Runs inside sandboxed iframe. Receives JSX source via postMessage, transpiles, renders, reports height/errors/bridge calls back to parent.
 
-- [ ] **Step 1: Write the sandbox HTML**
+- [ ] **Step 1: Write artifact-sandbox.html**
 
-Create `agent/webview/public/artifact-sandbox.html`:
+Create `agent/webview/public/artifact-sandbox.html` with:
+- `<script type="module">` that imports react, react-dom/client, react-runner
+- postMessage listener for `render` and `theme` messages
+- `sendToParent()` helper for `ready`, `rendered`, `error`, `bridge`, `console` messages
+- Error Boundary class component
+- Console interception (forward to parent)
+- ResizeObserver on `#root` to report height changes
+- Theme CSS variable injection from parent messages
+- Bridge scope with `navigateToFile` that sends via postMessage
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    :root { color-scheme: light; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 13px;
-      color: var(--fg, #333);
-      background: transparent;
-      overflow: hidden;
-    }
-    #root { padding: 12px; }
-    #error-display {
-      display: none;
-      padding: 12px;
-      border-radius: 6px;
-      background: rgba(239, 68, 68, 0.1);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      color: #ef4444;
-      font-family: monospace;
-      font-size: 12px;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <div id="error-display"></div>
+Reference the full sandbox code from the spec's architecture section. The sandbox should:
+1. Initialize: import React, ReactDOMClient, react-runner
+2. Create React root on `#root` div
+3. Send `{ type: 'ready' }` to parent
+4. On `render` message: build scope (React hooks + bridge + libraries), render via `react-runner`'s `Runner` component wrapped in ErrorBoundary
+5. On `theme` message: apply CSS variables to `:root`
+6. After every render: report `document.body.scrollHeight` via `{ type: 'rendered', height }`
+7. On error: send `{ type: 'error', phase, message, line }` and show inline error display
 
-  <!--
-    Libraries are loaded via <script> tags that Vite copies from node_modules
-    at build time. For now we use CDN-free dynamic imports inside the script.
-    The actual inlining of UMD builds will be done in Task 3 (build integration).
-    This file bootstraps the protocol and rendering logic.
-  -->
-  <script type="module">
-    // ── State ──
-    let reactRoot = null;
-    let React = null;
-    let ReactDOM = null;
-    let ReactDOMClient = null;
-    let runner = null;
-    let currentScope = {};
-    let bridgeState = { isDark: false, colors: {}, projectName: '' };
-
-    // ── Error display ──
-    function showError(phase, message, line) {
-      const el = document.getElementById('error-display');
-      const rootEl = document.getElementById('root');
-      el.style.display = 'block';
-      rootEl.style.display = 'none';
-      el.textContent = `[${phase}] ${line ? `Line ${line}: ` : ''}${message}`;
-      sendToParent({ type: 'error', phase, message, line });
-    }
-
-    function clearError() {
-      const el = document.getElementById('error-display');
-      const rootEl = document.getElementById('root');
-      el.style.display = 'none';
-      rootEl.style.display = 'block';
-    }
-
-    // ── Console interception ──
-    const originalConsole = { log: console.log, warn: console.warn, error: console.error };
-    ['log', 'warn', 'error'].forEach(level => {
-      console[level] = (...args) => {
-        originalConsole[level](...args);
-        sendToParent({ type: 'console', level, args: args.map(a => String(a)) });
-      };
-    });
-
-    // ── Communication ──
-    function sendToParent(msg) {
-      try { window.parent.postMessage(msg, '*'); } catch {}
-    }
-
-    function reportHeight() {
-      const height = document.body.scrollHeight;
-      sendToParent({ type: 'rendered', height });
-    }
-
-    // ── Error Boundary (class component as string, compiled at init) ──
-    let ErrorBoundaryClass = null;
-
-    function createErrorBoundary(R) {
-      class EB extends R.Component {
-        constructor(props) {
-          super(props);
-          this.state = { hasError: false, error: null };
-        }
-        static getDerivedStateFromError(error) {
-          return { hasError: true, error };
-        }
-        componentDidCatch(error, info) {
-          showError('render', error.message);
-        }
-        render() {
-          if (this.state.hasError) {
-            return R.createElement('div', {
-              style: { padding: 12, color: '#ef4444', fontSize: 12, fontFamily: 'monospace' }
-            }, `Render error: ${this.state.error?.message || 'Unknown'}`);
-          }
-          return this.props.children;
-        }
-      }
-      return EB;
-    }
-
-    // ── Initialization ──
-    async function init() {
-      try {
-        // Import React and react-runner
-        // These are resolved by the Vite build (see Task 3)
-        const reactMod = await import('react');
-        const reactDomMod = await import('react-dom');
-        const reactDomClientMod = await import('react-dom/client');
-        const runnerMod = await import('react-runner');
-
-        React = reactMod;
-        ReactDOM = reactDomMod;
-        ReactDOMClient = reactDomClientMod;
-        runner = runnerMod;
-
-        ErrorBoundaryClass = createErrorBoundary(React);
-
-        // Create React root
-        const rootEl = document.getElementById('root');
-        reactRoot = ReactDOMClient.createRoot(rootEl);
-
-        sendToParent({ type: 'ready' });
-      } catch (err) {
-        showError('init', `Failed to initialize: ${err.message}`);
-      }
-    }
-
-    // ── Render ──
-    function renderComponent(source, scope) {
-      if (!reactRoot || !runner || !React) {
-        showError('runtime', 'Sandbox not initialized');
-        return;
-      }
-
-      clearError();
-
-      try {
-        // Build the full scope with React globals + bridge + libraries
-        const fullScope = {
-          // React hooks
-          React,
-          useState: React.useState,
-          useEffect: React.useEffect,
-          useCallback: React.useCallback,
-          useMemo: React.useMemo,
-          useRef: React.useRef,
-          Fragment: React.Fragment,
-          // Bridge
-          bridge: {
-            navigateToFile(path, line) {
-              sendToParent({ type: 'bridge', action: 'navigateToFile', args: [path, line] });
-            },
-            isDark: bridgeState.isDark,
-            colors: bridgeState.colors,
-            projectName: bridgeState.projectName,
-          },
-          // User-provided scope (libraries injected by parent)
-          ...scope,
-        };
-
-        // Use react-runner's useRunner or direct Runner component
-        const element = React.createElement(runner.Runner, {
-          code: source,
-          scope: fullScope,
-          onRendered: (error) => {
-            if (error) {
-              showError('runtime', error.message);
-            } else {
-              // Report height after a frame to let layout settle
-              requestAnimationFrame(() => {
-                reportHeight();
-              });
-            }
-          }
-        });
-
-        reactRoot.render(
-          React.createElement(ErrorBoundaryClass, null, element)
-        );
-      } catch (err) {
-        showError('transpile', err.message);
-      }
-    }
-
-    // ── Message listener ──
-    window.addEventListener('message', (e) => {
-      const data = e.data;
-      if (!data || typeof data !== 'object' || !data.type) return;
-
-      switch (data.type) {
-        case 'render':
-          renderComponent(data.source, data.scope || {});
-          break;
-
-        case 'theme':
-          bridgeState.isDark = data.isDark;
-          bridgeState.colors = data.colors || {};
-          bridgeState.projectName = data.projectName || '';
-          // Apply CSS variables
-          const root = document.documentElement;
-          root.style.colorScheme = data.isDark ? 'dark' : 'light';
-          if (data.colors) {
-            Object.entries(data.colors).forEach(([key, value]) => {
-              root.style.setProperty(`--${key}`, value);
-            });
-          }
-          break;
-      }
-    });
-
-    // ── Height observer ──
-    const resizeObserver = new ResizeObserver(() => reportHeight());
-    resizeObserver.observe(document.getElementById('root'));
-
-    // ── Start ──
-    init();
-  </script>
-</body>
-</html>
-```
-
-- [ ] **Step 2: Verify the file is well-formed HTML**
-
-Open the file in a browser (it won't render components yet — it needs to be served through Vite for the imports to resolve). Check that the console shows no syntax errors.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
 git add agent/webview/public/artifact-sandbox.html
@@ -306,32 +84,13 @@ git commit -m "feat(webview): add artifact sandbox HTML with react-runner protoc
 **Files:**
 - Modify: `agent/webview/vite.config.ts`
 
-The sandbox HTML needs its own entry point so Vite resolves and bundles the `import('react')`, `import('react-runner')` etc. inside it into a self-contained file.
-
 - [ ] **Step 1: Read current vite.config.ts**
 
-Read `agent/webview/vite.config.ts` to understand the current multi-entry build setup.
+Read `agent/webview/vite.config.ts` to understand the current multi-entry build and manual chunks config.
 
 - [ ] **Step 2: Add sandbox as a build entry**
 
-Add `artifact-sandbox` as an additional entry in the `build.rollupOptions.input` config:
-
-```typescript
-input: {
-  main: resolve(__dirname, 'index.html'),
-  'plan-editor': resolve(__dirname, 'plan-editor.html'),
-  'artifact-sandbox': resolve(__dirname, 'public/artifact-sandbox.html'),
-},
-```
-
-Also add a manual chunk for recharts:
-
-```typescript
-manualChunks: {
-  // ... existing chunks ...
-  recharts: ['recharts'],
-},
-```
+Add `'artifact-sandbox'` to `build.rollupOptions.input`. Add `recharts` to `manualChunks`.
 
 - [ ] **Step 3: Build and verify**
 
@@ -339,7 +98,7 @@ manualChunks: {
 cd agent/webview && npm run build
 ```
 
-Verify that `../src/main/resources/webview/dist/artifact-sandbox.html` is generated and contains the bundled imports.
+Verify `agent/src/main/resources/webview/dist/artifact-sandbox.html` exists.
 
 - [ ] **Step 4: Commit**
 
@@ -350,32 +109,40 @@ git commit -m "build(webview): add artifact-sandbox entry point to Vite build"
 
 ---
 
-### Task 4: Add Artifact to VisualizationType and Settings
+### Task 4: Add Artifact to VisualizationType, Settings, and RichBlock
 
 **Files:**
 - Modify: `agent/webview/src/bridge/types.ts`
 - Modify: `agent/webview/src/stores/settingsStore.ts`
+- Modify: `agent/webview/src/components/rich/RichBlock.tsx`
 
 - [ ] **Step 1: Add 'artifact' to VisualizationType**
 
-In `agent/webview/src/bridge/types.ts`, update the type:
-
+In `types.ts`:
 ```typescript
-export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline' | 'image' | 'artifact';
+export type VisualizationType = '...' | 'artifact';
 ```
+
+Add `ArtifactState` interface:
+```typescript
+export interface ArtifactState {
+    title: string;
+    source: string;
+}
+```
+
+Add `artifact?: ArtifactState` to the `Message` interface.
 
 - [ ] **Step 2: Add artifact config to settings defaults**
 
-In `agent/webview/src/stores/settingsStore.ts`, add to the defaults object:
-
+In `settingsStore.ts`:
 ```typescript
 artifact: { enabled: true, autoRender: true, defaultExpanded: false, maxHeight: 400 },
 ```
 
 - [ ] **Step 3: Add artifact to RichBlock TYPE_META**
 
-In `agent/webview/src/components/rich/RichBlock.tsx`, add:
-
+In `RichBlock.tsx`:
 ```typescript
 artifact: { icon: '\u2B22', label: 'Interactive' },
 ```
@@ -384,7 +151,7 @@ artifact: { icon: '\u2B22', label: 'Interactive' },
 
 ```bash
 git add agent/webview/src/bridge/types.ts agent/webview/src/stores/settingsStore.ts agent/webview/src/components/rich/RichBlock.tsx
-git commit -m "feat(webview): add artifact visualization type to settings and RichBlock"
+git commit -m "feat(webview): add artifact visualization type to settings, types, and RichBlock"
 ```
 
 ---
@@ -394,192 +161,29 @@ git commit -m "feat(webview): add artifact visualization type to settings and Ri
 **Files:**
 - Create: `agent/webview/src/components/rich/ArtifactRenderer.tsx`
 
-This is the core component. It creates the sandbox iframe, manages postMessage communication, handles errors, and relays bridge calls.
+Core React component. Creates sandboxed iframe, manages postMessage communication, handles errors, relays bridge calls.
 
 - [ ] **Step 1: Write ArtifactRenderer.tsx**
 
-Create `agent/webview/src/components/rich/ArtifactRenderer.tsx`:
+Create `agent/webview/src/components/rich/ArtifactRenderer.tsx` with:
+- Props: `{ source: string; title?: string }`
+- Creates iframe pointing to `artifact-sandbox.html`
+- Listens for postMessage from iframe (`ready`, `rendered`, `error`, `bridge`, `console`)
+- On `ready`: sends theme + render message
+- On `rendered`: updates iframe height, clears loading state
+- On `error`: sets error state (RichBlock shows error card)
+- On `bridge`: validates action against `ALLOWED_BRIDGE_ACTIONS` (`navigateToFile` only), routes to `kotlinBridge`
+- Wraps in `RichBlock` with type `'artifact'`
+- Re-sends theme on theme change
+- Re-renders on source change
 
-```tsx
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { RichBlock } from './RichBlock';
-import { useThemeStore } from '@/stores/themeStore';
-import { kotlinBridge } from '@/bridge/jcef-bridge';
+Reference the full component code in the spec.
 
-// ── Bridge action allowlist ──
-const ALLOWED_BRIDGE_ACTIONS = new Set(['navigateToFile']);
-
-// ── Sandbox URL (Vite resolves from build output) ──
-const SANDBOX_URL = new URL('/artifact-sandbox.html', import.meta.url).href;
-
-// ── Component ──
-
-interface ArtifactRendererProps {
-  source: string;
-}
-
-export function ArtifactRenderer({ source }: ArtifactRendererProps) {
-  const isDark = useThemeStore((s) => s.isDark);
-  const cssVariables = useThemeStore((s) => s.cssVariables);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [iframeHeight, setIframeHeight] = useState(200);
-  const readyRef = useRef(false);
-  const pendingRenderRef = useRef<string | null>(null);
-
-  // Theme colors for bridge
-  const bridgeColors = useMemo(() => ({
-    bg: cssVariables['bg'] ?? (isDark ? '#1e1e1e' : '#ffffff'),
-    fg: cssVariables['fg'] ?? (isDark ? '#d4d4d4' : '#333333'),
-    accent: cssVariables['accent'] ?? '#6366f1',
-    success: cssVariables['success'] ?? '#22c55e',
-    error: cssVariables['error'] ?? '#ef4444',
-    warning: cssVariables['warning'] ?? '#eab308',
-    border: cssVariables['border'] ?? (isDark ? '#444444' : '#dddddd'),
-    codeBg: cssVariables['code-bg'] ?? (isDark ? '#1a1a2e' : '#f5f5f5'),
-  }), [cssVariables, isDark]);
-
-  // Send theme to iframe
-  const sendTheme = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage({
-      type: 'theme',
-      isDark,
-      colors: bridgeColors,
-      projectName: '', // Will be populated if needed
-    }, '*');
-  }, [isDark, bridgeColors]);
-
-  // Send render command to iframe
-  const sendRender = useCallback((src: string) => {
-    if (!readyRef.current) {
-      pendingRenderRef.current = src;
-      return;
-    }
-    iframeRef.current?.contentWindow?.postMessage({
-      type: 'render',
-      source: src,
-      scope: {}, // Libraries are pre-loaded in sandbox
-    }, '*');
-  }, []);
-
-  // Listen for messages from iframe
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
-      const data = e.data;
-      if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
-
-      switch (data.type) {
-        case 'ready':
-          readyRef.current = true;
-          sendTheme();
-          // Send pending render if we were waiting
-          if (pendingRenderRef.current) {
-            sendRender(pendingRenderRef.current);
-            pendingRenderRef.current = null;
-          } else {
-            sendRender(source);
-          }
-          break;
-
-        case 'rendered':
-          setIsLoading(false);
-          setError(null);
-          if (typeof data.height === 'number' && data.height > 0) {
-            setIframeHeight(Math.max(60, data.height));
-          }
-          break;
-
-        case 'error':
-          setIsLoading(false);
-          const errorMsg = data.line
-            ? `Line ${data.line}: ${data.message}`
-            : data.message;
-          setError(new Error(`[${data.phase}] ${errorMsg}`));
-          break;
-
-        case 'bridge':
-          // Relay allowed bridge calls to Kotlin
-          if (ALLOWED_BRIDGE_ACTIONS.has(data.action)) {
-            const fn = (kotlinBridge as any)[data.action];
-            if (typeof fn === 'function') {
-              fn(...(data.args || []));
-            }
-          }
-          break;
-
-        case 'console':
-          // Forward console output (optional: could display in UI)
-          if (data.level === 'error') {
-            console.warn('[Artifact]', ...(data.args || []));
-          }
-          break;
-      }
-    };
-
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, [source, sendTheme, sendRender]);
-
-  // Re-send theme on theme change
-  useEffect(() => {
-    if (readyRef.current) sendTheme();
-  }, [sendTheme]);
-
-  // Re-render on source change
-  useEffect(() => {
-    if (readyRef.current) {
-      setIsLoading(true);
-      setError(null);
-      sendRender(source);
-    }
-  }, [source, sendRender]);
-
-  // Retry handler
-  const handleRetry = useCallback(() => {
-    setIsLoading(true);
-    setError(null);
-    readyRef.current = false;
-    // Force iframe reload by changing key
-    const iframe = iframeRef.current;
-    if (iframe) {
-      iframe.src = iframe.src;
-    }
-  }, []);
-
-  return (
-    <RichBlock
-      type="artifact"
-      source={source}
-      isLoading={isLoading}
-      error={error}
-      onRetry={handleRetry}
-    >
-      <iframe
-        ref={iframeRef}
-        src={SANDBOX_URL}
-        sandbox="allow-scripts"
-        title="Interactive artifact"
-        className="w-full border-0"
-        style={{
-          height: `${iframeHeight}px`,
-          transition: 'height 200ms ease-out',
-          background: 'transparent',
-        }}
-      />
-    </RichBlock>
-  );
-}
-```
-
-- [ ] **Step 2: Verify the component compiles**
+- [ ] **Step 2: Verify TypeScript compiles**
 
 ```bash
 cd agent/webview && npx tsc --noEmit
 ```
-
-Expected: No type errors in ArtifactRenderer.tsx.
 
 - [ ] **Step 3: Commit**
 
@@ -590,38 +194,32 @@ git commit -m "feat(webview): add ArtifactRenderer component with sandbox iframe
 
 ---
 
-### Task 6: Wire ArtifactRenderer into MarkdownRenderer
+### Task 6: Wire ArtifactRenderer into MarkdownRenderer (Code Fence Path)
 
 **Files:**
 - Modify: `agent/webview/src/components/markdown/MarkdownRenderer.tsx`
 
-- [ ] **Step 1: Add import**
+- [ ] **Step 1: Add import and case**
 
-At the top of `MarkdownRenderer.tsx`, add:
-
+Add import:
 ```typescript
 import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
 ```
 
-- [ ] **Step 2: Add case to code fence switch**
-
-In the `switch (language)` block, add before the default case:
-
+Add cases in the `switch (language)` block before the default:
 ```typescript
 case 'react':
 case 'artifact':
-  return <ArtifactRenderer source={codeString} />;
+    return <ArtifactRenderer source={codeString} />;
 ```
 
-- [ ] **Step 3: Build and verify**
+- [ ] **Step 2: Build and verify**
 
 ```bash
 cd agent/webview && npm run build
 ```
 
-Expected: Build succeeds, `artifact-sandbox.html` in dist, main bundle includes ArtifactRenderer.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add agent/webview/src/components/markdown/MarkdownRenderer.tsx
@@ -630,87 +228,288 @@ git commit -m "feat(webview): route react/artifact code fences to ArtifactRender
 
 ---
 
-### Task 7: Test the Renderer End-to-End
+### Task 7: Add renderArtifact to JS Bridge and Chat Store (Tool Path)
 
 **Files:**
-- Create: `agent/webview/src/__tests__/ArtifactRenderer.test.tsx`
+- Modify: `agent/webview/src/bridge/jcef-bridge.ts`
+- Modify: `agent/webview/src/stores/chatStore.ts`
+- Modify: `agent/webview/src/components/chat/ChatView.tsx`
 
-- [ ] **Step 1: Write integration test**
+- [ ] **Step 1: Add renderArtifact bridge handler**
 
-Create `agent/webview/src/__tests__/ArtifactRenderer.test.tsx`:
+In `jcef-bridge.ts`, add to the bridge functions (Kotlin → JS):
+```typescript
+renderArtifact(payload: string) {
+    stores?.getChatStore().addArtifact(payload);
+},
+```
 
+Register it on `window` in the early registration block alongside existing bridge functions.
+
+- [ ] **Step 2: Add addArtifact action to chatStore**
+
+In `chatStore.ts`, add the action:
+```typescript
+addArtifact(payload: string) {
+    const { title, source } = JSON.parse(payload);
+    const msgId = nextId('artifact');
+    set((state) => ({
+        messages: [...state.messages, {
+            id: msgId,
+            role: 'system' as MessageRole,
+            content: `artifact:${title}`,
+            timestamp: Date.now(),
+            artifact: { title, source },
+        }],
+    }));
+},
+```
+
+Add `addArtifact` to the store interface.
+
+- [ ] **Step 3: Add artifact rendering in ChatView**
+
+In `ChatView.tsx`, in the message rendering logic, add a check before the existing message type checks:
 ```tsx
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
-
-// Mock the theme store
-vi.mock('@/stores/themeStore', () => ({
-  useThemeStore: (selector: any) => {
-    const state = {
-      isDark: false,
-      cssVariables: { bg: '#ffffff', fg: '#333333', accent: '#6366f1' },
-    };
-    return selector(state);
-  },
-}));
-
-// Mock the kotlin bridge
-vi.mock('@/bridge/jcef-bridge', () => ({
-  kotlinBridge: {
-    navigateToFile: vi.fn(),
-  },
-}));
-
-describe('ArtifactRenderer', () => {
-  it('renders an iframe with sandbox attribute', () => {
-    const source = 'export default function App() { return <div>Hello</div>; }';
-    const { container } = render(<ArtifactRenderer source={source} />);
-    
-    const iframe = container.querySelector('iframe');
-    expect(iframe).toBeTruthy();
-    expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts');
-    expect(iframe?.title).toBe('Interactive artifact');
-  });
-
-  it('shows loading state initially', () => {
-    const source = 'export default function App() { return <div>Hello</div>; }';
-    render(<ArtifactRenderer source={source} />);
-    
-    // RichBlock shows loading skeleton when isLoading=true
-    // The shimmer animation div should be present
-    expect(document.querySelector('[aria-label="Loading visualization"]')).toBeTruthy();
-  });
-
-  it('does not allow same-origin in sandbox', () => {
-    const source = 'export default function App() { return <div>Test</div>; }';
-    const { container } = render(<ArtifactRenderer source={source} />);
-    
-    const iframe = container.querySelector('iframe');
-    const sandbox = iframe?.getAttribute('sandbox') ?? '';
-    expect(sandbox).not.toContain('allow-same-origin');
-  });
-});
+if (msg.artifact) {
+    return (
+        <ErrorBoundary key={msg.id}>
+            <ArtifactRenderer source={msg.artifact.source} title={msg.artifact.title} />
+        </ErrorBoundary>
+    );
+}
 ```
 
-- [ ] **Step 2: Run tests**
+Add the ArtifactRenderer import.
+
+- [ ] **Step 4: Build and verify**
 
 ```bash
-cd agent/webview && npm test
+cd agent/webview && npm run build
 ```
 
-Expected: All tests pass.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add agent/webview/src/__tests__/ArtifactRenderer.test.tsx
-git commit -m "test(webview): add ArtifactRenderer unit tests"
+git add agent/webview/src/bridge/jcef-bridge.ts agent/webview/src/stores/chatStore.ts agent/webview/src/components/chat/ChatView.tsx
+git commit -m "feat(webview): add renderArtifact bridge handler and chat store integration"
 ```
 
 ---
 
-### Task 8: Add Artifact Visualization Guidance to Agent Prompts
+### Task 8: Create RenderArtifactTool (Kotlin)
+
+**Files:**
+- Create: `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/RenderArtifactTool.kt`
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/ToolResult.kt`
+
+- [ ] **Step 1: Add ArtifactPayload to ToolResult**
+
+Read `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/ToolResult.kt`. Add:
+
+```kotlin
+data class ArtifactPayload(
+    val title: String,
+    val source: String,
+)
+```
+
+Add `val artifact: ArtifactPayload? = null` to the `ToolResult` data class.
+
+- [ ] **Step 2: Create RenderArtifactTool**
+
+Create `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/RenderArtifactTool.kt`:
+
+```kotlin
+package com.workflow.orchestrator.agent.tools.builtin
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.ArtifactPayload
+import com.workflow.orchestrator.agent.tools.WorkerType
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+class RenderArtifactTool : AgentTool {
+    override val name = "render_artifact"
+    override val description = """Render an interactive React component in the chat as a visual artifact. Use alongside your text response when a visualization would help the user understand architecture, flows, hierarchies, or data comparisons.
+
+The component renders in a sandboxed iframe with:
+- bridge.navigateToFile(path, line) — click to open file in IDE
+- bridge.isDark, bridge.colors — theme-aware rendering
+- Lucide React icons (FileCode, GitBranch, Database, Shield, Zap, Server, etc.)
+- Recharts (BarChart, PieChart, LineChart, AreaChart, Tooltip, Legend, etc.)
+- React hooks (useState, useEffect, useCallback, useMemo, useRef)
+
+Use when: 3+ entities with relationships, multi-step flows, data comparisons as charts, or user explicitly asked for a visual.
+Do NOT use when: short text answers, fewer than 3 items, yes/no questions, or text is sufficient.
+
+The source must export a default function component receiving { bridge } prop. All data must be inline — no fetch or file reads."""
+
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "title" to ParameterProperty(
+                type = "string",
+                description = "Short title for the artifact (e.g., 'Authentication Flow', 'Module Dependencies')"
+            ),
+            "source" to ParameterProperty(
+                type = "string",
+                description = "JSX source code. Must export a default function component that receives { bridge } prop. All data must be inline — no fetch, no file reads."
+            )
+        ),
+        required = listOf("title", "source")
+    )
+
+    override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.CODER, WorkerType.ANALYZER)
+
+    override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        val title = params["title"]?.jsonPrimitive?.content
+            ?: return ToolResult(
+                content = "Error: 'title' parameter is required.",
+                summary = "Error: missing title",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
+        val source = params["source"]?.jsonPrimitive?.content
+            ?: return ToolResult(
+                content = "Error: 'source' parameter is required.",
+                summary = "Error: missing source",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
+        // Basic validation: source should contain export default
+        if (!source.contains("export default") && !source.contains("export default function")) {
+            return ToolResult(
+                content = "Error: source must export a default function component (e.g., 'export default function MyComponent({ bridge }) { ... }').",
+                summary = "Error: missing default export",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        return ToolResult(
+            content = "[Artifact: $title] Interactive component rendered in chat.",
+            summary = "Rendered artifact: $title",
+            tokenEstimate = 15,
+            artifact = ArtifactPayload(title = title, source = source)
+        )
+    }
+}
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/RenderArtifactTool.kt agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/ToolResult.kt
+git commit -m "feat(agent): add RenderArtifactTool and ArtifactPayload on ToolResult"
+```
+
+---
+
+### Task 9: Register Tool and Wire Artifact Callback in AgentLoop
+
+**Files:**
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt`
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/AgentLoop.kt`
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/AgentController.kt`
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/AgentCefPanel.kt`
+
+- [ ] **Step 1: Register RenderArtifactTool in AgentService**
+
+In `AgentService.registerAllTools()`, add:
+```kotlin
+registry.registerCore(RenderArtifactTool())
+```
+
+- [ ] **Step 2: Add artifact detection in AgentLoop**
+
+In `AgentLoop`, after a tool result is received, check for `artifact` payload:
+```kotlin
+if (toolResult.artifact != null) {
+    onArtifactRendered?.invoke(toolResult.artifact)
+}
+```
+
+Add `onArtifactRendered: ((ArtifactPayload) -> Unit)?` to AgentLoop's callback parameters (following the same pattern as `onToolCall`, `onTokenUpdate`, etc.).
+
+- [ ] **Step 3: Add renderArtifact bridge method to AgentCefPanel**
+
+```kotlin
+fun renderArtifact(title: String, source: String) {
+    val payload = buildJsonObject {
+        put("title", title)
+        put("source", source)
+    }.toString()
+    callJs("renderArtifact(${jsonStr(payload)})")
+}
+```
+
+- [ ] **Step 4: Wire callback in AgentController**
+
+In AgentController's `executeTask` call, wire `onArtifactRendered`:
+```kotlin
+onArtifactRendered = { payload ->
+    invokeLater {
+        dashboard.renderArtifact(payload.title, payload.source)
+    }
+}
+```
+
+- [ ] **Step 5: Verify compilation**
+
+```bash
+./gradlew :agent:compileKotlin
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add agent/src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt \
+       agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/AgentLoop.kt \
+       agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/AgentController.kt \
+       agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/AgentCefPanel.kt
+git commit -m "feat(agent): register RenderArtifactTool, wire artifact callback through AgentLoop to webview"
+```
+
+---
+
+### Task 10: Add render_artifact to Bundled Agent Tool Lists
+
+**Files:**
+- Modify: `agent/src/main/resources/agents/explorer.md`
+- Modify: `agent/src/main/resources/agents/code-reviewer.md`
+- Modify: `agent/src/main/resources/agents/architect-reviewer.md`
+- Modify: `agent/src/main/resources/agents/performance-engineer.md`
+- Modify: `agent/src/main/resources/agents/security-auditor.md`
+
+The `render_artifact` tool needs to be in the tool whitelist of agents that should produce visualizations.
+
+- [ ] **Step 1: Add render_artifact to tool lists**
+
+Add `render_artifact` to the `tools:` line in the YAML frontmatter of:
+- `explorer.md`
+- `code-reviewer.md`
+- `architect-reviewer.md`
+- `performance-engineer.md`
+- `security-auditor.md`
+
+Do NOT add to write agents (spring-boot-engineer, test-automator, refactoring-specialist, devops-engineer, general-purpose) — they implement, not visualize.
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add agent/src/main/resources/agents/*.md
+git commit -m "feat(agent): add render_artifact to explorer and reviewer agent tool lists"
+```
+
+---
+
+### Task 11: Add Visualization Guidance to Agent Prompts
 
 **Files:**
 - Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/prompt/SystemPrompt.kt`
@@ -722,95 +521,65 @@ git commit -m "test(webview): add ArtifactRenderer unit tests"
 
 - [ ] **Step 1: Add capability note to SystemPrompt.kt**
 
-In the `capabilities()` function, add after the "Usage tips" section:
-
-```kotlin
-- You can output interactive visualizations using ```react code fences. The chat UI transpiles and renders them as live React components. Use this for architecture diagrams, sequence flows, class hierarchies, charts, and any data that's clearer as a visual. The component receives a bridge prop with navigateToFile(path, line) for IDE navigation, theme colors, and access to Lucide icons and Recharts.
+In the `capabilities()` function, add:
+```
+- render_artifact tool: produce interactive React visualizations in chat. Use for architecture diagrams, sequence flows, class hierarchies, charts. Component gets bridge.navigateToFile for IDE navigation, theme colors, Lucide icons, and Recharts.
 ```
 
-- [ ] **Step 2: Add visualization section to explorer.md**
+- [ ] **Step 2: Add "Producing Visualizations" section to explorer.md**
 
-Add a new section before the "Process" section:
+Add before the "Process" section. Include: when to visualize, when not to, component contract, available libraries, and a code example showing a service map with `bridge.navigateToFile`.
 
-```markdown
-## Producing Visualizations
+- [ ] **Step 3: Add short visualization note to other agents**
 
-When the answer involves architecture, flows, hierarchies, relationships, or comparisons that would be clearer as a visual, output a `react` code fence with an interactive component.
-
-**When to visualize:**
-- Architecture overview → clickable module/service boxes
-- Request flow → animated sequence with clickable endpoints
-- Class hierarchy → expandable tree with source navigation
-- Data comparisons → charts (bar, pie, line) with Recharts
-- Dependency graph → connected nodes with clickable modules
-
-**When NOT to visualize:**
-- Simple text answers, short lists, single-file explanations
-- When the data has fewer than 3 items (just list them)
-- When the user asked a yes/no question
-
-**Component contract:**
-- Must export a default function component
-- Receives `{ bridge }` prop
-- `bridge.navigateToFile(path, line)` — clicking opens file in IDE
-- `bridge.isDark` and `bridge.colors` for theming
-- Lucide icons available: `FileCode`, `GitBranch`, `Database`, `Shield`, `Zap`, `Server`, `Globe`, etc.
-- Recharts available: `BarChart`, `PieChart`, `LineChart`, `AreaChart`, `Tooltip`, `Legend`, `Cell`, etc.
-- ALL DATA MUST BE INLINE — no fetch, no file reads from inside the component
-
-**Example — service architecture with clickable navigation:**
-
-` ` `react
-export default function ServiceMap({ bridge }) {
-  const services = [
-    { name: "OrderController", path: "src/main/kotlin/.../OrderController.kt", line: 15, type: "controller" },
-    { name: "OrderService", path: "src/main/kotlin/.../OrderService.kt", line: 8, type: "service" },
-  ];
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {services.map(s => (
-        <div key={s.name}
-          onClick={() => bridge.navigateToFile(s.path, s.line)}
-          style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border)',
-                   cursor: 'pointer', background: 'var(--code-bg)' }}>
-          <strong>{s.name}</strong>
-          <span style={{ color: 'var(--fg-muted)', marginLeft: 8 }}>{s.type}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-` ` `
-```
-
-(Remove spaces between backticks in the actual file — shown with spaces here to avoid markdown nesting issues.)
-
-- [ ] **Step 3: Add short note to other agent prompts**
-
-Add this line to the end of the system prompt section (before "## Completion") in `code-reviewer.md`, `architect-reviewer.md`, `performance-engineer.md`, and `security-auditor.md`:
+Add to code-reviewer, architect-reviewer, performance-engineer, security-auditor (before "## Completion"):
 
 ```markdown
-> **Visualization:** You can output `react` code fences for interactive visualizations. The component receives `{ bridge }` with `navigateToFile(path, line)` for IDE navigation, Lucide icons, and Recharts for charts. Use for findings dashboards, architecture diagrams, or comparison charts when they'd be clearer than text.
+> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. Component receives `{ bridge }` with `navigateToFile(path, line)`, Lucide icons, and Recharts.
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add agent/src/main/kotlin/com/workflow/orchestrator/agent/prompt/SystemPrompt.kt \
-       agent/src/main/resources/agents/explorer.md \
-       agent/src/main/resources/agents/code-reviewer.md \
-       agent/src/main/resources/agents/architect-reviewer.md \
-       agent/src/main/resources/agents/performance-engineer.md \
-       agent/src/main/resources/agents/security-auditor.md
-git commit -m "feat(agent): add artifact visualization guidance to agent prompts"
+git add agent/src/main/kotlin/com/workflow/orchestrator/agent/prompt/SystemPrompt.kt agent/src/main/resources/agents/*.md
+git commit -m "feat(agent): add artifact visualization guidance to system prompt and agent configs"
 ```
 
 ---
 
-### Task 9: Build, Test, and Release
+### Task 12: Write Tests
 
 **Files:**
-- Modify: `agent/webview/` (build output)
+- Create: `agent/webview/src/__tests__/ArtifactRenderer.test.tsx`
+- Create: `agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/builtin/RenderArtifactToolTest.kt`
+
+- [ ] **Step 1: Write ArtifactRenderer React tests**
+
+Test: renders iframe with sandbox attribute, shows loading state initially, no allow-same-origin in sandbox, accepts source prop.
+
+- [ ] **Step 2: Write RenderArtifactTool Kotlin tests**
+
+Test: returns artifact payload on valid input, error on missing title, error on missing source, error on source without default export, allowedWorkers includes ORCHESTRATOR and ANALYZER.
+
+- [ ] **Step 3: Run tests**
+
+```bash
+cd agent/webview && npm test
+./gradlew :agent:test --tests "*.RenderArtifactToolTest"
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add agent/webview/src/__tests__/ArtifactRenderer.test.tsx agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/builtin/RenderArtifactToolTest.kt
+git commit -m "test(agent): add RenderArtifactTool and ArtifactRenderer tests"
+```
+
+---
+
+### Task 13: Build, Test, and Release
+
+**Files:**
 - Modify: `gradle.properties` (version bump)
 
 - [ ] **Step 1: Full webview build**
@@ -819,46 +588,41 @@ git commit -m "feat(agent): add artifact visualization guidance to agent prompts
 cd agent/webview && npm run build
 ```
 
-Expected: Build succeeds. Check that `agent/src/main/resources/webview/dist/artifact-sandbox.html` exists.
-
-- [ ] **Step 2: Run webview tests**
+- [ ] **Step 2: Run all webview tests**
 
 ```bash
 cd agent/webview && npm test
 ```
 
-Expected: All tests pass including new ArtifactRenderer tests.
-
-- [ ] **Step 3: Full plugin build**
+- [ ] **Step 3: Run Kotlin agent tests**
 
 ```bash
-cd /path/to/project && ./gradlew clean buildPlugin
+./gradlew :agent:test
 ```
 
-Expected: BUILD SUCCESSFUL, ZIP generated in `build/distributions/`.
+- [ ] **Step 4: Full plugin build**
 
-- [ ] **Step 4: Bump version**
+```bash
+./gradlew clean buildPlugin
+```
 
-In `gradle.properties`, bump `pluginVersion` to `0.64.0-beta`.
+- [ ] **Step 5: Bump version to 0.64.0-beta**
 
-- [ ] **Step 5: Commit build artifacts and version bump**
+- [ ] **Step 6: Commit, push, release**
 
 ```bash
 git add -A
 git commit -m "feat(agent): artifact renderer — interactive JSX visualizations in chat
 
-react-runner + Sucrase in sandboxed iframe. LLM outputs react code fences,
-webview transpiles and renders as live interactive components with IDE
-source navigation via curated bridge."
-```
+render_artifact tool + react code fence fallback. react-runner + Sucrase in
+sandboxed iframe. IDE source navigation via curated bridge. Recharts for
+data viz, Lucide for icons. Zero network dependency."
 
-- [ ] **Step 6: Push and release**
-
-```bash
 git push origin rewrite/lean-agent
+
 gh release create v0.64.0-beta \
   --title "v0.64.0-beta — Interactive Artifact Renderer" \
-  --notes "Artifact renderer: LLM outputs react code fences → live interactive React components in chat. Clickable source navigation, theme-aware, Recharts for data viz, Lucide for icons. Sandboxed iframe, zero network dependency." \
+  --notes "..." \
   --target rewrite/lean-agent \
   build/distributions/intellij-workflow-orchestrator-0.64.0-beta.zip
 ```
