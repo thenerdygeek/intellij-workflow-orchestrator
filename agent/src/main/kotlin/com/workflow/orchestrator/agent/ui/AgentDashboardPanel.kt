@@ -539,6 +539,11 @@ class AgentDashboardPanel(
         mirrors.forEach { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
     }
 
+    fun renderArtifact(title: String, source: String) {
+        runOnEdt { cefPanel?.renderArtifact(title, source) }
+        mirrors.forEach { it.renderArtifact(title, source) }
+    }
+
     fun setCefKillSubAgentCallback(onKill: (String) -> Unit) {
         cefPanel?.onKillSubAgent = onKill
     }

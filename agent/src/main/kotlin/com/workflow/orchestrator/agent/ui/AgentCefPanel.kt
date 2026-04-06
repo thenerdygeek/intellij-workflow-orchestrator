@@ -883,6 +883,14 @@ class AgentCefPanel(
         callJs("completeSubAgent(${jsonStr(payload)})")
     }
 
+    fun renderArtifact(title: String, source: String) {
+        val payload = buildJsonObject {
+            put("title", title)
+            put("source", source)
+        }.toString()
+        callJs("renderArtifact(${jsonStr(payload)})")
+    }
+
     fun updateModelList(modelsJson: String) {
         callJs("updateModelList(${jsonStr(modelsJson)})")
     }

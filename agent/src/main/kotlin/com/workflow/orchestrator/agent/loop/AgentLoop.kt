@@ -13,6 +13,7 @@ import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ArtifactPayload
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.TokenEstimator
@@ -174,7 +175,12 @@ class AgentLoop(
      * at the entry point of every user message — current mode, open editor, open tabs,
      * context usage, active plan, active ticket.
      */
-    val environmentDetailsProvider: (() -> String?)? = null
+    val environmentDetailsProvider: (() -> String?)? = null,
+    /**
+     * Optional callback fired when a tool result contains an interactive artifact.
+     * Used by the UI to render React artifacts in the chat (e.g. charts, visualizations).
+     */
+    private val onArtifactRendered: ((ArtifactPayload) -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -903,6 +909,11 @@ class AgentLoop(
                     editDiff = toolResult.diff
                 )
             )
+
+            // Artifact rendering: push interactive React artifacts to the chat UI
+            if (toolResult.artifact != null) {
+                onArtifactRendered?.invoke(toolResult.artifact!!)
+            }
 
             // Track last tool name for consecutive-call guards
             lastToolName = toolName

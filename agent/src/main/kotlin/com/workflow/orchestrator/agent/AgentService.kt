@@ -24,6 +24,7 @@ import com.workflow.orchestrator.agent.session.SessionStatus
 import com.workflow.orchestrator.agent.session.SessionStore
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ArtifactPayload
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
@@ -232,6 +233,7 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { EnablePlanModeTool() }
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
+        safeRegisterCore { RenderArtifactTool() }
 
         // Core VCS — the three most commonly needed git tools
         safeRegisterCore { GitStatusTool() }
@@ -456,6 +458,11 @@ class AgentService(private val project: Project) : Disposable {
          */
         onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
         /**
+         * Optional callback fired when a tool result contains an interactive artifact.
+         * Used by the UI to render React artifacts (charts, visualizations) in the chat.
+         */
+        onArtifactRendered: ((ArtifactPayload) -> Unit)? = null,
+        /**
          * Optional callback fired after each API call with cumulative token counts.
          * Used by the UI to show real-time token budget utilization.
          */
@@ -677,6 +684,7 @@ class AgentService(private val project: Project) : Disposable {
                             activeTicketSummary = pluginSettings.state.activeTicketSummary
                         )
                     },
+                    onArtifactRendered = onArtifactRendered,
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where

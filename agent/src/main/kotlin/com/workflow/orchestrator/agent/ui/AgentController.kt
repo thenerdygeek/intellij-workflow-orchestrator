@@ -19,6 +19,7 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.ArtifactPayload
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
@@ -526,6 +527,11 @@ class AgentController(
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
+            onArtifactRendered = { payload ->
+                invokeLater {
+                    dashboard.renderArtifact(payload.title, payload.source)
+                }
+            },
             onTokenUpdate = ::onTokenUpdate,
             onDebugLog = if (debugEnabled) { level, event, detail, meta ->
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
