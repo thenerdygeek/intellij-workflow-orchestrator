@@ -1045,7 +1045,19 @@ class AgentController(
     fun cancelTask() {
         LOG.info("AgentController.cancelTask")
         service.cancelCurrentTask()
-        // The onComplete callback with LoopResult.Cancelled will handle UI cleanup
+        // Immediately reset controller state so the next user message starts a fresh loop.
+        // Don't wait for onComplete — it fires async and there's a race if the user
+        // types a message right after stopping (the message would hit the steering queue
+        // or channel path with stale state instead of starting a new loop).
+        currentJob = null
+        userInputChannel?.close()
+        userInputChannel = null
+        loopWaitingForInput = false
+        steeringQueue.clear()
+        invokeLater {
+            dashboard.setBusy(false)
+            dashboard.focusInput()
+        }
     }
 
     fun newChat() {
