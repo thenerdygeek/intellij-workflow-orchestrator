@@ -111,6 +111,16 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                         else -> emptyList()
                     }
 
+                    // Extract mentioned ticket keys from summary, description, and comments
+                    val mentionedTickets = extractMentionedTickets(
+                        selfKey = issue.key,
+                        summary = fields.summary,
+                        description = fields.description,
+                        comments = fields.comment?.comments?.map { it.body } ?: emptyList(),
+                        subtaskKeys = subtasks.map { it.key }.toSet(),
+                        linkedKeys = linkedIssues.map { it.key }.toSet()
+                    )
+
                     val data = JiraTicketData(
                         key = issue.key,
                         summary = fields.summary,
@@ -136,7 +146,8 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                         transitions = transitions,
                         attachments = attachments,
                         subtasks = subtasks,
-                        linkedIssues = linkedIssues
+                        linkedIssues = linkedIssues,
+                        mentionedTickets = mentionedTickets
                     )
                     ToolResult.success(
                         data = data,
@@ -827,6 +838,32 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                 )
             }
         }
+    }
+
+    /**
+     * Scans summary, description, and comment bodies for Jira ticket key patterns.
+     * Returns unique keys excluding the ticket itself, its subtasks, and already-linked issues.
+     */
+    private fun extractMentionedTickets(
+        selfKey: String,
+        summary: String,
+        description: String?,
+        comments: List<String>,
+        subtaskKeys: Set<String>,
+        linkedKeys: Set<String>
+    ): List<String> {
+        val pattern = Regex("\\b([A-Z][A-Z0-9]+-\\d+)\\b")
+        val excludeKeys = subtaskKeys + linkedKeys + selfKey
+        val allText = buildString {
+            appendLine(summary)
+            if (!description.isNullOrBlank()) appendLine(description)
+            comments.forEach { appendLine(it) }
+        }
+        return pattern.findAll(allText)
+            .map { it.groupValues[1] }
+            .distinct()
+            .filter { it !in excludeKeys }
+            .toList()
     }
 
     private fun formatSize(bytes: Long): String = when {

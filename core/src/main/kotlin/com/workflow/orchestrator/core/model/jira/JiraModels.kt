@@ -37,7 +37,9 @@ data class JiraTicketData(
     val transitions: List<JiraTransitionData> = emptyList(),
     val attachments: List<JiraAttachmentData> = emptyList(),
     val subtasks: List<JiraSubtaskRef> = emptyList(),
-    val linkedIssues: List<JiraLinkedIssueRef> = emptyList()
+    val linkedIssues: List<JiraLinkedIssueRef> = emptyList(),
+    /** Ticket keys mentioned in summary, description, or comments (excludes self and linked/subtask keys) */
+    val mentionedTickets: List<String> = emptyList()
 ) {
     override fun toString(): String = buildString {
         appendLine("$key: $summary")
@@ -113,6 +115,13 @@ data class JiraTicketData(
         if (commentCount > 0) {
             appendLine()
             appendLine("Comments: $commentCount (use get_comments to view)")
+        }
+
+        // Mentioned tickets
+        if (mentionedTickets.isNotEmpty()) {
+            appendLine()
+            appendLine("Mentioned Tickets (${mentionedTickets.size}):")
+            appendLine("  ${mentionedTickets.joinToString(", ")}")
         }
     }
 
