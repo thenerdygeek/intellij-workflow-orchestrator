@@ -4,6 +4,7 @@ import { AgentMessage } from './AgentMessage';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { SubAgentView } from '@/components/agent/SubAgentView';
+import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
@@ -385,6 +386,15 @@ export const ChatView = memo(function ChatView() {
             return (
               <ErrorBoundary key={msg.id}>
                  <SubAgentView subAgent={msg.subAgent} />
+              </ErrorBoundary>
+            );
+          }
+
+          // Render artifacts (system messages with artifact)
+          if (msg.artifact) {
+            return (
+              <ErrorBoundary key={msg.id}>
+                <ArtifactRenderer source={msg.artifact.source} title={msg.artifact.title} />
               </ErrorBoundary>
             );
           }

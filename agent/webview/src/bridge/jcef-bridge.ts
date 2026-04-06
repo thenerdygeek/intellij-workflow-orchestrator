@@ -300,6 +300,11 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().restoreInputText(text);
   },
 
+  // Artifact rendering from Kotlin
+  renderArtifact(payload: string) {
+    stores?.getChatStore().addArtifact(payload);
+  },
+
   // Sub-Agent methods from Kotlin
   spawnSubAgent(payload: string) {
     stores?.getChatStore().spawnSubAgent(payload);
@@ -339,6 +344,12 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
             const messages = store.messages ?? [];
             if (messages.length > 0) {
               messages[messages.length - 1].subAgent = msg.subAgent;
+            }
+          } else if (msg.artifact) {
+            store.addMessage('agent', '');
+            const messages = store.messages ?? [];
+            if (messages.length > 0) {
+              messages[messages.length - 1].artifact = msg.artifact;
             }
           } else {
             store.addMessage(msg.role, msg.content || '');

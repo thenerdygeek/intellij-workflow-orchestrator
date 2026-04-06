@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Message,
+  MessageRole,
   ToolCall,
   ToolCallStatus,
   Plan,
@@ -183,6 +184,9 @@ interface ChatState {
   promoteQueuedSteeringMessages(ids: string[]): void;
   restoreInputText(text: string): void;
   clearRestoredInputText(): void;
+
+  // Artifact Actions
+  addArtifact(payload: string): void;
 
   // Sub-Agent Actions
   spawnSubAgent(payload: string): void;
@@ -940,6 +944,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearRestoredInputText() {
     set({ restoredInputText: null });
+  },
+
+  // ── Artifact Actions ──
+  addArtifact(payload: string) {
+    const { title, source } = JSON.parse(payload);
+    const msgId = nextId('artifact');
+    set((state) => ({
+      messages: [...state.messages, {
+        id: msgId,
+        role: 'system' as MessageRole,
+        content: `artifact:${title}`,
+        timestamp: Date.now(),
+        artifact: { title, source },
+      }],
+    }));
   },
 
   // ── Sub-Agent Actions ──
