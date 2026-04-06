@@ -89,8 +89,13 @@ class SonarDataService(private val project: Project) : Disposable {
             eventBus.events.collect { event ->
                 when (event) {
                     is WorkflowEvent.PrSelected -> {
-                        log.info("[Sonar:Events] PR selected (id=${event.prId}), refreshing for branch '${event.fromBranch}'")
-                        refreshForBranch(event.fromBranch)
+                        val projectKey = event.sonarProjectKey
+                        if (!projectKey.isNullOrBlank()) {
+                            log.info("[Sonar:Events] PR selected (id=${event.prId}, repo=${event.repoName}), refreshing for branch '${event.fromBranch}' with project '$projectKey'")
+                            refreshForBranch(event.fromBranch, projectKey)
+                        } else {
+                            log.info("[Sonar:Events] PR selected (id=${event.prId}, repo=${event.repoName}), no sonarProjectKey configured — skipping refresh")
+                        }
                     }
                     is WorkflowEvent.BranchChanged -> {
                         log.info("[Sonar:Events] Branch changed to '${event.branchName}', refreshing quality data")
@@ -119,6 +124,20 @@ class SonarDataService(private val project: Project) : Disposable {
             val client = apiClient ?: return@launch
             val projectKey = settings.state.sonarProjectKey.orEmpty()
             if (projectKey.isBlank()) return@launch
+            refreshWith(client, projectKey, branch)
+        }
+    }
+
+    /**
+     * Refresh Sonar data for a specific branch AND project key.
+     * Used by PrSelected events where the repo context provides the correct project key.
+     */
+    fun refreshForBranch(branch: String, projectKey: String) {
+        if (projectKey.isBlank()) return
+        refreshDebounceJob?.cancel()
+        refreshDebounceJob = scope.launch {
+            delay(500)
+            val client = apiClient ?: return@launch
             refreshWith(client, projectKey, branch)
         }
     }
