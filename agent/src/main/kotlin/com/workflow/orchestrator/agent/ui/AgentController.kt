@@ -13,6 +13,7 @@ import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanParser
+import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.settings.AgentSettings
@@ -63,6 +64,15 @@ class AgentController(
     private var userInputChannel: Channel<String>? = null
     /** True when the loop is actively waiting for user input (plan presented, not exploring). */
     private var loopWaitingForInput = false
+
+    /**
+     * Thread-safe queue for mid-turn steering messages.
+     * When the user sends a message while the loop is actively running (not waiting for input),
+     * the message is added here instead of cancelling the current task.
+     * The AgentLoop drains this at the start of each iteration.
+     */
+    private val steeringQueue = java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>()
+    private val steeringCounter = java.util.concurrent.atomic.AtomicLong(0)
 
     /**
      * Pending approval deferred — the agent loop suspends on this while
@@ -171,6 +181,13 @@ class AgentController(
                 pendingApproval?.complete(ApprovalResult.ALLOWED_FOR_SESSION)
             }
         )
+
+        // Steering cancel callback — user clicks "Cancel" on a queued steering message
+        dashboard.setCefCancelSteeringCallback { steeringId ->
+            steeringQueue.removeIf { it.id == steeringId }
+            dashboard.removeQueuedSteeringMessage(steeringId)
+            LOG.info("AgentController: cancelled steering message $steeringId")
+        }
 
         // Checkpoint revert callback — user clicks "Revert" on a checkpoint in the timeline
         dashboard.setCefRevertCheckpointCallback { checkpointId ->
@@ -470,6 +487,18 @@ class AgentController(
             return
         }
 
+        // If the loop is actively running (not waiting), queue as a steering message.
+        // Ported from Claude Code's mid-turn steering: the message is injected into the
+        // conversation context at the start of the next loop iteration, so the LLM sees
+        // it before its next response. This avoids cancelling the current task.
+        if (currentJob?.isActive == true && !loopWaitingForInput) {
+            val steeringId = "steer-${System.currentTimeMillis()}-${steeringCounter.incrementAndGet()}"
+            LOG.info("AgentController: queuing steering message: ${task.take(80)}")
+            steeringQueue.offer(SteeringMessage(id = steeringId, text = task))
+            dashboard.addQueuedSteeringMessage(steeringId, task)
+            return
+        }
+
         // Cancel any running task before starting a new one
         currentJob?.let { job ->
             if (job.isActive) {
@@ -536,7 +565,13 @@ class AgentController(
             onDebugLog = if (debugEnabled) { level, event, detail, meta ->
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,
-            onSessionStarted = { sid -> currentSessionId = sid }
+            onSessionStarted = { sid -> currentSessionId = sid },
+            steeringQueue = steeringQueue,
+            onSteeringDrained = { drainedIds ->
+                invokeLater {
+                    dashboard.promoteQueuedSteeringMessages(drainedIds)
+                }
+            }
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -923,6 +958,8 @@ class AgentController(
             userInputChannel?.close()
             userInputChannel = null
             loopWaitingForInput = false
+            // Clear any orphaned steering messages that were queued after the last drain
+            steeringQueue.clear()
         }
     }
 
@@ -961,6 +998,7 @@ class AgentController(
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
+        steeringQueue.clear()
 
         // Reset ALL dashboard UI components to clean state
         dashboard.reset()                                          // Clear chat messages + replay log

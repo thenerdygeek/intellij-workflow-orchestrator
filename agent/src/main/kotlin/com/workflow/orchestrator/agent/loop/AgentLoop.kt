@@ -22,6 +22,7 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -51,6 +52,13 @@ enum class ApprovalResult { APPROVED, DENIED, ALLOWED_FOR_SESSION }
  * - Loop detection (from Cline): warns at 3, fails at 5 identical consecutive tool calls.
  * - Context overflow detection: catches API errors for context exceeded, compacts + retries.
  */
+
+/**
+ * A user message queued while the agent loop is actively running.
+ * Drained at the start of each iteration and injected into the conversation context.
+ */
+data class SteeringMessage(val id: String, val text: String, val timestamp: Long = System.currentTimeMillis())
+
 /**
  * Core ReAct loop: call LLM -> execute tools -> repeat.
  *
@@ -180,7 +188,21 @@ class AgentLoop(
      * Optional callback fired when a tool result contains an interactive artifact.
      * Used by the UI to render React artifacts in the chat (e.g. charts, visualizations).
      */
-    private val onArtifactRendered: ((ArtifactPayload) -> Unit)? = null
+    private val onArtifactRendered: ((ArtifactPayload) -> Unit)? = null,
+    /**
+     * Thread-safe queue of user messages sent while the agent is actively running.
+     * Drained at the start of each loop iteration (between compaction and LLM call).
+     * Ported from Claude Code's mid-turn steering: messages appear as user-role context
+     * so the LLM incorporates feedback without restarting the task.
+     */
+    private val steeringQueue: ConcurrentLinkedQueue<SteeringMessage>? = null,
+    /**
+     * Callback fired after steering messages are drained and injected into context.
+     * The UI uses this to promote queued steering messages to regular chat messages.
+     *
+     * @param drainedIds the IDs of the steering messages that were injected
+     */
+    private val onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -242,6 +264,14 @@ class AgentLoop(
             "Invalid API Response: The provider returned an empty or unparsable response. " +
             "This is a provider-side issue where the model failed to generate valid output. " +
             "Please retry — if the problem persists, check the model or provider configuration."
+        /**
+         * Prefix for mid-turn steering messages injected from the user's queued input.
+         * Frames the message so the LLM continues its current task rather than treating
+         * the steering input as a new task.
+         */
+        private const val STEERING_MESSAGE_PREFIX =
+            "The user sent an additional message while you were working. " +
+            "Incorporate their feedback while continuing your current task:\n\n"
         private const val LOOP_SOFT_WARNING =
             "WARNING: You have called the same tool with identical arguments multiple times in a row. " +
             "This is not making progress. Please try a different approach, use different parameters, " +
@@ -335,6 +365,31 @@ class AgentLoop(
                 sessionMetrics?.recordCompaction(tokensBefore, tokensAfter)
                 onDebugLog?.invoke("warn", "compaction", "Compacted: ${"%.1f".format(utilBefore)}% — $tokensBefore → $tokensAfter tokens",
                     mapOf("tokensBefore" to tokensBefore, "tokensAfter" to tokensAfter))
+            }
+
+            // Stage 0.5: Drain steering messages (ported from Claude Code's mid-turn steering)
+            // User messages sent while the loop was running are queued in steeringQueue.
+            // We drain them here — after compaction (so context is fresh) but before the
+            // LLM call (so the model sees the user's feedback in context).
+            if (steeringQueue != null && steeringQueue.isNotEmpty()) {
+                val drained = mutableListOf<SteeringMessage>()
+                while (true) {
+                    val msg = steeringQueue.poll() ?: break
+                    drained.add(msg)
+                }
+                if (drained.isNotEmpty()) {
+                    val combinedText = if (drained.size == 1) {
+                        drained[0].text
+                    } else {
+                        drained.joinToString("\n\n") { it.text }
+                    }
+                    val steeringEnvDetails = environmentDetailsProvider?.invoke()
+                    val fullMessage = STEERING_MESSAGE_PREFIX + combinedText +
+                        (if (steeringEnvDetails != null) "\n\n$steeringEnvDetails" else "")
+                    contextManager.addUserMessage(fullMessage)
+                    LOG.info("[Loop] Injected ${drained.size} steering message(s) into context")
+                    onSteeringDrained?.invoke(drained.map { it.id })
+                }
             }
 
             // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)

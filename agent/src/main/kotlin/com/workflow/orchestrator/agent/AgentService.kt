@@ -13,6 +13,7 @@ import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
+import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
@@ -477,7 +478,18 @@ class AgentService(private val project: Project) : Disposable {
          * Provides the session ID so callers can track the session early (e.g. before
          * the first checkpoint fires). Called on the thread that invokes executeTask.
          */
-        onSessionStarted: ((sessionId: String) -> Unit)? = null
+        onSessionStarted: ((sessionId: String) -> Unit)? = null,
+        /**
+         * Thread-safe queue for mid-turn steering messages.
+         * When provided, the loop drains this at the start of each iteration and
+         * injects queued user messages into the conversation context.
+         */
+        steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
+        /**
+         * Callback fired after steering messages are drained and injected.
+         * The UI promotes queued messages to regular chat messages.
+         */
+        onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -685,6 +697,8 @@ class AgentService(private val project: Project) : Disposable {
                         )
                     },
                     onArtifactRendered = onArtifactRendered,
+                    steeringQueue = steeringQueue,
+                    onSteeringDrained = onSteeringDrained,
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where
