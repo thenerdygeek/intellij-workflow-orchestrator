@@ -100,6 +100,35 @@ object ModelCache {
         return anthropic.maxByOrNull { it.created } ?: models.maxByOrNull { it.created }
     }
 
+    /**
+     * Build an ordered fallback chain for smart model fallback.
+     * Order: Opus thinking → Opus → Sonnet thinking → Sonnet.
+     * Skips tiers with no matching model. Excludes Haiku.
+     * Picks the latest (by created timestamp) model per tier.
+     */
+    fun buildFallbackChain(models: List<ModelInfo>): List<String> {
+        val anthropic = models.filter { it.provider == "anthropic" }
+        val chain = mutableListOf<String>()
+
+        // Tier 1: Opus thinking
+        anthropic.filter { it.isOpusClass && it.isThinkingModel }
+            .maxByOrNull { it.created }?.let { chain.add(it.id) }
+
+        // Tier 2: Opus non-thinking
+        anthropic.filter { it.isOpusClass && !it.isThinkingModel }
+            .maxByOrNull { it.created }?.let { chain.add(it.id) }
+
+        // Tier 3: Sonnet thinking
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") && it.isThinkingModel }
+            .maxByOrNull { it.created }?.let { chain.add(it.id) }
+
+        // Tier 4: Sonnet non-thinking
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") && !it.isThinkingModel }
+            .maxByOrNull { it.created }?.let { chain.add(it.id) }
+
+        return chain
+    }
+
     fun reset() {
         models = emptyList()
         lastFetchMs = 0
