@@ -15,6 +15,10 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.events.PrContext
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.services.BitbucketService
+import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.pullrequest.service.PrListService
@@ -221,19 +225,29 @@ class PrDashboardPanel(
                 val toBranch = prDetail.toRef?.displayId ?: ""
                 val repoName = prDetail.repoName ?: ""
                 if (fromBranch.isNotBlank()) {
-                    // Resolve RepoConfig to get bambooPlanKey and sonarProjectKey
-                    val repoConfig = PluginSettings.getInstance(project).getRepos()
+                    val pluginSettings = PluginSettings.getInstance(project)
+                    // Resolve RepoConfig; fall back to scalar settings for single-repo projects
+                    val repoConfig = pluginSettings.getRepos()
                         .find { it.displayLabel == repoName }
+                    val bambooPlanKey = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() }
+                        ?: pluginSettings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
+                    val sonarProjectKey = repoConfig?.sonarProjectKey?.takeIf { it.isNotBlank() }
+                        ?: pluginSettings.state.sonarProjectKey?.takeIf { it.isNotBlank() }
+                    val latestCommit = prDetail.fromRef?.latestCommit?.takeIf { it.isNotBlank() }
+
                     scope.launch {
-                        project.getService(EventBus::class.java)
-                            .emit(WorkflowEvent.PrSelected(
-                                prId = prId,
-                                fromBranch = fromBranch,
-                                toBranch = toBranch,
-                                repoName = repoName,
-                                bambooPlanKey = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() },
-                                sonarProjectKey = repoConfig?.sonarProjectKey?.takeIf { it.isNotBlank() },
-                            ))
+                        val eventBus = project.getService(EventBus::class.java)
+                        eventBus.emit(WorkflowEvent.PrSelected(
+                            prId = prId,
+                            fromBranch = fromBranch,
+                            toBranch = toBranch,
+                            repoName = repoName,
+                            bambooPlanKey = bambooPlanKey,
+                            sonarProjectKey = sonarProjectKey,
+                        ))
+
+                        // Async: fetch build + quality gate statuses and update PrContext
+                        fetchAndUpdateStatuses(eventBus, repoName, latestCommit, sonarProjectKey, fromBranch)
                     }
                 }
             } else {
@@ -540,6 +554,61 @@ class PrDashboardPanel(
             compareByDescending<BitbucketPrDetail> { it.repoName == primaryLabel }
                 .thenByDescending { it.updatedDate }
         ).first()
+    }
+
+    // ---------------------------------------------------------------
+    // Async status fetch: build + quality gate
+    // ---------------------------------------------------------------
+
+    /**
+     * Fetches build status (from Bitbucket commit statuses) and quality gate status
+     * (from SonarQube) in parallel, then updates the PrContext map so other tabs
+     * can immediately show statuses without waiting for their own full data fetch.
+     */
+    private suspend fun fetchAndUpdateStatuses(
+        eventBus: EventBus,
+        repoName: String,
+        latestCommit: String?,
+        sonarProjectKey: String?,
+        branch: String
+    ) {
+        var buildStatus: String? = null
+        var qualityGateStatus: String? = null
+
+        // Fetch build status from Bitbucket commit build statuses
+        if (!latestCommit.isNullOrBlank()) {
+            try {
+                val bitbucketService = project.getService(BitbucketService::class.java)
+                val result = bitbucketService.getBuildStatuses(latestCommit, repoName)
+                if (result.data.isNotEmpty()) {
+                    // Aggregate: if any FAILED → FAILED, else if any INPROGRESS → INPROGRESS, else SUCCESSFUL
+                    val states = result.data.map { it.state.uppercase() }
+                    buildStatus = when {
+                        states.any { it == "FAILED" } -> "FAILED"
+                        states.any { it == "INPROGRESS" } -> "INPROGRESS"
+                        else -> "SUCCESSFUL"
+                    }
+                }
+            } catch (_: Exception) { /* non-critical — status stays null */ }
+        }
+
+        // Fetch quality gate from SonarQube
+        if (!sonarProjectKey.isNullOrBlank()) {
+            try {
+                val sonarService = project.getService(SonarService::class.java)
+                val result = sonarService.getQualityGateStatus(sonarProjectKey, branch, repoName)
+                qualityGateStatus = result.data.status  // "OK" or "ERROR"
+            } catch (_: Exception) { /* non-critical — status stays null */ }
+        }
+
+        // Update PrContext with fetched statuses
+        if (buildStatus != null || qualityGateStatus != null) {
+            val existing = eventBus.prContextMap[repoName] ?: return
+            eventBus.prContextMap[repoName] = existing.copy(
+                buildStatus = buildStatus ?: existing.buildStatus,
+                qualityGateStatus = qualityGateStatus ?: existing.qualityGateStatus,
+            )
+        }
     }
 
     // ---------------------------------------------------------------

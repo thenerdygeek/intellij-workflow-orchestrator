@@ -19,6 +19,10 @@ data class PrContext(
     val repoName: String,
     val bambooPlanKey: String?,
     val sonarProjectKey: String?,
+    /** Build status: SUCCESSFUL, FAILED, INPROGRESS, or null if not yet fetched */
+    val buildStatus: String? = null,
+    /** Quality gate: OK, ERROR, or null if not yet fetched */
+    val qualityGateStatus: String? = null,
 )
 
 @Service(Service.Level.PROJECT)
