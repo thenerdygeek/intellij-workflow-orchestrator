@@ -207,6 +207,25 @@ class AgentService(private val project: Project) : Disposable {
         )
     }
 
+    // ── Manual Compaction ──────────────────────────────────────────────────
+
+    /**
+     * Manually compact the conversation context (user-triggered via /compact).
+     * Creates a temporary brain for LLM summarization if needed (Stage 3 only).
+     *
+     * @return pair of (tokensBefore, tokensAfter), or null if utilization is too low to compact
+     */
+    suspend fun compactContext(contextManager: ContextManager): Pair<Int, Int>? {
+        val utilization = contextManager.utilizationPercent()
+        if (utilization <= 70.0) return null // Matches ContextManager.compact() internal threshold
+
+        val tokensBefore = contextManager.tokenEstimate()
+        val brain = createBrain()
+        contextManager.compact(brain, hookManager)
+        val tokensAfter = contextManager.tokenEstimate()
+        return tokensBefore to tokensAfter
+    }
+
     // ── Tool Registration ──────────────────────────────────────────────────
 
     /**
@@ -567,8 +586,9 @@ class AgentService(private val project: Project) : Disposable {
 
                 val agentSettings = AgentSettings.getInstance(project)
 
-                // Build model fallback chain if enabled
-                val fallbackManager = if (agentSettings.state.enableModelFallback) {
+                // Network error strategy
+                val strategy = agentSettings.state.networkErrorStrategy ?: "none"
+                val fallbackManager = if (strategy == "model_fallback") {
                     val cachedModels = ModelCache.getCached()
                     val chain = ModelCache.buildFallbackChain(cachedModels)
                     if (chain.size > 1) {
@@ -579,6 +599,7 @@ class AgentService(private val project: Project) : Disposable {
                         null
                     }
                 } else null
+                val compactOnTimeoutExhaustion = strategy == "context_compaction"
 
                 val brainFactory: (suspend (String) -> LlmBrain)? = if (fallbackManager != null) {
                     val fbConnections = ConnectionSettings.getInstance()
@@ -750,6 +771,7 @@ class AgentService(private val project: Project) : Disposable {
                     brainFactory = brainFactory,
                     onModelSwitch = onModelSwitch,
                     onApiCallStart = onApiCallStart,
+                    compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.
                         // Ported from Cline's message-state.ts pattern where

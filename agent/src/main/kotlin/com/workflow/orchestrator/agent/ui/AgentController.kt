@@ -49,14 +49,21 @@ class AgentController(
 ) {
     companion object {
         private val LOG = Logger.getInstance(AgentController::class.java)
+
+        /** Commands handled directly by the controller (not LLM skills). */
+        private val BUILTIN_COMMANDS = setOf("compact")
     }
 
     private val service = AgentService.getInstance(project)
     private var contextManager: ContextManager? = null
     private var currentJob: Job? = null
     private var taskStartTime: Long = 0L
-    /** Last task text for retry button. Gap 17. */
+    /** Last task text for retry button (may include XML mention context). Gap 17. */
     private var lastTaskText: String? = null
+    /** Clean display text for retry/restore (without XML). Null = same as lastTaskText. */
+    private var lastDisplayText: String? = null
+    /** Mentions JSON for retry display chips. */
+    private var lastDisplayMentionsJson: String? = null
     /**
      * Channel for feeding user input into a running loop.
      * Used in plan mode: after the LLM presents a plan, the loop waits on this channel.
@@ -150,7 +157,10 @@ class AgentController(
             onChangeModel = ::changeModel,
             onTogglePlanMode = ::togglePlanMode,
             onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
-            onActivateSkill = { skillName -> executeTask("/skill $skillName") },
+            onActivateSkill = { skillName ->
+                if (skillName in BUILTIN_COMMANDS) executeTask("/$skillName")
+                else executeTask("/skill $skillName")
+            },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
@@ -165,6 +175,13 @@ class AgentController(
             onViewTrace = { LOG.info("View trace requested — not implemented in lean rewrite") },
             onPromptSubmitted = ::executeTask
         )
+
+        // Retry callback — re-executes last task with original mention context + clean display
+        dashboard.setCefRetryCallback {
+            lastTaskText?.let { task ->
+                executeTask(task, lastDisplayText, lastDisplayMentionsJson)
+            }
+        }
 
         // Plan approval callbacks — full plan lifecycle (Priority 1)
         dashboard.setCefPlanCallbacks(
@@ -449,11 +466,16 @@ class AgentController(
                 // LLM-only skills (systematic-debugging, tdd, etc.) and the auto-injected meta-skill
                 // should not appear in the user's skill picker — they're triggered by the LLM.
                 val uiSkills = allSkills.filter { it.userInvocable }
-                val skillsJson = uiSkills.joinToString(",", "[", "]") { skill ->
+                // Built-in commands (not LLM skills — handled directly by the controller)
+                val builtInCommands = listOf(
+                    """{"name":"compact","description":"Compact conversation context to free up space"}"""
+                )
+                val skillEntries = uiSkills.map { skill ->
                     val name = skill.name.replace("\"", "\\\"")
                     val desc = skill.description.replace("\"", "\\\"").take(200)
                     """{"name":"$name","description":"$desc"}"""
                 }
+                val skillsJson = (builtInCommands + skillEntries).joinToString(",", "[", "]")
                 invokeLater {
                     dashboard.updateSkillsList(skillsJson)
                 }
@@ -465,8 +487,96 @@ class AgentController(
     }
 
     // ═══════════════════════════════════════════════════
+    //  /compact — manual context compaction
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Handle /compact slash command — directly compact the conversation context
+     * without an LLM round-trip. Shows utilization stats before/after.
+     *
+     * Safety: blocks when the agent loop is actively running to avoid concurrent
+     * mutation of ContextManager (which is not thread-safe).
+     */
+    private fun handleCompactCommand() {
+        // Show /compact as a user message for conversation continuity
+        invokeLater { dashboard.appendUserMessage("/compact") }
+
+        val cm = contextManager
+        if (cm == null) {
+            invokeLater { dashboard.appendStatus("No active session to compact.", RichStreamingPanel.StatusType.WARNING) }
+            return
+        }
+
+        // Block when loop is actively running — ContextManager is not thread-safe
+        if (currentJob?.isActive == true) {
+            invokeLater {
+                dashboard.appendStatus(
+                    "Cannot compact while agent is running. Wait for the current turn to complete or cancel first.",
+                    RichStreamingPanel.StatusType.WARNING
+                )
+            }
+            return
+        }
+
+        val utilBefore = cm.utilizationPercent()
+        if (utilBefore <= 70.0) {
+            invokeLater {
+                dashboard.appendStatus(
+                    "Context at ${"%.0f".format(utilBefore)}% — compaction not needed (threshold: 70%).",
+                    RichStreamingPanel.StatusType.INFO
+                )
+            }
+            return
+        }
+
+        invokeLater { dashboard.appendStatus("Compacting context...", RichStreamingPanel.StatusType.INFO) }
+
+        // Assign to currentJob so dispose/newChat can cancel if needed.
+        // Safe: we verified no active job above.
+        currentJob = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            try {
+                val result = service.compactContext(cm)
+                if (result == null) {
+                    invokeLater {
+                        dashboard.appendStatus(
+                            "Context at ${"%.0f".format(utilBefore)}% — below compaction threshold.",
+                            RichStreamingPanel.StatusType.INFO
+                        )
+                    }
+                    return@launch
+                }
+                val (tokensBefore, tokensAfter) = result
+                val utilAfter = cm.utilizationPercent()
+                val saved = tokensBefore - tokensAfter
+                invokeLater {
+                    dashboard.appendStatus(
+                        "Compacted: ${"%.0f".format(utilBefore)}% → ${"%.0f".format(utilAfter)}% " +
+                            "($tokensBefore → $tokensAfter tokens, saved $saved)",
+                        RichStreamingPanel.StatusType.INFO
+                    )
+                }
+            } catch (e: Exception) {
+                LOG.warn("Manual compaction failed", e)
+                invokeLater {
+                    dashboard.appendError("Compaction failed: ${e.message}")
+                }
+            } finally {
+                currentJob = null
+            }
+        }
+    }
+
     //  Core: executeTask — send user message to agent loop
     // ═══════════════════════════════════════════════════
+
+    /** Display user message in chat UI, with mention chips if available. */
+    private fun displayUserMessage(text: String, mentionsJson: String?) {
+        if (mentionsJson != null) {
+            dashboard.appendUserMessageWithMentions(text, mentionsJson)
+        } else {
+            dashboard.appendUserMessage(text)
+        }
+    }
 
     /**
      * Execute a user task with resolved mention context.
@@ -518,7 +628,8 @@ class AgentController(
             }
 
             invokeLater {
-                executeTask(taskWithContext)
+                // Display clean text with chips in UI; pass XML-enriched text to LLM
+                executeTask(taskWithContext, displayText = text, displayMentionsJson = mentionsJson)
             }
         }
     }
@@ -530,14 +641,28 @@ class AgentController(
      * If a loop is currently waiting for user input (plan mode), feeds the message
      * into the existing loop's channel instead of starting a new one. This matches
      * Cline's continuous conversation model where plan mode is a dialogue.
+     *
+     * @param displayText Clean text for UI display (without XML context). Null = use task.
+     * @param displayMentionsJson JSON array of mentions for chip rendering. Null = no chips.
      */
-    fun executeTask(task: String) {
+    fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null) {
         if (task.isBlank()) return
+
+        // Intercept /compact — direct context compaction without LLM round-trip
+        if (task.trim().equals("/compact", ignoreCase = true)) {
+            handleCompactCommand()
+            return
+        }
 
         LOG.info("AgentController.executeTask: ${task.take(80)}")
 
+        // The text shown in the UI — clean text without mention XML
+        val uiText = displayText ?: task
+
         // Gap 15+17: Track last task for retry and session title
         lastTaskText = task
+        lastDisplayText = displayText
+        lastDisplayMentionsJson = displayMentionsJson
 
         // USER_PROMPT_SUBMIT hook (ported from Cline's UserPromptSubmit hook)
         // Fires after user input, before processing. Cancellable: can block the message.
@@ -564,7 +689,7 @@ class AgentController(
         val pending = com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.pendingQuestions
         if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
             LOG.info("AgentController: resolving pending question with user answer")
-            dashboard.appendUserMessage(task)
+            displayUserMessage(uiText, displayMentionsJson)
             dashboard.setBusy(true)
             pending.complete(task)
             return
@@ -574,7 +699,7 @@ class AgentController(
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             LOG.info("AgentController: feeding user message into existing loop via channel")
-            dashboard.appendUserMessage(task)
+            displayUserMessage(uiText, displayMentionsJson)
             dashboard.setBusy(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
             loopWaitingForInput = false
@@ -590,7 +715,7 @@ class AgentController(
             val steeringId = "steer-${System.currentTimeMillis()}-${steeringCounter.incrementAndGet()}"
             LOG.info("AgentController: queuing steering message: ${task.take(80)}")
             steeringQueue.offer(SteeringMessage(id = steeringId, text = task))
-            dashboard.addQueuedSteeringMessage(steeringId, task)
+            dashboard.addQueuedSteeringMessage(steeringId, uiText)
             return
         }
 
@@ -603,7 +728,7 @@ class AgentController(
         }
 
         // Show user message in the chat UI
-        dashboard.appendUserMessage(task)
+        displayUserMessage(uiText, displayMentionsJson)
         dashboard.setBusy(true)
         // Input is NOT locked — user can always type (Cline behavior)
         taskStartTime = System.currentTimeMillis()
@@ -613,7 +738,11 @@ class AgentController(
         if (isFirstMessage) {
             val settings = AgentSettings.getInstance(project)
             contextManager = ContextManager(maxInputTokens = settings.state.maxInputTokens)
-            dashboard.startSession(task)
+            if (displayMentionsJson != null) {
+                dashboard.startSessionWithMentions(uiText, displayMentionsJson)
+            } else {
+                dashboard.startSession(uiText)
+            }
         }
 
         // Generate or update conversation title via Haiku (async, non-blocking)
@@ -1026,7 +1155,7 @@ class AgentController(
                         status = RichStreamingPanel.SessionStatus.FAILED
                     )
                     // Gap 17: Show retry button so user can re-execute the last task
-                    lastTaskText?.let { dashboard.showRetryButton(it) }
+                    lastTaskText?.let { dashboard.showRetryButton(lastDisplayText ?: it) }
                 }
 
                 is LoopResult.Cancelled -> {
@@ -1125,6 +1254,8 @@ class AgentController(
         contextManager = null
         taskStartTime = 0L
         lastTaskText = null
+        lastDisplayText = null
+        lastDisplayMentionsJson = null
         currentSessionId = null
         currentPlanData = null
         pendingApproval?.cancel()
@@ -1251,7 +1382,7 @@ class AgentController(
         dashboard.appendStatus("Reverting to checkpoint...", RichStreamingPanel.StatusType.INFO)
 
         // Restore the last task text in the input bar so user can edit and re-send
-        lastTaskText?.let { dashboard.restoreInputText(it) }
+        (lastDisplayText ?: lastTaskText)?.let { dashboard.restoreInputText(it) }
 
         // Collect files modified since the target checkpoint for rollback notification
         val affectedFiles = service.getFilesModifiedSinceCheckpoint(sessionId, checkpointId)
@@ -1514,7 +1645,10 @@ class AgentController(
             onChangeModel = ::changeModel,
             onTogglePlanMode = ::togglePlanMode,
             onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
-            onActivateSkill = { skillName -> executeTask("/skill $skillName") },
+            onActivateSkill = { skillName ->
+                if (skillName in BUILTIN_COMMANDS) executeTask("/$skillName")
+                else executeTask("/skill $skillName")
+            },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
