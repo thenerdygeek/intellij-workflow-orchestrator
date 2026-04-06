@@ -24,7 +24,9 @@ The component renders in a sandboxed iframe with:
 Use when: 3+ entities with relationships, multi-step flows, data comparisons as charts, or user explicitly asked for a visual.
 Do NOT use when: short text answers, fewer than 3 items, yes/no questions, or text is sufficient.
 
-The source must export a default function component. bridge, useState, useEffect, and other scope variables are available directly (NOT as props — do not destructure from function params). All data must be inline."""
+The source must export a default function component. bridge, useState, useEffect, and other scope variables are available directly (NOT as props — do not destructure from function params). All data must be inline.
+
+Before calling render_artifact, load the frontend-design skill via use_skill("frontend-design") for component APIs and design guidelines. Use Tailwind CSS classes (not inline styles). Available UI components (scope variables): Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Progress, Separator, Accordion, AccordionItem, Tooltip."""
 
     override val parameters = FunctionParameters(
         properties = mapOf(

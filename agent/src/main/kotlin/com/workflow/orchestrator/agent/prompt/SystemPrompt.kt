@@ -222,7 +222,7 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - run_command executes shell commands. The environment sets PAGER=cat, GIT_PAGER=cat, EDITOR=cat. Prefer non-interactive commands. Each command runs in a new terminal. Redirect stderr with 2>&1 for error visibility.
 - curl/wget to localhost/127.0.0.1 is always allowed — useful for testing Spring Boot endpoints. Remote URLs require approval.
 - Use project_context early to get comprehensive state: branch, uncommitted changes, active Jira ticket, service keys, PR status, build results, Sonar quality gate, project type.
-- render_artifact tool: produce interactive React visualizations in chat. Use for architecture diagrams, sequence flows, class hierarchies, charts. Component gets bridge.navigateToFile for IDE navigation, theme colors, Lucide icons, and Recharts.
+- render_artifact tool: produce interactive React visualizations in chat. Load the frontend-design skill first for component APIs and design guidelines. Available: Tailwind CSS, Recharts, Lucide icons, UI components (Card, Badge, Tabs, Progress, Accordion, Tooltip). All scope variables — use directly, not as props.
 - You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially."""
 
     /**

@@ -90,9 +90,12 @@ When your findings involve architecture, flows, hierarchies, relationships, or d
 - `bridge.navigateToFile(path, line)` — click opens file in IDE
 - `bridge.isDark` and `bridge.colors` for theme-aware rendering
 - React hooks (`useState`, `useEffect`, etc.) are also scope variables — use directly
+- **Tailwind CSS** — use className with utility classes, not inline styles
+- **UI Components** (scope variables): Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Progress, Separator, Accordion, AccordionItem, Tooltip
 - Lucide icons: FileCode, GitBranch, Database, Shield, Zap, Server, Globe, etc.
-- Recharts: BarChart, PieChart, LineChart, AreaChart, Tooltip, Legend, Cell, etc.
+- Recharts: BarChart, PieChart, LineChart, AreaChart, Tooltip (as RechartsTooltip), Legend, Cell, etc.
 - ALL DATA MUST BE INLINE — no fetch, no file reads from inside the component
+- **Load the frontend-design skill** before calling render_artifact for design guidelines
 
 ## Process
 
