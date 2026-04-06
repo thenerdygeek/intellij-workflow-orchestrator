@@ -12,8 +12,11 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.PrContext
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
@@ -56,59 +59,119 @@ class ProjectContextTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val sb = StringBuilder()
-        val repos = try {
+        val gitRepos = try {
             GitRepositoryManager.getInstance(project).repositories
         } catch (_: Exception) {
             emptyList()
         }
-        val primaryRepo = repos.firstOrNull()
+        val primaryRepo = gitRepos.firstOrNull()
         val currentBranch = primaryRepo?.currentBranch?.name ?: "unknown"
 
-        // ── Local sections (instant) ──
-        appendProjectInfo(sb, project, repos, currentBranch)
+        // ── Global sections (instant) ──
+        appendProjectInfo(sb, project, gitRepos, currentBranch)
         appendResolvedDefaultBranch(sb, project, primaryRepo)
-        appendRecentCommits(sb, project, primaryRepo, currentBranch)
         appendUncommittedChanges(sb, project)
         appendOpenFiles(sb, project)
-        appendServiceConfig(sb, project, repos)
+        appendServiceConfig(sb, project, gitRepos)
         appendProjectType(sb, project)
 
-        // ── Network sections (stale-while-revalidate) ──
+        // ── Per-repo sections (recent commits + network status) ──
         val settings = try { PluginSettings.getInstance(project) } catch (_: Exception) { null }
         val state = settings?.state
+        val repoConfigs = settings?.getRepos()?.filter { it.isConfigured } ?: emptyList()
+        val eventBus = try { project.getService(EventBus::class.java) } catch (_: Exception) { null }
 
-        // Resolve keys for network calls
-        val repoConfig = settings?.getPrimaryRepo()
-        val sonarKey = repoConfig?.sonarProjectKey ?: state?.sonarProjectKey ?: ""
-        val bambooPlanKey = repoConfig?.bambooPlanKey ?: state?.bambooPlanKey ?: ""
+        if (repoConfigs.size > 1) {
+            // Multi-repo: iterate each repo
+            for (config in repoConfigs) {
+                val gitRepo = gitRepos.find { it.root.path == config.localVcsRootPath } ?: gitRepos.firstOrNull()
+                val branch = gitRepo?.currentBranch?.name ?: "unknown"
+                val primary = if (config.isPrimary) " [PRIMARY]" else ""
+                val sonarKey = config.sonarProjectKey?.takeIf { it.isNotBlank() } ?: ""
+                val bambooPlanKey = config.bambooPlanKey?.takeIf { it.isNotBlank() } ?: ""
+                val prContext = eventBus?.prContextMap?.get(config.displayLabel)
 
-        // Fire all network calls in parallel
+                sb.appendLine()
+                sb.appendLine("── ${config.displayLabel}$primary ──")
+                sb.appendLine("  Branch: $branch")
+
+                // Recent commits for this repo
+                appendRecentCommits(sb, project, gitRepo, branch)
+
+                // Network: PR, build, quality — use PrContext for quick status, fetch details in parallel
+                appendRepoStatus(sb, project, config.displayLabel, branch, bambooPlanKey, sonarKey, prContext)
+            }
+        } else {
+            // Single repo: original behavior
+            val sonarKey = repoConfigs.firstOrNull()?.sonarProjectKey?.takeIf { it.isNotBlank() }
+                ?: state?.sonarProjectKey ?: ""
+            val bambooPlanKey = repoConfigs.firstOrNull()?.bambooPlanKey?.takeIf { it.isNotBlank() }
+                ?: state?.bambooPlanKey ?: ""
+            val repoName = repoConfigs.firstOrNull()?.displayLabel ?: ""
+            val prContext = if (repoName.isNotBlank()) eventBus?.prContextMap?.get(repoName) else null
+
+            appendRecentCommits(sb, project, primaryRepo, currentBranch)
+            appendRepoStatus(sb, project, repoName, currentBranch, bambooPlanKey, sonarKey, prContext)
+        }
+
+        val content = sb.toString().trimEnd()
+        return ToolResult(
+            content = content,
+            summary = "Project context retrieved",
+            tokenEstimate = TokenEstimator.estimate(content)
+        )
+    }
+
+    /**
+     * Appends PR, build, and quality status for a single repo.
+     * Uses PrContext for immediate status if available, fetches details in parallel.
+     */
+    private suspend fun appendRepoStatus(
+        sb: StringBuilder,
+        project: Project,
+        repoName: String,
+        branch: String,
+        bambooPlanKey: String,
+        sonarKey: String,
+        prContext: PrContext?
+    ) {
+        // Quick status line from PrContext (if available)
+        if (prContext != null) {
+            val buildIcon = when (prContext.buildStatus) {
+                "SUCCESSFUL" -> "✓"; "FAILED" -> "✗"; "INPROGRESS" -> "⟳"; else -> "?"
+            }
+            val gateIcon = when (prContext.qualityGateStatus) {
+                "OK" -> "✓"; "ERROR" -> "✗"; else -> "?"
+            }
+            sb.appendLine("  Status: Build $buildIcon ${prContext.buildStatus ?: "unknown"}  |  Quality Gate $gateIcon ${prContext.qualityGateStatus ?: "unknown"}")
+        }
+
+        // Fetch detailed sections in parallel
         val networkSections = coroutineScope {
-            val prDeferred = async { fetchCurrentPr(project, currentBranch) }
-            val bambooDeferred = async { fetchBambooStatus(project, bambooPlanKey, currentBranch) }
-            val sonarDeferred = async { fetchSonarStatus(project, sonarKey, currentBranch) }
+            val cachePrefix = if (repoName.isNotBlank()) "${repoName}:" else ""
+            val prDeferred = async { fetchCurrentPr(project, branch, repoName) }
+            val bambooDeferred = async { fetchBambooStatus(project, bambooPlanKey, branch) }
+            val sonarDeferred = async { fetchSonarStatus(project, sonarKey, branch) }
 
-            // Wait up to 3s — use cached fallback for any that don't complete in time
-            val prResult = withTimeoutOrFallback(prDeferred, "current_pr", project)
-            val bambooResult = withTimeoutOrFallback(bambooDeferred, "bamboo_build", project)
-            val sonarResult = withTimeoutOrFallback(sonarDeferred, "sonar_quality", project)
+            val prResult = withTimeoutOrFallback(prDeferred, "${cachePrefix}current_pr", project)
+            val bambooResult = withTimeoutOrFallback(bambooDeferred, "${cachePrefix}bamboo_build", project)
+            val sonarResult = withTimeoutOrFallback(sonarDeferred, "${cachePrefix}sonar_quality", project)
 
             Triple(prResult, bambooResult, sonarResult)
         }
 
         val (prSection, bambooSection, sonarSection) = networkSections
 
-        // Append PR section and fetch PR commits if we have a PR ID
         if (prSection.isNotBlank()) {
             sb.appendLine()
             sb.append(prSection)
 
-            // Extract PR ID from cached data to fetch commits
             val prId = extractPrId(prSection)
             if (prId != null) {
+                val cachePrefix = if (repoName.isNotBlank()) "${repoName}:" else ""
                 val commitsSection = coroutineScope {
-                    val d = async { fetchPrCommits(project, prId) }
-                    withTimeoutOrFallback(d, "pr_commits", project)
+                    val d = async { fetchPrCommits(project, prId, repoName) }
+                    withTimeoutOrFallback(d, "${cachePrefix}pr_commits", project)
                 }
                 if (commitsSection.isNotBlank()) {
                     sb.appendLine()
@@ -125,13 +188,6 @@ class ProjectContextTool : AgentTool {
             sb.appendLine()
             sb.append(sonarSection)
         }
-
-        val content = sb.toString().trimEnd()
-        return ToolResult(
-            content = content,
-            summary = "Project context retrieved",
-            tokenEstimate = TokenEstimator.estimate(content)
-        )
     }
 
     // ═══════════════════════════════════════════════════
@@ -408,10 +464,10 @@ class ProjectContextTool : AgentTool {
     //  Network sections (stale-while-revalidate)
     // ═══════════════════════════════════════════════════
 
-    private suspend fun fetchCurrentPr(project: Project, currentBranch: String): String {
+    private suspend fun fetchCurrentPr(project: Project, currentBranch: String, repoName: String = ""): String {
         val bitbucket = ServiceLookup.bitbucket(project) ?: return ""
         return try {
-            val result = bitbucket.getPullRequestsForBranch(currentBranch)
+            val result = bitbucket.getPullRequestsForBranch(currentBranch, repoName.takeIf { it.isNotBlank() })
             if (result.isError || result.data.isEmpty()) return ""
             val pr = result.data.first() // Most recent open PR for this branch
             buildString {
@@ -424,10 +480,10 @@ class ProjectContextTool : AgentTool {
         } catch (_: Exception) { "" }
     }
 
-    private suspend fun fetchPrCommits(project: Project, prId: Int): String {
+    private suspend fun fetchPrCommits(project: Project, prId: Int, repoName: String = ""): String {
         val bitbucket = ServiceLookup.bitbucket(project) ?: return ""
         return try {
-            val result = bitbucket.getPullRequestCommits(prId)
+            val result = bitbucket.getPullRequestCommits(prId, repoName.takeIf { it.isNotBlank() })
             if (result.isError || result.data.isEmpty()) return ""
             val commits = result.data
             buildString {
