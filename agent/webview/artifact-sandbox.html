@@ -67,6 +67,26 @@
       <pre class="error-message"></pre>
     </div>
 
+    <!-- Tailwind CSS (vendored, zero network) -->
+    <script src="/vendor/tailwind-play.js"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              accent: 'var(--accent, #6366f1)',
+              success: 'var(--success, #22c55e)',
+              error: 'var(--error, #ef4444)',
+              warning: 'var(--warning, #eab308)',
+              border: 'var(--border, #3c3c3c)',
+              muted: 'var(--fg-muted, #888888)',
+              'code-bg': 'var(--code-bg, #1a1a2e)',
+            }
+          }
+        }
+      }
+    </script>
     <script type="module" src="/src/sandbox-main.ts"></script>
   </body>
 </html>

@@ -170,6 +170,8 @@ window.addEventListener('message', (e: MessageEvent) => {
           root.style.setProperty(`--${key}`, value)
         })
       }
+      // Toggle Tailwind dark mode class
+      document.documentElement.classList.toggle('dark', bridgeState.isDark)
       break
   }
 })
