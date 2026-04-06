@@ -405,13 +405,19 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             object : BranchChangeListener {
                 override fun branchWillChange(branchName: String) {}
                 override fun branchHasChanged(branchName: String) {
-                    val planKey = settings.state.bambooPlanKey.orEmpty()
+                    // On branch change, resolve the current repo and use its plan key
+                    // PrContext will be updated by the PR tab's auto-select on branch change
+                    val currentRepo = if (repoSelector != null && allRepos.isNotEmpty()) {
+                        val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
+                        allRepos.getOrNull(idx)
+                    } else null
+                    val planKey = currentRepo?.bambooPlanKey?.takeIf { it.isNotBlank() }
+                        ?: settings.state.bambooPlanKey.orEmpty()
                     if (planKey.isNotBlank()) {
                         val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
                         monitorService.switchBranch(planKey, branchName, interval)
                         invokeLater {
                             headerLabel.text = "Plan: $planKey / $branchName"
-                            prBar.refreshPrs()
                             // Clear history on branch switch
                             viewingHistoricalBuild = false
                             historicalBuildBanner.isVisible = false
@@ -550,9 +556,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         splitter.isVisible = true
 
         if (bambooPlanKey.isNullOrBlank()) {
-            // No Bamboo plan key — try auto-detect, otherwise show hint
+            // No Bamboo plan key — try auto-detect from build statuses, show hint if that also fails
             scope.launch {
                 autoDetectAndMonitor(branch)
+                // If auto-detect didn't find a plan key, show actionable hint
+                if (activePlanKey.isBlank()) {
+                    invokeLater {
+                        showHint("Bamboo plan key not configured for $repoName \u2014 configure in Settings > CI/CD")
+                    }
+                }
             }
             return
         }
