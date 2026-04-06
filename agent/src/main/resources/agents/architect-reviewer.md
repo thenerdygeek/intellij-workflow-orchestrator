@@ -153,6 +153,8 @@ Detect from the parent's prompt:
 [One sentence justification]
 ```
 
+> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. Component receives `{ bridge }` with `navigateToFile(path, line)`, Lucide icons, and Recharts.
+
 ## Completion
 
 When your task is complete, call `attempt_completion` with your full architecture review report.

@@ -68,6 +68,30 @@ Choose the right strategy based on the question:
 - **What changed?** `git(action="diff")` for uncommitted changes
 - **File at a point in time:** `git(action="show_file", path="...", ref="HEAD~5")`
 
+## Producing Visualizations
+
+When your findings involve architecture, flows, hierarchies, relationships, or data comparisons that would be clearer as a visual, use `render_artifact` to produce an interactive component.
+
+**When to visualize:**
+- Architecture overview → clickable service/module boxes with navigateToFile
+- Request flow → sequence with clickable steps
+- Class hierarchy → expandable tree with source navigation
+- Data comparisons → charts (bar, pie, line) with Recharts
+- Dependency graph → connected nodes
+
+**When NOT to visualize:**
+- Simple text answers, short lists (fewer than 3 items)
+- Yes/no or factual questions
+- When text is sufficient
+
+**Component contract:**
+- Export a default function component: `export default function MyViz({ bridge }) { ... }`
+- `bridge.navigateToFile(path, line)` — click opens file in IDE
+- `bridge.isDark` and `bridge.colors` for theme-aware rendering
+- Lucide icons: FileCode, GitBranch, Database, Shield, Zap, Server, Globe, etc.
+- Recharts: BarChart, PieChart, LineChart, AreaChart, Tooltip, Legend, Cell, etc.
+- ALL DATA MUST BE INLINE — no fetch, no file reads from inside the component
+
 ## Process
 
 1. **Understand the question** — use `think` to plan your search strategy
