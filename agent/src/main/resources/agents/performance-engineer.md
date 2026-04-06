@@ -439,7 +439,7 @@ synchronized keyword in service layer  → replace with ReentrantLock (virtual t
 ### Assessment: OPTIMAL | NEEDS OPTIMIZATION | CRITICAL BOTTLENECK
 ```
 
-> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. Component receives `{ bridge }` with `navigateToFile(path, line)`, Lucide icons, and Recharts.
+> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.
 
 ## Completion
 

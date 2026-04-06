@@ -85,9 +85,11 @@ When your findings involve architecture, flows, hierarchies, relationships, or d
 - When text is sufficient
 
 **Component contract:**
-- Export a default function component: `export default function MyViz({ bridge }) { ... }`
+- Export a default function component: `export default function MyViz() { ... }`
+- `bridge` is available as a scope variable (NOT a prop — do not destructure from params)
 - `bridge.navigateToFile(path, line)` — click opens file in IDE
 - `bridge.isDark` and `bridge.colors` for theme-aware rendering
+- React hooks (`useState`, `useEffect`, etc.) are also scope variables — use directly
 - Lucide icons: FileCode, GitBranch, Database, Shield, Zap, Server, Globe, etc.
 - Recharts: BarChart, PieChart, LineChart, AreaChart, Tooltip, Legend, Cell, etc.
 - ALL DATA MUST BE INLINE — no fetch, no file reads from inside the component

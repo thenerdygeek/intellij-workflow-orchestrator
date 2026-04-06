@@ -153,7 +153,7 @@ Detect from the parent's prompt:
 [One sentence justification]
 ```
 
-> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. Component receives `{ bridge }` with `navigateToFile(path, line)`, Lucide icons, and Recharts.
+> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.
 
 ## Completion
 

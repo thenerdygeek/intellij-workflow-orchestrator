@@ -152,7 +152,7 @@ For each non-trivial changed file, analyze against the checklist below. Inject c
 
 Always verify by reading code and running tests — never trust assumptions. Be specific with file:line references.
 
-> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. Component receives `{ bridge }` with `navigateToFile(path, line)`, Lucide icons, and Recharts.
+> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.
 
 ## Completion
 
