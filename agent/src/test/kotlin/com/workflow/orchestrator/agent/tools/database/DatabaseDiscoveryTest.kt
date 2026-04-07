@@ -6,9 +6,10 @@ import org.junit.jupiter.api.Test
 
 /**
  * Tests for [DatabaseDiscovery] — pure helpers for the test-connection-and-discover
- * flow used by [DatabaseProfileDialog]. No JDBC, no IntelliJ APIs.
+ * flow used by [com.workflow.orchestrator.agent.settings.DatabaseProfileDialog].
+ * No JDBC, no IntelliJ APIs.
  */
-class DatabaseDiscoveryTest {
+internal class DatabaseDiscoveryTest {
 
     @Nested
     inner class BootstrapUrl {

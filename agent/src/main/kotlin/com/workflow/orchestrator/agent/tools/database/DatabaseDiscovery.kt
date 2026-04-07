@@ -27,6 +27,11 @@ internal object DatabaseDiscovery {
     fun bootstrapUrl(dbType: DbType, host: String, port: Int): String? = when (dbType) {
         DbType.POSTGRESQL -> "jdbc:postgresql://$host:$port/postgres"
         DbType.MYSQL -> "jdbc:mysql://$host:$port/"
+        // No `;databaseName=...` parameter — the SQL Server JDBC driver accepts a
+        // bare server URL and lands the connection in `master`. This is intentionally
+        // asymmetric with JdbcUrlBuilder.build (which always emits a databaseName);
+        // the bootstrap URL is for discovery only and never round-trips through
+        // JdbcUrlBuilder.parseMssql, which would return null for a URL with no `;`.
         DbType.MSSQL -> "jdbc:sqlserver://$host:$port"
         DbType.SQLITE, DbType.GENERIC -> null
     }
