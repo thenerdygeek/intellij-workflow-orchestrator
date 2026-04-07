@@ -63,5 +63,40 @@ class DatabaseConnectionManagerTest {
             assertEquals(emptyList<String>(), discovery.databases)
             assertEquals(0, discovery.systemDatabasesFiltered)
         }
+
+        @Test
+        fun `non-existent sqlite path returns failure`(@TempDir tmp: Path) = runTest {
+            // Point at a directory that does not exist — sqlite-jdbc cannot create the file
+            val missing = tmp.resolve("does/not/exist/test.db").toFile()
+
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.SQLITE,
+                host = "",
+                port = 0,
+                username = "",
+                password = "",
+                rawJdbcUrl = "jdbc:sqlite:${missing.absolutePath}",
+            )
+
+            assertTrue(result.isFailure, "Expected failure for non-existent path")
+        }
+
+        @Test
+        fun `blank sqlite jdbc url returns failure`() = runTest {
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.SQLITE,
+                host = "",
+                port = 0,
+                username = "",
+                password = "",
+                rawJdbcUrl = "",
+            )
+
+            assertTrue(result.isFailure)
+            assertTrue(
+                result.exceptionOrNull()?.message?.contains("requires a JDBC URL") == true,
+                "Expected error to mention JDBC URL requirement, got: ${result.exceptionOrNull()?.message}"
+            )
+        }
     }
 }
