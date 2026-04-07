@@ -33,7 +33,6 @@ import com.workflow.orchestrator.agent.memory.CoreMemory
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.tools.builtin.*
-import com.workflow.orchestrator.agent.tools.config.*
 import com.workflow.orchestrator.agent.tools.database.*
 import com.workflow.orchestrator.agent.tools.debug.AgentDebugController
 import com.workflow.orchestrator.agent.tools.debug.DebugBreakpointsTool
@@ -317,9 +316,6 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
         safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
         safeRegisterDeferred("Build & Run") { CoverageTool() }
-        safeRegisterDeferred("Build & Run") { CreateRunConfigTool() }
-        safeRegisterDeferred("Build & Run") { ModifyRunConfigTool() }
-        safeRegisterDeferred("Build & Run") { DeleteRunConfigTool() }
 
         // Database — queries, schema, connection profiles
         safeRegisterDeferred("Database") { DbListProfilesTool() }

@@ -7,11 +7,16 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class RuntimeConfigToolTest {
     private val project = mockk<Project>(relaxed = true)
     private val tool = RuntimeConfigTool()
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Tool surface
+    // ──────────────────────────────────────────────────────────────────────
 
     @Test
     fun `tool name is runtime_config`() {
@@ -63,5 +68,191 @@ class RuntimeConfigToolTest {
         val result = tool.execute(buildJsonObject { put("action", "nonexistent") }, project)
         assertTrue(result.isError)
         assertTrue(result.content.contains("Unknown action"))
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // create_run_config — validation scenarios
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class CreateRunConfigTests {
+
+        @Test
+        fun `missing name returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("type", "application")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Missing required parameter: name"))
+        }
+
+        @Test
+        fun `missing type returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "MyApp")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Missing required parameter: type"))
+        }
+
+        @Test
+        fun `invalid type returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "MyApp")
+                put("type", "invalid_type")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Invalid type 'invalid_type'"))
+        }
+
+        @Test
+        fun `application without main_class returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "MyApp")
+                put("type", "application")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("main_class"))
+            assertTrue(result.content.contains("required"))
+        }
+
+        @Test
+        fun `spring_boot without main_class returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "MyApp")
+                put("type", "spring_boot")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("main_class"))
+            assertTrue(result.content.contains("required"))
+        }
+
+        @Test
+        fun `junit without test_class returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "MyTest")
+                put("type", "junit")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("test_class"))
+            assertTrue(result.content.contains("required"))
+        }
+
+        @Test
+        fun `remote_debug does not require main_class or test_class`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "RemoteDebug")
+                put("type", "remote_debug")
+            }, project)
+            // Should NOT fail with missing main_class/test_class — it will fail at RunManager level
+            assertFalse(result.content.contains("main_class"))
+            assertFalse(result.content.contains("test_class"))
+        }
+
+        @Test
+        fun `gradle does not require main_class or test_class`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "create_run_config")
+                put("name", "GradleBuild")
+                put("type", "gradle")
+            }, project)
+            assertFalse(result.content.contains("main_class"))
+            assertFalse(result.content.contains("test_class"))
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // modify_run_config — validation scenarios
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class ModifyRunConfigTests {
+
+        @Test
+        fun `missing name returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "modify_run_config")
+                put("vm_options", "-Xmx2g")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Missing required parameter: name"))
+        }
+
+        @Test
+        fun `no modification fields returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "modify_run_config")
+                put("name", "[Agent] MyApp")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("No modifications"))
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // delete_run_config — validation + safety scenarios
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class DeleteRunConfigTests {
+
+        @Test
+        fun `missing name returns error`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "delete_run_config")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Missing required parameter: name"))
+        }
+
+        @Test
+        fun `non-agent config rejected by safety check`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "delete_run_config")
+                put("name", "MyUserConfig")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("Cannot delete"))
+            assertTrue(result.content.contains("safety constraint"))
+        }
+
+        @Test
+        fun `config without Agent prefix rejected`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "delete_run_config")
+                put("name", "Spring Boot App")
+            }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("[Agent]"))
+        }
+
+        @Test
+        fun `agent-prefixed config passes safety check`() = runTest {
+            val result = tool.execute(buildJsonObject {
+                put("action", "delete_run_config")
+                put("name", "[Agent] MyConfig")
+            }, project)
+            // Without a running IDE, RunManager.getInstance() will throw — but it should
+            // NOT fail with the safety check error
+            assertTrue(result.isError)
+            assertFalse(result.content.contains("Cannot delete"))
+            assertTrue(result.content.contains("Error"))
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // AGENT_PREFIX constant
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `AGENT_PREFIX constant is correct`() {
+        assertEquals("[Agent] ", RuntimeConfigTool.AGENT_PREFIX)
     }
 }
