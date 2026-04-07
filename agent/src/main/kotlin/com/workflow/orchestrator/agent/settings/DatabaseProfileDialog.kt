@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.settings
 
 import com.intellij.openapi.ui.DialogWrapper
+import kotlinx.coroutines.cancel
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
@@ -69,6 +70,19 @@ class DatabaseProfileDialog(
                 isEnabled = false
             }
         }
+
+    // Test Connection UI
+    private val testButton = javax.swing.JButton("Test Connection")
+    private val testStatusLabel = JBLabel("").apply {
+        // Default neutral colour; success/error update to green/red on click.
+        foreground = com.intellij.ui.JBColor.GRAY
+    }
+
+    // Coroutine scope owned by the dialog — cancelled in dispose() so an
+    // in-flight test connection can't outlive the dialog.
+    private val dialogScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
+    )
 
     // Raw URL field (SQLite, Generic, or escape hatch for server engines)
     private val urlField = JBTextField(existing?.jdbcUrl ?: "").apply {
@@ -181,6 +195,12 @@ class DatabaseProfileDialog(
         }
 
         row {
+            cell(testButton)
+        }
+        row {
+            cell(testStatusLabel).align(AlignX.FILL)
+        }
+        row {
             cell(rawUrlCheckbox)
         }
         row("JDBC URL:") {
@@ -261,5 +281,10 @@ class DatabaseProfileDialog(
             DatabaseCredentialHelper.storePassword(profile.id, pw)
         }
         return profile
+    }
+
+    override fun dispose() {
+        dialogScope.cancel()
+        super.dispose()
     }
 }
