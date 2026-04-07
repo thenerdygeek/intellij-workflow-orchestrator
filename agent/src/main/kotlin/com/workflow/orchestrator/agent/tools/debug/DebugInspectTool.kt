@@ -6,6 +6,7 @@ import com.intellij.debugger.ui.HotSwapUI
 import com.intellij.debugger.ui.HotSwapStatusListener
 import com.intellij.debugger.impl.DebuggerSession
 import com.intellij.openapi.project.Project
+import com.intellij.xdebugger.XDebugSession
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
@@ -13,6 +14,8 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.integration.ToolValidation
+import com.workflow.orchestrator.agent.tools.platform.DebugState
+import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -163,6 +166,78 @@ Most actions require a suspended session. session_id defaults to active session.
         }
     }
 
+    // ── session resolution ──────────────────────────────────────────────────
+    //
+    // All actions resolve their target debug session through one of these two
+    // helpers. Both delegate to IdeStateProbe so that sessions started outside
+    // the agent (gutter Debug button, run config dropdown, etc.) are found via
+    // the IntelliJ Platform — not just the agent's own session registry.
+    //
+    // The agent's controller registry is still consulted first via the
+    // registryLookup callback, so sessions started by start_debug_session keep
+    // their agent-assigned ids and `activeSessionId` semantics.
+
+    private sealed class SessionResolution {
+        data class Found(val session: XDebugSession) : SessionResolution()
+        data class Failed(val toolResult: ToolResult) : SessionResolution()
+    }
+
+    /**
+     * Resolves a debug session that exists (running or paused) for [sessionId].
+     * Use this for actions that don't require the session to be paused
+     * (thread_dump, hotswap).
+     */
+    private fun requireSession(project: Project, sessionId: String?): SessionResolution {
+        val state = IdeStateProbe.debugState(project, sessionId, controller::getSession)
+        return when (state) {
+            is DebugState.Paused -> SessionResolution.Found(state.session)
+            is DebugState.Running -> SessionResolution.Found(state.session)
+            DebugState.NoSession -> SessionResolution.Failed(noSessionError(sessionId))
+            is DebugState.AmbiguousSession -> SessionResolution.Failed(ambiguousError(state))
+        }
+    }
+
+    /**
+     * Resolves a debug session that exists AND is currently paused for [sessionId].
+     * Use this for actions that need to inspect or modify suspended runtime state
+     * (evaluate, get_variables, set_value, get_stack_frames, memory_view,
+     * force_return, drop_frame).
+     */
+    private fun requireSuspendedSession(project: Project, sessionId: String?): SessionResolution {
+        val state = IdeStateProbe.debugState(project, sessionId, controller::getSession)
+        return when (state) {
+            is DebugState.Paused -> SessionResolution.Found(state.session)
+            is DebugState.Running -> SessionResolution.Failed(notSuspendedError())
+            DebugState.NoSession -> SessionResolution.Failed(noSessionError(sessionId))
+            is DebugState.AmbiguousSession -> SessionResolution.Failed(ambiguousError(state))
+        }
+    }
+
+    private fun noSessionError(sessionId: String?) = ToolResult(
+        buildString {
+            append("No debug session found")
+            if (sessionId != null) append(": $sessionId")
+            append(". Start one with start_debug_session, or have the user start a debug session via the IDE (gutter Debug button or Run menu) and try again.")
+        },
+        "No session",
+        ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
+
+    private fun notSuspendedError() = ToolResult(
+        "Debug session is running but not paused. This action requires the debugger to be suspended (at a breakpoint or after a step). Set a breakpoint and let execution reach it, or call debug_step.pause first.",
+        "Not suspended",
+        ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
+
+    private fun ambiguousError(state: DebugState.AmbiguousSession) = ToolResult(
+        "Multiple debug sessions are active (${state.count}: ${state.names.joinToString(", ")}). Pass session_id to disambiguate.",
+        "Ambiguous session",
+        ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
+
     // ── evaluate ────────────────────────────────────────────────────────────
 
     private suspend fun executeEvaluate(params: JsonObject, project: Project): ToolResult {
@@ -173,21 +248,9 @@ Most actions require a suspended session. session_id defaults to active session.
 
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult(
-                "Session is not suspended. Cannot evaluate expressions while running.",
-                "Not suspended",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
@@ -216,21 +279,9 @@ Most actions require a suspended session. session_id defaults to active session.
         val maxFrames = (params["max_frames"]?.jsonPrimitive?.intOrNull ?: DEFAULT_MAX_FRAMES)
             .coerceIn(1, MAX_FRAMES_CAP)
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult(
-                "Session is not suspended. Cannot get stack frames while running.",
-                "Not suspended",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
@@ -273,21 +324,9 @@ Most actions require a suspended session. session_id defaults to active session.
         val maxDepth = (params["max_depth"]?.jsonPrimitive?.intOrNull ?: DEFAULT_MAX_DEPTH)
             .coerceIn(1, MAX_DEPTH_CAP)
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult(
-                "Session is not suspended. Cannot inspect variables while running.",
-                "Not suspended",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
@@ -362,21 +401,9 @@ Most actions require a suspended session. session_id defaults to active session.
         val newValue = params["new_value"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("new_value")
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult(
-                "Session is not suspended. Cannot set variable while running.",
-                "Not suspended",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
@@ -464,13 +491,10 @@ Most actions require a suspended session. session_id defaults to active session.
         val maxFrames = params["max_frames"]?.jsonPrimitive?.intOrNull ?: 20
         val includeDaemon = params["include_daemon"]?.jsonPrimitive?.booleanOrNull ?: false
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
 
         return try {
             val threadInfos = controller.executeOnManagerThread(session) { _, vmProxy ->
@@ -549,21 +573,9 @@ Most actions require a suspended session. session_id defaults to active session.
         val className = params["class_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("class_name")
         val maxInstances = params["max_instances"]?.jsonPrimitive?.intOrNull ?: 0
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult(
-                "Session is not suspended. Memory view requires the debug session to be paused.",
-                "Not suspended",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
@@ -631,13 +643,10 @@ Most actions require a suspended session. session_id defaults to active session.
         val sessionId = params["session_id"]?.jsonPrimitive?.content
         val compileFirst = params["compile_first"]?.jsonPrimitive?.booleanOrNull ?: true
 
-        controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val xSession = when (val r = requireSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
 
         return try {
             val hotSwapUI = HotSwapUI.getInstance(project)
@@ -645,7 +654,6 @@ Most actions require a suspended session. session_id defaults to active session.
 
             // Correlate the XDebugSession with the correct DebuggerSession.
             // When multiple sessions exist, sessions.firstOrNull() would pick the wrong one.
-            val xSession = controller.getSession(sessionId)
             val debuggerSession = debuggerManager.sessions.find { ds ->
                 ds.xDebugSession === xSession
             } ?: debuggerManager.sessions.firstOrNull()
@@ -699,16 +707,9 @@ Most actions require a suspended session. session_id defaults to active session.
         val returnValue = params["return_value"]?.jsonPrimitive?.content
         val returnType = params["return_type"]?.jsonPrimitive?.content ?: "auto"
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult("Session is not suspended. Cannot force return while running.", "Not suspended", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
@@ -812,16 +813,9 @@ Most actions require a suspended session. session_id defaults to active session.
             return ToolResult("frame_index must be >= 0, got $frameIndex", "Invalid frame index", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
-        if (!session.isSuspended) {
-            return ToolResult("Session is not suspended. Cannot drop frame while running.", "Not suspended", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
         }
 
         return try {
