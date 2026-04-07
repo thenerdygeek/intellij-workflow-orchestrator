@@ -35,4 +35,22 @@ internal object DatabaseDiscovery {
         DbType.MSSQL -> "jdbc:sqlserver://$host:$port"
         DbType.SQLITE, DbType.GENERIC -> null
     }
+
+    /**
+     * Returns the SQL to list user-visible databases on the bootstrap connection
+     * for [dbType], or `null` if discovery is not applicable (single-database
+     * engines and raw-URL profiles).
+     *
+     * The PostgreSQL and SQL Server queries already filter system catalogs at
+     * the SQL level. MySQL's `SHOW DATABASES` returns everything, so callers
+     * should pipe its results through [filterSystemDatabases] (added in a
+     * later task) to drop `mysql`, `sys`, `information_schema`, and
+     * `performance_schema`.
+     */
+    fun discoveryQuery(dbType: DbType): String? = when (dbType) {
+        DbType.POSTGRESQL -> "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
+        DbType.MYSQL -> "SHOW DATABASES"
+        DbType.MSSQL -> "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name"
+        DbType.SQLITE, DbType.GENERIC -> null
+    }
 }

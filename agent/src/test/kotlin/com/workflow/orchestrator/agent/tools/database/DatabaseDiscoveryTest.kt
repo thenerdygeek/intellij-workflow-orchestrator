@@ -44,4 +44,42 @@ internal class DatabaseDiscoveryTest {
             assertNull(url)
         }
     }
+
+    @Nested
+    inner class DiscoveryQuery {
+
+        @Test
+        fun `postgres discovery filters templates and orders by name`() {
+            val sql = DatabaseDiscovery.discoveryQuery(DbType.POSTGRESQL)
+            assertEquals(
+                "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
+                sql
+            )
+        }
+
+        @Test
+        fun `mysql discovery uses SHOW DATABASES`() {
+            val sql = DatabaseDiscovery.discoveryQuery(DbType.MYSQL)
+            assertEquals("SHOW DATABASES", sql)
+        }
+
+        @Test
+        fun `mssql discovery filters system databases via database_id`() {
+            val sql = DatabaseDiscovery.discoveryQuery(DbType.MSSQL)
+            assertEquals(
+                "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name",
+                sql
+            )
+        }
+
+        @Test
+        fun `sqlite returns null because no discovery is run`() {
+            assertNull(DatabaseDiscovery.discoveryQuery(DbType.SQLITE))
+        }
+
+        @Test
+        fun `generic returns null because no discovery is run`() {
+            assertNull(DatabaseDiscovery.discoveryQuery(DbType.GENERIC))
+        }
+    }
 }
