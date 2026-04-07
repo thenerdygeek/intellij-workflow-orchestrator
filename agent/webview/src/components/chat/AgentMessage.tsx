@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { Message, Mention } from '@/bridge/types';
+import type { Message, Mention, Question } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
@@ -70,6 +70,42 @@ function splitContentWithMentions(content: string, mentions: Mention[]): Segment
     segments = next;
   }
   return segments;
+}
+
+/** Frozen Q&A snapshot rendered when an ask_questions wizard has been submitted. */
+function AnsweredQuestionsCard({ questions }: { questions: Question[] }) {
+  return (
+    <div
+      className="my-1 rounded-lg border p-3"
+      style={{ borderColor: 'var(--border)', backgroundColor: 'var(--card, var(--user-bg))' }}
+    >
+      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide" style={{ color: 'var(--fg-secondary)' }}>
+        Answered {questions.length} question{questions.length === 1 ? '' : 's'}
+      </div>
+      <ul className="space-y-2.5">
+        {questions.map((q, i) => {
+          const skipped = q.skipped;
+          const answers = Array.isArray(q.answer) ? q.answer : (q.answer ? [q.answer] : []);
+          return (
+            <li key={q.id ?? i} className="text-[12px] leading-snug">
+              <div className="font-medium" style={{ color: 'var(--fg)' }}>
+                {i + 1}. {q.text}
+              </div>
+              <div className="mt-0.5 pl-3" style={{ color: skipped ? 'var(--fg-muted)' : 'var(--fg-secondary)' }}>
+                {skipped ? (
+                  <span className="italic">Skipped</span>
+                ) : answers.length > 0 ? (
+                  <span>{answers.join(', ')}</span>
+                ) : (
+                  <span className="italic">No answer</span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function UserContent({ content, mentions }: { content: string; mentions?: Mention[] }) {
@@ -184,7 +220,9 @@ export const AgentMessage = memo(function AgentMessage({
           </span>
         )}
 
-        {isUser ? (
+        {message.answeredQuestions && message.answeredQuestions.length > 0 ? (
+          <AnsweredQuestionsCard questions={message.answeredQuestions} />
+        ) : isUser ? (
           <UserContent content={content} mentions={message.mentions} />
         ) : (
           <MarkdownRenderer content={content} isStreaming={isStreaming} />

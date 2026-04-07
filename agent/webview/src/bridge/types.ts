@@ -19,6 +19,8 @@ export interface Message {
   rolledBack?: boolean;
   /** Context mentions (file, ticket, skill, etc.) — rendered as chips in user bubbles */
   mentions?: Mention[];
+  /** Frozen Q&A snapshot from a submitted ask_questions wizard — rendered as a finalized card */
+  answeredQuestions?: Question[];
 }
 
 // ── Sub-Agent types ──

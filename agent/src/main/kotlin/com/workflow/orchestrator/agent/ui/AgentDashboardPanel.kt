@@ -412,6 +412,10 @@ class AgentDashboardPanel(
         recordReplay { p -> p.appendUserMessage(text) }
     }
 
+    fun finalizeQuestionsAsMessage() {
+        cefPanel?.finalizeQuestionsAsMessage()
+    }
+
     fun completeSession(
         tokensUsed: Int, iterations: Int, filesModified: List<String>,
         durationMs: Long, status: RichStreamingPanel.SessionStatus

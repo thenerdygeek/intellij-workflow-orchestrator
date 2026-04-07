@@ -697,6 +697,10 @@ class AgentCefPanel(
         callJs("appendUserMessageWithMentions(${jsonStr(text)}, ${jsonStr(mentionsJson)})")
     }
 
+    fun finalizeQuestionsAsMessage() {
+        callJs("finalizeQuestionsAsMessage()")
+    }
+
     fun completeSession(
         tokensUsed: Int, iterations: Int, filesModified: List<String>,
         durationMs: Long, status: RichStreamingPanel.SessionStatus

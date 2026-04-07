@@ -300,6 +300,9 @@ class AgentController(
             },
             onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
             onSubmitted = {
+                // Convert the live question wizard into a frozen Q&A chat bubble
+                // BEFORE resolving the tool, so the snapshot reflects what was answered.
+                dashboard.finalizeQuestionsAsMessage()
                 if (pendingApprovalChoice) {
                     // System-level approval choice — route to our handler, not AskQuestionsTool
                     handleApprovalChoice(collectedAnswers)

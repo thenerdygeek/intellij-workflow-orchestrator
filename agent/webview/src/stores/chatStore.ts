@@ -133,6 +133,7 @@ interface ChatState {
   setPlanPending(state: 'approve' | 'revise' | null): void;
   setPlanCommentCount(count: number): void;
   showQuestions(questions: Question[]): void;
+  finalizeQuestionsAsMessage(): void;
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
   answerQuestion(qid: string, answer: string[]): void;
@@ -569,6 +570,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   showQuestions(questions: Question[]) {
     set({ questions, activeQuestionIndex: 0, questionSummary: null });
+  },
+
+  finalizeQuestionsAsMessage() {
+    set(state => {
+      const snapshot = state.questions;
+      if (!snapshot || snapshot.length === 0) {
+        return { questions: null, questionSummary: null, activeQuestionIndex: 0 };
+      }
+      const message: Message = {
+        id: nextId('msg'),
+        role: 'user',
+        content: '',
+        timestamp: Date.now(),
+        answeredQuestions: snapshot,
+      };
+      return {
+        messages: [...state.messages, message],
+        questions: null,
+        questionSummary: null,
+        activeQuestionIndex: 0,
+      };
+    });
   },
 
   showQuestion(index: number) {

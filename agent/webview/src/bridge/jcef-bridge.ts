@@ -52,6 +52,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       stores?.getChatStore().addMessage('user', text);
     }
   },
+  finalizeQuestionsAsMessage() {
+    stores?.getChatStore().finalizeQuestionsAsMessage();
+  },
   endStream() {
     stores?.getChatStore().endStream();
   },
