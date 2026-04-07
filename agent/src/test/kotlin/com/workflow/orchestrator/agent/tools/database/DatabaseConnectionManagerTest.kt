@@ -1,12 +1,10 @@
 package com.workflow.orchestrator.agent.tools.database
 
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.Properties
@@ -104,21 +102,27 @@ class DatabaseConnectionManagerTest {
     }
 
     @Nested
-    @TestInstance(TestInstance.Lifecycle.PER_CLASS)
     inner class GenericBranch {
 
         /**
-         * Shut down MySQL's AbandonedConnectionCleanupThread after each Generic test.
-         * Calling DriverManager.getConnection() with any URL (even malformed) triggers
-         * MySQL SPI auto-loading, which starts the cleanup daemon. IntelliJ's
-         * ThreadLeakTracker runs as an @AfterEach extension and flags it as a leak
-         * unless we explicitly shut it down before that check fires.
+         * Shut down MySQL Connector-J's `AbandonedConnectionCleanupThread` daemon
+         * after each test. The thread is started automatically when `DriverManager`
+         * loads MySQL via SPI (which happens when the Generic branch test calls
+         * `DriverManager.getConnection`). IntelliJ's `ThreadLeakTracker` runs after
+         * each test and flags this daemon as a leak unless we shut it down first.
+         *
+         * `uncheckedShutdown()` is preferred over `checkedShutdown()` because
+         * failure to shut down the cleanup thread should not abort the test —
+         * the test has already verified the production code's contract.
+         *
+         * Wrapped in `runCatching` to handle the case where MySQL Connector-J
+         * was never loaded (the thread doesn't exist) or the API changes in
+         * a future version.
          */
         @AfterEach
         fun shutdownMysqlCleanupThread() {
             runCatching {
-                val cls = Class.forName("com.mysql.cj.jdbc.AbandonedConnectionCleanupThread")
-                cls.getMethod("uncheckedShutdown").invoke(null)
+                com.mysql.cj.jdbc.AbandonedConnectionCleanupThread.uncheckedShutdown()
             }
         }
 
