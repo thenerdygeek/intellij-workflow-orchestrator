@@ -41,7 +41,7 @@
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- Settings -->
+        <!-- Settings: Tools > Workflow Orchestrator > ... -->
         <projectConfigurable
             parentId="tools"
             instance="com.workflow.orchestrator.core.settings.WorkflowSettingsConfigurable"
@@ -51,30 +51,44 @@
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.GeneralConfigurable"
-            id="workflow.orchestrator.general"
-            displayName="General"
+            instance="com.workflow.orchestrator.core.settings.ConnectionsConfigurable"
+            id="workflow.orchestrator.connections"
+            displayName="Connections"
             nonDefaultProject="true"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.jira.settings.WorkflowConfigurable"
-            id="workflow.orchestrator.workflow_config"
-            displayName="Workflow"
+            instance="com.workflow.orchestrator.core.settings.RepositoriesConfigurable"
+            id="workflow.orchestrator.repositories"
+            displayName="Repositories"
             nonDefaultProject="true"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.automation.settings.CiCdConfigurable"
-            id="workflow.orchestrator.cicd"
-            displayName="CI/CD"
+            instance="com.workflow.orchestrator.jira.settings.JiraWorkflowConfigurable"
+            id="workflow.orchestrator.jira_workflow"
+            displayName="Jira &amp; Workflow"
             nonDefaultProject="true"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.core.settings.AiAdvancedConfigurable"
-            id="workflow.orchestrator.ai_advanced"
-            displayName="AI &amp; Advanced"
+            instance="com.workflow.orchestrator.sonar.settings.CodeQualityConfigurable"
+            id="workflow.orchestrator.code_quality"
+            displayName="Code Quality"
+            nonDefaultProject="true"/>
+
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.bamboo.settings.BuildsAndHealthChecksConfigurable"
+            id="workflow.orchestrator.builds_health"
+            displayName="Builds &amp; Health Checks"
+            nonDefaultProject="true"/>
+
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.automation.settings.AutomationConfigurable"
+            id="workflow.orchestrator.automation"
+            displayName="Automation"
             nonDefaultProject="true"/>
 
         <!-- Tool Window -->
@@ -252,9 +266,27 @@
             serviceImplementation="com.workflow.orchestrator.agent.settings.ToolPreferences"/>
         <projectConfigurable
             parentId="workflow.orchestrator"
-            instance="com.workflow.orchestrator.agent.settings.AgentSettingsConfigurable"
+            instance="com.workflow.orchestrator.agent.settings.AgentParentConfigurable"
             id="workflow.orchestrator.agent"
-            displayName="Agent"
+            displayName="AI Agent"
+            nonDefaultProject="true"/>
+        <projectConfigurable
+            parentId="workflow.orchestrator.agent"
+            instance="com.workflow.orchestrator.agent.settings.AgentDatabaseProfilesConfigurable"
+            id="workflow.orchestrator.agent.database_profiles"
+            displayName="Database Profiles"
+            nonDefaultProject="true"/>
+        <projectConfigurable
+            parentId="workflow.orchestrator.agent"
+            instance="com.workflow.orchestrator.agent.settings.AgentProcessToolsConfigurable"
+            id="workflow.orchestrator.agent.process_tools"
+            displayName="Process Tools"
+            nonDefaultProject="true"/>
+        <projectConfigurable
+            parentId="workflow.orchestrator.agent"
+            instance="com.workflow.orchestrator.agent.settings.AgentAdvancedConfigurable"
+            id="workflow.orchestrator.agent.advanced"
+            displayName="Advanced"
             nonDefaultProject="true"/>
         <postStartupActivity
             implementation="com.workflow.orchestrator.agent.listeners.AgentStartupActivity"/>

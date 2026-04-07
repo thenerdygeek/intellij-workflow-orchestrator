@@ -7,17 +7,12 @@ import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
-import com.intellij.ui.SimpleListCellRenderer
-import com.intellij.ui.ToolbarDecorator
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.dsl.builder.*
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.api.SourcegraphChatClient
 import com.workflow.orchestrator.agent.api.dto.ModelInfo
-import com.workflow.orchestrator.agent.tools.database.DatabaseCredentialHelper
-import com.workflow.orchestrator.agent.tools.database.DatabaseProfile
-import com.workflow.orchestrator.agent.tools.database.DatabaseSettings
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.AuthInterceptor
@@ -26,17 +21,29 @@ import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
+import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import kotlinx.coroutines.*
 import java.awt.Component
-import java.awt.Dimension
 import javax.swing.*
 
-class AgentSettingsConfigurable(
+/**
+ * Parent "AI Agent" settings page. Shows the most commonly-used agent settings:
+ *  - Enable / disable the agent
+ *  - LLM chat model selection (with load-from-server)
+ *  - Token budgets
+ *  - Behavior (approval, network error strategy)
+ *
+ * More specialised settings live on sub-pages:
+ *  - [AgentDatabaseProfilesConfigurable]
+ *  - [AgentProcessToolsConfigurable]
+ *  - [AgentAdvancedConfigurable]
+ */
+class AgentParentConfigurable(
     private val project: Project
 ) : SearchableConfigurable {
 
     companion object {
-        private val LOG = Logger.getInstance(AgentSettingsConfigurable::class.java)
+        private val LOG = Logger.getInstance(AgentParentConfigurable::class.java)
     }
 
     private val settings = AgentSettings.getInstance(project)
@@ -49,9 +56,6 @@ class AgentSettingsConfigurable(
     private var maxInputTokens = settings.state.maxInputTokens
     private var maxOutputTokens = settings.state.maxOutputTokens
     private var approvalRequiredForEdits = settings.state.approvalRequiredForEdits
-    private var showDebugLog = settings.state.showDebugLog
-    private var powershellEnabled = settings.state.powershellEnabled
-    private var smartWorkingIndicator = settings.state.smartWorkingIndicator
     private var networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
 
     // Model dropdown state
@@ -61,22 +65,28 @@ class AgentSettingsConfigurable(
     private val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var cachedModels: List<ModelInfo> = emptyList()
 
-    // ---- Database profiles state ----
-    private val dbSettings = DatabaseSettings.getInstance(project)
-    private val dbProfileModel = DefaultListModel<DatabaseProfile>()
-
     override fun getId(): String = "workflow.orchestrator.agent"
-    override fun getDisplayName(): String = "Agent"
+    override fun getDisplayName(): String = "AI Agent"
 
     override fun createComponent(): JComponent {
+        lateinit var agentEnabledCell: Cell<JBCheckBox>
+
         val innerPanel = panel {
+            // Connection status banner — Sourcegraph is required for the agent
+            ConnectionStatusBanner.render(
+                this,
+                project,
+                requirements = listOf(ConnectionStatusBanner.Requirement.SOURCEGRAPH)
+            )
+
             group("Agent Features") {
                 row {
-                    checkBox("Enable Agent features")
+                    agentEnabledCell = checkBox("Enable Agent features")
                         .bindSelected(::agentEnabled)
                         .comment("Enables the Agent tab and AI-powered task orchestration")
                 }
             }
+
             group("LLM Configuration") {
                 row("Chat model:") {
                     val combo = JComboBox(DefaultComboBoxModel<ModelItem>())
@@ -127,7 +137,8 @@ class AgentSettingsConfigurable(
                         .bindIntText(::maxOutputTokens)
                         .comment("Maximum tokens per LLM response (Sourcegraph API cap: 4,000)")
                 }
-            }
+            }.enabledIf(agentEnabledCell.selected)
+
             group("Behavior") {
                 row {
                     checkBox("Require approval for file edits")
@@ -135,103 +146,33 @@ class AgentSettingsConfigurable(
                         .comment("Shows a confirmation dialog before the agent modifies files")
                 }
                 row {
-                    checkBox("Allow PowerShell in run_command tool")
-                        .bindSelected(::powershellEnabled)
-                        .comment("When disabled, the agent cannot use PowerShell — only bash and cmd are available")
-                }
-            }
-            group("Advanced") {
-                row {
-                    checkBox("Show debug log panel (displays real-time agent activity in chat)")
-                        .bindSelected(::showDebugLog)
-                        .comment("Enables an expandable debug panel in the chat view showing tool events, context usage, and loop diagnostics")
-                }
-                row {
-                    checkBox("Smart working indicator (experimental)")
-                        .bindSelected(::smartWorkingIndicator)
-                        .comment("Uses a lightweight AI model to generate contextual loading messages")
-                }
-                row {
                     label("On network error retry exhaustion:")
                     comboBox(listOf("Do nothing", "Switch to cheaper model", "Compact context and retry"))
                         .bindItem(
-                            { when (networkErrorStrategy) {
-                                "model_fallback" -> "Switch to cheaper model"
-                                "context_compaction" -> "Compact context and retry"
-                                else -> "Do nothing"
-                            } },
-                            { networkErrorStrategy = when (it) {
-                                "Switch to cheaper model" -> "model_fallback"
-                                "Compact context and retry" -> "context_compaction"
-                                else -> "none"
-                            } }
+                            {
+                                when (networkErrorStrategy) {
+                                    "model_fallback" -> "Switch to cheaper model"
+                                    "context_compaction" -> "Compact context and retry"
+                                    else -> "Do nothing"
+                                }
+                            },
+                            {
+                                networkErrorStrategy = when (it) {
+                                    "Switch to cheaper model" -> "model_fallback"
+                                    "Compact context and retry" -> "context_compaction"
+                                    else -> "none"
+                                }
+                            }
                         )
-                        .comment("Model fallback switches Opus \u2192 Sonnet on failures. Context compaction shrinks conversation history and retries.")
+                        .comment(
+                            "Model fallback switches Opus \u2192 Sonnet on failures. " +
+                                "Context compaction shrinks conversation history and retries."
+                        )
                 }
-            }
-
-            group("Database Profiles") {
-                row {
-                    comment(
-                        "Read-only database connections for the agent's db_query and db_schema tools. " +
-                            "Passwords are stored in the system keychain via PasswordSafe."
-                    )
-                }
-                row {
-                    cell(buildDatabaseProfilePanel())
-                        .align(Align.FILL)
-                        .resizableColumn()
-                }.resizableRow()
-            }
+            }.enabledIf(agentEnabledCell.selected)
         }
         dialogPanel = innerPanel
-
-        // Populate profile list after panel is built
-        dbProfileModel.clear()
-        dbSettings.getProfiles().forEach { dbProfileModel.addElement(it) }
-
         return innerPanel
-    }
-
-    private fun buildDatabaseProfilePanel(): JComponent {
-        val list = JBList(dbProfileModel).apply {
-            cellRenderer = SimpleListCellRenderer.create("") { p ->
-                "${p.displayName}  [${p.dbType.displayName}]  ${p.jdbcUrl}"
-            }
-            preferredSize = Dimension(600, 120)
-        }
-
-        return ToolbarDecorator.createDecorator(list)
-            .setAddAction {
-                val dlg = DatabaseProfileDialog()
-                if (dlg.showAndGet()) {
-                    val profile = dlg.buildProfile()
-                    // Remove any existing entry with the same id
-                    val existing = (0 until dbProfileModel.size).firstOrNull {
-                        dbProfileModel.getElementAt(it).id == profile.id
-                    }
-                    if (existing != null) dbProfileModel.set(existing, profile)
-                    else dbProfileModel.addElement(profile)
-                }
-            }
-            .setEditAction {
-                val idx = list.selectedIndex
-                if (idx >= 0) {
-                    val dlg = DatabaseProfileDialog(existing = dbProfileModel.getElementAt(idx))
-                    if (dlg.showAndGet()) {
-                        dbProfileModel.set(idx, dlg.buildProfile())
-                    }
-                }
-            }
-            .setRemoveAction {
-                val idx = list.selectedIndex
-                if (idx >= 0) {
-                    val profile = dbProfileModel.getElementAt(idx)
-                    DatabaseCredentialHelper.removePassword(profile.id)
-                    dbProfileModel.remove(idx)
-                }
-            }
-            .createPanel()
     }
 
     /**
@@ -284,7 +225,8 @@ class AgentSettingsConfigurable(
                             populateModelDropdown(cachedModels)
                             modelStatusLabel?.icon = AllIcons.General.InspectionsOK
                             modelStatusLabel?.text = "${cachedModels.size} models loaded"
-                            modelStatusLabel?.foreground = JBColor(java.awt.Color(0, 128, 0), java.awt.Color(0, 180, 0))
+                            modelStatusLabel?.foreground =
+                                JBColor(java.awt.Color(0, 128, 0), java.awt.Color(0, 180, 0))
                         }
                         is ApiResult.Error -> {
                             modelStatusLabel?.icon = AllIcons.General.Error
@@ -355,7 +297,11 @@ class AgentSettingsConfigurable(
         }
     }
 
-    private fun selectModelInDropdown(combo: JComboBox<ModelItem>, comboModel: DefaultComboBoxModel<ModelItem>, modelId: String) {
+    private fun selectModelInDropdown(
+        combo: JComboBox<ModelItem>,
+        comboModel: DefaultComboBoxModel<ModelItem>,
+        modelId: String
+    ) {
         for (i in 0 until comboModel.size) {
             val item = comboModel.getElementAt(i)
             if (!item.isSeparator && item.model.id == modelId) {
@@ -393,14 +339,7 @@ class AgentSettingsConfigurable(
         settings.state.maxInputTokens = maxInputTokens
         settings.state.maxOutputTokens = maxOutputTokens
         settings.state.approvalRequiredForEdits = approvalRequiredForEdits
-        settings.state.showDebugLog = showDebugLog
-        settings.state.powershellEnabled = powershellEnabled
-        settings.state.smartWorkingIndicator = smartWorkingIndicator
         settings.state.networkErrorStrategy = networkErrorStrategy
-
-        // Save database profiles
-        val profiles = (0 until dbProfileModel.size).map { dbProfileModel.getElementAt(it) }
-        dbSettings.saveProfiles(profiles)
     }
 
     override fun reset() {
@@ -409,15 +348,8 @@ class AgentSettingsConfigurable(
         maxInputTokens = settings.state.maxInputTokens
         maxOutputTokens = settings.state.maxOutputTokens
         approvalRequiredForEdits = settings.state.approvalRequiredForEdits
-        showDebugLog = settings.state.showDebugLog
-        powershellEnabled = settings.state.powershellEnabled
-        smartWorkingIndicator = settings.state.smartWorkingIndicator
         networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
         dialogPanel?.reset()
-
-        // Reload database profiles from saved state
-        dbProfileModel.clear()
-        dbSettings.getProfiles().forEach { dbProfileModel.addElement(it) }
 
         // Reset combo to current value
         if (sourcegraphChatModel.isNotBlank()) {

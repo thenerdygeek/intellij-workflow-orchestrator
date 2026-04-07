@@ -421,9 +421,6 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             append("${c.jiraUrl}|${c.bambooUrl}|${c.sonarUrl}|${c.bitbucketUrl}|${c.sourcegraphUrl}|${c.nexusUrl}")
             // Board config
             append("|board=${s.jiraBoardId}|boardType=${s.jiraBoardType}|boardName=${s.jiraBoardName}")
-            // Module toggles
-            append("|sprint=${s.sprintModuleEnabled}|build=${s.buildModuleEnabled}")
-            append("|quality=${s.qualityModuleEnabled}|auto=${s.automationModuleEnabled}|handover=${s.handoverModuleEnabled}")
             // Keys that affect tab content
             append("|planKey=${s.bambooPlanKey}|sonarKey=${s.sonarProjectKey}")
             // Agent tab depends on extension providers being loaded

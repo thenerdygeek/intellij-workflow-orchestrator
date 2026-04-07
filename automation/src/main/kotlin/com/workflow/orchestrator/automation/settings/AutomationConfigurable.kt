@@ -7,45 +7,68 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
-import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
-import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.COLUMNS_LARGE
+import com.intellij.ui.dsl.builder.bindIntText
+import com.intellij.ui.dsl.builder.bindText
+import com.intellij.ui.dsl.builder.columns
+import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.service.AutomationSettingsService
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.ConnectionSettings
+import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import com.workflow.orchestrator.core.settings.PluginSettings
-import kotlinx.coroutines.*
+import com.workflow.orchestrator.core.ui.StatusColors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
-import javax.swing.*
+import javax.swing.BoxLayout
+import javax.swing.JButton
+import javax.swing.JComboBox
+import javax.swing.JComponent
+import javax.swing.JPanel
+import javax.swing.JSeparator
 
 /**
- * Merged settings page for CI/CD configuration.
- * Combines: Bamboo settings, Docker & Automation, Quality Thresholds,
- * Automation Suites (project/plan browser + regex search), and Health Checks.
+ * Settings page for the Automation feature.
+ *
+ * Covers Docker tag extraction fields and the Automation Suites picker UI.
+ * Bamboo connection details live on the Connections page; this page assumes
+ * Bamboo and Nexus are already configured and shows a status banner at the top.
+ *
+ * Note: The Automation Suites panel is a custom Swing component (ported
+ * verbatim from [CiCdConfigurable]) because Kotlin UI DSL v2 cannot
+ * cleanly model the dynamic project/plan/search workflow.
  */
-class CiCdConfigurable(private val project: Project) : SearchableConfigurable, Disposable {
+class AutomationConfigurable(private val project: Project) : SearchableConfigurable, Disposable {
 
-    private val log = Logger.getInstance(CiCdConfigurable::class.java)
+    private val log = Logger.getInstance(AutomationConfigurable::class.java)
 
     /** invokeLater that works inside modal dialogs (Settings dialog is modal). */
     private fun runOnEdt(action: () -> Unit) {
         ApplicationManager.getApplication().invokeLater(action, ModalityState.any())
     }
 
-    private var mainPanel: JPanel? = null
     private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
     private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // === Automation Suites UI state ===
     private val suiteRows = mutableListOf<SuiteRow>()
     private var suitesContainer: JPanel? = null
-    private val projectCombo = JComboBox<CiCdProjectItem>()
-    private val planCombo = JComboBox<CiCdPlanItem>()
+    private val projectCombo = JComboBox<AutomationProjectItem>()
+    private val planCombo = JComboBox<AutomationPlanItem>()
     private val searchField = JBTextField(20).apply {
         emptyText.setText("Search pattern (e.g., REGRESSION, E2E.*)")
     }
@@ -60,252 +83,77 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         val panel: JPanel
     )
 
-    override fun getId(): String = "workflow.orchestrator.cicd"
-    override fun getDisplayName(): String = "CI/CD"
+    override fun getId(): String = "workflow.orchestrator.automation"
+    override fun getDisplayName(): String = "Automation"
 
     override fun createComponent(): JComponent {
         // Recreate scope in case it was cancelled by a previous disposeUIResources()
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val settings = PluginSettings.getInstance(project)
         val automationSettings = AutomationSettingsService.getInstance()
 
-        // === DSL panel for simple field groups ===
         val dslPanel = panel {
-            // === 1. Bamboo ===
-            collapsibleGroup("Bamboo") {
-                row("Bamboo plan key:") {
-                    textField()
-                        .bindText(
-                            { settings.state.bambooPlanKey ?: "" },
-                            { settings.state.bambooPlanKey = it }
-                        )
-                        .comment("e.g., PROJ-BUILD. Auto-detected from PR build status if blank.")
-                }
-                row("Build poll interval (seconds):") {
-                    intTextField(range = 5..3600)
-                        .bindIntText(settings.state::buildPollIntervalSeconds)
-                }
-            }.expanded = true
+            ConnectionStatusBanner.render(
+                this, project, listOf(
+                    ConnectionStatusBanner.Requirement.BAMBOO,
+                    ConnectionStatusBanner.Requirement.NEXUS,
+                )
+            )
 
-            // === 2. Docker & Automation ===
-            collapsibleGroup("Docker & Automation") {
+            group("Docker Tags") {
                 row("Docker tag key for this repo:") {
                     textField()
                         .bindText(
-                            { settings.state.dockerTagKey ?: "" },
-                            { settings.state.dockerTagKey = it }
+                            { PluginSettings.getInstance(project).state.dockerTagKey ?: "" },
+                            { PluginSettings.getInstance(project).state.dockerTagKey = it }
                         )
+                        .columns(COLUMNS_LARGE)
                         .comment("Key in dockerTagsAsJson that represents this repo (e.g., order-service)")
                 }
                 row("Service CI plan key:") {
                     textField()
                         .bindText(
-                            { settings.state.serviceCiPlanKey ?: "" },
-                            { settings.state.serviceCiPlanKey = it }
+                            { PluginSettings.getInstance(project).state.serviceCiPlanKey ?: "" },
+                            { PluginSettings.getInstance(project).state.serviceCiPlanKey = it }
                         )
+                        .columns(COLUMNS_LARGE)
                         .comment("Bamboo plan key for this repo's CI build (for docker tag extraction)")
                 }
                 row("Build variable name:") {
                     textField()
                         .bindText(
-                            { settings.state.bambooBuildVariableName ?: "" },
-                            { settings.state.bambooBuildVariableName = it }
+                            { PluginSettings.getInstance(project).state.bambooBuildVariableName ?: "dockerTagsAsJson" },
+                            { PluginSettings.getInstance(project).state.bambooBuildVariableName = it }
                         )
                         .comment("Bamboo build variable containing Docker tag JSON (default: dockerTagsAsJson)")
                 }
+            }
+
+            group("Automation Suites") {
+                row {
+                    cell(buildAutomationSuitesPanel(automationSettings))
+                        .align(AlignX.FILL)
+                        .resizableColumn()
+                }
+            }
+
+            collapsibleGroup("Advanced") {
                 row("Tag history entries:") {
                     intTextField(range = 1..50)
-                        .bindIntText(settings.state::tagHistoryMaxEntries)
-                }
-            }
-
-            // === 3. Quality Thresholds ===
-            collapsibleGroup("Quality Thresholds") {
-                row("High coverage — green (%):") {
-                    textField()
-                        .bindText(
-                            { settings.state.coverageHighThreshold.toString() },
-                            { settings.state.coverageHighThreshold = it.toFloatOrNull() ?: 80.0f }
-                        )
-                }
-                row("Medium coverage — yellow (%):") {
-                    textField()
-                        .bindText(
-                            { settings.state.coverageMediumThreshold.toString() },
-                            { settings.state.coverageMediumThreshold = it.toFloatOrNull() ?: 50.0f }
-                        )
-                }
-                row("SonarQube metrics:") {
-                    textField()
-                        .bindText(
-                            { settings.state.sonarMetricKeys ?: "" },
-                            { settings.state.sonarMetricKeys = it }
-                        )
-                        .comment("Comma-separated metric keys for API queries")
-                }
-            }
-
-            // === 4. SonarQube ===
-            collapsibleGroup("SonarQube") {
-                row {
-                    checkBox("Enable Sonar inline annotations in editor")
-                        .bindSelected(settings.state::sonarInlineAnnotationsEnabled)
-                        .comment("Show SonarQube issues as inline annotations on affected lines")
-                }
-                row {
-                    checkBox("Enable Sonar AI quick-fix intention action")
-                        .bindSelected(settings.state::sonarIntentionActionEnabled)
-                        .comment("Show an AI-powered quick-fix intention on Sonar-annotated lines")
-                }
-                row("Project Key:") {
-                    val projectKeyField = textField()
-                        .bindText(
-                            { settings.state.sonarProjectKey ?: "" },
-                            { settings.state.sonarProjectKey = it }
-                        )
-                        .columns(30)
-                    button("Browse...") {
-                        // Open SonarProjectPickerDialog via reflection to avoid :sonar dependency
-                        try {
-                            val dialogClass = Class.forName("com.workflow.orchestrator.sonar.ui.SonarProjectPickerDialog")
-                            val constructor = dialogClass.getConstructor(com.intellij.openapi.project.Project::class.java)
-                            val dialog = constructor.newInstance(project) as com.intellij.openapi.ui.DialogWrapper
-                            if (dialog.showAndGet()) {
-                                val getKey = dialogClass.getMethod("getSelectedProjectKey")
-                                val key = getKey.invoke(dialog) as? String
-                                if (!key.isNullOrBlank()) {
-                                    projectKeyField.component.text = key
-                                }
-                            }
-                        } catch (e: Exception) {
-                            log.warn("[CI/CD] SonarProjectPickerDialog not available: ${e.message}")
-                        }
-                    }
-                    button("Auto-detect") {
-                        // Detect sonar.projectKey from pom.xml via Maven API
-                        val detected = try {
-                            val mavenManager = org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
-                            if (mavenManager.isMavenizedProject) {
-                                val rootProject = mavenManager.rootProjects.firstOrNull()
-                                rootProject?.properties?.getProperty("sonar.projectKey")
-                                    ?: rootProject?.let { "${it.mavenId.groupId}:${it.mavenId.artifactId}" }
-                            } else null
-                        } catch (_: Exception) { null }
-
-                        if (detected != null) {
-                            projectKeyField.component.text = detected
-                        } else {
-                            com.intellij.openapi.ui.Messages.showWarningDialog(
-                                "Could not detect sonar.projectKey from pom.xml.\nEnsure Maven is configured with a sonar.projectKey property.",
-                                "Auto-detect Failed"
-                            )
-                        }
-                    }
-                }.comment("SonarQube project key for quality analysis. Use Browse to search or Auto-detect from pom.xml.")
-            }
-
-            // === 5. Health Checks ===
-            collapsibleGroup("Health Checks") {
-                row {
-                    checkBox("Enable health checks on commit")
-                        .bindSelected(settings.state::healthCheckEnabled)
-                }
-                row("Blocking mode:") {
-                    comboBox(listOf("hard", "soft", "off"))
-                        .bindItem(
-                            getter = { settings.state.healthCheckBlockingMode },
-                            setter = { settings.state.healthCheckBlockingMode = it ?: "soft" }
-                        )
-                        .comment("hard = block commit, soft = warn only, off = disabled")
-                }
-                group("Checks") {
-                    row {
-                        checkBox("Maven compile")
-                            .bindSelected(settings.state::healthCheckCompileEnabled)
-                    }
-                    row {
-                        checkBox("Maven test")
-                            .bindSelected(settings.state::healthCheckTestEnabled)
-                    }
-                    row {
-                        checkBox("Copyright headers")
-                            .bindSelected(settings.state::healthCheckCopyrightEnabled)
-                    }
-                    row {
-                        checkBox("Sonar quality gate (uses cached status)")
-                            .bindSelected(settings.state::healthCheckSonarGateEnabled)
-                    }
-                    row {
-                        checkBox("CVE annotations in pom.xml")
-                            .bindSelected(settings.state::healthCheckCveEnabled)
-                    }
-                }
-                row("Maven goals:") {
-                    textField()
-                        .columns(30)
-                        .bindText(
-                            { settings.state.healthCheckMavenGoals ?: "" },
-                            { settings.state.healthCheckMavenGoals = it }
-                        )
-                }
-                row("Skip for branches (regex):") {
-                    textField()
-                        .columns(30)
-                        .bindText(
-                            { settings.state.healthCheckSkipBranchPattern ?: "" },
-                            { settings.state.healthCheckSkipBranchPattern = it }
-                        )
-                        .comment("e.g., hotfix/.* — leave blank to run on all branches")
-                }
-                row("Timeout (seconds):") {
-                    intTextField(range = 10..3600)
-                        .bindIntText(settings.state::healthCheckTimeoutSeconds)
-                }
-                row("Copyright header pattern (regex):") {
-                    textField()
-                        .columns(40)
-                        .bindText(
-                            { settings.state.copyrightHeaderPattern ?: "" },
-                            { settings.state.copyrightHeaderPattern = it }
-                        )
-                        .comment("e.g., Copyright \\(c\\) \\d{4} MyCompany")
+                        .bindIntText(PluginSettings.getInstance(project).state::tagHistoryMaxEntries)
                 }
             }
         }
         dialogPanel = dslPanel
 
-        // === 4. Automation Suites (custom Swing) ===
-        val suitesSection = buildAutomationSuitesPanel(automationSettings)
-
-        // Compose the full panel
-        mainPanel = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(8)
-        }
-
-        val contentPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(dslPanel)
-            add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(suitesSection)
-        }
-
-        mainPanel!!.add(contentPanel, BorderLayout.CENTER)
-
         loadProjects()
-        return JBScrollPane(mainPanel!!)
+        return JBScrollPane(dslPanel)
     }
 
-    // ========== Automation Suites UI (ported from AutomationSuiteConfigurable) ==========
+    // ========== Automation Suites UI (ported verbatim from CiCdConfigurable) ==========
 
     private fun buildAutomationSuitesPanel(automationSettings: AutomationSettingsService): JPanel {
         val wrapper = JPanel(BorderLayout()).apply {
             border = JBUI.Borders.empty(8, 0, 0, 0)
-        }
-
-        // Title
-        val titleLabel = JBLabel("Automation Suites").apply {
-            font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
-            border = JBUI.Borders.emptyBottom(8)
         }
 
         // === Add by Project -> Plan ===
@@ -320,14 +168,14 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
         val dropdownRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
         dropdownRow.add(JBLabel("Project:"))
-        dropdownRow.add(projectCombo.apply { preferredSize = java.awt.Dimension(JBUI.scale(200), JBUI.scale(28)) })
+        dropdownRow.add(projectCombo.apply { preferredSize = Dimension(JBUI.scale(200), JBUI.scale(28)) })
         dropdownRow.add(JBLabel("Plan:"))
-        dropdownRow.add(planCombo.apply { preferredSize = java.awt.Dimension(JBUI.scale(250), JBUI.scale(28)) })
+        dropdownRow.add(planCombo.apply { preferredSize = Dimension(JBUI.scale(250), JBUI.scale(28)) })
         dropdownRow.add(JButton("Add").apply { addActionListener { addSelectedPlan() } })
         addByProjectPanel.add(dropdownRow)
 
         projectCombo.addActionListener {
-            val item = projectCombo.selectedItem as? CiCdProjectItem ?: return@addActionListener
+            val item = projectCombo.selectedItem as? AutomationProjectItem ?: return@addActionListener
             loadPlansForProject(item.key)
         }
 
@@ -346,7 +194,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         searchRow.add(JButton("Find & Add").apply { addActionListener { searchAndAdd() } })
         addBySearchPanel.add(searchRow)
         addBySearchPanel.add(JBScrollPane(searchResultsPanel).apply {
-            preferredSize = java.awt.Dimension(0, JBUI.scale(80))
+            preferredSize = Dimension(0, JBUI.scale(80))
             border = JBUI.Borders.emptyTop(4)
         })
 
@@ -359,19 +207,21 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
         val topPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            add(titleLabel)
             add(addByProjectPanel)
             add(JSeparator())
             add(addBySearchPanel)
             add(JSeparator())
             add(JBLabel("Configured Suites:").apply {
-                font = JBUI.Fonts.label().deriveFont(java.awt.Font.BOLD)
+                font = JBUI.Fonts.label().deriveFont(Font.BOLD)
                 border = JBUI.Borders.empty(8, 0, 4, 0)
             })
         }
 
         wrapper.add(topPanel, BorderLayout.NORTH)
-        wrapper.add(JBScrollPane(suitesContainer).apply { border = null }, BorderLayout.CENTER)
+        wrapper.add(JBScrollPane(suitesContainer).apply {
+            preferredSize = Dimension(0, JBUI.scale(200))
+            border = null
+        }, BorderLayout.CENTER)
 
         return wrapper
     }
@@ -380,16 +230,16 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
         val connSettings = ConnectionSettings.getInstance()
         val url = connSettings.state.bambooUrl.trimEnd('/')
         if (url.isBlank()) {
-            log.warn("[CiCd] Bamboo URL is blank — showing configure message")
+            log.warn("[Automation] Bamboo URL is blank — showing configure message")
             runOnEdt {
                 projectCombo.removeAllItems()
-                projectCombo.addItem(CiCdProjectItem("", "Configure Bamboo URL in Connections first"))
+                projectCombo.addItem(AutomationProjectItem("", "Configure Bamboo URL in Connections first"))
             }
             return
         }
         runOnEdt {
             projectCombo.removeAllItems()
-            projectCombo.addItem(CiCdProjectItem("", "Loading projects..."))
+            projectCombo.addItem(AutomationProjectItem("", "Loading projects..."))
         }
         scope.launch {
             try {
@@ -400,22 +250,22 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                     projectCombo.removeAllItems()
                     if (!result.isError) {
                         if (result.data.isEmpty()) {
-                            projectCombo.addItem(CiCdProjectItem("", "No projects found"))
+                            projectCombo.addItem(AutomationProjectItem("", "No projects found"))
                         } else {
-                            projectCombo.addItem(CiCdProjectItem("", "Select a project..."))
+                            projectCombo.addItem(AutomationProjectItem("", "Select a project..."))
                             for (proj in result.data.sortedBy { it.name }) {
-                                projectCombo.addItem(CiCdProjectItem(proj.key, proj.name))
+                                projectCombo.addItem(AutomationProjectItem(proj.key, proj.name))
                             }
                         }
                     } else {
-                        projectCombo.addItem(CiCdProjectItem("", "Failed: ${result.summary}"))
+                        projectCombo.addItem(AutomationProjectItem("", "Failed: ${result.summary}"))
                     }
                 }
             } catch (e: Exception) {
-                log.warn("[CiCd] loadProjects() exception: ${e::class.simpleName}: ${e.message}", e)
+                log.warn("[Automation] loadProjects() exception: ${e::class.simpleName}: ${e.message}", e)
                 runOnEdt {
                     projectCombo.removeAllItems()
-                    projectCombo.addItem(CiCdProjectItem("", "Error: ${e.message ?: "Connection failed"}"))
+                    projectCombo.addItem(AutomationProjectItem("", "Error: ${e.message ?: "Connection failed"}"))
                 }
             }
         }
@@ -423,10 +273,10 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
 
     private fun loadPlansForProject(projectKey: String) {
         if (projectKey.isBlank()) return
-        val projectName = (projectCombo.selectedItem as? CiCdProjectItem)?.name ?: ""
+        val projectName = (projectCombo.selectedItem as? AutomationProjectItem)?.name ?: ""
         runOnEdt {
             planCombo.removeAllItems()
-            planCombo.addItem(CiCdPlanItem("", "Loading plans..."))
+            planCombo.addItem(AutomationPlanItem("", "Loading plans..."))
         }
         scope.launch {
             val result = bambooService.getProjectPlans(projectKey)
@@ -434,24 +284,24 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
                 planCombo.removeAllItems()
                 if (!result.isError) {
                     if (result.data.isEmpty()) {
-                        planCombo.addItem(CiCdPlanItem("", "No plans in this project"))
+                        planCombo.addItem(AutomationPlanItem("", "No plans in this project"))
                     } else {
                         for (plan in result.data.sortedBy { it.name }) {
                             val displayName = plan.name
                                 .removePrefix("$projectName - ")
                                 .removePrefix("$projectName-")
-                            planCombo.addItem(CiCdPlanItem(plan.key, displayName))
+                            planCombo.addItem(AutomationPlanItem(plan.key, displayName))
                         }
                     }
                 } else {
-                    planCombo.addItem(CiCdPlanItem("", "Failed: ${result.summary}"))
+                    planCombo.addItem(AutomationPlanItem("", "Failed: ${result.summary}"))
                 }
             }
         }
     }
 
     private fun addSelectedPlan() {
-        val plan = planCombo.selectedItem as? CiCdPlanItem ?: return
+        val plan = planCombo.selectedItem as? AutomationPlanItem ?: return
         if (plan.key.isBlank()) return
         if (suiteRows.any { it.planKeyField.text == plan.key }) return
         addSuiteRow(plan.name, plan.key)
@@ -523,7 +373,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
     private fun addSuiteRow(displayName: String, planKey: String) {
         val rowPanel = JPanel(GridBagLayout()).apply {
             border = JBUI.Borders.emptyBottom(4)
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(32))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(32))
         }
         val gbc = GridBagConstraints().apply {
             fill = GridBagConstraints.HORIZONTAL
@@ -554,7 +404,7 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
     // ========== SearchableConfigurable lifecycle ==========
 
     override fun isModified(): Boolean {
-        // DSL-bound fields (Bamboo, Docker, Quality, Health Check)
+        // DSL-bound fields (Docker Tags + Advanced)
         val dslModified = dialogPanel?.isModified() ?: false
 
         // Automation suites (app-level AutomationSettingsService)
@@ -604,7 +454,6 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
     override fun disposeUIResources() {
         scope.cancel()
         dialogPanel = null
-        mainPanel = null
         suitesContainer = null
         suiteRows.clear()
     }
@@ -614,10 +463,10 @@ class CiCdConfigurable(private val project: Project) : SearchableConfigurable, D
     }
 }
 
-private data class CiCdProjectItem(val key: String, val name: String) {
+private data class AutomationProjectItem(val key: String, val name: String) {
     override fun toString() = if (key.isBlank()) name else "$name ($key)"
 }
 
-private data class CiCdPlanItem(val key: String, val name: String) {
+private data class AutomationPlanItem(val key: String, val name: String) {
     override fun toString() = if (key.isBlank()) name else "$name ($key)"
 }

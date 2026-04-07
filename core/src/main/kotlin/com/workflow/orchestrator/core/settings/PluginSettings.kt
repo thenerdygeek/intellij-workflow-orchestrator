@@ -26,13 +26,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // SonarQube project key (auto-detected or user-configured)
         var sonarProjectKey by string("")
 
-        // Feature toggles
-        var sprintModuleEnabled by property(true)
-        var buildModuleEnabled by property(true)
-        var qualityModuleEnabled by property(true)
-        var automationModuleEnabled by property(true)
-        var handoverModuleEnabled by property(true)
-
         // Commit message format
         var useConventionalCommits by property(false)
 
@@ -55,7 +48,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var healthCheckTestEnabled by property(true)
         var healthCheckCopyrightEnabled by property(true)
         var healthCheckSonarGateEnabled by property(true)
-        var healthCheckCveEnabled by property(true)
         var healthCheckMavenGoals by string("clean compile test")
         var healthCheckSkipBranchPattern by string("")
         var healthCheckTimeoutSeconds by property(300)
@@ -81,12 +73,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Jira board type filter ("scrum", "kanban", or "" for all)
         var jiraBoardType by string("scrum")
-
-        // Plugin guards (transition prerequisites)
-        var guardBuildPassedBeforeReview by property(false)
-        var guardCopyrightBeforeClose by property(false)
-        var guardCoverageBeforeReview by property(false)
-        var guardAutomationBeforeClose by property(false)
 
         // Coverage thresholds (percentage)
         var coverageHighThreshold by property(80.0f)
