@@ -23,10 +23,15 @@ class DbSchemaTool : AgentTool {
         primary keys, and foreign key relationships. Uses JDBC metadata — no SQL needed.
         Call this before db_query to understand the structure before writing queries.
 
+        Note on terminology: `database` selects which database on the profile's server to
+        connect to (e.g. `mydb` vs `analytics` on the same Postgres cluster). `schema` is
+        the namespace WITHIN a database (e.g. `public` in Postgres). They're different.
+
         Examples:
-          db_schema(profile="qa")                          — list all tables
-          db_schema(profile="qa", table="orders")          — describe a specific table
-          db_schema(profile="qa", schema="reporting")      — tables in a specific schema
+          db_schema(profile="qa")                                — tables in profile's default DB
+          db_schema(profile="qa", database="orders")             — tables in the 'orders' DB
+          db_schema(profile="qa", database="orders", table="line_items")  — describe a table
+          db_schema(profile="qa", schema="reporting")            — tables in a Postgres schema
     """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -35,9 +40,17 @@ class DbSchemaTool : AgentTool {
                 type = "string",
                 description = "Profile ID (from db_list_profiles)"
             ),
+            "database" to ParameterProperty(
+                type = "string",
+                description = "Optional database name on the profile's server. Defaults to the " +
+                    "profile's default database. Use db_list_databases to see what's available. " +
+                    "Ignored for SQLite/Generic profiles."
+            ),
             "schema" to ParameterProperty(
                 type = "string",
-                description = "Database schema name (default: 'public' for PostgreSQL, null = all schemas)"
+                description = "Database schema (namespace) name. Different from `database` — this " +
+                    "is the inner namespace, e.g. 'public' in Postgres. Default: 'public' for " +
+                    "PostgreSQL, null = all schemas."
             ),
             "table" to ParameterProperty(
                 type = "string",
@@ -52,6 +65,7 @@ class DbSchemaTool : AgentTool {
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val profileId = params["profile"]?.jsonPrimitive?.content?.trim()
             ?: return error("'profile' parameter is required.")
+        val database = params["database"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
         val schemaFilter = params["schema"]?.jsonPrimitive?.content?.trim()
         val tableFilter = params["table"]?.jsonPrimitive?.content?.trim()
 
@@ -61,10 +75,12 @@ class DbSchemaTool : AgentTool {
             return error("DatabaseSettings service not available.")
         } ?: return error("Profile '$profileId' not found. Call db_list_profiles first.")
 
-        val result = DatabaseConnectionManager.withConnection(profile) { conn ->
+        val targetLabel = database?.let { "${profile.displayName} / $it" } ?: profile.displayName
+
+        val result = DatabaseConnectionManager.withConnection(profile, database) { conn ->
             val meta = conn.metaData
             val sb = StringBuilder()
-            sb.append("Schema for **${profile.displayName}** (${profile.dbType.displayName})\n\n")
+            sb.append("Schema for **$targetLabel** (${profile.dbType.displayName})\n\n")
 
             if (tableFilter != null) {
                 // Describe a single table in detail
@@ -96,16 +112,18 @@ class DbSchemaTool : AgentTool {
             sb.toString()
         }
 
+        val summaryProfileLabel = "${profile.id}${database?.let { "/$it" } ?: ""}"
+
         return result.fold(
             onSuccess = { content ->
                 ToolResult(
                     content = content,
-                    summary = "db_schema on '${profile.id}'" +
+                    summary = "db_schema on '$summaryProfileLabel'" +
                         (if (tableFilter != null) " table '$tableFilter'" else ""),
                     tokenEstimate = TokenEstimator.estimate(content)
                 )
             },
-            onFailure = { e -> error("Schema inspection failed on '${profile.id}': ${e.message}") }
+            onFailure = { e -> error("Schema inspection failed on '$summaryProfileLabel': ${e.message}") }
         )
     }
 

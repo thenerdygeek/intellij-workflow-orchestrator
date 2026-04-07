@@ -46,10 +46,21 @@ class DbListProfilesTool : AgentTool {
         val sb = StringBuilder("Available database profiles:\n\n")
         profiles.forEach { p ->
             sb.append("- **${p.id}** — ${p.displayName} (${p.dbType.displayName})\n")
-            sb.append("  URL: `${p.jdbcUrl}`\n")
+            if (p.isServerProfile) {
+                val host = p.resolvedHost
+                val port = p.resolvedPort
+                val db = p.resolvedDefaultDatabase.ifBlank { "(none)" }
+                sb.append("  Server: `$host:$port`,  Default DB: `$db`\n")
+            } else {
+                // SQLite / Generic — show the raw URL
+                sb.append("  URL: `${p.jdbcUrl}`\n")
+            }
             sb.append("  User: `${p.username}`\n")
         }
-        sb.append("\nUse `db_query(profile=\"<id>\", sql=\"SELECT ...\")` to run queries.")
+        sb.append("\nUse `db_query(profile=\"<id>\", sql=\"SELECT ...\")` to run queries.\n")
+        sb.append("For server profiles (Postgres / MySQL / SQL Server) call ")
+        sb.append("`db_list_databases(profile=\"<id>\")` to discover all databases on the server, ")
+        sb.append("then pass `database=\"<name>\"` to `db_query` / `db_schema` to switch into one.")
 
         return ToolResult(
             content = sb.toString(),

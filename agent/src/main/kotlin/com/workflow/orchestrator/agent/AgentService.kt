@@ -320,6 +320,7 @@ class AgentService(private val project: Project) : Disposable {
 
         // Database — queries, schema, connection profiles
         safeRegisterDeferred("Database") { DbListProfilesTool() }
+        safeRegisterDeferred("Database") { DbListDatabasesTool() }
         safeRegisterDeferred("Database") { DbQueryTool() }
         safeRegisterDeferred("Database") { DbSchemaTool() }
 

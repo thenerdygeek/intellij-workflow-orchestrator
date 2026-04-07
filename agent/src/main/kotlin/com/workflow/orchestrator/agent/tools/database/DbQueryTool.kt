@@ -25,10 +25,14 @@ class DbQueryTool : AgentTool {
         Rules:
         - Only SELECT statements are allowed. INSERT/UPDATE/DELETE/DDL are blocked.
         - Always call db_list_profiles first if you don't know which profiles exist.
+        - Use db_list_databases to see which databases exist on a server profile, then
+          pass the database name via the optional `database` parameter to query a non-default DB.
         - Use db_schema to understand the table structure before writing queries.
         - Keep queries targeted — avoid SELECT * on large tables without a WHERE clause.
 
-        Example: db_query(profile="qa", sql="SELECT id, name, status FROM orders WHERE status='PENDING' LIMIT 20")
+        Examples:
+          db_query(profile="qa", sql="SELECT id, name FROM orders WHERE status='PENDING' LIMIT 20")
+          db_query(profile="local", database="analytics", sql="SELECT count(*) FROM events")
     """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -36,6 +40,12 @@ class DbQueryTool : AgentTool {
             "profile" to ParameterProperty(
                 type = "string",
                 description = "Profile ID to query (from db_list_profiles), e.g. 'local', 'qa'"
+            ),
+            "database" to ParameterProperty(
+                type = "string",
+                description = "Optional database name on the profile's server. Defaults to the " +
+                    "profile's default database. Use db_list_databases to see what's available. " +
+                    "Ignored for SQLite/Generic profiles."
             ),
             "sql" to ParameterProperty(
                 type = "string",
@@ -54,6 +64,7 @@ class DbQueryTool : AgentTool {
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val profileId = params["profile"]?.jsonPrimitive?.content?.trim()
             ?: return error("'profile' parameter is required. Call db_list_profiles to see options.")
+        val database = params["database"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
         val sql = params["sql"]?.jsonPrimitive?.content?.trim()
             ?: return error("'sql' parameter is required.")
 
@@ -68,7 +79,7 @@ class DbQueryTool : AgentTool {
             "Profile '$profileId' not found. Call db_list_profiles to see available profiles."
         )
 
-        val result = DatabaseConnectionManager.withConnection(profile) { conn ->
+        val result = DatabaseConnectionManager.withConnection(profile, database) { conn ->
             val stmt = DatabaseConnectionManager.createStatement(conn)
             val rs = stmt.executeQuery(sql)
             val (table, rowCount) = DatabaseConnectionManager.resultSetToMarkdown(rs)
@@ -77,18 +88,20 @@ class DbQueryTool : AgentTool {
             Pair(table, rowCount)
         }
 
+        val targetLabel = database?.let { "${profile.displayName} / $it" } ?: profile.displayName
+
         return result.fold(
             onSuccess = { (table, rowCount) ->
-                val content = "Query against **${profile.displayName}** (${profile.dbType.displayName}):\n\n" +
+                val content = "Query against **$targetLabel** (${profile.dbType.displayName}):\n\n" +
                     "```sql\n$sql\n```\n\n$table\n_$rowCount row(s) returned._"
                 ToolResult(
                     content = content,
-                    summary = "db_query on '${profile.id}': $rowCount row(s)",
+                    summary = "db_query on '${profile.id}${database?.let { "/$it" } ?: ""}': $rowCount row(s)",
                     tokenEstimate = TokenEstimator.estimate(content)
                 )
             },
             onFailure = { e ->
-                error("Query failed on '${profile.id}': ${e.message}")
+                error("Query failed on '${profile.id}${database?.let { "/$it" } ?: ""}': ${e.message}")
             }
         )
     }

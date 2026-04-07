@@ -42,16 +42,26 @@ object DatabaseConnectionManager {
     /**
      * Opens a short-lived read-only connection, executes [block], then closes it.
      * Always uses the plugin classloader to load bundled JDBC drivers.
+     *
+     * @param database Optional database name to connect to. If null/blank, uses
+     *                 the profile's [DatabaseProfile.resolvedDefaultDatabase]. For
+     *                 SQLite/Generic profiles this parameter is ignored — those use
+     *                 the raw [DatabaseProfile.jdbcUrl] verbatim. For PostgreSQL,
+     *                 MySQL, and SQL Server, supplying [database] lets one profile
+     *                 reach any database on the server (mirrors DBeaver's per-DB
+     *                 connection switching).
      */
     suspend fun <T> withConnection(
         profile: DatabaseProfile,
+        database: String? = null,
         block: (Connection) -> T
     ): Result<T> = withContext(Dispatchers.IO) {
         runCatching {
             val password = DatabaseCredentialHelper.getPassword(profile.id)
                 ?: error("No password stored for profile '${profile.displayName}'. Check Settings > Agent.")
 
-            val conn = openConnection(profile, password)
+            val targetUrl = profile.jdbcUrlFor(database)
+            val conn = openConnection(profile, targetUrl, password)
             try {
                 conn.autoCommit = false
                 conn.isReadOnly = true
@@ -61,7 +71,7 @@ object DatabaseConnectionManager {
                 runCatching { conn.close() }
             }
         }.onFailure { e ->
-            LOG.warn("[DB:${profile.id}] Connection error: ${e.message}")
+            LOG.warn("[DB:${profile.id}${database?.let { "/$it" } ?: ""}] Connection error: ${e.message}")
         }
     }
 
@@ -117,7 +127,7 @@ object DatabaseConnectionManager {
 
     // ----- private -----
 
-    private fun openConnection(profile: DatabaseProfile, password: String): Connection {
+    private fun openConnection(profile: DatabaseProfile, jdbcUrl: String, password: String): Connection {
         val props = Properties().apply {
             put("user", profile.username)
             put("password", password)
@@ -133,7 +143,7 @@ object DatabaseConnectionManager {
 
         return if (profile.dbType == DbType.GENERIC || profile.dbType.driverClass.isEmpty()) {
             // Fall back to DriverManager for generic JDBC — user's classpath must have the driver
-            java.sql.DriverManager.getConnection(profile.jdbcUrl, props)
+            java.sql.DriverManager.getConnection(jdbcUrl, props)
         } else {
             // Load driver via plugin classloader to find bundled JARs
             @Suppress("UNCHECKED_CAST")
@@ -143,8 +153,8 @@ object DatabaseConnectionManager {
                 DatabaseConnectionManager::class.java.classLoader
             ) as Class<out Driver>
             val driver = driverClass.getDeclaredConstructor().newInstance()
-            driver.connect(profile.jdbcUrl, props)
-                ?: error("Driver returned null for URL '${profile.jdbcUrl}'. Check the JDBC URL format.")
+            driver.connect(jdbcUrl, props)
+                ?: error("Driver returned null for URL '$jdbcUrl'. Check the JDBC URL format.")
         }
     }
 }
