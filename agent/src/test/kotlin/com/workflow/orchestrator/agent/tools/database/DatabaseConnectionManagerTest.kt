@@ -1,0 +1,67 @@
+package com.workflow.orchestrator.agent.tools.database
+
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.util.Properties
+
+/**
+ * Tests for [DatabaseConnectionManager.testConnectionAndDiscover].
+ *
+ * Coverage strategy:
+ *  - SQLite branches use real `@TempDir` files because sqlite-jdbc has
+ *    no server requirement and runs anywhere.
+ *  - Generic JDBC branch reuses the SQLite driver via a raw URL.
+ *  - PostgreSQL / MySQL / SQL Server branches are tested only for
+ *    failure (unreachable host on a port that is not listening). Real
+ *    server tests would require testcontainers and are out of scope.
+ */
+class DatabaseConnectionManagerTest {
+
+    /**
+     * Opens a SQLite connection via the plugin classloader (same path as production code)
+     * to avoid triggering MySQL's `AbandonedConnectionCleanupThread` via DriverManager
+     * service-provider auto-loading, which would cause an IntelliJ thread-leak assertion.
+     */
+    private fun openSqlite(url: String): java.sql.Connection {
+        @Suppress("UNCHECKED_CAST")
+        val driverClass = Class.forName(
+            DbType.SQLITE.driverClass,
+            true,
+            DatabaseConnectionManager::class.java.classLoader
+        ) as Class<out java.sql.Driver>
+        val driver = driverClass.getDeclaredConstructor().newInstance()
+        return driver.connect(url, Properties())
+            ?: error("SQLite driver returned null for URL '$url'")
+    }
+
+    @Nested
+    inner class SqliteBranch {
+
+        @Test
+        fun `valid sqlite file returns success with empty database list`(@TempDir tmp: Path) = runTest {
+            val dbFile = tmp.resolve("test.db").toFile()
+            // Create a real SQLite database using the plugin classloader path (avoids MySQL thread leak).
+            openSqlite("jdbc:sqlite:${dbFile.absolutePath}").use { conn ->
+                conn.createStatement().use { s -> s.execute("CREATE TABLE t (id INTEGER)") }
+            }
+
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.SQLITE,
+                host = "",
+                port = 0,
+                username = "",
+                password = "",
+                rawJdbcUrl = "jdbc:sqlite:${dbFile.absolutePath}",
+            )
+
+            assertTrue(result.isSuccess, "Expected success, got ${result.exceptionOrNull()?.message}")
+            val discovery = result.getOrThrow()
+            assertEquals(emptyList<String>(), discovery.databases)
+            assertEquals(0, discovery.systemDatabasesFiltered)
+        }
+    }
+}

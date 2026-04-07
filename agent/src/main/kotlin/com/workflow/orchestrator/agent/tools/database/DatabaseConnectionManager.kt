@@ -120,7 +120,24 @@ object DatabaseConnectionManager {
         rawJdbcUrl: String = "",
     ): Result<DiscoveryResult> = withContext(Dispatchers.IO) {
         runCatching {
-            error("testConnectionAndDiscover: ${dbType.displayName} branch not implemented yet")
+            when (dbType) {
+                DbType.SQLITE -> {
+                    if (rawJdbcUrl.isBlank()) error("SQLite requires a JDBC URL")
+                    // Loading via the plugin classloader so the bundled sqlite-jdbc driver is found.
+                    @Suppress("UNCHECKED_CAST")
+                    val driverClass = Class.forName(
+                        DbType.SQLITE.driverClass,
+                        true,
+                        DatabaseConnectionManager::class.java.classLoader
+                    ) as Class<out java.sql.Driver>
+                    val driver = driverClass.getDeclaredConstructor().newInstance()
+                    val conn = driver.connect(rawJdbcUrl, java.util.Properties())
+                        ?: error("SQLite driver returned null for URL '$rawJdbcUrl'")
+                    conn.close()
+                    DiscoveryResult(databases = emptyList(), systemDatabasesFiltered = 0)
+                }
+                else -> error("testConnectionAndDiscover: ${dbType.displayName} branch not implemented yet")
+            }
         }
     }
 
