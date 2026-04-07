@@ -134,6 +134,22 @@ class DatabaseProfileDialog(
         rawUrlCheckbox.addActionListener { updateFieldVisibility() }
         updateFieldVisibility()
         testButton.addActionListener { runTestConnection() }
+
+        // Re-test required after any edit to a connection-affecting field
+        val invalidator = object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent?) = invalidateTestResult()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent?) = invalidateTestResult()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent?) = invalidateTestResult()
+        }
+        hostField.document.addDocumentListener(invalidator)
+        portField.document.addDocumentListener(invalidator)
+        userField.document.addDocumentListener(invalidator)
+        passField.document.addDocumentListener(invalidator)
+        urlField.document.addDocumentListener(invalidator)
+        // Type change also invalidates the test
+        typeCombo.addActionListener { invalidateTestResult() }
+        // rawUrlCheckbox toggle invalidates too
+        rawUrlCheckbox.addActionListener { invalidateTestResult() }
     }
 
     private fun onTypeChanged() {
@@ -263,6 +279,23 @@ class DatabaseProfileDialog(
                 }
             )
         }
+    }
+
+    /**
+     * Marks the prior Test Connection result as invalid. Called when the
+     * user edits any connection-affecting field. Disables the OK button
+     * and clears the status label so the user knows they must re-test.
+     *
+     * Does NOT clear the combo's existing items — the user might still
+     * want to see what was discovered last time. The dropdown is disabled
+     * so it can't be re-selected without a fresh test.
+     */
+    private fun invalidateTestResult() {
+        if (!testPassed) return
+        testPassed = false
+        okAction.isEnabled = (existing != null)  // grandfathered profiles stay saveable
+        defaultDbCombo.isEnabled = false
+        testStatusLabel.text = ""
     }
 
     private fun buildPreviewUrl(): String {
