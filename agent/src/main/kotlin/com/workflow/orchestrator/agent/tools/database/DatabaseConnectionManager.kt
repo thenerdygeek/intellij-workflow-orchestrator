@@ -169,43 +169,54 @@ object DatabaseConnectionManager {
                     val props = Properties().apply {
                         put("user", username)
                         put("password", password)
-                        // Engine-specific tweaks copied from openConnection()
                         if (dbType == DbType.MYSQL) {
                             put("useSSL", "false")
                             put("allowPublicKeyRetrieval", "true")
                         }
-                        // Cap how long the driver waits before giving up
+                        // loginTimeout: honoured by PostgreSQL JDBC, MySQL Connector-J, and
+                        // mssql-jdbc. Drivers that do not recognise it silently ignore it;
+                        // the JVM-global DriverManager.setLoginTimeout() below is the
+                        // primary timeout enforcement.
                         put("loginTimeout", TEST_CONNECT_TIMEOUT_SECONDS.toString())
                     }
+
+                    // DriverManager.setLoginTimeout is a JVM-global static. Save the
+                    // previous value so we can restore it in finally — otherwise this
+                    // call permanently changes the timeout for all JDBC code in the
+                    // IDE process (e.g. user-supplied Generic JDBC profiles).
+                    val prevTimeout = DriverManager.getLoginTimeout()
                     DriverManager.setLoginTimeout(TEST_CONNECT_TIMEOUT_SECONDS)
-
-                    @Suppress("UNCHECKED_CAST")
-                    val driverClass = Class.forName(
-                        dbType.driverClass,
-                        true,
-                        DatabaseConnectionManager::class.java.classLoader
-                    ) as Class<out Driver>
-                    val driver = driverClass.getDeclaredConstructor().newInstance()
-                    val conn = driver.connect(bootstrapUrl, props)
-                        ?: error("Driver returned null for URL '$bootstrapUrl'")
-
                     try {
-                        val rawNames = mutableListOf<String>()
-                        conn.createStatement().use { stmt ->
-                            stmt.queryTimeout = TEST_CONNECT_TIMEOUT_SECONDS
-                            stmt.executeQuery(query).use { rs ->
-                                while (rs.next()) {
-                                    rawNames.add(rs.getString(1))
+                        @Suppress("UNCHECKED_CAST")
+                        val driverClass = Class.forName(
+                            dbType.driverClass,
+                            true,
+                            DatabaseConnectionManager::class.java.classLoader
+                        ) as Class<out Driver>
+                        val driver = driverClass.getDeclaredConstructor().newInstance()
+                        val conn = driver.connect(bootstrapUrl, props)
+                            ?: error("Driver returned null for URL '$bootstrapUrl'")
+
+                        try {
+                            val rawNames = mutableListOf<String>()
+                            conn.createStatement().use { stmt ->
+                                stmt.queryTimeout = TEST_CONNECT_TIMEOUT_SECONDS
+                                stmt.executeQuery(query).use { rs ->
+                                    while (rs.next()) {
+                                        rawNames.add(rs.getString(1))
+                                    }
                                 }
                             }
+                            val filtered = DatabaseDiscovery.filterSystemDatabases(dbType, rawNames)
+                            DiscoveryResult(
+                                databases = filtered,
+                                systemDatabasesFiltered = rawNames.size - filtered.size,
+                            )
+                        } finally {
+                            runCatching { conn.close() }
                         }
-                        val filtered = DatabaseDiscovery.filterSystemDatabases(dbType, rawNames)
-                        DiscoveryResult(
-                            databases = filtered,
-                            systemDatabasesFiltered = rawNames.size - filtered.size,
-                        )
                     } finally {
-                        runCatching { conn.close() }
+                        DriverManager.setLoginTimeout(prevTimeout)
                     }
                 }
             }

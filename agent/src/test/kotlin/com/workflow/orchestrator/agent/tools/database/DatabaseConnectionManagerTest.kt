@@ -23,6 +23,34 @@ import java.util.Properties
 class DatabaseConnectionManagerTest {
 
     /**
+     * Shut down MySQL Connector-J's `AbandonedConnectionCleanupThread` daemon
+     * after each test. The thread is started automatically when `DriverManager`
+     * loads MySQL via SPI (which happens when the Generic branch test calls
+     * `DriverManager.getConnection`). IntelliJ's `ThreadLeakTracker` runs after
+     * each test and flags this daemon as a leak unless we shut it down first.
+     *
+     * `uncheckedShutdown()` is preferred over `checkedShutdown()` because
+     * failure to shut down the cleanup thread should not abort the test —
+     * the test has already verified the production code's contract.
+     *
+     * Wrapped in `runCatching` to handle the case where MySQL Connector-J
+     * was never loaded (the thread doesn't exist) or the API changes in
+     * a future version.
+     *
+     * Declared on the outer class so it covers all nested classes:
+     * [SqliteBranch], [GenericBranch], and [ServerEngineBranches]. The MySQL
+     * unreachable-host test in [ServerEngineBranches] can also start the
+     * cleanup thread, so a teardown scoped only to [GenericBranch] would
+     * leave it running after server-engine tests, causing flaky CI failures.
+     */
+    @AfterEach
+    fun shutdownMysqlCleanupThread() {
+        runCatching {
+            com.mysql.cj.jdbc.AbandonedConnectionCleanupThread.uncheckedShutdown()
+        }
+    }
+
+    /**
      * Opens a SQLite connection via the plugin classloader (same path as production code)
      * to avoid triggering MySQL's `AbandonedConnectionCleanupThread` via DriverManager
      * service-provider auto-loading, which would cause an IntelliJ thread-leak assertion.
@@ -103,28 +131,6 @@ class DatabaseConnectionManagerTest {
 
     @Nested
     inner class GenericBranch {
-
-        /**
-         * Shut down MySQL Connector-J's `AbandonedConnectionCleanupThread` daemon
-         * after each test. The thread is started automatically when `DriverManager`
-         * loads MySQL via SPI (which happens when the Generic branch test calls
-         * `DriverManager.getConnection`). IntelliJ's `ThreadLeakTracker` runs after
-         * each test and flags this daemon as a leak unless we shut it down first.
-         *
-         * `uncheckedShutdown()` is preferred over `checkedShutdown()` because
-         * failure to shut down the cleanup thread should not abort the test —
-         * the test has already verified the production code's contract.
-         *
-         * Wrapped in `runCatching` to handle the case where MySQL Connector-J
-         * was never loaded (the thread doesn't exist) or the API changes in
-         * a future version.
-         */
-        @AfterEach
-        fun shutdownMysqlCleanupThread() {
-            runCatching {
-                com.mysql.cj.jdbc.AbandonedConnectionCleanupThread.uncheckedShutdown()
-            }
-        }
 
         @Test
         fun `generic with sqlite url returns success with empty database list`(@TempDir tmp: Path) = runTest {
