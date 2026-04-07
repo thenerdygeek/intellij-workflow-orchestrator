@@ -497,11 +497,6 @@ class AgentService(private val project: Project) : Disposable {
          */
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
         /**
-         * Callback fired before each LLM API call.
-         * Used by the UI to show "Thinking (model)..." status.
-         */
-        onApiCallStart: ((modelId: String) -> Unit)? = null,
-        /**
          * Optional callback fired synchronously before the agent loop coroutine starts.
          * Provides the session ID so callers can track the session early (e.g. before
          * the first checkpoint fires). Called on the thread that invokes executeTask.
@@ -757,7 +752,6 @@ class AgentService(private val project: Project) : Disposable {
                     fallbackManager = fallbackManager,
                     brainFactory = brainFactory,
                     onModelSwitch = onModelSwitch,
-                    onApiCallStart = onApiCallStart,
                     compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
                     onCheckpoint = {
                         // Checkpoint: persist new messages since last checkpoint.

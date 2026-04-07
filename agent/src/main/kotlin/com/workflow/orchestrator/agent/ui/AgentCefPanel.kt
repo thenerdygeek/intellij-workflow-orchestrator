@@ -777,6 +777,17 @@ class AgentCefPanel(
         callJs("setModelName(${JsEscape.toJsString(name)})")
     }
 
+    /**
+     * Indicates whether the active model is the result of an automatic fallback
+     * (e.g. network error caused a switch from Opus to Sonnet). The React side
+     * renders a subtle amber indicator + icon + tooltip on the model chip when
+     * [isFallback] is true. Pass [reason]=null when clearing.
+     */
+    fun setModelFallbackState(isFallback: Boolean, reason: String?) {
+        val reasonJs = if (reason == null) "null" else JsEscape.toJsString(reason)
+        callJs("setModelFallbackState(${if (isFallback) "true" else "false"}, $reasonJs)")
+    }
+
     fun setPlanMode(enabled: Boolean) {
         callJs("setPlanMode(${if (enabled) "true" else "false"})")
     }

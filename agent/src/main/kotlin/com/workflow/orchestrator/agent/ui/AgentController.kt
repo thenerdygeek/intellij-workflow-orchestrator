@@ -781,19 +781,22 @@ class AgentController(
                     )
                 }
             },
-            onApiCallStart = { modelId ->
-                invokeLater {
-                    val shortName = modelId.substringAfterLast("::")
-                    dashboard.appendStatus("Thinking ($shortName)...", RichStreamingPanel.StatusType.INFO)
-                }
-            },
-            onModelSwitch = { from, to, reason ->
+            onModelSwitch = { _, to, reason ->
                 invokeLater {
                     val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
                     val displayName = cached.find { it.id == to }?.displayName
                         ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(to.substringAfterLast("::"))
-                    dashboard.appendStatus("$reason to $displayName", RichStreamingPanel.StatusType.WARNING)
                     dashboard.setModelName(displayName)
+                    // Subtle in-chip indicator instead of a noisy chat status line.
+                    // - "Network error — falling back": fallback ON, tooltip explains why
+                    // - "Escalating back": optimistically clear (silent recovery — Option X)
+                    // - "Escalation failed — reverting": fallback ON again with the failure reason
+                    when {
+                        reason.startsWith("Escalating back", ignoreCase = true) ->
+                            dashboard.setModelFallbackState(false, null)
+                        else ->
+                            dashboard.setModelFallbackState(true, "$reason — now using $displayName")
+                    }
                 }
             },
             onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },

@@ -211,11 +211,6 @@ class AgentLoop(
      */
     private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
     /**
-     * Callback fired before each LLM API call.
-     * Used by the UI to show "Thinking (model)..." status.
-     */
-    private val onApiCallStart: ((modelId: String) -> Unit)? = null,
-    /**
      * Optional model fallback manager. When provided with [brainFactory],
      * the loop falls back to cheaper models on network errors and escalates back.
      */
@@ -425,7 +420,6 @@ class AgentLoop(
             contextManager.setToolDefinitionTokens(
                 TokenEstimator.estimateToolDefinitions(currentToolDefs)
             )
-            onApiCallStart?.invoke(brain.modelId)
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,

@@ -168,6 +168,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setModelName(name: string) {
     stores?.getChatStore().setModelName(name);
   },
+  setModelFallbackState(isFallback: boolean, reason: string | null) {
+    stores?.getChatStore().setModelFallbackState(isFallback, reason);
+  },
   setPlanMode(enabled: boolean) {
     stores?.getChatStore().setInputMode(enabled ? 'plan' : 'agent');
   },

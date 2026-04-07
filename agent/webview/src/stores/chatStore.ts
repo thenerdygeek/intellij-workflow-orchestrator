@@ -81,6 +81,8 @@ interface ChatState {
     locked: boolean;
     mentions: Mention[];
     model: string;
+    /** When set, the active model is the result of an automatic fallback (e.g. network error → cheaper model). The string is the human-readable reason shown in the chip's tooltip. null = primary model. */
+    modelFallbackReason: string | null;
     mode: 'agent' | 'plan';
     ralph: boolean;
   };
@@ -144,6 +146,13 @@ interface ChatState {
   setBusy(busy: boolean): void;
   setSteeringMode(enabled: boolean): void;
   setModelName(model: string): void;
+  /**
+   * Toggles the fallback indicator on the model chip. When [isFallback] is true,
+   * the chip renders an amber border + Zap icon + tooltip showing [reason].
+   * Pass [isFallback]=false (and reason=null) to clear — the chip returns to its
+   * normal appearance. Used by ModelFallbackManager via the JCEF bridge.
+   */
+  setModelFallbackState(isFallback: boolean, reason: string | null): void;
   updateTokenBudget(used: number, max: number): void;
   updateSkillsList(skills: Skill[]): void;
   showSkillBanner(name: string): void;
@@ -222,6 +231,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     locked: false,
     mentions: [],
     model: '',
+    modelFallbackReason: null,
     mode: 'agent',
     ralph: false,
   },
@@ -647,6 +657,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setModelName(model: string) {
     set(state => ({
       inputState: { ...state.inputState, model },
+    }));
+  },
+
+  setModelFallbackState(isFallback: boolean, reason: string | null) {
+    set(state => ({
+      inputState: {
+        ...state.inputState,
+        modelFallbackReason: isFallback ? (reason ?? '') : null,
+      },
     }));
   },
 

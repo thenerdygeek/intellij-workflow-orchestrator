@@ -189,8 +189,7 @@ Two-layer enforcement (Claude Code style + Cline safety net):
 - **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429 AND 5xx
 - **Context overflow**: Condenser pipeline triggered + replay (OpenCode pattern)
 - **Streaming**: Heuristic token estimate when API returns usage: null
-- **Model fallback**: Opt-in (`AgentSettings.enableModelFallback`). On NETWORK_ERROR/TIMEOUT, `ModelFallbackManager` advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku). After 3 successful iterations on fallback, attempts escalation back to primary. If escalation fails, waits 6 iterations. `brainFactory` creates fresh `OpenAiCompatBrain` per switch. `onModelSwitch` callback updates UI model chip via existing `dashboard.setModelName()`.
-- **API call progress**: `onApiCallStart` callback fires before each LLM call, showing "Thinking (model)..." in chat status.
+- **Model fallback**: Opt-in (`AgentSettings.enableModelFallback`). On NETWORK_ERROR/TIMEOUT, `ModelFallbackManager` advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku). After 3 successful iterations on fallback, attempts escalation back to primary. If escalation fails, waits 6 iterations. `brainFactory` creates fresh `OpenAiCompatBrain` per switch. `onModelSwitch` callback updates the model chip via `dashboard.setModelName()` and toggles a subtle in-chip fallback indicator (amber border + Zap icon + tooltip showing the reason) via `dashboard.setModelFallbackState()`. Silent recovery on escalation back to primary — no chat status spam.
 
 ## Ralph Loop Patterns
 

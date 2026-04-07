@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban, Zap } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
@@ -55,7 +55,14 @@ const ProviderLogo = memo(function ProviderLogo({ provider, size = 14 }: { provi
 
 // ── ModelChip ──
 
-const ModelChip = memo(function ModelChip({ model }: { model: string }) {
+const ModelChip = memo(function ModelChip({
+  model,
+  fallbackReason,
+}: {
+  model: string;
+  /** Non-null when the active model is the result of an automatic fallback. The string is the human-readable reason shown as the chip's tooltip. null = primary model, no indicator. */
+  fallbackReason: string | null;
+}) {
   const [items, setItems] = useState<DropdownItem[]>([]);
   const activeItem = useMemo(() => items.find(m => m.name === model), [items, model]);
 
@@ -65,13 +72,40 @@ const ModelChip = memo(function ModelChip({ model }: { model: string }) {
     };
   }, []);
 
+  const isFallback = fallbackReason !== null;
+  // Subtle amber indicator when in fallback mode: border tint + Zap icon + tooltip.
+  // Uses existing CSS variables so it adapts to light/dark themes.
+  const fallbackBorderStyle = isFallback
+    ? {
+        borderColor: 'var(--warning, #d97706)',
+        borderWidth: '1px',
+        borderStyle: 'solid' as const,
+      }
+    : undefined;
+  const tooltipText = isFallback
+    ? (fallbackReason || 'Automatic fallback model active')
+    : undefined;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[12px] font-medium whitespace-nowrap">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-1.5 text-[12px] font-medium whitespace-nowrap"
+          style={fallbackBorderStyle}
+          title={tooltipText}
+        >
           <ProviderLogo provider={activeItem?.provider} size={12} />
           <span>{model || 'Model'}</span>
           {activeItem?.thinking && <Brain className="h-3 w-3 shrink-0" style={{ color: 'var(--accent, #60a5fa)' }} />}
+          {isFallback && (
+            <Zap
+              className="h-3 w-3 shrink-0"
+              style={{ color: 'var(--warning, #d97706)' }}
+              aria-label="Fallback model"
+            />
+          )}
           <ChevronDown className="h-2.5 w-2.5" />
         </Button>
       </DropdownMenuTrigger>
@@ -230,6 +264,7 @@ interface InputBarContentProps {
   planActive: boolean;
   ralphActive: boolean;
   model: string;
+  modelFallbackReason: string | null;
   richInputRef: React.RefObject<RichInputHandle>;
   onMentionSelect: (result: MentionSearchResult) => void;
   onSkillSelect: (skillName: string) => void;
@@ -268,6 +303,7 @@ function InputBarContent({
   planActive,
   ralphActive,
   model,
+  modelFallbackReason,
   richInputRef,
   onMentionSelect,
   onSkillSelect,
@@ -401,7 +437,7 @@ function InputBarContent({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <ModelChip model={model} />
+          <ModelChip model={model} fallbackReason={modelFallbackReason} />
           <PlanChip active={planActive} />
           <RalphChip active={ralphActive} />
           <SkillsChip />
@@ -703,6 +739,7 @@ export const InputBar = memo(function InputBar() {
           planActive={planActive}
           ralphActive={ralphActive}
           model={inputState.model ?? ''}
+          modelFallbackReason={inputState.modelFallbackReason ?? null}
           richInputRef={richInputRef}
           onMentionSelect={handleMentionSelect}
           onSkillSelect={handleSkillSelect}

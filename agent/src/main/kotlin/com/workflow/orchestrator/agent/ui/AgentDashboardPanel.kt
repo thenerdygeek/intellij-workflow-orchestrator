@@ -55,6 +55,8 @@ class AgentDashboardPanel(
      * idempotent state setter so mirrors can be brought up to speed immediately.
      */
     @Volatile private var cachedModelName: String? = null
+    /** When non-null, the model is in a fallback state and the value is the reason. Empty string = fallback ON, no reason. */
+    @Volatile private var cachedModelFallback: String? = null
     @Volatile private var cachedModelListJson: String? = null
     @Volatile private var cachedSkillsJson: String? = null
     @Volatile private var cachedPlanMode: Boolean = false
@@ -79,6 +81,7 @@ class AgentDashboardPanel(
         // Replay idempotent state
         cachedModelListJson?.let { panel.updateModelList(it) }
         cachedModelName?.let { panel.setModelName(it) }
+        cachedModelFallback?.let { panel.setModelFallbackState(true, it.ifBlank { null }) }
         cachedSkillsJson?.let { panel.updateSkillsList(it) }
         if (cachedPlanMode) panel.setPlanMode(true)
         if (cachedDebugLogVisible) panel.setDebugLogVisible(true)
@@ -172,6 +175,17 @@ class AgentDashboardPanel(
             cefPanel?.setModelName(shortName)
         }
         broadcast(replay = false) { it.setModelName(name) }
+    }
+
+    /**
+     * Marks the active model as a fallback (or clears the fallback state).
+     * Forwarded to the React model chip which renders an amber border + Zap
+     * icon + tooltip when [isFallback] is true.
+     */
+    fun setModelFallbackState(isFallback: Boolean, reason: String?) {
+        cachedModelFallback = if (isFallback) reason ?: "" else null
+        runOnEdt { cefPanel?.setModelFallbackState(isFallback, reason) }
+        broadcast(replay = false) { it.setModelFallbackState(isFallback, reason) }
     }
 
     fun updateModelList(modelsJson: String) {
