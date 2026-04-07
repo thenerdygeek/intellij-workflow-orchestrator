@@ -8,6 +8,8 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -48,7 +50,7 @@ class KillProcessTool : AgentTool {
         ProcessRegistry.kill(processId)
 
         // Wait for reader thread to finish draining output (max 2s)
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             readerLatch.await(2, java.util.concurrent.TimeUnit.SECONDS)
         }
 

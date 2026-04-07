@@ -232,7 +232,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val ceTasksDeferred = scope.async {
             try { client.getAnalysisTasks(projectKey) }
             catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
                 log.info("[Sonar:CE] CE activity not available (may require admin permission)")
                 null
             }
@@ -240,7 +240,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val newCodePeriodDeferred = scope.async {
             try { client.getNewCodePeriod(projectKey, branch) }
             catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
                 log.warn("[Sonar:CE] Failed to fetch new code period: ${e.message}")
                 null
             }
@@ -250,7 +250,7 @@ class SonarDataService(private val project: Project) : Disposable {
         val hotspotsDeferred = scope.async {
             try { client.getSecurityHotspots(projectKey, branch) }
             catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
                 log.info("[Sonar:Hotspots] Security hotspots not available (may require Developer Edition)")
                 null
             }

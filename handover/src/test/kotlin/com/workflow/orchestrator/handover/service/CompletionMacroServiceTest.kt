@@ -2,6 +2,7 @@ package com.workflow.orchestrator.handover.service
 
 import com.workflow.orchestrator.handover.model.MacroStep
 import com.workflow.orchestrator.handover.model.MacroStepStatus
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -57,7 +58,7 @@ class CompletionMacroServiceTest {
     }
 
     @Test
-    fun `executeMacro runs enabled steps and returns results`() = kotlinx.coroutines.test.runTest {
+    fun `executeMacro runs enabled steps and returns results`() = runTest {
         val steps = listOf(
             MacroStep("a", "Step A", enabled = true),
             MacroStep("b", "Step B", enabled = true)
@@ -75,7 +76,7 @@ class CompletionMacroServiceTest {
     }
 
     @Test
-    fun `executeMacro stops on failure and skips remaining`() = kotlinx.coroutines.test.runTest {
+    fun `executeMacro stops on failure and skips remaining`() = runTest {
         val steps = listOf(
             MacroStep("a", "Step A", enabled = true),
             MacroStep("b", "Step B", enabled = true),
@@ -95,7 +96,7 @@ class CompletionMacroServiceTest {
     }
 
     @Test
-    fun `executeMacro skips disabled steps`() = kotlinx.coroutines.test.runTest {
+    fun `executeMacro skips disabled steps`() = runTest {
         val steps = listOf(
             MacroStep("a", "Step A", enabled = true),
             MacroStep("b", "Step B", enabled = false),

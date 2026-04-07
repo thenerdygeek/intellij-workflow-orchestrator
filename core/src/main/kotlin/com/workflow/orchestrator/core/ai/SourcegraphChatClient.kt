@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -434,7 +435,7 @@ class SourcegraphChatClient(
             } finally {
                 activeCall.set(null)
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             log.info("[Agent:API] Stream cancelled by user")
             activeCall.getAndSet(null)?.cancel()
             throw e // re-throw so coroutine machinery handles it
@@ -514,7 +515,7 @@ class SourcegraphChatClient(
             } finally {
                 activeCall.set(null)
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             throw e // Never swallow CancellationException — propagate for structured concurrency
         } catch (e: IOException) {
             log.warn("[Agent:API] Network error: ${e.message}", e)

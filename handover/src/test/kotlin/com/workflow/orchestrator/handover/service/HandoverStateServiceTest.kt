@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -88,7 +89,7 @@ class HandoverStateServiceTest {
             skipItems(1)
 
             // Yield to ensure the service's event collector coroutine is fully subscribed
-            kotlinx.coroutines.yield()
+            yield()
 
             eventBus.emit(WorkflowEvent.AutomationTriggered(
                 suitePlanKey = "PROJ-REGR",

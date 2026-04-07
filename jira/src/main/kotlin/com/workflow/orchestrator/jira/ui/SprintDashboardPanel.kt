@@ -42,6 +42,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.debounce
@@ -180,7 +181,7 @@ class SprintDashboardPanel(
         setupListeners()
         listenForTicketDetection()
 
-        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        @OptIn(FlowPreview::class)
         scope.launch {
             searchDebounce.debounce(250).collect {
                 withContext(Dispatchers.EDT) { applyFilter() }

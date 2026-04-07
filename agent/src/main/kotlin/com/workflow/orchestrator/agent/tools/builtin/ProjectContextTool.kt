@@ -223,7 +223,7 @@ class ProjectContextTool : AgentTool {
         if (primaryRepo == null) return
         try {
             val resolver = DefaultBranchResolver.getInstance(project)
-            val resolved = kotlinx.coroutines.runBlocking {
+            val resolved = runBlocking {
                 withTimeoutOrNull(2000) { resolver.resolve(primaryRepo) }
             } ?: return
             sb.appendLine("Default Target Branch: $resolved")

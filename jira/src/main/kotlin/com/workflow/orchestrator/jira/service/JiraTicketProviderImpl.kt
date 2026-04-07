@@ -10,6 +10,8 @@ import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.intellij.openapi.progress.runBackgroundableTask
 import com.workflow.orchestrator.jira.api.JiraApiClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
  * Implementation of [JiraTicketProvider] that delegates to [JiraApiClient].
@@ -88,7 +90,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
         val client = createClient() ?: return
 
         runBackgroundableTask("Loading transitions for $ticketId", project, false) {
-            val result = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            val result = runBlocking(Dispatchers.IO) {
                 client.getTransitions(ticketId, expandFields = true)
             }
             val transitions = when (result) {
@@ -108,7 +110,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                 if (transitions.size == 1 && transitions[0].fields.isNullOrEmpty()) {
                     // Single transition, no required fields — execute directly
                     runBackgroundableTask("Transitioning $ticketId", project, false) {
-                        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                        runBlocking(Dispatchers.IO) {
                             transitionTicket(ticketId, transitions[0].id)
                         }
                         com.intellij.openapi.application.invokeLater { onTransitioned() }
@@ -126,7 +128,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                                 ).show()
                             } else {
                                 runBackgroundableTask("Transitioning $ticketId", project, false) {
-                                    kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                                    runBlocking(Dispatchers.IO) {
                                         transitionTicket(ticketId, transition.id)
                                     }
                                     com.intellij.openapi.application.invokeLater { onTransitioned() }

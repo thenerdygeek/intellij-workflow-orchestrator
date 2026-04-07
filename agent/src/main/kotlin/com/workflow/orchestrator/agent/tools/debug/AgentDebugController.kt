@@ -14,6 +14,7 @@ import com.intellij.xdebugger.frame.presentation.XValuePresentation
 import com.intellij.debugger.engine.DebugProcessImpl
 import com.intellij.debugger.engine.events.DebuggerCommandImpl
 import com.intellij.debugger.jdi.VirtualMachineProxyImpl
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -68,7 +69,7 @@ class AgentDebugController(private val project: Project) : Disposable {
                 )
             }
 
-            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+            @OptIn(ExperimentalCoroutinesApi::class)
             override fun sessionResumed() {
                 // Reset the replay cache so waitForPause blocks on next call
                 flow.resetReplayCache()

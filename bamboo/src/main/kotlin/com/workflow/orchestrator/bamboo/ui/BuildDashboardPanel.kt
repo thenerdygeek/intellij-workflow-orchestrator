@@ -46,6 +46,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.awt.*
 import java.awt.event.MouseAdapter
@@ -501,7 +502,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             while (retries < 10) {
                 val repos = GitRepositoryManager.getInstance(project).repositories
                 if (repos.isNotEmpty()) break
-                kotlinx.coroutines.delay(1000)
+                delay(1000)
                 retries++
             }
             invokeLater { prBar.refreshPrs() }
@@ -749,7 +750,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                         if (!result.isError) {
                             statusLabel.text = "Build $resultKey stopped"
                             scope.launch {
-                                kotlinx.coroutines.delay(2000)
+                                delay(2000)
                                 monitorService.pollOnce(state.planKey, state.branch)
                             }
                         } else {
@@ -784,7 +785,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                         if (!result.isError) {
                             statusLabel.text = "Build $resultKey cancelled"
                             scope.launch {
-                                kotlinx.coroutines.delay(2000)
+                                delay(2000)
                                 monitorService.pollOnce(state.planKey, state.branch)
                             }
                         } else {
@@ -822,7 +823,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                             statusLabel.text = "Rerun triggered for $planKey #$buildNumber"
                             // Poll immediately to get updated status
                             scope.launch {
-                                kotlinx.coroutines.delay(2000)
+                                delay(2000)
                                 monitorService.pollOnce(planKey, state.branch)
                             }
                         } else {

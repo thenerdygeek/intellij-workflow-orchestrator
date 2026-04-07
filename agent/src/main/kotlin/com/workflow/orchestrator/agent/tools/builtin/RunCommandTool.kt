@@ -19,6 +19,8 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
@@ -461,7 +463,7 @@ class RunCommandTool : AgentTool {
                 // delay() is also cancellable, but ensureActive() gives an immediate check
                 // before waiting 500ms.
                 coroutineContext.ensureActive()
-                kotlinx.coroutines.delay(500)
+                delay(500)
                 val now = System.currentTimeMillis()
 
                 // Priority 1: process exited — always check first (race condition fix)
@@ -487,7 +489,7 @@ class RunCommandTool : AgentTool {
             }
             @Suppress("UNREACHABLE_CODE")
             error("unreachable: while(true) always returns")
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             // Coroutine cancelled (user pressed Stop) — ProcessRegistry.killAll() handles cleanup
             throw e // Propagate for structured concurrency
         } catch (e: Exception) {

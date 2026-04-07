@@ -8,6 +8,7 @@ import com.workflow.orchestrator.sonar.model.QualityGateStatus
 import com.workflow.orchestrator.sonar.model.SonarState
 import io.mockk.coEvery
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
@@ -147,7 +148,7 @@ private class TestSonarDataServiceWithHotspots(private val apiClient: SonarApiCl
         val hotspotsResult = try {
             client.getSecurityHotspots(projectKey, branch)
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is CancellationException) throw e
             null
         }
 

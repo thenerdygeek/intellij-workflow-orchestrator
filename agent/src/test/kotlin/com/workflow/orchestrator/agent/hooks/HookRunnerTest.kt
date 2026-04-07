@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.hooks
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -221,7 +222,7 @@ class HookRunnerTest {
 
     @DisabledOnOs(OS.WINDOWS)
     @Test
-    fun `execute returns Proceed on timeout`() = kotlinx.coroutines.runBlocking {
+    fun `execute returns Proceed on timeout`() = runBlocking {
         // Use runBlocking instead of runTest because this test involves real process
         // execution with real timeouts (runTest uses virtual time which doesn't work
         // with ProcessBuilder/withTimeoutOrNull over real processes)

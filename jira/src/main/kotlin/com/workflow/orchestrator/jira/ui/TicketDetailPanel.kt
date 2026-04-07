@@ -23,7 +23,12 @@ import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
 import com.workflow.orchestrator.jira.service.AttachmentDownloadService
 import com.workflow.orchestrator.jira.service.IssueDetailCache
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.*
@@ -98,10 +103,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     private var currentIssueKey: String? = null
     private var currentWorklogSection: WorklogSection? = null
     private var currentDevStatusSection: DevStatusSection? = null
-    private var lazyLoadJob: kotlinx.coroutines.Job? = null
-    private val lazyScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
-    )
+    private var lazyLoadJob: Job? = null
+    private val lazyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Lazy-loaded section placeholders
     private val commentsPlaceholder = JPanel(BorderLayout()).apply {
@@ -334,10 +337,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                         label.text = "Downloading..."
                         label.foreground = StatusColors.SECONDARY_TEXT
                         label.cursor = Cursor.getDefaultCursor()
-                        lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        lazyScope.launch(Dispatchers.IO) {
                             val (results, summary) = attachmentDownloadService
                                 .downloadAll(attachments, targetDir)
-                            withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                            withContext(Dispatchers.EDT) {
                                 label.isEnabled = true
                                 label.text = "Download All"
                                 label.foreground = StatusColors.LINK
@@ -428,13 +431,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     add(thumbnailLabel)
 
                     // Lazy-load thumbnail
-                    lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    lazyScope.launch(Dispatchers.IO) {
                         try {
                             val image = attachmentDownloadService.downloadThumbnail(att)
                             if (image != null) {
                                 val scaled = scaleToFit(image, thumbW, thumbH)
                                 val imageIcon = ImageIcon(scaled)
-                                withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                                withContext(Dispatchers.EDT) {
                                     thumbnailLabel.icon = imageIcon
                                     thumbnailLabel.isOpaque = false
                                     thumbnailLabel.revalidate()
@@ -496,10 +499,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         menu.add(JMenuItem("Open in Editor").apply {
             addActionListener {
-                lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                lazyScope.launch(Dispatchers.IO) {
                     val result = attachmentDownloadService.downloadAttachment(att)
                     if (result != null) {
-                        withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                        withContext(Dispatchers.EDT) {
                             val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(result.file)
                             if (vf != null) {
                                 FileEditorManager.getInstance(project).openFile(vf, true)
@@ -522,10 +525,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     .withTitle("Select Download Directory")
                 FileChooser.chooseFile(descriptor, project, null) { chosenDir ->
                     val targetDir = File(chosenDir.path)
-                    lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    lazyScope.launch(Dispatchers.IO) {
                         val result = attachmentDownloadService.downloadAttachment(att, targetDir)
                         if (result != null) {
-                            withContext(kotlinx.coroutines.Dispatchers.EDT) {
+                            withContext(Dispatchers.EDT) {
                                 NotificationGroupManager.getInstance()
                                     .getNotificationGroup("Workflow Orchestrator")
                                     .createNotification(
@@ -554,8 +557,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     }
 
     private fun lazyLoadComments(issueKey: String) {
-        lazyLoadJob = lazyScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            kotlinx.coroutines.delay(200) // debounce
+        lazyLoadJob = lazyScope.launch(Dispatchers.IO) {
+            delay(200) // debounce
             if (currentIssueKey != issueKey) return@launch
 
             val cache = IssueDetailCache.getInstance(project)

@@ -59,6 +59,7 @@ import com.workflow.orchestrator.agent.loop.ModelFallbackManager
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -450,7 +451,7 @@ class AgentService(private val project: Project) : Disposable {
          * Used in plan mode: after plan presentation, the loop waits on this channel
          * for the user to send a message, add comments, or approve.
          */
-        userInputChannel: kotlinx.coroutines.channels.Channel<String>? = null,
+        userInputChannel: Channel<String>? = null,
         /**
          * Optional approval gate for write tool executions.
          * When set, the loop suspends before write tools and waits for user approval.
@@ -989,7 +990,7 @@ class AgentService(private val project: Project) : Disposable {
         // Cancellable: can prevent session resumption.
         // Cline: "Executes when a task is resumed after being interrupted."
         if (hookManager.hasHooks(HookType.TASK_RESUME)) {
-            val hookResult = kotlinx.coroutines.runBlocking {
+            val hookResult = runBlocking {
                 hookManager.dispatch(
                     HookEvent(
                         type = HookType.TASK_RESUME,

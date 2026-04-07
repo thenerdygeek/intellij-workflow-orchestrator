@@ -24,6 +24,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.util.ReflectionUtils
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -155,7 +156,7 @@ Actions and their parameters:
         // Register a CoverageSuiteListener BEFORE launching the run.
         // coverageDataCalculated() fires when the coverage engine finishes processing
         // the .exec/.ic data — this is the reliable signal that data is ready.
-        val coverageDeferred = kotlinx.coroutines.CompletableDeferred<CoverageSnapshot?>()
+        val coverageDeferred = CompletableDeferred<CoverageSnapshot?>()
         val listenerDisposable = registerCoverageListener(project, coverageDeferred)
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
@@ -327,7 +328,7 @@ Actions and their parameters:
      */
     private fun registerCoverageListener(
         project: Project,
-        deferred: kotlinx.coroutines.CompletableDeferred<CoverageSnapshot?>
+        deferred: CompletableDeferred<CoverageSnapshot?>
     ): com.intellij.openapi.Disposable? {
         return try {
             val dataManagerClass = Class.forName("com.intellij.coverage.CoverageDataManager")

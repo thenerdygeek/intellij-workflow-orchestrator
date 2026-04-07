@@ -402,7 +402,7 @@ class AgentController(
         if (connections.state.sourcegraphUrl.isBlank()) return
 
         val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
-        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         scope.launch {
             try {
                 val client = com.workflow.orchestrator.core.ai.SourcegraphChatClient(

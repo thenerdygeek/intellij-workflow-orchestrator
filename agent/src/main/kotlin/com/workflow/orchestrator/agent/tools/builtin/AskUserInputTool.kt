@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -133,7 +134,7 @@ class AskUserInputTool : AgentTool {
         var lastCheckedSize = outputSizeBeforeInput
 
         while (true) {
-            kotlinx.coroutines.delay(MONITOR_POLL_MS)
+            delay(MONITOR_POLL_MS)
             val now = System.currentTimeMillis()
 
             // Priority 1: process exited

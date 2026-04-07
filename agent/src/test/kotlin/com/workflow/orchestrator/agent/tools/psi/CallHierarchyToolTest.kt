@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.psi
 
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -40,7 +41,7 @@ class CallHierarchyToolTest {
     }
 
     @Test
-    fun `execute returns dumbModeError when indexing`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns dumbModeError when indexing`() = runTest {
         val tool = CallHierarchyTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
@@ -60,7 +61,7 @@ class CallHierarchyToolTest {
     }
 
     @Test
-    fun `execute returns error when method is missing`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns error when method is missing`() = runTest {
         val tool = CallHierarchyTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"

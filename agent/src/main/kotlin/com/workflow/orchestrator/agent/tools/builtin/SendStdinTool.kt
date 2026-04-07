@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -121,7 +122,7 @@ class SendStdinTool : AgentTool {
         var lastCheckedSize = outputSizeBeforeStdin
 
         while (true) {
-            kotlinx.coroutines.delay(MONITOR_POLL_MS)
+            delay(MONITOR_POLL_MS)
             val now = System.currentTimeMillis()
 
             // Priority 1: process exited

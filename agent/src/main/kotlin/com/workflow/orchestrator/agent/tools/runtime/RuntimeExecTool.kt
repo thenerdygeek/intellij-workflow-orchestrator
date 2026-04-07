@@ -31,6 +31,7 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.util.ReflectionUtils
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -777,7 +778,7 @@ description optional: for approval dialog on run_tests, compile_module.
 
     private fun handleDescriptorReady(
         descriptor: RunContentDescriptor,
-        continuation: kotlinx.coroutines.CancellableContinuation<ToolResult?>,
+        continuation: CancellableContinuation<ToolResult?>,
         testTarget: String,
         descriptorRef: AtomicReference<RunContentDescriptor?>,
         processHandlerRef: AtomicReference<ProcessHandler?>,

@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.psi
 
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -36,7 +37,7 @@ class FileStructureToolTest {
     }
 
     @Test
-    fun `execute returns dumbModeError when indexing`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns dumbModeError when indexing`() = runTest {
         val tool = FileStructureTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
@@ -56,7 +57,7 @@ class FileStructureToolTest {
     }
 
     @Test
-    fun `execute returns error when path is missing`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns error when path is missing`() = runTest {
         val tool = FileStructureTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"

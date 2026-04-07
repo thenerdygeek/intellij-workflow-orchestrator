@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.psi
 
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -56,7 +57,7 @@ class ReadWriteAccessToolTest {
     }
 
     @Test
-    fun `execute returns error when file parameter is missing`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns error when file parameter is missing`() = runTest {
         val tool = ReadWriteAccessTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
@@ -70,7 +71,7 @@ class ReadWriteAccessToolTest {
     }
 
     @Test
-    fun `execute returns error when neither offset nor line is provided`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns error when neither offset nor line is provided`() = runTest {
         val tool = ReadWriteAccessTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
@@ -86,7 +87,7 @@ class ReadWriteAccessToolTest {
     }
 
     @Test
-    fun `execute returns dumbModeError when indexing`() = kotlinx.coroutines.test.runTest {
+    fun `execute returns dumbModeError when indexing`() = runTest {
         val tool = ReadWriteAccessTool()
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
