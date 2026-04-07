@@ -1,9 +1,12 @@
 package com.workflow.orchestrator.agent.tools.database
 
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.util.Properties
@@ -97,6 +100,62 @@ class DatabaseConnectionManagerTest {
                 result.exceptionOrNull()?.message?.contains("requires a JDBC URL") == true,
                 "Expected error to mention JDBC URL requirement, got: ${result.exceptionOrNull()?.message}"
             )
+        }
+    }
+
+    @Nested
+    @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+    inner class GenericBranch {
+
+        /**
+         * Shut down MySQL's AbandonedConnectionCleanupThread after each Generic test.
+         * Calling DriverManager.getConnection() with any URL (even malformed) triggers
+         * MySQL SPI auto-loading, which starts the cleanup daemon. IntelliJ's
+         * ThreadLeakTracker runs as an @AfterEach extension and flags it as a leak
+         * unless we explicitly shut it down before that check fires.
+         */
+        @AfterEach
+        fun shutdownMysqlCleanupThread() {
+            runCatching {
+                val cls = Class.forName("com.mysql.cj.jdbc.AbandonedConnectionCleanupThread")
+                cls.getMethod("uncheckedShutdown").invoke(null)
+            }
+        }
+
+        @Test
+        fun `generic with sqlite url returns success with empty database list`(@TempDir tmp: Path) = runTest {
+            val dbFile = tmp.resolve("test.db").toFile()
+            // Create the SQLite file via the same classloader path used by production code
+            // (avoids triggering MySQL's AbandonedConnectionCleanupThread via DriverManager).
+            openSqlite("jdbc:sqlite:${dbFile.absolutePath}").use {
+                it.createStatement().use { s -> s.execute("CREATE TABLE t (id INTEGER)") }
+            }
+
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.GENERIC,
+                host = "",
+                port = 0,
+                username = "",
+                password = "",
+                rawJdbcUrl = "jdbc:sqlite:${dbFile.absolutePath}",
+            )
+
+            assertTrue(result.isSuccess, "Expected success, got ${result.exceptionOrNull()?.message}")
+            assertEquals(emptyList<String>(), result.getOrThrow().databases)
+        }
+
+        @Test
+        fun `generic with malformed url returns failure`() = runTest {
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.GENERIC,
+                host = "",
+                port = 0,
+                username = "",
+                password = "",
+                rawJdbcUrl = "not-a-jdbc-url",
+            )
+
+            assertTrue(result.isFailure)
         }
     }
 }

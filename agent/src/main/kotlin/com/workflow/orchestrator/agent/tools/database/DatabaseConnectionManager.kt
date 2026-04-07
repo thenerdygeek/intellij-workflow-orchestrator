@@ -143,6 +143,22 @@ object DatabaseConnectionManager {
                         runCatching { conn.close() }
                     }
                 }
+                DbType.GENERIC -> {
+                    if (rawJdbcUrl.isBlank()) error("Generic JDBC requires a URL")
+                    val props = Properties().apply {
+                        if (username.isNotBlank()) put("user", username)
+                        if (password.isNotEmpty()) put("password", password)
+                    }
+                    // Generic falls back to DriverManager — the user is expected to have
+                    // their own driver on the classpath. Use try/finally to guarantee
+                    // the connection is closed even if a later step throws.
+                    val conn = java.sql.DriverManager.getConnection(rawJdbcUrl, props)
+                    try {
+                        DiscoveryResult(databases = emptyList(), systemDatabasesFiltered = 0)
+                    } finally {
+                        runCatching { conn.close() }
+                    }
+                }
                 else -> error("testConnectionAndDiscover: ${dbType.displayName} branch not implemented yet")
             }
         }
