@@ -32,6 +32,26 @@ object DatabaseConnectionManager {
     /** Max characters per cell value. */
     const val MAX_CELL_CHARS = 500
 
+    /**
+     * Result of a successful test-and-discover call. Used by
+     * [com.workflow.orchestrator.agent.settings.DatabaseProfileDialog]
+     * to populate the default-database dropdown after the user clicks
+     * "Test Connection".
+     */
+    data class DiscoveryResult(
+        /** User-visible databases on the server, system catalogs already filtered out. */
+        val databases: List<String>,
+        /** Number of system databases hidden from [databases] (informational, for the success label). */
+        val systemDatabasesFiltered: Int,
+    )
+
+    /**
+     * Connect timeout for the test-connection flow (seconds). Hardcoded
+     * because the user has not yet saved a profile when this runs, so
+     * we can't read per-profile JDBC properties.
+     */
+    private const val TEST_CONNECT_TIMEOUT_SECONDS = 10
+
     // Patterns that must not appear at the start of a (trimmed, uppercased) query.
     private val BLOCKED_PREFIXES = listOf(
         "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
@@ -72,6 +92,35 @@ object DatabaseConnectionManager {
             }
         }.onFailure { e ->
             LOG.warn("[DB:${profile.id}${database?.let { "/$it" } ?: ""}] Connection error: ${e.message}")
+        }
+    }
+
+    /**
+     * Opens a short-lived bootstrap connection for [dbType] and lists the
+     * user-visible databases on the server. Used by the Add/Edit profile
+     * dialog to validate credentials and populate the default-database
+     * dropdown before the user saves the profile.
+     *
+     * For server engines (PostgreSQL/MySQL/SQL Server) this builds the
+     * bootstrap URL via [DatabaseDiscovery.bootstrapUrl] and runs
+     * [DatabaseDiscovery.discoveryQuery]. For SQLite/Generic it opens
+     * the supplied [rawJdbcUrl] and returns an empty database list (those
+     * engines have no per-server discovery).
+     *
+     * @param rawJdbcUrl Required for SQLite and Generic. Ignored for
+     *                   PostgreSQL/MySQL/SQL Server (their bootstrap URL is
+     *                   built from [host] and [port]).
+     */
+    suspend fun testConnectionAndDiscover(
+        dbType: DbType,
+        host: String,
+        port: Int,
+        username: String,
+        password: String,
+        rawJdbcUrl: String = "",
+    ): Result<DiscoveryResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            error("testConnectionAndDiscover: ${dbType.displayName} branch not implemented yet")
         }
     }
 
