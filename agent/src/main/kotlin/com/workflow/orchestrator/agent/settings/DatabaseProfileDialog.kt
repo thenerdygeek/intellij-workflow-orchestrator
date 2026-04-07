@@ -278,7 +278,14 @@ class DatabaseProfileDialog(
                     testStatusLabel.foreground = com.intellij.ui.JBColor.RED
                     val raw = ex.message ?: ex.javaClass.simpleName
                     val truncated = if (raw.length > 200) raw.take(200) + "…" else raw
-                    testStatusLabel.text = truncated
+                    val hint = if (
+                        type == DbType.POSTGRESQL &&
+                        raw.contains("postgres", ignoreCase = true) &&
+                        raw.contains("does not exist", ignoreCase = true)
+                    ) {
+                        " — Tip: enable 'Use raw JDBC URL' and supply a database you can access."
+                    } else ""
+                    testStatusLabel.text = truncated + hint
                 }
             )
         }
