@@ -82,4 +82,53 @@ internal class DatabaseDiscoveryTest {
             assertNull(DatabaseDiscovery.discoveryQuery(DbType.GENERIC))
         }
     }
+
+    @Nested
+    inner class FilterSystemDatabases {
+
+        @Test
+        fun `mysql drops the four system schemas`() {
+            val raw = listOf(
+                "mysql", "sys", "information_schema", "performance_schema",
+                "app_db", "analytics", "users"
+            )
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.MYSQL, raw)
+            assertEquals(listOf("app_db", "analytics", "users"), filtered)
+        }
+
+        @Test
+        fun `mysql preserves order of remaining databases`() {
+            val raw = listOf("z_db", "a_db", "mysql", "m_db")
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.MYSQL, raw)
+            assertEquals(listOf("z_db", "a_db", "m_db"), filtered)
+        }
+
+        @Test
+        fun `mysql with no system databases passes through unchanged`() {
+            val raw = listOf("app_db", "analytics")
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.MYSQL, raw)
+            assertEquals(listOf("app_db", "analytics"), filtered)
+        }
+
+        @Test
+        fun `postgres passes through unchanged because SQL already filtered`() {
+            val raw = listOf("postgres", "app_db")
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.POSTGRESQL, raw)
+            assertEquals(listOf("postgres", "app_db"), filtered)
+        }
+
+        @Test
+        fun `mssql passes through unchanged because SQL already filtered`() {
+            val raw = listOf("master", "app_db")
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.MSSQL, raw)
+            assertEquals(listOf("master", "app_db"), filtered)
+        }
+
+        @Test
+        fun `sqlite passes through unchanged`() {
+            val raw = listOf("anything")
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.SQLITE, raw)
+            assertEquals(listOf("anything"), filtered)
+        }
+    }
 }

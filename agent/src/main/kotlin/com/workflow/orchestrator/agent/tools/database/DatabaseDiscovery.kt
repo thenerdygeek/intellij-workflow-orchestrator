@@ -53,4 +53,25 @@ internal object DatabaseDiscovery {
         DbType.MSSQL -> "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name"
         DbType.SQLITE, DbType.GENERIC -> null
     }
+
+    /**
+     * MySQL system database names that should be hidden from the
+     * user's "default database" dropdown. Power users who genuinely
+     * need to query these can override at query time via
+     * `db_query(profile=…, database="information_schema", sql=…)`.
+     */
+    private val MYSQL_SYSTEM_DATABASES = setOf(
+        "mysql", "sys", "information_schema", "performance_schema"
+    )
+
+    /**
+     * Filters out engine-specific system databases from a raw discovery
+     * result list. Only [DbType.MYSQL] needs post-query filtering — the
+     * other engines filter at the SQL level (via `WHERE datistemplate = false`
+     * or `database_id > 4`).
+     */
+    fun filterSystemDatabases(dbType: DbType, raw: List<String>): List<String> = when (dbType) {
+        DbType.MYSQL -> raw.filter { it !in MYSQL_SYSTEM_DATABASES }
+        else -> raw
+    }
 }
