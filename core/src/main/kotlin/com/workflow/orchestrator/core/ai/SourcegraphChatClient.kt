@@ -5,6 +5,7 @@ import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.ai.dto.ListModelsResponse
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
+import com.workflow.orchestrator.core.http.ChatHttpEventListener
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
@@ -83,6 +84,7 @@ class SourcegraphChatClient(
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+            .eventListener(ChatHttpEventListener())
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))
             .addInterceptor(RetryInterceptor())
             .build()
