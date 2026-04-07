@@ -59,6 +59,10 @@ internal object DatabaseDiscovery {
      * user's "default database" dropdown. Power users who genuinely
      * need to query these can override at query time via
      * `db_query(profile=…, database="information_schema", sql=…)`.
+     *
+     * MySQL always returns these names in lowercase regardless of
+     * server OS, so the comparison in [filterSystemDatabases] is
+     * intentionally case-sensitive.
      */
     private val MYSQL_SYSTEM_DATABASES = setOf(
         "mysql", "sys", "information_schema", "performance_schema"

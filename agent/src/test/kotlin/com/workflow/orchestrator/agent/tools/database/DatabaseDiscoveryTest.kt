@@ -130,5 +130,12 @@ internal class DatabaseDiscoveryTest {
             val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.SQLITE, raw)
             assertEquals(listOf("anything"), filtered)
         }
+
+        @Test
+        fun `generic passes through unchanged`() {
+            val raw = listOf("anything")
+            val filtered = DatabaseDiscovery.filterSystemDatabases(DbType.GENERIC, raw)
+            assertEquals(listOf("anything"), filtered)
+        }
     }
 }
