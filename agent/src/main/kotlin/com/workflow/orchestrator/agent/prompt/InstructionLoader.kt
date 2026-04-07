@@ -36,6 +36,7 @@ object InstructionLoader {
         "using-skills",
         "brainstorm",
         "create-skill",
+        "frontend-design",
         "git-workflow",
         "interactive-debugging",
         "subagent-driven",
