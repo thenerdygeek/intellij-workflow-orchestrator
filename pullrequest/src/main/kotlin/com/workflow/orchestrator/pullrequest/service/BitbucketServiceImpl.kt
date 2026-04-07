@@ -11,7 +11,6 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.model.bitbucket.*
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.ToolResult
-import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 
 /**
@@ -26,19 +25,10 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
     private val log = Logger.getInstance(BitbucketServiceImpl::class.java)
     private val settings get() = PluginSettings.getInstance(project)
 
-    @Volatile private var cachedClient: BitbucketBranchClient? = null
-    @Volatile private var cachedBaseUrl: String? = null
+    private val clientCache = BitbucketBranchClientCache()
 
     private val client: BitbucketBranchClient?
-        get() {
-            val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
-            if (url.isBlank()) return null
-            if (url != cachedBaseUrl || cachedClient == null) {
-                cachedBaseUrl = url
-                cachedClient = BitbucketBranchClient.fromConfiguredSettings()
-            }
-            return cachedClient
-        }
+        get() = clientCache.get()
 
     private fun resolveRepo(repoName: String?): Pair<String, String>? {
         if (repoName != null) {
@@ -98,7 +88,7 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         )) {
             is ApiResult.Success -> {
                 val pr = result.data
-                val link = pr.links.self.firstOrNull()?.href ?: "${cachedBaseUrl}/projects/$projectKey/repos/$repoSlug/pull-requests/${pr.id}"
+                val link = pr.links.self.firstOrNull()?.href ?: "${clientCache.cachedUrl}/projects/$projectKey/repos/$repoSlug/pull-requests/${pr.id}"
                 val data = PullRequestData(
                     id = pr.id,
                     title = pr.title,

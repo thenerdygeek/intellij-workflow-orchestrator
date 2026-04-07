@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -153,11 +154,10 @@ class ModifyRunConfigTool : AgentTool {
         if (config is ApplicationConfiguration) {
             config.envs = envVars
         } else {
-            try {
+            // Best effort
+            ReflectionUtils.tryReflective {
                 val method = config.javaClass.methods.find { it.name == "setEnvs" && it.parameterCount == 1 }
                 method?.invoke(config, envVars)
-            } catch (_: Exception) {
-                // Best effort
             }
         }
     }
@@ -166,14 +166,13 @@ class ModifyRunConfigTool : AgentTool {
         if (config is ApplicationConfiguration) {
             config.vmParameters = vmOptions
         } else {
-            try {
+            // Best effort
+            ReflectionUtils.tryReflective {
                 val method = config.javaClass.methods.find {
                     (it.name == "setVMParameters" || it.name == "setVmParameters" || it.name == "setVmOptions")
                         && it.parameterCount == 1
                 }
                 method?.invoke(config, vmOptions)
-            } catch (_: Exception) {
-                // Best effort
             }
         }
     }
@@ -182,14 +181,13 @@ class ModifyRunConfigTool : AgentTool {
         if (config is ApplicationConfiguration) {
             config.programParameters = args
         } else {
-            try {
+            // Best effort
+            ReflectionUtils.tryReflective {
                 val method = config.javaClass.methods.find {
                     (it.name == "setProgramParameters" || it.name == "setRawCommandLine")
                         && it.parameterCount == 1
                 }
                 method?.invoke(config, args)
-            } catch (_: Exception) {
-                // Best effort
             }
         }
     }
@@ -198,25 +196,23 @@ class ModifyRunConfigTool : AgentTool {
         if (config is ApplicationConfiguration) {
             config.workingDirectory = dir
         } else {
-            try {
+            // Best effort
+            ReflectionUtils.tryReflective {
                 val method = config.javaClass.methods.find {
                     it.name == "setWorkingDirectory" && it.parameterCount == 1
                 }
                 method?.invoke(config, dir)
-            } catch (_: Exception) {
-                // Best effort
             }
         }
     }
 
     private fun applyActiveProfiles(config: RunConfiguration, profiles: String) {
-        try {
+        // Only applicable to Spring Boot configs
+        ReflectionUtils.tryReflective {
             val method = config.javaClass.methods.find {
                 it.name == "setActiveProfiles" && it.parameterCount == 1
             }
             method?.invoke(config, profiles)
-        } catch (_: Exception) {
-            // Only applicable to Spring Boot configs
         }
     }
 }

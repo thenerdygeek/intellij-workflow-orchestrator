@@ -5,7 +5,6 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
-import com.workflow.orchestrator.agent.tools.process.ManagedProcess
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -36,6 +35,7 @@ class AskUserInputTool : AgentTool {
         private const val MONITOR_POLL_MS = 500L
         private const val IDLE_AFTER_INPUT_MS = 10_000L
         private const val MAX_WAIT_AFTER_INPUT_MS = 60_000L
+        private const val IDLE_LABEL = "user input"
 
         var showInputCallback: ((processId: String, description: String, prompt: String, command: String) -> Unit)? = null
 
@@ -138,7 +138,7 @@ class AskUserInputTool : AgentTool {
 
             // Priority 1: process exited
             if (!managed.process.isAlive) {
-                val newOutput = collectNewOutput(managed, outputSizeBeforeInput)
+                val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeInput)
                 val stripped = RunCommandTool.stripAnsi(newOutput)
                 val exitCode = try { managed.process.exitValue() } catch (_: Exception) { -1 }
                 ProcessRegistry.unregister(processId)
@@ -160,10 +160,10 @@ class AskUserInputTool : AgentTool {
 
             // Priority 2: max wait after input exceeded (60s)
             if (now - inputSentAt > MAX_WAIT_AFTER_INPUT_MS) {
-                val newOutput = collectNewOutput(managed, outputSizeBeforeInput)
+                val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeInput)
                 val stripped = RunCommandTool.stripAnsi(newOutput)
                 managed.idleSignaledAt.set(now)
-                val content = buildIdleContent(processId, stripped, now - inputSentAt)
+                val content = ProcessToolHelpers.buildIdleContent(processId, stripped, now - inputSentAt, IDLE_LABEL)
                 return ToolResult(
                     content = content,
                     summary = "Process idle after user input — waiting for more input (ID: $processId)",
@@ -176,10 +176,10 @@ class AskUserInputTool : AgentTool {
             val timeSinceLastOutput = now - lastNewOutputAt
             val timeSinceInput = now - inputSentAt
             if (timeSinceInput > 500 && lastCheckedSize > outputSizeBeforeInput && timeSinceLastOutput >= IDLE_AFTER_INPUT_MS) {
-                val newOutput = collectNewOutput(managed, outputSizeBeforeInput)
+                val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeInput)
                 val stripped = RunCommandTool.stripAnsi(newOutput)
                 managed.idleSignaledAt.set(now)
-                val content = buildIdleContent(processId, stripped, timeSinceLastOutput)
+                val content = ProcessToolHelpers.buildIdleContent(processId, stripped, timeSinceLastOutput, IDLE_LABEL)
                 return ToolResult(
                     content = content,
                     summary = "Process idle after user input — waiting for more input (ID: $processId)",
@@ -190,32 +190,5 @@ class AskUserInputTool : AgentTool {
         }
         @Suppress("UNREACHABLE_CODE")
         error("unreachable: while(true) always returns")
-    }
-
-    private fun collectNewOutput(managed: ManagedProcess, fromIndex: Int): String {
-        val lines = managed.outputLines.toList()
-        return if (fromIndex < lines.size) {
-            lines.drop(fromIndex).joinToString("")
-        } else {
-            ""
-        }
-    }
-
-    private fun buildIdleContent(processId: String, newOutput: String, idleMs: Long): String {
-        val idleSec = idleMs / 1000
-        return buildString {
-            appendLine("[IDLE] Process idle for ${idleSec}s after user input — no new output.")
-            appendLine("Process still running (ID: $processId).")
-            if (newOutput.isNotBlank()) {
-                appendLine()
-                appendLine("Output since user input:")
-                newOutput.lines().forEach { appendLine("  $it") }
-            }
-            appendLine()
-            appendLine("Options:")
-            appendLine("- send_stdin(process_id=\"$processId\", input=\"<your input>\\n\") to provide more input")
-            appendLine("- ask_user_input(process_id=\"$processId\", description=\"...\", prompt=\"...\") for user input")
-            appendLine("- kill_process(process_id=\"$processId\") to abort")
-        }
     }
 }

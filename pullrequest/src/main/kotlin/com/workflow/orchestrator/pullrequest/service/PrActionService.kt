@@ -13,7 +13,6 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
-import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 
 /**
@@ -34,18 +33,9 @@ class PrActionService(private val project: Project) {
         }
     }
 
-    @Volatile private var cachedClient: BitbucketBranchClient? = null
-    @Volatile private var cachedBaseUrl: String? = null
+    private val clientCache = BitbucketBranchClientCache()
 
-    private fun getClient(): BitbucketBranchClient? {
-        val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
-        if (url.isBlank()) return null
-        if (url != cachedBaseUrl || cachedClient == null) {
-            cachedBaseUrl = url
-            cachedClient = BitbucketBranchClient.fromConfiguredSettings()
-        }
-        return cachedClient
-    }
+    private fun getClient(): BitbucketBranchClient? = clientCache.get()
 
     private fun projectKey(): String =
         PluginSettings.getInstance(project).state.bitbucketProjectKey.orEmpty()

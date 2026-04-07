@@ -99,9 +99,8 @@ class ArchivalMemory(private val storageFile: File) {
 
             var score = 0
             for (kw in keywords) {
-                // Content matches
-                val contentHits = entry.content.lowercase().windowed(kw.length, 1)
-                    .count { it == kw }
+                // Content matches (non-overlapping, case-insensitive via MemoryKeywordSearch)
+                val contentHits = MemoryKeywordSearch.countOccurrences(entry.content, kw)
                 score += contentHits
 
                 // Tag matches (3x boost per spec)

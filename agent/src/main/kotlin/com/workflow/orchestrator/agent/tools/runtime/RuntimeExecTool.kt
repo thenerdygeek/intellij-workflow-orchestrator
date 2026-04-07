@@ -30,6 +30,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -358,14 +359,14 @@ description optional: for approval dialog on run_tests, compile_module.
         repeat(MAX_UNWRAP_DEPTH) {
             if (current is com.intellij.execution.impl.ConsoleViewImpl) return current
 
-            val delegate = tryReflectiveCall(current, "getDelegate")
+            val delegate = ReflectionUtils.tryInvoke(current, "getDelegate")
             if (delegate is com.intellij.execution.impl.ConsoleViewImpl) return delegate
             if (delegate != null && delegate !== current) {
                 current = delegate
                 return@repeat
             }
 
-            val inner = tryReflectiveCall(current, "getConsole")
+            val inner = ReflectionUtils.tryInvoke(current, "getConsole")
             if (inner is com.intellij.execution.impl.ConsoleViewImpl) return inner
             if (inner != null && inner !== current) {
                 current = inner
@@ -375,12 +376,6 @@ description optional: for approval dialog on run_tests, compile_module.
             return null
         }
         return current as? com.intellij.execution.impl.ConsoleViewImpl
-    }
-
-    private fun tryReflectiveCall(target: Any?, methodName: String): Any? {
-        return try {
-            target?.javaClass?.getMethod(methodName)?.invoke(target)
-        } catch (_: Exception) { null }
     }
 
     private suspend fun readConsoleViewText(console: com.intellij.execution.impl.ConsoleViewImpl): String? {

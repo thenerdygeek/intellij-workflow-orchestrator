@@ -88,18 +88,11 @@ class PrListService(private val project: Project) : Disposable {
     /** Limits concurrent repo fetches to 3 to prevent monopolizing the connection pool. */
     private val repoFetchSemaphore = Semaphore(3)
 
-    @Volatile private var cachedClient: BitbucketBranchClient? = null
-    @Volatile private var cachedBaseUrl: String? = null
+    private val clientCache = BitbucketBranchClientCache()
     private val pluginSettings by lazy { PluginSettings.getInstance(project) }
 
-    private fun getClient(url: String): BitbucketBranchClient {
-        if (url != cachedBaseUrl || cachedClient == null) {
-            cachedBaseUrl = url
-            cachedClient = BitbucketBranchClient.fromConfiguredSettings()
-                ?: error("Bitbucket URL not configured")
-        }
-        return cachedClient!!
-    }
+    private fun getClient(): BitbucketBranchClient =
+        clientCache.get() ?: error("Bitbucket URL not configured")
 
     suspend fun refresh() {
         val connSettings = ConnectionSettings.getInstance().state
@@ -109,7 +102,7 @@ class PrListService(private val project: Project) : Disposable {
             return
         }
 
-        val client = getClient(bitbucketUrl)
+        val client = getClient()
 
         // Auto-detect username on first call (or use saved setting)
         val username = cachedUsername

@@ -9,6 +9,7 @@ import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefClient
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
+import com.workflow.orchestrator.agent.util.JsEscape
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +47,15 @@ class AgentCefPanel(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var browser: JBCefBrowser? = null
+
+    /**
+     * Tracks every [JBCefJSQuery] created via [registerQuery] so [dispose] can
+     * tear them all down in one pass. This avoids the previous bug where new
+     * queries would be added to [createBrowser] but forgotten in [dispose],
+     * leaking native resources (e.g. `toggleRalphLoopQuery`).
+     */
+    private val registeredQueries = mutableListOf<JBCefJSQuery>()
+
     private var undoQuery: JBCefJSQuery? = null
     private var traceQuery: JBCefJSQuery? = null
     private var promptQuery: JBCefJSQuery? = null
@@ -221,258 +231,172 @@ class AgentCefPanel(
             }
         }
 
-        // Create JS→Kotlin bridges for UI actions (undo, view-trace, example prompts)
-        undoQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onUndoRequested?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        traceQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onViewTraceRequested?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        promptQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { text -> onPromptSubmitted?.invoke(text); JBCefJSQuery.Response("ok") }
-        }
-        planApproveQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onPlanApproved?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        planReviseQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { commentsJson -> onPlanRevised?.invoke(commentsJson); JBCefJSQuery.Response("ok") }
-        }
-        toolToggleQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                // data format: "tool_name:1" or "tool_name:0"
-                val colonIdx = data.lastIndexOf(':')
-                if (colonIdx > 0) {
-                    val toolName = data.substring(0, colonIdx)
-                    val enabled = data.substring(colonIdx + 1) == "1"
-                    onToolToggled?.invoke(toolName, enabled)
-                }
-                JBCefJSQuery.Response("ok")
+        // Create JS→Kotlin bridges for UI actions (undo, view-trace, example prompts).
+        // Every query goes through registerQuery so dispose() can tear them all down
+        // in one pass — never call JBCefJSQuery.create directly here.
+        undoQuery = registerQuery(b) { _ -> onUndoRequested?.invoke(); JBCefJSQuery.Response("ok") }
+        traceQuery = registerQuery(b) { _ -> onViewTraceRequested?.invoke(); JBCefJSQuery.Response("ok") }
+        promptQuery = registerQuery(b) { text -> onPromptSubmitted?.invoke(text); JBCefJSQuery.Response("ok") }
+        planApproveQuery = registerQuery(b) { _ -> onPlanApproved?.invoke(); JBCefJSQuery.Response("ok") }
+        planReviseQuery = registerQuery(b) { commentsJson -> onPlanRevised?.invoke(commentsJson); JBCefJSQuery.Response("ok") }
+        toolToggleQuery = registerQuery(b) { data ->
+            // data format: "tool_name:1" or "tool_name:0"
+            val colonIdx = data.lastIndexOf(':')
+            if (colonIdx > 0) {
+                val toolName = data.substring(0, colonIdx)
+                val enabled = data.substring(colonIdx + 1) == "1"
+                onToolToggled?.invoke(toolName, enabled)
             }
+            JBCefJSQuery.Response("ok")
         }
 
         // Question wizard bridges
-        questionAnsweredQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                // data format: "questionId:optionsJson"
-                val sep = data.indexOf(':')
-                if (sep > 0) onQuestionAnswered?.invoke(data.substring(0, sep), data.substring(sep + 1))
-                JBCefJSQuery.Response("ok")
-            }
+        questionAnsweredQuery = registerQuery(b) { data ->
+            // data format: "questionId:optionsJson"
+            val sep = data.indexOf(':')
+            if (sep > 0) onQuestionAnswered?.invoke(data.substring(0, sep), data.substring(sep + 1))
+            JBCefJSQuery.Response("ok")
         }
-        questionSkippedQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data -> onQuestionSkipped?.invoke(data); JBCefJSQuery.Response("ok") }
+        questionSkippedQuery = registerQuery(b) { data -> onQuestionSkipped?.invoke(data); JBCefJSQuery.Response("ok") }
+        chatAboutQuery = registerQuery(b) { data ->
+            // data format: "questionId\x1FoptionLabel\x1Fmessage" (unit separator avoids colon conflicts)
+            val parts = data.split("\u001F")
+            if (parts.size >= 3) onChatAboutOption?.invoke(parts[0], parts[1], parts.drop(2).joinToString("\u001F"))
+            JBCefJSQuery.Response("ok")
         }
-        chatAboutQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                // data format: "questionId\x1FoptionLabel\x1Fmessage" (unit separator avoids colon conflicts)
-                val parts = data.split("\u001F")
-                if (parts.size >= 3) onChatAboutOption?.invoke(parts[0], parts[1], parts.drop(2).joinToString("\u001F"))
-                JBCefJSQuery.Response("ok")
-            }
-        }
-        questionsSubmittedQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onQuestionsSubmitted?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        questionsCancelledQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onQuestionsCancelled?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        editQuestionQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data -> onEditQuestion?.invoke(data); JBCefJSQuery.Response("ok") }
-        }
-        deactivateSkillQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onSkillDismissed?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        navigateToFileQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                val colonIdx = data.lastIndexOf(':')
-                val hasLine = colonIdx > 0 && data.substring(colonIdx + 1).toIntOrNull() != null
-                val filePath = if (hasLine) data.substring(0, colonIdx) else data
-                val line = if (hasLine) data.substring(colonIdx + 1).toInt() else 0
-                onNavigateToFile?.invoke(filePath, line)
-                JBCefJSQuery.Response("ok")
-            }
+        questionsSubmittedQuery = registerQuery(b) { _ -> onQuestionsSubmitted?.invoke(); JBCefJSQuery.Response("ok") }
+        questionsCancelledQuery = registerQuery(b) { _ -> onQuestionsCancelled?.invoke(); JBCefJSQuery.Response("ok") }
+        editQuestionQuery = registerQuery(b) { data -> onEditQuestion?.invoke(data); JBCefJSQuery.Response("ok") }
+        deactivateSkillQuery = registerQuery(b) { _ -> onSkillDismissed?.invoke(); JBCefJSQuery.Response("ok") }
+        navigateToFileQuery = registerQuery(b) { data ->
+            val colonIdx = data.lastIndexOf(':')
+            val hasLine = colonIdx > 0 && data.substring(colonIdx + 1).toIntOrNull() != null
+            val filePath = if (hasLine) data.substring(0, colonIdx) else data
+            val line = if (hasLine) data.substring(colonIdx + 1).toInt() else 0
+            onNavigateToFile?.invoke(filePath, line)
+            JBCefJSQuery.Response("ok")
         }
 
         // Toolbar + input bar bridges
-        cancelTaskQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onCancelTask?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        newChatQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onNewChat?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        sendMessageQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { text -> onSendMessage?.invoke(text); JBCefJSQuery.Response("ok") }
-        }
-        changeModelQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { modelId -> onChangeModel?.invoke(modelId); JBCefJSQuery.Response("ok") }
-        }
-        togglePlanModeQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { enabled -> onTogglePlanMode?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
-        }
-        toggleRalphLoopQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { enabled -> onToggleRalphLoop?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
-        }
-        activateSkillQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
-        }
-        requestFocusIdeQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onRequestFocusIde?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        openSettingsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onOpenSettings?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        openToolsPanelQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onOpenToolsPanel?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        searchMentionsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                // data format: "type:query" e.g. "file:Login" or "categories:"
-                val colonIdx = data.indexOf(':')
-                val type = if (colonIdx > 0) data.substring(0, colonIdx) else data
-                val query = if (colonIdx > 0) data.substring(colonIdx + 1) else ""
-                // Search on IO thread, callback to JS
-                scope.launch {
-                    try {
-                        withTimeout(15_000L) {
-                            val results = mentionSearchProvider?.search(type, query) ?: "[]"
-                            callJs("receiveMentionResults(${jsonStr(results)})")
-                        }
-                    } catch (e: Exception) {
-                        LOG.warn("searchMentions handler failed: ${e.message}")
-                        callJs("receiveMentionResults('[]')")
-                    }
-                }
-                JBCefJSQuery.Response("ok")
-            }
-        }
-        searchTicketsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { query ->
-                scope.launch {
-                    try {
-                        withTimeout(15_000L) {
-                            val results = mentionSearchProvider?.searchTickets(query) ?: "[]"
-                            callJs("(window.__ticketSearchCallback)(${jsonStr(results)})")
-                        }
-                    } catch (e: Exception) {
-                        LOG.warn("searchTickets handler failed: ${e.message}")
-                        callJs("(window.__ticketSearchCallback)('[]')")
-                    }
-                }
-                JBCefJSQuery.Response("ok")
-            }
-        }
-        validateTicketQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                // data format: "TICKETKEY|callbackName"
-                val parts = data.split("|", limit = 2)
-                val ticketKey = parts.getOrElse(0) { "" }
-                val callbackName = parts.getOrElse(1) { "" }
-                scope.launch {
-                    try {
-                        withTimeout(15_000L) {
-                            val result = mentionSearchProvider?.validateTicket(ticketKey)
-                            val json = result ?: """{"valid":false}"""
-                            callJs("(window[${jsonStr(callbackName)}])(${jsonStr(json)})")
-                        }
-                    } catch (e: Exception) {
-                        LOG.warn("validateTicket handler failed: ${e.message}")
-                        callJs("(window[${jsonStr(callbackName)}])(${jsonStr("""{"valid":false}""")})")
-                    }
-                }
-                JBCefJSQuery.Response("ok")
-            }
-        }
-        sendMessageWithMentionsQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { payload ->
+        cancelTaskQuery = registerQuery(b) { _ -> onCancelTask?.invoke(); JBCefJSQuery.Response("ok") }
+        newChatQuery = registerQuery(b) { _ -> onNewChat?.invoke(); JBCefJSQuery.Response("ok") }
+        sendMessageQuery = registerQuery(b) { text -> onSendMessage?.invoke(text); JBCefJSQuery.Response("ok") }
+        changeModelQuery = registerQuery(b) { modelId -> onChangeModel?.invoke(modelId); JBCefJSQuery.Response("ok") }
+        togglePlanModeQuery = registerQuery(b) { enabled -> onTogglePlanMode?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
+        toggleRalphLoopQuery = registerQuery(b) { enabled -> onToggleRalphLoop?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
+        activateSkillQuery = registerQuery(b) { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
+        requestFocusIdeQuery = registerQuery(b) { _ -> onRequestFocusIde?.invoke(); JBCefJSQuery.Response("ok") }
+        openSettingsQuery = registerQuery(b) { _ -> onOpenSettings?.invoke(); JBCefJSQuery.Response("ok") }
+        openToolsPanelQuery = registerQuery(b) { _ -> onOpenToolsPanel?.invoke(); JBCefJSQuery.Response("ok") }
+        searchMentionsQuery = registerQuery(b) { data ->
+            // data format: "type:query" e.g. "file:Login" or "categories:"
+            val colonIdx = data.indexOf(':')
+            val type = if (colonIdx > 0) data.substring(0, colonIdx) else data
+            val query = if (colonIdx > 0) data.substring(colonIdx + 1) else ""
+            // Search on IO thread, callback to JS
+            scope.launch {
                 try {
-                    val json = Json.parseToJsonElement(payload).jsonObject
-                    val text = json["text"]?.jsonPrimitive?.content ?: ""
-                    val mentionsJson = json["mentions"]?.toString() ?: "[]"
-                    val handler = onSendMessageWithMentions
-                    if (handler != null) {
-                        handler.invoke(text, mentionsJson)
-                    } else {
-                        // Fallback: no mention handler wired — send plain text
-                        onSendMessage?.invoke(text)
+                    withTimeout(15_000L) {
+                        val results = mentionSearchProvider?.search(type, query) ?: "[]"
+                        callJs("receiveMentionResults(${JsEscape.toJsString(results)})")
                     }
                 } catch (e: Exception) {
-                    // Fallback: treat entire payload as text
-                    onSendMessage?.invoke(payload)
+                    LOG.warn("searchMentions handler failed: ${e.message}")
+                    callJs("receiveMentionResults('[]')")
                 }
-                JBCefJSQuery.Response("ok")
             }
+            JBCefJSQuery.Response("ok")
         }
-        openInEditorTabQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
+        searchTicketsQuery = registerQuery(b) { query ->
+            scope.launch {
+                try {
+                    withTimeout(15_000L) {
+                        val results = mentionSearchProvider?.searchTickets(query) ?: "[]"
+                        callJs("(window.__ticketSearchCallback)(${JsEscape.toJsString(results)})")
+                    }
+                } catch (e: Exception) {
+                    LOG.warn("searchTickets handler failed: ${e.message}")
+                    callJs("(window.__ticketSearchCallback)('[]')")
+                }
+            }
+            JBCefJSQuery.Response("ok")
         }
-        focusPlanEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        validateTicketQuery = registerQuery(b) { data ->
+            // data format: "TICKETKEY|callbackName"
+            val parts = data.split("|", limit = 2)
+            val ticketKey = parts.getOrElse(0) { "" }
+            val callbackName = parts.getOrElse(1) { "" }
+            scope.launch {
+                try {
+                    withTimeout(15_000L) {
+                        val result = mentionSearchProvider?.validateTicket(ticketKey)
+                        val json = result ?: """{"valid":false}"""
+                        callJs("(window[${JsEscape.toJsString(callbackName)}])(${JsEscape.toJsString(json)})")
+                    }
+                } catch (e: Exception) {
+                    LOG.warn("validateTicket handler failed: ${e.message}")
+                    callJs("(window[${JsEscape.toJsString(callbackName)}])(${JsEscape.toJsString("""{"valid":false}""")})")
+                }
+            }
+            JBCefJSQuery.Response("ok")
         }
-        revisePlanFromEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onRevisePlanFromEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        sendMessageWithMentionsQuery = registerQuery(b) { payload ->
+            try {
+                val json = Json.parseToJsonElement(payload).jsonObject
+                val text = json["text"]?.jsonPrimitive?.content ?: ""
+                val mentionsJson = json["mentions"]?.toString() ?: "[]"
+                val handler = onSendMessageWithMentions
+                if (handler != null) {
+                    handler.invoke(text, mentionsJson)
+                } else {
+                    // Fallback: no mention handler wired — send plain text
+                    onSendMessage?.invoke(text)
+                }
+            } catch (e: Exception) {
+                // Fallback: treat entire payload as text
+                onSendMessage?.invoke(payload)
+            }
+            JBCefJSQuery.Response("ok")
         }
-        viewInEditorQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
-        }
+        openInEditorTabQuery = registerQuery(b) { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
+        focusPlanEditorQuery = registerQuery(b) { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        revisePlanFromEditorQuery = registerQuery(b) { _ -> onRevisePlanFromEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        viewInEditorQuery = registerQuery(b) { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
 
         // Tool call approval bridges
-        approveToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onApproveToolCall?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        denyToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onDenyToolCall?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        allowToolForSessionQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { toolName -> onAllowToolForSession?.invoke(toolName); JBCefJSQuery.Response("ok") }
-        }
-        interactiveHtmlMessageQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { json -> onInteractiveHtmlMessage?.invoke(json); JBCefJSQuery.Response("ok") }
-        }
-        acceptDiffHunkQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                try {
-                    val obj = Json.parseToJsonElement(data).jsonObject
-                    val fp = obj["filePath"]?.jsonPrimitive?.content ?: ""
-                    val hi = obj["hunkIndex"]?.jsonPrimitive?.int ?: 0
-                    val ec = obj["editedContent"]?.jsonPrimitive?.content
-                    onAcceptDiffHunk?.invoke(fp, hi, ec)
-                } catch (e: Exception) {
-                    LOG.warn("Failed to parse acceptDiffHunk data", e)
-                }
-                JBCefJSQuery.Response("ok")
+        approveToolCallQuery = registerQuery(b) { _ -> onApproveToolCall?.invoke(); JBCefJSQuery.Response("ok") }
+        denyToolCallQuery = registerQuery(b) { _ -> onDenyToolCall?.invoke(); JBCefJSQuery.Response("ok") }
+        allowToolForSessionQuery = registerQuery(b) { toolName -> onAllowToolForSession?.invoke(toolName); JBCefJSQuery.Response("ok") }
+        interactiveHtmlMessageQuery = registerQuery(b) { json -> onInteractiveHtmlMessage?.invoke(json); JBCefJSQuery.Response("ok") }
+        acceptDiffHunkQuery = registerQuery(b) { data ->
+            try {
+                val obj = Json.parseToJsonElement(data).jsonObject
+                val fp = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                val hi = obj["hunkIndex"]?.jsonPrimitive?.int ?: 0
+                val ec = obj["editedContent"]?.jsonPrimitive?.content
+                onAcceptDiffHunk?.invoke(fp, hi, ec)
+            } catch (e: Exception) {
+                LOG.warn("Failed to parse acceptDiffHunk data", e)
             }
+            JBCefJSQuery.Response("ok")
         }
-        rejectDiffHunkQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { data ->
-                try {
-                    val obj = Json.parseToJsonElement(data).jsonObject
-                    val fp = obj["filePath"]?.jsonPrimitive?.content ?: ""
-                    val hi = obj["hunkIndex"]?.jsonPrimitive?.int ?: 0
-                    onRejectDiffHunk?.invoke(fp, hi)
-                } catch (e: Exception) {
-                    LOG.warn("Failed to parse rejectDiffHunk data", e)
-                }
-                JBCefJSQuery.Response("ok")
+        rejectDiffHunkQuery = registerQuery(b) { data ->
+            try {
+                val obj = Json.parseToJsonElement(data).jsonObject
+                val fp = obj["filePath"]?.jsonPrimitive?.content ?: ""
+                val hi = obj["hunkIndex"]?.jsonPrimitive?.int ?: 0
+                onRejectDiffHunk?.invoke(fp, hi)
+            } catch (e: Exception) {
+                LOG.warn("Failed to parse rejectDiffHunk data", e)
             }
+            JBCefJSQuery.Response("ok")
         }
-        killToolCallQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
-        }
-        killSubAgentQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
-        }
-        revertCheckpointQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { checkpointId -> onRevertCheckpoint?.invoke(checkpointId); JBCefJSQuery.Response("ok") }
-        }
-        cancelSteeringQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
-        }
-        retryLastTaskQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
-        }
-        processInputQuery = JBCefJSQuery.create(b as JBCefBrowserBase).apply {
-            addHandler { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
-        }
+        killToolCallQuery = registerQuery(b) { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
+        killSubAgentQuery = registerQuery(b) { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
+        revertCheckpointQuery = registerQuery(b) { checkpointId -> onRevertCheckpoint?.invoke(checkpointId); JBCefJSQuery.Response("ok") }
+        cancelSteeringQuery = registerQuery(b) { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
+        retryLastTaskQuery = registerQuery(b) { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
+        processInputQuery = registerQuery(b) { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -682,19 +606,19 @@ class AgentCefPanel(
     // ═══════════════════════════════════════════════════
 
     fun startSession(task: String) {
-        callJs("startSession(${jsonStr(task)})")
+        callJs("startSession(${JsEscape.toJsString(task)})")
     }
 
     fun startSessionWithMentions(task: String, mentionsJson: String) {
-        callJs("startSessionWithMentions(${jsonStr(task)}, ${jsonStr(mentionsJson)})")
+        callJs("startSessionWithMentions(${JsEscape.toJsString(task)}, ${JsEscape.toJsString(mentionsJson)})")
     }
 
     fun appendUserMessage(text: String) {
-        callJs("appendUserMessage(${jsonStr(text)})")
+        callJs("appendUserMessage(${JsEscape.toJsString(text)})")
     }
 
     fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
-        callJs("appendUserMessageWithMentions(${jsonStr(text)}, ${jsonStr(mentionsJson)})")
+        callJs("appendUserMessageWithMentions(${JsEscape.toJsString(text)}, ${JsEscape.toJsString(mentionsJson)})")
     }
 
     fun finalizeQuestionsAsMessage() {
@@ -705,12 +629,12 @@ class AgentCefPanel(
         tokensUsed: Int, iterations: Int, filesModified: List<String>,
         durationMs: Long, status: RichStreamingPanel.SessionStatus
     ) {
-        val filesArray = filesModified.joinToString(",") { jsonStr(it) }
+        val filesArray = filesModified.joinToString(",") { JsEscape.toJsString(it) }
         callJs("endStream(); completeSession('${status.name}',$tokensUsed,$durationMs,$iterations,[$filesArray])")
     }
 
     fun appendStreamToken(token: String) {
-        callJs("appendToken(${jsonStr(token)})")
+        callJs("appendToken(${JsEscape.toJsString(token)})")
     }
 
     fun flushStreamBuffer() {
@@ -722,8 +646,8 @@ class AgentCefPanel(
     }
 
     fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
-        val cmdArg = if (verifyCommand != null) jsonStr(verifyCommand) else "undefined"
-        callJs("appendCompletionSummary(${jsonStr(result)},$cmdArg)")
+        val cmdArg = if (verifyCommand != null) JsEscape.toJsString(verifyCommand) else "undefined"
+        callJs("appendCompletionSummary(${JsEscape.toJsString(result)},$cmdArg)")
     }
 
     fun appendToolCall(
@@ -731,7 +655,7 @@ class AgentCefPanel(
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
     ) {
-        callJs("appendToolCall(${jsonStr(toolCallId)},${jsonStr(toolName)},${jsonStr(args)},'${status.name}')")
+        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}')")
     }
 
     fun updateLastToolCall(
@@ -741,13 +665,13 @@ class AgentCefPanel(
         diff: String? = null
     ) {
         val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
-        val outputArg = if (output != null) jsonStr(output) else "null"
-        val diffArg = if (diff != null) jsonStr(diff) else "null"
-        callJs("updateToolResult(${jsonStr(result)},$durationMs,${jsonStr(toolName)},${jsonStr(statusStr)},$outputArg,$diffArg)")
+        val outputArg = if (output != null) JsEscape.toJsString(output) else "null"
+        val diffArg = if (diff != null) JsEscape.toJsString(diff) else "null"
+        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg)")
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
-        callJs("appendToolOutput(${jsonStr(toolCallId)},${jsonStr(chunk)})")
+        callJs("appendToolOutput(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(chunk)})")
     }
 
     /**
@@ -755,26 +679,26 @@ class AgentCefPanel(
      * Used by generate_explanation tool to show the diff without waiting for LLM response.
      */
     fun appendDiffExplanation(title: String, diffSource: String) {
-        callJs("appendDiffExplanation(${jsonStr(title)},${jsonStr(diffSource)})")
+        callJs("appendDiffExplanation(${JsEscape.toJsString(title)},${JsEscape.toJsString(diffSource)})")
     }
 
     fun appendEditDiff(
         filePath: String, oldText: String, newText: String, accepted: Boolean? = null
     ) {
-        val oldLines = oldText.lines().take(100).joinToString(",") { jsonStr(it) }
-        val newLines = newText.lines().take(100).joinToString(",") { jsonStr(it) }
+        val oldLines = oldText.lines().take(100).joinToString(",") { JsEscape.toJsString(it) }
+        val newLines = newText.lines().take(100).joinToString(",") { JsEscape.toJsString(it) }
         val acceptedJs = when (accepted) { true -> "true"; false -> "false"; null -> "null" }
-        callJs("appendDiff(${jsonStr(filePath)},[$oldLines],[$newLines],$acceptedJs)")
+        callJs("appendDiff(${JsEscape.toJsString(filePath)},[$oldLines],[$newLines],$acceptedJs)")
     }
 
     fun appendStatus(message: String, type: RichStreamingPanel.StatusType = RichStreamingPanel.StatusType.INFO) {
-        callJs("appendStatus(${jsonStr(message)},'${type.name}')")
+        callJs("appendStatus(${JsEscape.toJsString(message)},'${type.name}')")
     }
 
     fun appendError(message: String) = appendStatus(message, RichStreamingPanel.StatusType.ERROR)
 
     fun appendThinking(text: String) {
-        callJs("appendThinking(${jsonStr(text)})")
+        callJs("appendThinking(${JsEscape.toJsString(text)})")
     }
 
     fun clear() {
@@ -782,7 +706,7 @@ class AgentCefPanel(
     }
 
     fun showToolsPanel(toolsJson: String) {
-        callJs("showToolsPanel(${jsonStr(toolsJson)})")
+        callJs("showToolsPanel(${JsEscape.toJsString(toolsJson)})")
     }
 
     fun hideToolsPanel() {
@@ -790,7 +714,7 @@ class AgentCefPanel(
     }
 
     fun renderPlan(planJson: String) {
-        callJs("renderPlan(${jsonStr(planJson)})")
+        callJs("renderPlan(${JsEscape.toJsString(planJson)})")
     }
 
     fun approvePlanInUi() {
@@ -798,11 +722,11 @@ class AgentCefPanel(
     }
 
     fun updatePlanStep(stepId: String, status: String) {
-        callJs("updatePlanStep(${jsonStr(stepId)}, ${jsonStr(status)})")
+        callJs("updatePlanStep(${JsEscape.toJsString(stepId)}, ${JsEscape.toJsString(status)})")
     }
 
     fun replaceExecutionSteps(stepsJson: String) {
-        callJs("replaceExecutionSteps(${jsonStr(stepsJson)})")
+        callJs("replaceExecutionSteps(${JsEscape.toJsString(stepsJson)})")
     }
 
     fun setPlanCommentCount(count: Int) {
@@ -810,13 +734,13 @@ class AgentCefPanel(
     }
 
     fun updatePlanSummary(summary: String) {
-        callJs("updatePlanSummary(${jsonStr(summary)})")
+        callJs("updatePlanSummary(${JsEscape.toJsString(summary)})")
     }
 
     // ── Question wizard rendering ──
 
     fun showQuestions(questionsJson: String) {
-        callJs("showQuestions(${jsonStr(questionsJson)})")
+        callJs("showQuestions(${JsEscape.toJsString(questionsJson)})")
     }
 
     fun showQuestion(index: Int) {
@@ -824,7 +748,7 @@ class AgentCefPanel(
     }
 
     fun showQuestionSummary(summaryJson: String) {
-        callJs("showQuestionSummary(${jsonStr(summaryJson)})")
+        callJs("showQuestionSummary(${JsEscape.toJsString(summaryJson)})")
     }
 
     fun enableChatInput() {
@@ -850,7 +774,7 @@ class AgentCefPanel(
     }
 
     fun setModelName(name: String) {
-        callJs("setModelName(${jsonStr(name)})")
+        callJs("setModelName(${JsEscape.toJsString(name)})")
     }
 
     fun setPlanMode(enabled: Boolean) {
@@ -865,12 +789,12 @@ class AgentCefPanel(
 
     fun spawnSubAgent(agentId: String, label: String) {
         val payload = buildJsonObject { put("agentId", agentId); put("label", label) }.toString()
-        callJs("spawnSubAgent(${jsonStr(payload)})")
+        callJs("spawnSubAgent(${JsEscape.toJsString(payload)})")
     }
 
     fun updateSubAgentIteration(agentId: String, iteration: Int) {
         val payload = buildJsonObject { put("agentId", agentId); put("iteration", iteration) }.toString()
-        callJs("updateSubAgentIteration(${jsonStr(payload)})")
+        callJs("updateSubAgentIteration(${JsEscape.toJsString(payload)})")
     }
 
     fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
@@ -879,7 +803,7 @@ class AgentCefPanel(
             put("toolName", toolName)
             put("toolArgs", toolArgs)
         }.toString()
-        callJs("addSubAgentToolCall(${jsonStr(payload)})")
+        callJs("addSubAgentToolCall(${JsEscape.toJsString(payload)})")
     }
 
     fun updateSubAgentToolCall(
@@ -893,7 +817,7 @@ class AgentCefPanel(
             put("toolDurationMs", durationMs)
             put("isError", isError)
         }.toString()
-        callJs("updateSubAgentToolCall(${jsonStr(payload)})")
+        callJs("updateSubAgentToolCall(${JsEscape.toJsString(payload)})")
     }
 
     fun updateSubAgentMessage(agentId: String, textContent: String) {
@@ -901,7 +825,7 @@ class AgentCefPanel(
             put("agentId", agentId)
             put("textContent", textContent)
         }.toString()
-        callJs("updateSubAgentMessage(${jsonStr(payload)})")
+        callJs("updateSubAgentMessage(${JsEscape.toJsString(payload)})")
     }
 
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
@@ -911,7 +835,7 @@ class AgentCefPanel(
             put("tokensUsed", tokensUsed)
             put("isError", isError)
         }.toString()
-        callJs("completeSubAgent(${jsonStr(payload)})")
+        callJs("completeSubAgent(${JsEscape.toJsString(payload)})")
     }
 
     fun renderArtifact(title: String, source: String) {
@@ -919,19 +843,19 @@ class AgentCefPanel(
             put("title", title)
             put("source", source)
         }.toString()
-        callJs("renderArtifact(${jsonStr(payload)})")
+        callJs("renderArtifact(${JsEscape.toJsString(payload)})")
     }
 
     fun updateModelList(modelsJson: String) {
-        callJs("updateModelList(${jsonStr(modelsJson)})")
+        callJs("updateModelList(${JsEscape.toJsString(modelsJson)})")
     }
 
     fun updateSkillsList(skillsJson: String) {
-        callJs("updateSkillsList(${jsonStr(skillsJson)})")
+        callJs("updateSkillsList(${JsEscape.toJsString(skillsJson)})")
     }
 
     fun showRetryButton(lastMessage: String) {
-        callJs("showRetryButton(${jsonStr(lastMessage)})")
+        callJs("showRetryButton(${JsEscape.toJsString(lastMessage)})")
     }
 
     fun focusInput() {
@@ -941,7 +865,7 @@ class AgentCefPanel(
     // ── Skill banner rendering ──
 
     fun showSkillBanner(name: String) {
-        callJs("showSkillBanner(${jsonStr(name)})")
+        callJs("showSkillBanner(${JsEscape.toJsString(name)})")
     }
 
     fun hideSkillBanner() {
@@ -951,13 +875,13 @@ class AgentCefPanel(
     // ── Chart.js support ──
 
     fun appendChart(chartConfigJson: String) {
-        callJs("appendChart(${jsonStr(chartConfigJson)})")
+        callJs("appendChart(${JsEscape.toJsString(chartConfigJson)})")
     }
 
     // ── ANSI, Skeleton, Toast, Table support ──
 
     fun appendAnsiOutput(text: String) {
-        callJs("appendAnsiOutput(${jsonStr(text)})")
+        callJs("appendAnsiOutput(${JsEscape.toJsString(text)})")
     }
 
     fun showSkeleton() {
@@ -969,42 +893,42 @@ class AgentCefPanel(
     }
 
     fun showToast(message: String, type: String = "info", durationMs: Int = 3000) {
-        callJs("showToast(${jsonStr(message)},${jsonStr(type)},$durationMs)")
+        callJs("showToast(${JsEscape.toJsString(message)},${JsEscape.toJsString(type)},$durationMs)")
     }
 
     // ── Tabbed content, timeline, progress bar ──
 
     fun appendTabs(tabsJson: String) {
-        callJs("appendTabs(${jsonStr(tabsJson)})")
+        callJs("appendTabs(${JsEscape.toJsString(tabsJson)})")
     }
 
     fun appendTimeline(itemsJson: String) {
-        callJs("appendTimeline(${jsonStr(itemsJson)})")
+        callJs("appendTimeline(${JsEscape.toJsString(itemsJson)})")
     }
 
     fun appendProgressBar(percent: Int, type: String = "info") {
-        callJs("appendProgressBar($percent,${jsonStr(type)})")
+        callJs("appendProgressBar($percent,${JsEscape.toJsString(type)})")
     }
 
     // ── Jira card & Sonar badge ──
 
     fun appendJiraCard(cardJson: String) {
-        callJs("appendJiraCard(${jsonStr(cardJson)})")
+        callJs("appendJiraCard(${JsEscape.toJsString(cardJson)})")
     }
 
     fun appendSonarBadge(badgeJson: String) {
-        callJs("appendSonarBadge(${jsonStr(badgeJson)})")
+        callJs("appendSonarBadge(${JsEscape.toJsString(badgeJson)})")
     }
 
     // ── Tool call approval rendering ──
 
     fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
-        val diffArg = if (diffContent != null) jsonStr(diffContent) else "null"
-        callJs("showApproval(${jsonStr(toolName)},${jsonStr(riskLevel)},${jsonStr(description)},${jsonStr(metadataJson)},$diffArg)")
+        val diffArg = if (diffContent != null) JsEscape.toJsString(diffContent) else "null"
+        callJs("showApproval(${JsEscape.toJsString(toolName)},${JsEscape.toJsString(riskLevel)},${JsEscape.toJsString(description)},${JsEscape.toJsString(metadataJson)},$diffArg)")
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
-        callJs("showProcessInput(${jsonStr(processId)},${jsonStr(description)},${jsonStr(prompt)},${jsonStr(command)})")
+        callJs("showProcessInput(${JsEscape.toJsString(processId)},${JsEscape.toJsString(description)},${JsEscape.toJsString(prompt)},${JsEscape.toJsString(command)})")
     }
 
     // ── Debug log panel ──
@@ -1034,18 +958,13 @@ class AgentCefPanel(
                     null -> null
                     is Number -> "\"$k\":$v"
                     is Boolean -> "\"$k\":$v"
-                    else -> {
-                        val escaped = v.toString().take(100)
-                            .replace("\\", "\\\\").replace("\"", "\\\"")
-                            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-                        "\"$k\":\"$escaped\""
-                    }
+                    else -> "\"$k\":${JsEscape.toJsonString(v.toString().take(100))}"
                 }
             }.joinToString(",")
             "{$pairs}"
         } else "null"
         val json = """{"ts":$ts,"level":"$level","event":"$event","detail":"$truncatedDetail","meta":$metaStr}"""
-        callJs("addDebugLogEntry(${jsonStr(json)})")
+        callJs("addDebugLogEntry(${JsEscape.toJsString(json)})")
     }
 
     // ── Edit stats + checkpoints ──
@@ -1055,38 +974,38 @@ class AgentCefPanel(
     }
 
     fun updateCheckpoints(checkpointsJson: String) {
-        callJs("updateCheckpoints(${jsonStr(checkpointsJson)})")
+        callJs("updateCheckpoints(${JsEscape.toJsString(checkpointsJson)})")
     }
 
     fun notifyRollback(rollbackJson: String) {
-        callJs("notifyRollback(${jsonStr(rollbackJson)})")
+        callJs("notifyRollback(${JsEscape.toJsString(rollbackJson)})")
     }
 
     fun setSmartWorkingPhrase(phrase: String) {
-        callJs("setSmartWorkingPhrase(${jsonStr(phrase)})")
+        callJs("setSmartWorkingPhrase(${JsEscape.toJsString(phrase)})")
     }
 
     fun setSessionTitle(title: String) {
-        callJs("setSessionTitle(${jsonStr(title)})")
+        callJs("setSessionTitle(${JsEscape.toJsString(title)})")
     }
 
     // ── Queued steering message rendering ──
 
     fun addQueuedSteeringMessage(id: String, text: String) {
-        callJs("addQueuedSteeringMessage(${jsonStr(id)},${jsonStr(text)})")
+        callJs("addQueuedSteeringMessage(${JsEscape.toJsString(id)},${JsEscape.toJsString(text)})")
     }
 
     fun removeQueuedSteeringMessage(id: String) {
-        callJs("removeQueuedSteeringMessage(${jsonStr(id)})")
+        callJs("removeQueuedSteeringMessage(${JsEscape.toJsString(id)})")
     }
 
     fun promoteQueuedSteeringMessages(ids: List<String>) {
-        val idsJson = ids.joinToString(",") { jsonStr(it) }
+        val idsJson = ids.joinToString(",") { JsEscape.toJsString(it) }
         callJs("promoteQueuedSteeringMessages([$idsJson])")
     }
 
     fun restoreInputText(text: String) {
-        callJs("restoreInputText(${jsonStr(text)})")
+        callJs("restoreInputText(${JsEscape.toJsString(text)})")
     }
 
     // ═══════════════════════════════════════════════════
@@ -1187,107 +1106,38 @@ class AgentCefPanel(
         }
     }
 
-    /** Escape a string for safe injection into JavaScript. */
-    private fun jsonStr(s: String): String {
-        val escaped = s
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
-        return "'$escaped'"
+    /**
+     * Create a [JBCefJSQuery] bound to [b], install [handler], and track the
+     * resulting query in [registeredQueries] so it gets disposed in [dispose].
+     *
+     * Always go through this helper instead of calling
+     * `JBCefJSQuery.create(...)` directly — that is how we avoid leaking native
+     * resources when new bridges are added.
+     */
+    private fun registerQuery(
+        b: JBCefBrowser,
+        handler: (String) -> JBCefJSQuery.Response?
+    ): JBCefJSQuery {
+        val q = JBCefJSQuery.create(b as JBCefBrowserBase)
+        q.addHandler(handler)
+        registeredQueries.add(q)
+        return q
     }
 
     override fun dispose() {
         scope.cancel()
-        undoQuery?.dispose()
-        traceQuery?.dispose()
-        promptQuery?.dispose()
-        planApproveQuery?.dispose()
-        planReviseQuery?.dispose()
-        toolToggleQuery?.dispose()
-        questionAnsweredQuery?.dispose()
-        questionSkippedQuery?.dispose()
-        chatAboutQuery?.dispose()
-        questionsSubmittedQuery?.dispose()
-        questionsCancelledQuery?.dispose()
-        editQuestionQuery?.dispose()
-        deactivateSkillQuery?.dispose()
-        navigateToFileQuery?.dispose()
-        cancelTaskQuery?.dispose()
-        newChatQuery?.dispose()
-        sendMessageQuery?.dispose()
-        changeModelQuery?.dispose()
-        togglePlanModeQuery?.dispose()
-        activateSkillQuery?.dispose()
-        requestFocusIdeQuery?.dispose()
-        openSettingsQuery?.dispose()
-        openToolsPanelQuery?.dispose()
-        searchMentionsQuery?.dispose()
-        searchTicketsQuery?.dispose()
-        validateTicketQuery?.dispose()
-        sendMessageWithMentionsQuery?.dispose()
-        openInEditorTabQuery?.dispose()
-        focusPlanEditorQuery?.dispose()
-        revisePlanFromEditorQuery?.dispose()
-        viewInEditorQuery?.dispose()
-        approveToolCallQuery?.dispose()
-        denyToolCallQuery?.dispose()
-        allowToolForSessionQuery?.dispose()
-        interactiveHtmlMessageQuery?.dispose()
-        acceptDiffHunkQuery?.dispose()
-        rejectDiffHunkQuery?.dispose()
-        killToolCallQuery?.dispose()
-        killSubAgentQuery?.dispose()
-        revertCheckpointQuery?.dispose()
-        cancelSteeringQuery?.dispose()
-        retryLastTaskQuery?.dispose()
-        processInputQuery?.dispose()
+        // Tear down every JBCefJSQuery created via registerQuery in one pass.
+        // This automatically covers any new bridges added later — no risk of
+        // forgetting one in dispose() (the previous toggleRalphLoopQuery leak).
+        registeredQueries.forEach {
+            try {
+                it.dispose()
+            } catch (e: Exception) {
+                LOG.debug("AgentCefPanel: query dispose failed: ${e.message}")
+            }
+        }
+        registeredQueries.clear()
         browser?.dispose()
-        undoQuery = null
-        traceQuery = null
-        promptQuery = null
-        planApproveQuery = null
-        planReviseQuery = null
-        toolToggleQuery = null
-        questionAnsweredQuery = null
-        questionSkippedQuery = null
-        chatAboutQuery = null
-        questionsSubmittedQuery = null
-        questionsCancelledQuery = null
-        editQuestionQuery = null
-        deactivateSkillQuery = null
-        navigateToFileQuery = null
-        cancelTaskQuery = null
-        newChatQuery = null
-        sendMessageQuery = null
-        changeModelQuery = null
-        togglePlanModeQuery = null
-        activateSkillQuery = null
-        requestFocusIdeQuery = null
-        openSettingsQuery = null
-        openToolsPanelQuery = null
-        searchMentionsQuery = null
-        searchTicketsQuery = null
-        validateTicketQuery = null
-        sendMessageWithMentionsQuery = null
-        openInEditorTabQuery = null
-        focusPlanEditorQuery = null
-        revisePlanFromEditorQuery = null
-        viewInEditorQuery = null
-        approveToolCallQuery = null
-        denyToolCallQuery = null
-        allowToolForSessionQuery = null
-        interactiveHtmlMessageQuery = null
-        acceptDiffHunkQuery = null
-        rejectDiffHunkQuery = null
-        killToolCallQuery = null
-        killSubAgentQuery = null
-        revertCheckpointQuery = null
-        cancelSteeringQuery = null
-        retryLastTaskQuery = null
-        processInputQuery = null
         browser = null
     }
 }

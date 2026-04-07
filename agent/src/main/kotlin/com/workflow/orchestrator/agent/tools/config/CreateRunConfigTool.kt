@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -228,8 +229,8 @@ class CreateRunConfigTool : AgentTool {
         }
     }
 
-    private fun resolveConfigurationFactory(type: String): ConfigurationFactory? {
-        return try {
+    private fun resolveConfigurationFactory(type: String): ConfigurationFactory? =
+        ReflectionUtils.tryReflective {
             when (type) {
                 "application" -> ApplicationConfigurationType.getInstance().configurationFactories.firstOrNull()
                 "spring_boot" -> resolveFactoryViaReflection(
@@ -246,13 +247,10 @@ class CreateRunConfigTool : AgentTool {
                 )
                 else -> null
             }
-        } catch (_: Exception) {
-            null
         }
-    }
 
-    private fun resolveFactoryViaReflection(className: String): ConfigurationFactory? {
-        return try {
+    private fun resolveFactoryViaReflection(className: String): ConfigurationFactory? =
+        ReflectionUtils.tryReflective {
             val clazz = Class.forName(className)
             val getInstance = clazz.getMethod("getInstance")
             val instance = getInstance.invoke(null)
@@ -260,12 +258,7 @@ class CreateRunConfigTool : AgentTool {
             @Suppress("UNCHECKED_CAST")
             val factories = getFactories.invoke(instance) as Array<ConfigurationFactory>
             factories.firstOrNull()
-        } catch (_: ClassNotFoundException) {
-            null
-        } catch (_: Exception) {
-            null
         }
-    }
 
     @Suppress("LongParameterList")
     private fun applyConfigSettings(
@@ -317,15 +310,14 @@ class CreateRunConfigTool : AgentTool {
         workingDir: String?,
         activeProfiles: String?
     ) {
-        try {
+        // Best effort — plugin may vary
+        ReflectionUtils.tryReflective {
             mainClass?.let { setViaReflection(config, "setMainClassName", it) }
             vmOptions?.let { setViaReflection(config, "setVMParameters", it) }
             programArgs?.let { setViaReflection(config, "setProgramParameters", it) }
             envVars?.let { setEnvsViaReflection(config, it) }
             workingDir?.let { setViaReflection(config, "setWorkingDirectory", it) }
             activeProfiles?.let { setViaReflection(config, "setActiveProfiles", it) }
-        } catch (_: Exception) {
-            // Best effort — plugin may vary
         }
     }
 
@@ -337,8 +329,8 @@ class CreateRunConfigTool : AgentTool {
         envVars: Map<String, String>?,
         workingDir: String?
     ) {
-        // JUnit plugin may not be available — use reflection
-        try {
+        // JUnit plugin may not be available — use reflection, best effort
+        ReflectionUtils.tryReflective {
             testClass?.let {
                 // Access persistentData via reflection
                 val getPersistentData = config.javaClass.methods.find { m -> m.name == "getPersistentData" }
@@ -359,22 +351,18 @@ class CreateRunConfigTool : AgentTool {
             vmOptions?.let { setViaReflection(config, "setVMParameters", it) }
             envVars?.let { setEnvsViaReflection(config, it) }
             workingDir?.let { setViaReflection(config, "setWorkingDirectory", it) }
-        } catch (_: Exception) {
-            // Best effort for JUnit configuration
         }
     }
 
     private fun applyRemoteConfig(config: RunConfiguration, port: Int) {
-        // Remote debug plugin may not be available — use reflection
-        try {
+        // Remote debug plugin may not be available — use reflection, best effort
+        ReflectionUtils.tryReflective {
             val portField = config.javaClass.getField("PORT")
             portField.set(config, port.toString())
             val hostField = config.javaClass.getField("HOST")
             hostField.set(config, "localhost")
             val serverModeField = config.javaClass.getField("SERVER_MODE")
             serverModeField.set(config, false)
-        } catch (_: Exception) {
-            // Best effort for Remote configuration
         }
     }
 
@@ -385,30 +373,26 @@ class CreateRunConfigTool : AgentTool {
         envVars: Map<String, String>?,
         workingDir: String?
     ) {
-        try {
+        // Best effort for Gradle configuration
+        ReflectionUtils.tryReflective {
             programArgs?.let { setViaReflection(config, "setRawCommandLine", it) }
             vmOptions?.let { setViaReflection(config, "setVmOptions", it) }
             workingDir?.let { setViaReflection(config, "setWorkingDirectory", it) }
-        } catch (_: Exception) {
-            // Best effort for Gradle configuration
         }
     }
 
     private fun setViaReflection(config: RunConfiguration, methodName: String, value: String) {
-        try {
+        // Silently fail — method may not exist on this config type
+        ReflectionUtils.tryReflective {
             val method = config.javaClass.methods.find { it.name == methodName && it.parameterCount == 1 }
             method?.invoke(config, value)
-        } catch (_: Exception) {
-            // Silently fail — method may not exist on this config type
         }
     }
 
     private fun setEnvsViaReflection(config: RunConfiguration, envs: Map<String, String>) {
-        try {
+        ReflectionUtils.tryReflective {
             val method = config.javaClass.methods.find { it.name == "setEnvs" && it.parameterCount == 1 }
             method?.invoke(config, envs)
-        } catch (_: Exception) {
-            // Silently fail
         }
     }
 }

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.util.JsEscape
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -143,12 +144,12 @@ class AskQuestionsTool : AgentTool {
             val options = parseSimpleOptions(optionsJson)
             val wrappedJson = buildString {
                 append("""{"questions":[{"id":"q1","question":""")
-                append(escapeJsonString(question))
+                append(JsEscape.toJsonString(question))
                 append(""","type":"single","options":[""")
                 options.forEachIndexed { i, opt ->
                     if (i > 0) append(",")
                     append("""{"id":"o${i+1}","label":""")
-                    append(escapeJsonString(opt))
+                    append(JsEscape.toJsonString(opt))
                     append("}")
                 }
                 append("]}]}")
@@ -208,9 +209,8 @@ class AskQuestionsTool : AgentTool {
             )
         }
 
-        val escapedTitle = title?.replace("\\", "\\\\")?.replace("\"", "\\\"")
-        val wizardJson = if (escapedTitle != null) {
-            """{"title":"$escapedTitle","questions":$questionsJson}"""
+        val wizardJson = if (title != null) {
+            """{"title":${JsEscape.toJsonString(title)},"questions":$questionsJson}"""
         } else {
             """{"questions":$questionsJson}"""
         }
@@ -288,8 +288,4 @@ class AskQuestionsTool : AgentTool {
         }
     }
 
-    private fun escapeJsonString(s: String): String {
-        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-        return "\"$escaped\""
-    }
 }

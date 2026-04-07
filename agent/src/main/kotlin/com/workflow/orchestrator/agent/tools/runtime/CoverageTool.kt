@@ -23,6 +23,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -451,10 +452,10 @@ Actions and their parameters:
             var projectData: Any? = null
 
             // Path A: Try bundle first (fastest when available)
-            val bundle = try { implClass.getMethod("getCurrentSuitesBundle").invoke(dataManager) } catch (_: Exception) { null }
+            val bundle = ReflectionUtils.tryReflective { implClass.getMethod("getCurrentSuitesBundle").invoke(dataManager) }
             if (bundle != null) {
                 diag.appendLine("getCurrentSuitesBundle(): ${bundle.javaClass.simpleName}")
-                projectData = try { bundle.javaClass.getMethod("getCoverageData").invoke(bundle) } catch (_: Exception) { null }
+                projectData = ReflectionUtils.tryReflective { bundle.javaClass.getMethod("getCoverageData").invoke(bundle) }
                 if (projectData != null) diag.appendLine("Path A: bundle.getCoverageData() OK")
             } else {
                 diag.appendLine("getCurrentSuitesBundle() returned null")
@@ -696,10 +697,10 @@ Actions and their parameters:
                     testObjectField.set(data, testType)
                     mainClassField.set(data, className)
 
-                    try {
+                    ReflectionUtils.tryReflective {
                         val packageField = data.javaClass.getField("PACKAGE_NAME")
                         packageField.set(data, className.substringBeforeLast('.', ""))
-                    } catch (_: Exception) {}
+                    }
 
                     if (method != null) {
                         val methodField = data.javaClass.getField("METHOD_NAME")

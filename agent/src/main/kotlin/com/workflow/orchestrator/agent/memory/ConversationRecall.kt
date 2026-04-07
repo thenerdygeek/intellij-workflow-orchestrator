@@ -78,10 +78,9 @@ class ConversationRecall(private val sessionsDir: File) {
                         if (role == "tool") return@forEachLine
 
                         // Keyword match — OR logic with frequency-based scoring
-                        // (matches ArchivalMemory pattern, not AND which gives identical scores)
-                        val contentLower = content.lowercase()
+                        // (unified with ArchivalMemory via MemoryKeywordSearch helper)
                         val score = keywords.sumOf { kw ->
-                            contentLower.split(kw).size - 1  // non-overlapping occurrence count
+                            MemoryKeywordSearch.countOccurrences(content, kw)
                         }
                         if (score == 0) return@forEachLine
 

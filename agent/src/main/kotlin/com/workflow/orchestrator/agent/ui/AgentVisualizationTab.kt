@@ -16,6 +16,7 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
+import com.workflow.orchestrator.agent.util.JsEscape
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
@@ -102,15 +103,8 @@ class AgentVisualizationEditor(
         val jsObj = vars.entries.joinToString(",") { "'${it.key}':'${it.value}'" }
         val isDarkJs = if (isDark) "true" else "false"
 
-        val escapedContent = vizFile.content
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
-        val escapedType = vizFile.visualizationType
-            .replace("'", "\\'")
+        val escapedContent = JsEscape.escapeForJsString(vizFile.content)
+        val escapedType = JsEscape.escapeForJsString(vizFile.visualizationType)
 
         // Poll for React bridge readiness — initBridge() registers functions on window
         // after React mounts (useEffect), which is AFTER onLoadEnd fires.

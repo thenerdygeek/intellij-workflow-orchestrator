@@ -24,6 +24,7 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
+import com.workflow.orchestrator.agent.util.JsEscape
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -268,12 +269,12 @@ class AgentController(
                     // (clickable radio buttons with descriptions, Skip/Cancel actions)
                     val wizardJson = buildString {
                         append("""{"questions":[{"id":"q1","question":""")
-                        append(escapeJsonForBridge(question))
+                        append(JsEscape.toJsonString(question))
                         append(""","type":"single","options":[""")
                         options.forEachIndexed { i, opt ->
                             if (i > 0) append(",")
                             append("""{"id":"o${i + 1}","label":""")
-                            append(escapeJsonForBridge(opt))
+                            append(JsEscape.toJsonString(opt))
                             append("}")
                         }
                         append("]}]}")
@@ -1685,11 +1686,6 @@ class AgentController(
             val escapedDesc = tool.description.take(200).replace("\"", "\\\"").replace("\n", " ")
             """{"name":"$escapedName","description":"$escapedDesc","enabled":true}"""
         }
-
-    private fun escapeJsonForBridge(s: String): String {
-        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-        return "\"$escaped\""
-    }
 
     /**
      * Format token count for display: "45K" for large counts, exact for small.

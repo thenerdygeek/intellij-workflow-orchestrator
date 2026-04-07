@@ -8,7 +8,6 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
@@ -159,20 +158,10 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
                 val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 val stage = params["stage"]?.jsonPrimitive?.content
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
-                val variablesStr = params["variables"]?.jsonPrimitive?.content
-                val variables = if (!variablesStr.isNullOrBlank()) {
-                    try {
-                        val obj = kotlinx.serialization.json.Json.parseToJsonElement(variablesStr).jsonObject
-                        obj.mapValues { it.value.jsonPrimitive.content }
-                    } catch (_: Exception) {
-                        return ToolResult(
-                            "Invalid variables JSON: '$variablesStr'. Expected format: {\"key\":\"value\"}",
-                            "Invalid variables",
-                            ToolResult.ERROR_TOKEN_ESTIMATE,
-                            isError = true
-                        )
-                    }
-                } else emptyMap()
+                val variables = when (val parsed = BambooToolUtils.parseVariables(params["variables"]?.jsonPrimitive?.content)) {
+                    is BambooToolUtils.VariablesParseResult.Success -> parsed.variables
+                    is BambooToolUtils.VariablesParseResult.Failure -> return parsed.error
+                }
                 service.triggerStage(planKey, variables, stage).toAgentToolResult()
             }
 

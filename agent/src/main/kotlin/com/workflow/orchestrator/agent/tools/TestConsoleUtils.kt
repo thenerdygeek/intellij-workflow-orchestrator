@@ -4,6 +4,7 @@ import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView
 import com.intellij.execution.ui.ExecutionConsole
 import com.intellij.execution.ui.RunContentDescriptor
+import com.workflow.orchestrator.agent.util.ReflectionUtils
 
 /**
  * Utility for unwrapping IntelliJ console wrappers to find the underlying SMTRunnerConsoleView.
@@ -30,7 +31,7 @@ object TestConsoleUtils {
         var current: Any? = console
         repeat(5) {
             // Try getDelegate() — ConsoleViewWithDelegate (IntelliJ Ultimate profiler wrapper)
-            val delegate = tryInvoke(current, "getDelegate")
+            val delegate = ReflectionUtils.tryInvoke(current, "getDelegate")
             if (delegate is SMTRunnerConsoleView) return delegate
             if (delegate != null && delegate !== current) {
                 current = delegate
@@ -38,7 +39,7 @@ object TestConsoleUtils {
             }
 
             // Try getConsole() — BaseTestsOutputConsoleView
-            val inner = tryInvoke(current, "getConsole")
+            val inner = ReflectionUtils.tryInvoke(current, "getConsole")
             if (inner is SMTRunnerConsoleView) return inner
             if (inner != null && inner !== current) {
                 current = inner
@@ -58,13 +59,5 @@ object TestConsoleUtils {
     fun findTestRoot(descriptor: RunContentDescriptor): SMTestProxy.SMRootTestProxy? {
         val testConsole = unwrapToTestConsole(descriptor.executionConsole) ?: return null
         return testConsole.resultsViewer.testsRootNode as? SMTestProxy.SMRootTestProxy
-    }
-
-    private fun tryInvoke(target: Any?, methodName: String): Any? {
-        return try {
-            target?.javaClass?.getMethod(methodName)?.invoke(target)
-        } catch (_: Exception) {
-            null
-        }
     }
 }
