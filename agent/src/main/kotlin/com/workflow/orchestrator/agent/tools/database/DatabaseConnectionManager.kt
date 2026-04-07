@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.sql.Connection
 import java.sql.Driver
+import java.sql.DriverManager
 import java.sql.ResultSet
 import java.sql.Statement
 import java.util.Properties
@@ -152,14 +153,61 @@ object DatabaseConnectionManager {
                     // Generic falls back to DriverManager — the user is expected to have
                     // their own driver on the classpath. Use try/finally to guarantee
                     // the connection is closed even if a later step throws.
-                    val conn = java.sql.DriverManager.getConnection(rawJdbcUrl, props)
+                    val conn = DriverManager.getConnection(rawJdbcUrl, props)
                     try {
                         DiscoveryResult(databases = emptyList(), systemDatabasesFiltered = 0)
                     } finally {
                         runCatching { conn.close() }
                     }
                 }
-                else -> error("testConnectionAndDiscover: ${dbType.displayName} branch not implemented yet")
+                DbType.POSTGRESQL, DbType.MYSQL, DbType.MSSQL -> {
+                    val bootstrapUrl = DatabaseDiscovery.bootstrapUrl(dbType, host, port)
+                        ?: error("No bootstrap URL for ${dbType.displayName}")
+                    val query = DatabaseDiscovery.discoveryQuery(dbType)
+                        ?: error("No discovery query for ${dbType.displayName}")
+
+                    val props = Properties().apply {
+                        put("user", username)
+                        put("password", password)
+                        // Engine-specific tweaks copied from openConnection()
+                        if (dbType == DbType.MYSQL) {
+                            put("useSSL", "false")
+                            put("allowPublicKeyRetrieval", "true")
+                        }
+                        // Cap how long the driver waits before giving up
+                        put("loginTimeout", TEST_CONNECT_TIMEOUT_SECONDS.toString())
+                    }
+                    DriverManager.setLoginTimeout(TEST_CONNECT_TIMEOUT_SECONDS)
+
+                    @Suppress("UNCHECKED_CAST")
+                    val driverClass = Class.forName(
+                        dbType.driverClass,
+                        true,
+                        DatabaseConnectionManager::class.java.classLoader
+                    ) as Class<out Driver>
+                    val driver = driverClass.getDeclaredConstructor().newInstance()
+                    val conn = driver.connect(bootstrapUrl, props)
+                        ?: error("Driver returned null for URL '$bootstrapUrl'")
+
+                    try {
+                        val rawNames = mutableListOf<String>()
+                        conn.createStatement().use { stmt ->
+                            stmt.queryTimeout = TEST_CONNECT_TIMEOUT_SECONDS
+                            stmt.executeQuery(query).use { rs ->
+                                while (rs.next()) {
+                                    rawNames.add(rs.getString(1))
+                                }
+                            }
+                        }
+                        val filtered = DatabaseDiscovery.filterSystemDatabases(dbType, rawNames)
+                        DiscoveryResult(
+                            databases = filtered,
+                            systemDatabasesFiltered = rawNames.size - filtered.size,
+                        )
+                    } finally {
+                        runCatching { conn.close() }
+                    }
+                }
             }
         }
     }
@@ -232,7 +280,7 @@ object DatabaseConnectionManager {
 
         return if (profile.dbType == DbType.GENERIC || profile.dbType.driverClass.isEmpty()) {
             // Fall back to DriverManager for generic JDBC — user's classpath must have the driver
-            java.sql.DriverManager.getConnection(jdbcUrl, props)
+            DriverManager.getConnection(jdbcUrl, props)
         } else {
             // Load driver via plugin classloader to find bundled JARs
             @Suppress("UNCHECKED_CAST")

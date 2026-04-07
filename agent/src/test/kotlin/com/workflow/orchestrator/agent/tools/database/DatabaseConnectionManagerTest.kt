@@ -162,4 +162,49 @@ class DatabaseConnectionManagerTest {
             assertTrue(result.isFailure)
         }
     }
+
+    @Nested
+    inner class ServerEngineBranches {
+
+        // Port 1 is reserved (TCP/UDP port multiplexer) and reliably refuses
+        // connections in CI environments — used here as a portable "unreachable host" target.
+        private val unreachableHost = "127.0.0.1"
+        private val unreachablePort = 1
+
+        @Test
+        fun `postgres unreachable host returns failure`() = runTest {
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.POSTGRESQL,
+                host = unreachableHost,
+                port = unreachablePort,
+                username = "test",
+                password = "test",
+            )
+            assertTrue(result.isFailure, "Expected failure when connecting to unreachable host")
+        }
+
+        @Test
+        fun `mysql unreachable host returns failure`() = runTest {
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.MYSQL,
+                host = unreachableHost,
+                port = unreachablePort,
+                username = "test",
+                password = "test",
+            )
+            assertTrue(result.isFailure)
+        }
+
+        @Test
+        fun `mssql unreachable host returns failure`() = runTest {
+            val result = DatabaseConnectionManager.testConnectionAndDiscover(
+                dbType = DbType.MSSQL,
+                host = unreachableHost,
+                port = unreachablePort,
+                username = "test",
+                password = "test",
+            )
+            assertTrue(result.isFailure)
+        }
+    }
 }
