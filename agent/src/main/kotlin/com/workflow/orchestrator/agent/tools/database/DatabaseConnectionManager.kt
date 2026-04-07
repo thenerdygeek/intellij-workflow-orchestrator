@@ -49,6 +49,10 @@ object DatabaseConnectionManager {
      * Connect timeout for the test-connection flow (seconds). Hardcoded
      * because the user has not yet saved a profile when this runs, so
      * we can't read per-profile JDBC properties.
+     *
+     * Used by the server-engine branches (PostgreSQL, MySQL, SQL Server)
+     * for `loginTimeout` and `Statement.queryTimeout`. Not applicable to
+     * SQLite or Generic, which open a local file or user-supplied URL.
      */
     private const val TEST_CONNECT_TIMEOUT_SECONDS = 10
 
@@ -129,12 +133,15 @@ object DatabaseConnectionManager {
                         DbType.SQLITE.driverClass,
                         true,
                         DatabaseConnectionManager::class.java.classLoader
-                    ) as Class<out java.sql.Driver>
+                    ) as Class<out Driver>
                     val driver = driverClass.getDeclaredConstructor().newInstance()
-                    val conn = driver.connect(rawJdbcUrl, java.util.Properties())
+                    val conn = driver.connect(rawJdbcUrl, Properties())
                         ?: error("SQLite driver returned null for URL '$rawJdbcUrl'")
-                    conn.close()
-                    DiscoveryResult(databases = emptyList(), systemDatabasesFiltered = 0)
+                    try {
+                        DiscoveryResult(databases = emptyList(), systemDatabasesFiltered = 0)
+                    } finally {
+                        runCatching { conn.close() }
+                    }
                 }
                 else -> error("testConnectionAndDiscover: ${dbType.displayName} branch not implemented yet")
             }
