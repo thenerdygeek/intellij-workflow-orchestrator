@@ -117,6 +117,9 @@ class DatabaseProfileDialog(
     init {
         title = if (existing != null) "Edit Database Profile" else "Add Database Profile"
         init()
+        // OK is disabled for new profiles until Test Connection succeeds.
+        // Existing profiles open with OK enabled (grandfathered).
+        okAction.isEnabled = (existing != null)
         // Pre-fill password
         if (existing != null) {
             val stored = DatabaseCredentialHelper.getPassword(existing.id)
