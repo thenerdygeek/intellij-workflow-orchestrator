@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
+import com.workflow.orchestrator.agent.tools.database.DatabaseConnectionManager
 import com.workflow.orchestrator.agent.tools.database.DatabaseCredentialHelper
 import com.workflow.orchestrator.agent.tools.database.DatabaseProfile
 import com.workflow.orchestrator.agent.tools.database.DbType
@@ -20,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Add / edit dialog for a single [DatabaseProfile].
@@ -130,6 +133,7 @@ class DatabaseProfileDialog(
         typeCombo.addActionListener { onTypeChanged() }
         rawUrlCheckbox.addActionListener { updateFieldVisibility() }
         updateFieldVisibility()
+        testButton.addActionListener { runTestConnection() }
     }
 
     private fun onTypeChanged() {
@@ -160,6 +164,105 @@ class DatabaseProfileDialog(
         // (set in the click handler). Raw mode just hides it entirely.
         defaultDbCombo.isEnabled = !rawMode && (testPassed || existing != null)
         urlField.isEnabled = rawMode
+    }
+
+    /**
+     * Runs the test connection in [dialogScope]. On success, populates
+     * the database combo with the discovered list and enables the OK
+     * button. On failure, surfaces the driver's error message in the
+     * status label without enabling save.
+     *
+     * Uses bare host/port credentials for server engines and the raw
+     * URL field for SQLite/Generic. Validates required fields before
+     * attempting the connection.
+     */
+    private fun runTestConnection() {
+        val type = typeCombo.selectedItem as DbType
+        val rawMode = rawUrlCheckbox.isSelected
+
+        // Pre-flight validation: surface obvious problems immediately
+        // instead of issuing a doomed JDBC call.
+        val preflightError = when {
+            rawMode || type == DbType.SQLITE || type == DbType.GENERIC -> {
+                if (urlField.text.isBlank()) "JDBC URL is required for ${type.displayName}" else null
+            }
+            else -> {
+                when {
+                    hostField.text.isBlank() -> "Host is required"
+                    (portField.text.toIntOrNull() ?: 0) <= 0 -> "Port is required"
+                    userField.text.isBlank() -> "Username is required"
+                    passField.password.isEmpty() -> "Password is required"
+                    else -> null
+                }
+            }
+        }
+        if (preflightError != null) {
+            testStatusLabel.foreground = com.intellij.ui.JBColor.RED
+            testStatusLabel.text = preflightError
+            return
+        }
+
+        // Disable the button and clear status while we're working.
+        testButton.isEnabled = false
+        testStatusLabel.foreground = com.intellij.ui.JBColor.GRAY
+        testStatusLabel.text = "Testing..."
+
+        val host = hostField.text.trim()
+        val port = portField.text.toIntOrNull() ?: JdbcUrlBuilder.defaultPort(type)
+        val username = userField.text.trim()
+        val password = String(passField.password)
+        val rawUrl = urlField.text.trim()
+
+        dialogScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                DatabaseConnectionManager.testConnectionAndDiscover(
+                    dbType = type,
+                    host = host,
+                    port = port,
+                    username = username,
+                    password = password,
+                    rawJdbcUrl = rawUrl,
+                )
+            }
+
+            // Back on EDT (dialogScope is on Dispatchers.EDT)
+            testButton.isEnabled = true
+            result.fold(
+                onSuccess = { discovery ->
+                    testPassed = true
+                    if (type == DbType.SQLITE || type == DbType.GENERIC) {
+                        // Single-database engines: nothing to put in the combo.
+                        defaultDbCombo.removeAllItems()
+                        defaultDbCombo.isEnabled = false
+                        testStatusLabel.foreground = com.intellij.ui.JBColor.GREEN
+                        testStatusLabel.text = "✓ Connected."
+                    } else {
+                        defaultDbCombo.removeAllItems()
+                        discovery.databases.forEach { defaultDbCombo.addItem(it) }
+                        if (discovery.databases.isNotEmpty()) {
+                            defaultDbCombo.selectedIndex = 0
+                        }
+                        defaultDbCombo.isEnabled = true
+                        testStatusLabel.foreground = com.intellij.ui.JBColor.GREEN
+                        val filteredSuffix =
+                            if (discovery.systemDatabasesFiltered > 0)
+                                " (${discovery.systemDatabasesFiltered} system database(s) hidden)"
+                            else ""
+                        testStatusLabel.text =
+                            "✓ Connected. Found ${discovery.databases.size} database(s)$filteredSuffix."
+                    }
+                    okAction.isEnabled = true
+                },
+                onFailure = { ex ->
+                    testPassed = false
+                    okAction.isEnabled = false
+                    testStatusLabel.foreground = com.intellij.ui.JBColor.RED
+                    val raw = ex.message ?: ex.javaClass.simpleName
+                    val truncated = if (raw.length > 200) raw.take(200) + "…" else raw
+                    testStatusLabel.text = truncated
+                }
+            )
+        }
     }
 
     private fun buildPreviewUrl(): String {
