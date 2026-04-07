@@ -53,9 +53,22 @@ class DatabaseProfileDialog(
             (existing?.dbType ?: DbType.POSTGRESQL)
         )).toString()
     ).apply { preferredSize = Dimension(80, 28) }
-    private val defaultDbField = JBTextField(existing?.resolvedDefaultDatabase ?: "").apply {
-        preferredSize = Dimension(200, 28)
-    }
+    // Default database is now a dropdown populated by Test Connection.
+    // For new profiles it starts disabled and empty. For existing profiles
+    // (edit flow) it is grandfathered: pre-seeded with the saved DB and
+    // enabled, so the user can save without re-testing.
+    private val defaultDbCombo: com.intellij.openapi.ui.ComboBox<String> =
+        com.intellij.openapi.ui.ComboBox<String>().apply {
+            preferredSize = Dimension(200, 28)
+            val seed = existing?.resolvedDefaultDatabase?.takeIf { it.isNotBlank() }
+            if (seed != null) {
+                addItem(seed)
+                selectedItem = seed
+                isEnabled = true
+            } else {
+                isEnabled = false
+            }
+        }
 
     // Raw URL field (SQLite, Generic, or escape hatch for server engines)
     private val urlField = JBTextField(existing?.jdbcUrl ?: "").apply {
@@ -74,6 +87,11 @@ class DatabaseProfileDialog(
     private val userField = JBTextField(existing?.username ?: "").apply { preferredSize = Dimension(200, 28) }
     private val passField = JBPasswordField().apply { preferredSize = Dimension(200, 28) }
     private val passHint = JBLabel(if (existing != null) "(leave blank to keep existing password)" else "")
+
+    // True when the user has successfully tested the connection, OR when editing
+    // an existing profile (grandfathered — assumed valid until they change a
+    // connection-affecting field). Gates the OK button.
+    private var testPassed: Boolean = (existing != null)
 
     init {
         title = if (existing != null) "Edit Database Profile" else "Add Database Profile"
@@ -120,7 +138,9 @@ class DatabaseProfileDialog(
         val rawMode = rawUrlCheckbox.isSelected
         hostField.isEnabled = !rawMode
         portField.isEnabled = !rawMode
-        defaultDbField.isEnabled = !rawMode
+        // The combo's enable state is also driven by Test Connection results
+        // (set in the click handler). Raw mode just hides it entirely.
+        defaultDbCombo.isEnabled = !rawMode && (testPassed || existing != null)
         urlField.isEnabled = rawMode
     }
 
@@ -130,7 +150,7 @@ class DatabaseProfileDialog(
         if (type == DbType.GENERIC) return ""
         val host = hostField.text.ifBlank { "localhost" }
         val port = portField.text.toIntOrNull() ?: 0
-        val db = defaultDbField.text.ifBlank { "mydb" }
+        val db = (defaultDbCombo.selectedItem as? String)?.ifBlank { "mydb" } ?: "mydb"
         return JdbcUrlBuilder.build(type, host, port, db)
     }
 
@@ -153,9 +173,10 @@ class DatabaseProfileDialog(
             cell(portField).comment("Defaults to engine standard if blank (5432 / 3306 / 1433)")
         }
         row("Default database:") {
-            cell(defaultDbField).align(AlignX.FILL).comment(
-                "Database to connect to when no `database` parameter is supplied. " +
-                    "The agent can switch via db_list_databases + db_query(database=…)."
+            cell(defaultDbCombo).align(AlignX.FILL).comment(
+                "Click 'Test Connection' below to discover and select a database. " +
+                    "The agent uses this when no explicit database is supplied to a query, " +
+                    "and can still switch databases per-query via db_query(database=…)."
             )
         }
 
@@ -194,8 +215,12 @@ class DatabaseProfileDialog(
             val port = portField.text.toIntOrNull()
             if (port == null || port <= 0 || port > 65535)
                 return ValidationInfo("Port must be a number between 1 and 65535", portField)
-            if (defaultDbField.text.isBlank())
-                return ValidationInfo("Default database is required", defaultDbField)
+            val selected = defaultDbCombo.selectedItem as? String
+            if (selected.isNullOrBlank())
+                return ValidationInfo(
+                    "Select a database from the list (click Test Connection first)",
+                    defaultDbCombo
+                )
         }
 
         if (existing == null && passField.password.isEmpty())
@@ -227,7 +252,7 @@ class DatabaseProfileDialog(
                 username = userField.text.trim(),
                 host = hostField.text.trim(),
                 port = portField.text.toIntOrNull() ?: JdbcUrlBuilder.defaultPort(type),
-                defaultDatabase = defaultDbField.text.trim(),
+                defaultDatabase = (defaultDbCombo.selectedItem as? String)?.trim().orEmpty(),
             )
         }
 
