@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.settings
 
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.ui.DialogWrapper
-import kotlinx.coroutines.cancel
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
@@ -16,6 +16,10 @@ import java.awt.Dimension
 import javax.swing.JCheckBox
 import javax.swing.JComboBox
 import javax.swing.JComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 /**
  * Add / edit dialog for a single [DatabaseProfile].
@@ -79,10 +83,10 @@ class DatabaseProfileDialog(
     }
 
     // Coroutine scope owned by the dialog — cancelled in dispose() so an
-    // in-flight test connection can't outlive the dialog.
-    private val dialogScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
-    )
+    // in-flight test connection can't outlive the dialog. Base dispatcher
+    // is EDT so UI updates after `withContext(Dispatchers.IO)` blocks
+    // return directly to the EDT without another explicit switch.
+    private val dialogScope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
 
     // Raw URL field (SQLite, Generic, or escape hatch for server engines)
     private val urlField = JBTextField(existing?.jdbcUrl ?: "").apply {
