@@ -964,8 +964,20 @@ class AgentController(
                     )
                 }
                 else -> {
-                    update.latestToolCall?.let { toolCall ->
-                        dashboard.addSubAgentToolCall(agentId, toolCall, "")
+                    // Tool starting — add a RUNNING tool chip to the subagent's chain.
+                    // Use raw toolName so the matching key in updateSubAgentToolCall works.
+                    update.toolStartName?.let { name ->
+                        dashboard.addSubAgentToolCall(agentId, name, update.toolStartArgs ?: "")
+                    }
+                    // Tool completing — flip the matching RUNNING chip to COMPLETED/ERROR.
+                    update.toolCompleteName?.let { name ->
+                        dashboard.updateSubAgentToolCall(
+                            agentId,
+                            name,
+                            update.toolCompleteResult ?: "",
+                            update.toolCompleteDurationMs,
+                            update.toolCompleteIsError
+                        )
                     }
                     update.stats?.let { stats ->
                         dashboard.updateSubAgentIteration(agentId, stats.toolCalls)

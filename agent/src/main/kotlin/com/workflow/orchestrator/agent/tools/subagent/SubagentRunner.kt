@@ -106,15 +106,32 @@ class SubagentRunner(
                 maxOutputTokens = maxOutputTokens,
                 planMode = planMode,
                 onToolCall = { progress ->
-                    stats.toolCalls++
-                    val preview = formatToolCallPreview(progress.toolName, progress.args)
-                    stats.latestToolCall = preview
-                    // Fire progress with latestToolCall (Cline: onProgress({ latestToolCall }))
-                    scope.launch {
-                        onProgress(SubagentProgressUpdate(
-                            latestToolCall = preview,
-                            stats = stats.snapshot()
-                        ))
+                    // AgentLoop fires onToolCall twice: once at tool start (empty result, durationMs=0)
+                    // and once at tool completion (populated result, durationMs>0). We must propagate
+                    // both so the UI can transition the sub-agent's tool chip from RUNNING to COMPLETED.
+                    val isStarting = progress.result.isEmpty() && progress.durationMs == 0L
+                    if (isStarting) {
+                        stats.toolCalls++
+                        val preview = formatToolCallPreview(progress.toolName, progress.args)
+                        stats.latestToolCall = preview
+                        scope.launch {
+                            onProgress(SubagentProgressUpdate(
+                                latestToolCall = preview,
+                                toolStartName = progress.toolName,
+                                toolStartArgs = progress.args,
+                                stats = stats.snapshot()
+                            ))
+                        }
+                    } else {
+                        scope.launch {
+                            onProgress(SubagentProgressUpdate(
+                                toolCompleteName = progress.toolName,
+                                toolCompleteResult = progress.result,
+                                toolCompleteDurationMs = progress.durationMs,
+                                toolCompleteIsError = progress.isError,
+                                stats = stats.snapshot()
+                            ))
+                        }
                     }
                 },
                 onTokenUpdate = { inputTokens, outputTokens ->

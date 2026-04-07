@@ -46,6 +46,10 @@ data class SubagentRunResult(
 /**
  * Incremental progress update emitted by a running subagent.
  * All fields are optional since any subset may be updated on each tick.
+ *
+ * Tool lifecycle: a tool start sets [toolStartName]+[toolStartArgs]; a tool completion
+ * sets [toolCompleteName]+[toolCompleteResult]+[toolCompleteDurationMs]+[toolCompleteIsError].
+ * The two are separate so the UI can transition tools from RUNNING → COMPLETED/ERROR.
  */
 data class SubagentProgressUpdate(
     val stats: SubagentRunStats? = null,
@@ -53,6 +57,14 @@ data class SubagentProgressUpdate(
     val status: String? = null,
     val result: String? = null,
     val error: String? = null,
+    // Tool lifecycle (start)
+    val toolStartName: String? = null,
+    val toolStartArgs: String? = null,
+    // Tool lifecycle (complete)
+    val toolCompleteName: String? = null,
+    val toolCompleteResult: String? = null,
+    val toolCompleteDurationMs: Long = 0L,
+    val toolCompleteIsError: Boolean = false,
 )
 
 /**
