@@ -49,8 +49,9 @@ class RunCommandTool : AgentTool {
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
         private const val MAX_TIMEOUT_SECONDS = 600L
         private const val MAX_OUTPUT_CHARS = 30_000
-        private const val DEFAULT_IDLE_THRESHOLD_MS = 15_000L
-        private const val BUILD_IDLE_THRESHOLD_MS = 60_000L
+        // Idle thresholds are read from AgentSettings.commandIdleThresholdSeconds and
+        // AgentSettings.buildCommandIdleThresholdSeconds at execution time. Defaults
+        // are 15s / 60s respectively (set in AgentSettings.State).
         private const val IO_DRAIN_TIMEOUT_MS = 2000L
         private val processIdCounter = AtomicLong(0)
 
@@ -427,9 +428,14 @@ class RunCommandTool : AgentTool {
             // Register in ProcessRegistry for kill/killAll/stdin support
             val managed = ProcessRegistry.register(toolCallId, process, command)
 
-            // Determine idle threshold
+            // Determine idle threshold — caller-supplied param wins, otherwise read from
+            // AgentSettings (defaults: 15s / 60s for build commands).
+            val agentSettings = com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state
             val idleThresholdMs = params["idle_timeout"]?.jsonPrimitive?.int?.let { it * 1000L }
-                ?: if (isLikelyBuildCommand(command)) BUILD_IDLE_THRESHOLD_MS else DEFAULT_IDLE_THRESHOLD_MS
+                ?: if (isLikelyBuildCommand(command))
+                    agentSettings.buildCommandIdleThresholdSeconds * 1000L
+                else
+                    agentSettings.commandIdleThresholdSeconds * 1000L
 
             // Buffer-based reader thread (handles binary output)
             val activeStreamCallback: ((String, String) -> Unit)? = streamCallback

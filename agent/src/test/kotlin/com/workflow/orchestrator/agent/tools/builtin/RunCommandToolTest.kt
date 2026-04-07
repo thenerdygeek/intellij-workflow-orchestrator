@@ -1,14 +1,18 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -20,8 +24,23 @@ class RunCommandToolTest {
 
     private val project = mockk<Project> { every { basePath } returns "/tmp" }
 
+    @BeforeEach
+    fun mockAgentSettings() {
+        // RunCommandTool now reads idle thresholds from AgentSettings.
+        // Provide a stub that returns the default values so the existing tests
+        // (which don't care about settings) keep working unchanged.
+        mockkObject(AgentSettings.Companion)
+        every { AgentSettings.getInstance(any()) } returns mockk {
+            every { state } returns mockk {
+                every { commandIdleThresholdSeconds } returns 15
+                every { buildCommandIdleThresholdSeconds } returns 60
+            }
+        }
+    }
+
     @AfterEach
     fun cleanup() {
+        unmockkObject(AgentSettings.Companion)
         // Kill any lingering processes left by idle detection tests
         ProcessRegistry.killAll()
         // Give threads a moment to terminate after process kill

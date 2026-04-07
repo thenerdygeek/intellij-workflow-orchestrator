@@ -23,11 +23,18 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** Max output tokens per LLM response. Limit varies per model — no hardcoded cap. */
         var maxOutputTokens by property(64000)
         var approvalRequiredForEdits by property(true)
-        var maxSessionTokens by property(500_000)
         var showDebugLog by property(false)
+        /** Idle threshold (seconds) for `run_command`. After this many seconds without
+         *  output, the process is reported as [IDLE] so the LLM can interact with it. */
         var commandIdleThresholdSeconds by property(15)
+        /** Idle threshold (seconds) for build commands (mvn / gradle / npm / docker build / etc.).
+         *  Builds frequently pause for downloads or compilation, so the threshold is higher. */
         var buildCommandIdleThresholdSeconds by property(60)
+        /** Maximum number of `send_stdin` calls allowed against a single running process.
+         *  Prevents runaway agents from spamming stdin into hanging processes. */
         var maxStdinPerProcess by property(10)
+        /** Timeout (minutes) for `ask_user_input` waiting for the user to respond.
+         *  After this many minutes the prompt expires and the tool returns an error. */
         var askUserInputTimeoutMinutes by property(5)
         var powershellEnabled by property(true)
         /** Use Haiku to generate contextual humorous working indicator messages. */
@@ -39,18 +46,6 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * - "context_compaction": compact context and retry with the same model
          */
         var networkErrorStrategy by string("none")
-
-        // Ralph Loop defaults
-        var ralphMaxIterations by property(10)
-        var ralphMaxCostUsd by string("10.0")
-        var ralphReviewerEnabled by property(true)
-
-        /**
-         * Whether lifecycle hooks are enabled.
-         * Ported from Cline's hooksEnabled setting.
-         * When false, no hooks are executed regardless of .agent-hooks.json.
-         */
-        var hooksEnabled by property(true)
     }
 
     companion object {

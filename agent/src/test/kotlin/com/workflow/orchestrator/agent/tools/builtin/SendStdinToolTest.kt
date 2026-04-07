@@ -1,22 +1,39 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 class SendStdinToolTest {
 
     private val project = mockk<Project> { every { basePath } returns "/tmp" }
 
+    @BeforeEach
+    fun mockAgentSettings() {
+        // SendStdinTool now reads MAX_STDIN_PER_PROCESS from AgentSettings.maxStdinPerProcess.
+        // Provide the default value (10) so existing test assertions stay valid.
+        mockkObject(AgentSettings.Companion)
+        every { AgentSettings.getInstance(any()) } returns mockk {
+            every { state } returns mockk {
+                every { maxStdinPerProcess } returns 10
+            }
+        }
+    }
+
     @AfterEach
     fun cleanup() {
+        unmockkObject(AgentSettings.Companion)
         ProcessRegistry.killAll()
         Thread.sleep(100)
     }
@@ -62,6 +79,50 @@ class SendStdinToolTest {
         assertTrue(
             result.content.contains("limit") || result.content.contains("exceeded"),
             "Expected limit message in: ${result.content}"
+        )
+
+        process.destroyForcibly()
+    }
+
+    @Test
+    fun `respects custom maxStdinPerProcess from AgentSettings`() = runTest {
+        // Override the default mock to return a custom limit of 3 instead of 10.
+        // This proves the tool actually reads from AgentSettings rather than using
+        // a hardcoded constant. With limit=3, the 3rd send should be allowed but
+        // the 4th should be rejected.
+        unmockkObject(AgentSettings.Companion)
+        mockkObject(AgentSettings.Companion)
+        every { AgentSettings.getInstance(any()) } returns mockk {
+            every { state } returns mockk {
+                every { maxStdinPerProcess } returns 3
+            }
+        }
+
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        val process = if (isWindows) {
+            ProcessBuilder("cmd.exe", "/c", "pause").start()
+        } else {
+            ProcessBuilder("sh", "-c", "read line; echo done").start()
+        }
+
+        val toolCallId = "test-stdin-custom-limit"
+        val managed = ProcessRegistry.register(toolCallId, process, "read line; echo done")
+
+        // Set stdinCount to 3 — equal to the custom limit. Next send should be rejected.
+        managed.stdinCount.set(3)
+
+        val tool = SendStdinTool()
+        val params = buildJsonObject {
+            put("process_id", toolCallId)
+            put("input", "hello\n")
+        }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError, "Expected error at custom limit, got: ${result.content}")
+        assertTrue(
+            result.content.contains("Stdin limit (3)"),
+            "Expected error to mention the custom limit '3', got: ${result.content}"
         )
 
         process.destroyForcibly()

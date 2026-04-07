@@ -32,7 +32,8 @@ class AskUserInputTool : AgentTool {
 
     companion object {
         private val LOG = Logger.getInstance(AskUserInputTool::class.java)
-        private const val USER_INPUT_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
+        // User-response wait timeout is read from AgentSettings.askUserInputTimeoutMinutes
+        // at execution time. Default is 5 minutes (set in AgentSettings.State).
         private const val MONITOR_POLL_MS = 500L
         private const val IDLE_AFTER_INPUT_MS = 10_000L
         private const val MAX_WAIT_AFTER_INPUT_MS = 60_000L
@@ -94,15 +95,18 @@ class AskUserInputTool : AgentTool {
         // Show input UI in chat
         showInputCallback?.invoke(processId, description, prompt, managed.command)
 
-        // Wait for user input with timeout
-        val userInput = withTimeoutOrNull(USER_INPUT_TIMEOUT_MS) { deferred.await() }
+        // Wait for user input with timeout (configurable via AgentSettings.askUserInputTimeoutMinutes)
+        val timeoutMinutes = com.workflow.orchestrator.agent.settings.AgentSettings
+            .getInstance(project).state.askUserInputTimeoutMinutes
+        val userInputTimeoutMs = timeoutMinutes * 60_000L
+        val userInput = withTimeoutOrNull(userInputTimeoutMs) { deferred.await() }
         pendingInput = null
 
         if (userInput == null) {
             // Timeout — kill process
             ProcessRegistry.kill(processId)
             return ToolResult(
-                "User did not respond within 5 minutes. Process killed.",
+                "User did not respond within $timeoutMinutes minute(s). Process killed.",
                 "Error: user input timeout — process killed",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true

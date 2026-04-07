@@ -13,7 +13,8 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-private const val MAX_STDIN_PER_PROCESS = 10
+// Max stdin writes per process is read from AgentSettings.maxStdinPerProcess at execution time.
+// Default is 10 (set in AgentSettings.State).
 private const val MONITOR_POLL_MS = 500L
 private const val IDLE_AFTER_STDIN_MS = 10_000L
 private const val MAX_WAIT_AFTER_STDIN_MS = 60_000L
@@ -75,9 +76,11 @@ class SendStdinTool : AgentTool {
         }
 
         // Step 4: Rate limit check
-        if (managed.stdinCount.get() >= MAX_STDIN_PER_PROCESS) {
+        val maxStdinPerProcess = com.workflow.orchestrator.agent.settings.AgentSettings
+            .getInstance(project).state.maxStdinPerProcess
+        if (managed.stdinCount.get() >= maxStdinPerProcess) {
             return ToolResult(
-                "Error: Stdin limit ($MAX_STDIN_PER_PROCESS) exceeded for process '$processId'. " +
+                "Error: Stdin limit ($maxStdinPerProcess) exceeded for process '$processId'. " +
                     "Kill the process with kill_process and rerun using a non-interactive command instead.",
                 "Error: stdin limit exceeded",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
