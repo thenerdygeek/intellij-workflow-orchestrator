@@ -418,6 +418,7 @@ class AgentDashboardPanel(
 
     fun finalizeQuestionsAsMessage() {
         cefPanel?.finalizeQuestionsAsMessage()
+        broadcast { it.finalizeQuestionsAsMessage() }
     }
 
     fun completeSession(
