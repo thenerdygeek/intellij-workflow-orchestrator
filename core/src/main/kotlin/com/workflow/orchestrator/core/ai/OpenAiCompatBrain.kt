@@ -12,7 +12,7 @@ import okhttp3.OkHttpClient
  * - Endpoint: `/.api/llm/chat/completions` (not `/v1/chat/completions`)
  * - Auth: `token TOKEN_VALUE` (not `Bearer`)
  * - Model format: `provider::apiVersion::modelId` (e.g., `anthropic::2024-10-22::claude-sonnet-4-20250514`)
- * - max_tokens capped at 4000
+ * - max_tokens: mandatory for thinking models (HTTP 500 if omitted), no fixed cap
  * - tool_choice not supported (tools use auto behavior)
  *
  * @param sourcegraphUrl The Sourcegraph instance root URL (e.g., "https://sourcegraph.company.com")

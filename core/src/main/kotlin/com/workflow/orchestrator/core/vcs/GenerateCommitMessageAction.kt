@@ -155,10 +155,12 @@ class GenerateCommitMessageAction : AnAction(
                 recentCommits = recentCommits,
                 codeContext = codeContext
             )
-            // 4000 = Sourcegraph API cap. For thinking models, this budget covers
-            // both internal reasoning (~3000-3500) and output (~500). Must be set
-            // explicitly — omitting maxTokens causes Sourcegraph to return HTTP 500.
-            val result = brain.chat(messages, tools = null, maxTokens = 4000)
+            // maxTokens MUST be set explicitly — omitting it causes Sourcegraph to
+            // return HTTP 500 for thinking models (the thinking budget needs to be
+            // allocated up front). 8000 gives thinking models ~7500 tokens for
+            // reasoning plus ~500 for the commit message itself. Sourcegraph has no
+            // fixed cap here; the agent sends up to 64K successfully.
+            val result = brain.chat(messages, tools = null, maxTokens = 8000)
             when (result) {
                 is ApiResult.Success ->
                     result.data.choices.firstOrNull()?.message?.content

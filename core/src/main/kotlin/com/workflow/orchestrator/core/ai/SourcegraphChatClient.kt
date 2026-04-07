@@ -29,14 +29,15 @@ import java.util.concurrent.TimeUnit
  * - Auth: `Authorization: token TOKEN_VALUE` (Sourcegraph token scheme)
  * - Endpoint: `{baseUrl}/.api/llm/chat/completions`
  * - Model format: `provider::apiVersion::modelId` (e.g., `anthropic::2023-06-01::claude-3.5-sonnet`)
- * - max_tokens capped at 4000 by the API
+ * - max_tokens: MANDATORY for thinking models (omitting causes HTTP 500). Limit varies
+ *   per model — no fixed API cap. Probe scripts confirm 8K/16K/100K all accepted.
+ *   The agent currently sends up to 64K successfully.
  * - tools supported (AssistantToolsFunction[])
  * - tool_choice NOT supported by the API (omitted from requests)
  * - stream: true uses SSE on the same endpoint
  *
  * Key differences from standard OpenAI API:
  * - No `tool_choice` parameter
- * - `max_tokens` maximum is 4000 (not 4096 or higher)
  * - Response `object` field is `"object"` not `"chat.completion"`
  * - Auth uses `token` prefix, not `Bearer`
  */
